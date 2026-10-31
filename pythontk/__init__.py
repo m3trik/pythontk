@@ -81,6 +81,10 @@ DEFAULT_INCLUDE = {
     # (resolve, search order, claims, relocation) -- the lightmap markers of
     # both DCC bakers today; any record that names files that way.
     "file_utils.file_dependencies": ["FileDependencies"],
+    # Gather the files a set of readers use into one folder, keyed by reader:
+    # names kept, a clash kept apart by its parent folders, identical files
+    # shared (the Texture Path Editor's Find & Copy / Collect, both DCCs).
+    "file_utils.file_collect": ["FileCollect", "CollectHost", "PureCollectHost"],
     "file_utils.pending_files": ["PendingFiles"],
     # The tile / frame token vocabulary of a path (<UDIM>, <uvtile>, <u>_<v>,
     # <f>): detect, collapse to a representative, expand to the set.

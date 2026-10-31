@@ -551,8 +551,8 @@ class TestResolve(_FilesCase):
 
     def test_the_walk_takes_a_unique_hit_and_refuses_to_guess(self):
         self._file("root", "deep", "U.exr")
-        self._file("root", "one", "D.exr")
-        self._file("root", "two", "D.exr")
+        self._file("root", "one", "D.exr", data=b"one")
+        self._file("root", "two", "D.exr", data=b"two")  # different: not a copy
         refs = [("|u", "U.exr", ""), ("|d", "D.exr", "")]
         deps = {
             d["name"]: d
@@ -574,6 +574,114 @@ class TestResolve(_FilesCase):
         root = self._dir("root")
         FileDependencies.resolve([("|x", "X.exr", "")], walk_root=root, find_files=find)
         self.assertEqual(seen, [(["X.exr"], root)])
+
+    def test_a_search_folder_hit_beside_another_under_the_walk_is_ambiguous(self):
+        """BACKLOG 2026-10-21 (heal): the texture folder kept an older
+        ``Concrete_Lightmap.exr`` after its ``lightmaps`` folder was renamed;
+        the plain search folders were tried first, so the stale file was
+        "found" and healed in for good. The search folders and the walk are
+        one candidate set now, and two different files are never settled."""
+        root = self._dir("sourceimages")
+        stale = self._file("sourceimages", "Concrete_Lightmap.exr", data=b"old")
+        fresh = self._file("sourceimages", "lm_v2", "Concrete_Lightmap.exr", data=b"new")
+        (dep,) = FileDependencies.resolve(
+            [("|c", "Concrete_Lightmap.exr", self._dir("gone"))],
+            search_dirs=[root],
+            walk_root=root,
+        )
+        self.assertIsNone(dep["path"])
+        self.assertIsNone(dep["found_by"])
+        self.assertEqual(len(dep["candidates"]), 2, dep)
+        self.assertTrue(self._same(dep["candidates"][0], stale), "search folder first")
+        self.assertTrue(self._same(dep["candidates"][1], fresh))
+        self.assertIn("ambiguous: 2", dep["note"])
+
+    def test_one_file_reached_by_the_folder_and_the_walk_is_one_candidate(self):
+        root = self._dir("sourceimages")
+        only = self._file("sourceimages", "Floor.exr")
+        (dep,) = FileDependencies.resolve(
+            [("|f", "Floor.exr", "")], search_dirs=[root], walk_root=root
+        )
+        self.assertEqual(dep["found_by"], FileDependencies.FOUND_BY_SEARCH)
+        self.assertTrue(self._same(dep["path"], only))
+        self.assertEqual(dep["candidates"], [])
+
+    def test_identical_copies_of_a_name_are_one_candidate(self):
+        """Either reads the same bytes: nothing to ask about."""
+        first = self._file("pool", "a", "Twin.exr", data=b"same")
+        self._file("pool", "b", "Twin.exr", data=b"same")
+        (dep,) = FileDependencies.resolve(
+            [("|t", "Twin.exr", "")], walk_root=self._dir("pool")
+        )
+        self.assertTrue(self._same(dep["path"], first))
+        self.assertEqual(dep["candidates"], [])
+
+    def test_a_key_keeps_two_same_named_readers_apart(self):
+        """A texture node names its file by PATH: ``wood/diffuse.png`` and
+        ``metal/diffuse.png`` must not share a record."""
+        wood = self._file("wood", "diffuse.png", data=b"wood")
+        metal = self._file("metal", "diffuse.png", data=b"metal")
+        deps = FileDependencies.resolve(
+            [
+                ("a", "diffuse.png", os.path.dirname(wood)),
+                ("b", "diffuse.png", os.path.dirname(metal)),
+            ],
+            key=lambda owner, _name: owner,
+        )
+        self.assertEqual([d["owners"] for d in deps], [["a"], ["b"]])
+        self.assertTrue(self._same(deps[0]["path"], wood))
+        self.assertTrue(self._same(deps[1]["path"], metal))
+
+    def test_a_tile_set_resolves_by_its_tiles(self):
+        tile = self._file("hint", "rock.1001.png")
+        self._file("pool", "x", "rock.1001.png", data=b"x")
+        self._file("pool", "y", "rock.1002.png", data=b"y")
+        hinted, searched = FileDependencies.resolve(
+            [
+                ("|h", "rock.<UDIM>.png", os.path.dirname(tile)),
+                ("|s", "ROCK.<UDIM>.PNG", ""),
+            ],
+            walk_root=self._dir("pool"),
+            key=lambda owner, _name: owner,
+        )
+        self.assertEqual(hinted["found_by"], FileDependencies.FOUND_BY_HINT)
+        self.assertTrue(hinted["path"].endswith("hint/rock.<UDIM>.png"))
+        self.assertEqual(
+            sorted(os.path.basename(os.path.dirname(c)) for c in searched["candidates"]),
+            ["x", "y"],
+            "each folder holding tiles is one candidate",
+        )
+
+    def test_find_files_matches_a_set_by_its_tiles(self):
+        self._file("t", "rock.1001.png")
+        self._file("t", "rock.1002.png")
+        self._file("t", "rock.thumb.png")
+        hits = FileDependencies.find_files(["rock.<UDIM>.png"], self._dir("t"))
+        self.assertEqual(
+            sorted(os.path.basename(h) for h in hits),
+            ["rock.1001.png", "rock.1002.png"],
+        )
+
+
+class TestChoose(_FilesCase):
+    """``FileDependencies.choose``: the one rule every lookup by name shares."""
+
+    def test_one_file_however_spelled_is_chosen(self):
+        path = self._file("a", "x.png")
+        chosen, several = FileDependencies.choose([path, path.replace("\\", "/")])
+        self.assertTrue(self._same(chosen, path))
+        self.assertEqual(several, [])
+
+    def test_different_files_come_back_in_order_never_one_picked(self):
+        a = self._file("a", "x.png", data=b"a")
+        b = self._file("b", "x.png", data=b"b")
+        self.assertEqual(
+            FileDependencies.choose([b, a]),
+            (None, [b.replace("\\", "/"), a.replace("\\", "/")]),
+        )
+
+    def test_nothing_is_nothing(self):
+        self.assertEqual(FileDependencies.choose([]), (None, []))
 
 
 class TestSearchDirs(_FilesCase):
@@ -671,18 +779,22 @@ class TestSearchDirs(_FilesCase):
 
 
 class TestRelocate(_FilesCase):
-    def test_plan_then_copy_newest_wins(self):
+    def test_plan_then_copy_an_ambiguous_name_is_never_guessed(self):
+        """It took the NEWEST same-named file under the source folder; two
+        different files of one name are left with their candidates now."""
         dest = self._dir("dest")
         here = self._file("dest", "In.exr")
         src = self._file("old", "Out.exr")
         older = self._file("pool", "a", "Lost.exr", data=b"old")
         self._file("pool", "b", "Lost.exr", data=b"new")
+        self._file("pool", "c", "Found.exr")
         os.utime(older, (1_000_000, 1_000_000))
         deps = FileDependencies.resolve(
             [
                 ("|in", "In.exr", os.path.dirname(here)),
                 ("|out", "Out.exr", os.path.dirname(src)),
                 ("|lost", "Lost.exr", self._dir("gone")),
+                ("|found", "Found.exr", self._dir("gone")),
                 ("|none", "None.exr", self._dir("gone")),
             ]
         )
@@ -693,18 +805,36 @@ class TestRelocate(_FilesCase):
         self.assertEqual(len(plan["in_place"]), 1)
         self.assertEqual(
             sorted(os.path.basename(d) for _s, d in plan["relocate"]),
-            ["Lost.exr", "Out.exr"],
+            ["Found.exr", "Out.exr"],
         )
         self.assertEqual([m["name"] for m in plan["missing"]], ["None.exr"])
+        (lost,) = plan["ambiguous"]
+        self.assertEqual(lost["name"], "Lost.exr")
+        self.assertEqual(len(lost["candidates"]), 2)
         self.assertFalse(os.path.exists(os.path.join(dest, "Out.exr")), "dry run wrote")
 
         done = FileDependencies.relocate(deps, dest, source_dir=self._dir("pool"))
         self.assertEqual(len(done["copied"]), 2)
-        with open(os.path.join(dest, "Lost.exr"), "rb") as fh:
-            self.assertEqual(fh.read(), b"new", "the newest same-named file wins")
+        self.assertFalse(os.path.exists(os.path.join(dest, "Lost.exr")), "guessed")
         self.assertTrue(os.path.exists(src), "a copy leaves its source")
 
+    def test_a_same_named_file_already_there_keeps_the_newcomer_apart(self):
+        """A different file of the name in the destination is never
+        overwritten, and the newcomer still lands: under its parent folder."""
+        dest = self._dir("dest")
+        self._file("dest", "Map.exr", data=b"someone else's")
+        src = self._file("bakes", "Map.exr", data=b"ours")
+        deps = FileDependencies.resolve([("|m", "Map.exr", os.path.dirname(src))])
+
+        result = FileDependencies.relocate(deps, dest)
+
+        ((_src, dst),) = result["copied"]
+        self.assertTrue(self._same(dst, os.path.join(dest, "bakes", "Map.exr")))
+        with open(os.path.join(dest, "Map.exr"), "rb") as fh:
+            self.assertEqual(fh.read(), b"someone else's")
+
     def test_a_host_copy_replaces_the_default(self):
+        """The host copies; a move takes the source away only once it landed."""
         src = self._file("old", "Out.exr")
         deps = FileDependencies.resolve([("|o", "Out.exr", os.path.dirname(src))])
         calls = []
@@ -716,9 +846,10 @@ class TestRelocate(_FilesCase):
         dest = self._dir("dest")
         result = FileDependencies.relocate(deps, dest, mode="move", copy=copy)
         self.assertEqual(
-            calls, [([src.replace("\\", "/")], dest.replace("\\", "/"), "move")]
+            calls, [([src.replace("\\", "/")], dest.replace("\\", "/"), "copy")]
         )
         self.assertEqual(result["copied"], [])
+        self.assertTrue(os.path.exists(src), "nothing landed, so nothing was removed")
 
 
 class TestCopyFiles(_FilesCase):

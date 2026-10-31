@@ -2248,6 +2248,13 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.file_utils.file_collect",
+    "name": "CollectHost",
+    "qualname": "CollectHost",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.core_utils.color",
     "name": "Color",
     "qualname": "Color",
@@ -2510,6 +2517,13 @@
     "module": "pythontk.core_utils.schema_spec",
     "name": "FieldDoc",
     "qualname": "FieldDoc",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.file_utils.file_collect",
+    "name": "FileCollect",
+    "qualname": "FileCollect",
     "tier": "root"
   },
   {
@@ -3462,6 +3476,13 @@
     "module": "pythontk.math_utils.progression",
     "name": "ProgressionCurves",
     "qualname": "ProgressionCurves",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.file_utils.file_collect",
+    "name": "PureCollectHost",
+    "qualname": "PureCollectHost",
     "tier": "root"
   },
   {
