@@ -20,6 +20,7 @@ from dataclasses import dataclass, field, replace
 from typing import (
     Any,
     Callable,
+    ClassVar,
     Dict,
     FrozenSet,
     Iterable,
@@ -99,7 +100,69 @@ class ExportContext:
             copy and, on a hand-off, the one shipped as stored; and what a
             producer asks of a node (:meth:`ships`).  Shots and audio are the
             timeline's and ship whole.
+        unit_scale: The metres one scene unit is in the file this write
+            produces -- stated by its WRITER (:attr:`WRITER_UNITS`, filled by
+            the host's ``FbxUtils.export_context``), and the label every
+            producer gives the lengths it records in scene units (a record's
+            ``unit_scale``). No producer converts: the lengths stay as the
+            scene holds them, and the label says what the writer made of
+            them. ``None`` when no writer stated one: the producer labels its
+            record with the scene's unit.
     """
+
+    #: Each writer's effective metres per scene unit, stated once: ``{(host,
+    #: format): rule}``, a rule taking the scene's metres per unit and the
+    #: write's own options (the writer's keyword arguments) and answering the
+    #: metres one scene unit is in the file it writes. Where both hosts'
+    #: writers reach it; a new writer is one row.
+    WRITER_UNITS: ClassVar[
+        Dict[Tuple[str, str], Callable[[float, Mapping[str, Any]], float]]
+    ] = {
+        # Maya's writers write the scene's unit and say so in the file (the
+        # FBX UnitScaleFactor, USD's metersPerUnit): a converted unit changes
+        # the numbers, never the metres.
+        ("maya", "fbx"): lambda scene, options: scene,
+        ("maya", "usd"): lambda scene, options: scene,
+        # io_scene_fbx scales by scale_length only with apply_unit_scale on
+        # (its default), and by global_scale always: off, one BU is one metre.
+        ("blender", "fbx"): lambda scene, options: (
+            (scene if options.get("apply_unit_scale", True) else 1.0)
+            * float(options.get("global_scale", 1.0))
+        ),
+        # Blender's native glTF writer ignores scale_length: one BU is one
+        # metre (measured 2026-10-17: a 1 BU = 1 cm scene's node at 100 BU
+        # wrote 100).
+        ("blender", "gltf"): lambda scene, options: 1.0,
+    }
+
+    @classmethod
+    def writer_unit(
+        cls,
+        host: str,
+        writer: str,
+        scene_unit: float,
+        options: Optional[Mapping[str, Any]] = None,
+    ) -> float:
+        """The metres one scene unit is in the file *host*'s *writer* writes
+        with *options*, the scene's being *scene_unit* (:attr:`WRITER_UNITS`).
+
+        Raises:
+            KeyError: A writer with no row -- a write whose unit nobody stated.
+        """
+        try:
+            rule = cls.WRITER_UNITS[(host, writer)]
+        except KeyError:
+            raise KeyError(
+                f"No unit is stated for the {host} {writer!r} writer; add its "
+                "row to ExportContext.WRITER_UNITS."
+            ) from None
+        return float(rule(float(scene_unit), dict(options or {})))
+
+    def unit(self, scene_unit: Callable[[], float]) -> float:
+        """The unit label a producer gives its record: :attr:`unit_scale`, or
+        -- no writer stated one -- *scene_unit()*, the scene's metres per
+        unit, read only then."""
+        return self.unit_scale if self.unit_scale is not None else scene_unit()
 
     PIPELINE = "pipeline"
     HANDOFF = "handoff"
@@ -114,6 +177,7 @@ class ExportContext:
     notes: List[str] = field(default_factory=list)
     scope: Optional[Tuple[str, ...]] = None
     nodes: Optional[FrozenSet[str]] = None
+    unit_scale: Optional[float] = None
     #: :attr:`nodes` as a reader matches them, built on first use.
     _names: Optional[_NodeNames] = field(
         default=None, init=False, repr=False, compare=False

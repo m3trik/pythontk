@@ -246,5 +246,36 @@ class TestStoredCopy(_Case):
         self.assertIn(SR.LIGHTMAPS.key, snap.failed)
 
 
+class TestWriterUnits(_Case):
+    """The writer states its unit, once; every producer labels its record with
+    it and converts nothing. Measured 2026-10-17: Blender's native glTF writer
+    ignores scale_length and an FBX written with apply_unit_scale off ships
+    one BU as one metre, while every record was labelled with the scene's."""
+
+    def test_each_writer_states_the_metres_one_scene_unit_is_in_its_file(self):
+        """Added: 2026-10-31"""
+        unit = ExportContext.writer_unit
+        self.assertEqual(unit("maya", "fbx", 0.01), 0.01)
+        self.assertEqual(unit("maya", "usd", 0.01), 0.01)
+        self.assertEqual(unit("blender", "fbx", 0.01), 0.01, "apply_unit_scale on")
+        self.assertEqual(unit("blender", "fbx", 0.01, {"apply_unit_scale": False}), 1.0)
+        self.assertAlmostEqual(unit("blender", "fbx", 0.01, {"global_scale": 2.0}), 0.02)
+        self.assertEqual(unit("blender", "gltf", 0.01), 1.0)
+        with self.assertRaises(KeyError):
+            unit("maya", "obj", 0.01)
+
+    def test_a_record_takes_the_writers_label_else_the_scenes(self):
+        """Added: 2026-10-31"""
+        read = []
+
+        def scene():
+            read.append(True)
+            return 0.01
+
+        self.assertEqual(ExportContext(unit_scale=1.0).unit(scene), 1.0)
+        self.assertEqual(read, [], "the scene's unit is read only without a writer's")
+        self.assertEqual(ExportContext().unit(scene), 0.01)
+
+
 if __name__ == "__main__":
     unittest.main()
