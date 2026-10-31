@@ -615,6 +615,31 @@ class PackageManager(
         except TypeError:  # pragma: no cover - 3.8/3.9 selector signature
             return list(entry_points().get(group, []))
 
+    @staticmethod
+    def metadata_version(name: str) -> Optional[str]:
+        """The version of distribution *name* installed for the RUNNING
+        interpreter, read from its metadata.
+
+        The cheap reader a version range is checked against: no subprocess,
+        where :meth:`installed_version` runs ``pip show`` against
+        :attr:`python_path`. For another interpreter, ask it directly.
+
+        Parameters:
+            name: The distribution name (``"extapps"``); PEP 503 spellings match.
+
+        Returns:
+            The version string, or None when *name* is not installed -- a source
+            checkout on the path has no metadata.
+        """
+        from importlib.metadata import PackageNotFoundError, version
+
+        try:
+            return version(name)
+        except PackageNotFoundError:
+            return None
+        except Exception:  # noqa: BLE001 -- unreadable metadata names no version
+            return None
+
     def _get_startupinfo(self):
         """Prepare startup information for subprocess on Windows."""
         from pythontk.core_utils.execution_monitor._execution_monitor import (
@@ -776,9 +801,13 @@ class PackageManager(
             raise RuntimeError(f"Command '{shown}' failed: {e.stderr}")
 
     def _parse_command(self, command):
-        """Parse the pip command from string to list format."""
+        """Parse the pip command from string to list format.
+
+        Split on whitespace only: a comma joins the specifiers of one
+        requirement (``extapps>=0.8.0,<0.9``), never two arguments.
+        """
         if isinstance(command, str):
-            return re.findall(r'(?:[^\s,"]|"(?:\\.|[^"])*")+', command)
+            return re.findall(r'(?:[^\s"]|"(?:\\.|[^"])*")+', command)
         return command
 
     def _process_output(self, stdout, stderr, output_as_string):

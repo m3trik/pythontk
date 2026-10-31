@@ -16,7 +16,7 @@ _Deprecated aliases whose window ran out._
 - `core_utils/engines/shots/manifest/manifest_model.py::ManifestModel.asset_column`
 - `core_utils/engines/shots/manifest/manifest_model.py::ManifestModel.column_clipboard`
 
-## Added (254)
+## Added (270)
 
 - `core_utils/engines/key_stash/key_stash_model.py::KeyStash.merge_carrier(cls, carriers: Any, other: Dict[Any, Any], ctx: Any) -> None`
 - `core_utils/engines/key_stash/key_stash_model.py::KeyStash.reconcile(self) -> List[int]`
@@ -46,6 +46,10 @@ _Deprecated aliases whose window ran out._
 - `core_utils/engines/lighting/look_match/session.py::LookSession.mixes(cls, path: str, data: Mapping[str, Any]) -> PresetStore`
 - `core_utils/engines/scene_export/bake_baseline.py::BakeBaseline.atlas_files(cls, markers: Mapping[str, Mapping[str, Any]], path_of: Mapping[str, str], record: Mapping[str, Any], group_of: Callable[[List[str]], Mapping[str, str]], objects: Sequence[str] = ()) -> Optional['BakeBaseline.AtlasFiles']`
 - `core_utils/engines/scene_export/bake_baseline.py::BakeBaseline.keep_baked(cls, record: Any, before: Any, objects: Iterable[str]) -> Dict[str, Any]`
+- `core_utils/engines/scene_export/export_snapshot.py::ExportContext.narrowed(self, spec: RecordSpec, payload: Any) -> Any`
+- `core_utils/engines/scene_export/export_snapshot.py::ExportContext.ships(self, name: Any) -> bool`
+- `core_utils/engines/scene_export/export_snapshot.py::ExportContext.unit(self, scene_unit: Callable[[], float]) -> float`
+- `core_utils/engines/scene_export/export_snapshot.py::ExportContext.writer_unit(cls, host: str, writer: str, scene_unit: float, options: Optional[Mapping[str, Any]] = None) -> float`
 - `core_utils/engines/scene_export/scene_data_sidecar.py::PureSidecarHost(class)`
 - `core_utils/engines/scene_export/scene_data_sidecar.py::PureSidecarHost.clean_path(path: str) -> str`
 - `core_utils/engines/scene_export/scene_data_sidecar.py::PureSidecarHost.drop_intermediate(nodes: Iterable[str]) -> List[str]`
@@ -60,6 +64,7 @@ _Deprecated aliases whose window ran out._
 - `core_utils/engines/scene_export/scene_exporter.py::SceneExporterBase.note_retired_panel_state(self, store: Any) -> None`
 - `core_utils/engines/scene_export/scene_exporter.py::SceneExporterBase.note_retired_preset_rows(self, name: str, stored: Optional[Dict[str, Any]]) -> None`
 - `core_utils/engines/scene_export/scene_exporter.py::SceneExporterBase.resolve_export_dir(self, export_dir: Optional[str]) -> str`
+- `core_utils/engines/scene_export/scene_records.py::RecordSpec.narrowed(self, payload: Any, nodes: Iterable[str]) -> Any`
 - `core_utils/engines/scene_export/scene_records.py::SceneRecords.peek_entry(entries: Optional[List[dict]], entry_id: Optional[str] = None) -> Optional[dict]`
 - `core_utils/engines/scene_export/scene_records.py::SceneRecords.pop_entry(entries: Optional[List[dict]], entry_id: Optional[str] = None) -> Optional[dict]`
 - `core_utils/engines/scene_export/scene_records.py::SceneRecords.resolve_row(label: str, module: str, owner: str, *methods: Optional[str], log: Optional[logging.Logger] = None) -> Optional[Tuple[Optional[Callable], ...]]`
@@ -191,9 +196,17 @@ _Deprecated aliases whose window ran out._
 - `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsModel.transfer_out(cls, ctx: 'ptk.TransferContext') -> Optional[dict]`
 - `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsModel.validate(cls) -> List[str]`
 - `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsModel.weight_attrs(cls) -> Dict[str, str]`
+- `core_utils/package_manager.py::PackageManager.metadata_version(name: str) -> Optional[str]`
+- `core_utils/package_requirement.py::PackageRequirement(class)`
+- `core_utils/package_requirement.py::PackageRequirement.contains(self, version: Optional[str]) -> bool`
+- `core_utils/package_requirement.py::PackageRequirement.declared_by(cls, dist: str, name: str, extra: Optional[str] = None) -> Optional['PackageRequirement']`
+- `core_utils/package_requirement.py::PackageRequirement.release(cls, version: Optional[str]) -> Tuple[int, ...]`
+- `core_utils/package_requirement.py::PackageRequirement.version_key(cls, version: str) -> tuple`
 - `file_utils/_file_utils.py::FileUtils.import_files(cls, paths: Iterable[str], folder: Optional[str], mode: str = 'copy', on_conflict: Union[str, Callable[[str], bool]] = 'reuse', validate: Optional[Callable[[str], Tuple[bool, str]]] = None, strict: bool = False) -> dict`
 - `file_utils/file_dependencies.py::FileDependencies.strangers(folder: str, stem: str, ext: str, claims: Mapping[str, Any], wrote: Callable[[str], bool]) -> Set[str]`
+- `file_utils/file_naming.py::RenamePlan.predict(cls, plan: Sequence[PlanEntry], scopes: Callable[[object], Tuple[Sequence[object], Sequence[object]]], names: Callable[[object], Optional[Sequence[str]]], uniquify: Callable[[str, set], str]) -> List[str]`
 - `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.fix_glb_nonfinite_keys(cls, glb: GlbTarget) -> Dict[str, int]`
+- `file_utils/mesh_convert/fbx_media.py::FbxMedia.repair_null_normals(cls, src: str, dst: Optional[str] = None) -> Dict[str, int]`
 - `file_utils/scene_listing.py::SceneListing(class)`
 - `file_utils/scene_listing.py::SceneListing.default_save_name(cls, scene_path: Optional[str], case_style: str = 'None', suffix: str = '') -> str`
 - `file_utils/scene_listing.py::SceneListing.display_name(path: str, hide_extension: bool, hide_suffix: str) -> str`
@@ -233,6 +246,8 @@ _Deprecated aliases whose window ran out._
 - `geo_utils/curtain_drape.py::CurtainDrape.drape(self, u, v, pos, tan, normal) -> Vec`
 - `geo_utils/curtain_drape.py::CurtainDrape.grid_points(self) -> Tuple[int, int, List[Vec]]`
 - `geo_utils/curtain_drape.py::CurtainDrape.prepare(self) -> Tuple[int, int, List[Tuple[Vec, Vec, Vec]]]`
+- `geo_utils/pointcloud.py::PointCloud.order_points(cls, points: Sequence[Tuple[object, Sequence[float]]], order_by: str = 'auto', reference: Sequence[float] = (0.0, 0.0, 0.0), tolerance: float = 0.001, reverse: bool = False) -> List[object]`
+- `geo_utils/pointcloud.py::PointCloud.spread_axis(cls, points: Sequence[Sequence[float]], tolerance: float = 0.001) -> str`
 - `geo_utils/probe_placement.py::ProbeHost(class)`
 - `geo_utils/probe_placement.py::ProbeHost.bounds(self, nodes: Sequence[Any]) -> Box`
 - `geo_utils/probe_placement.py::ProbeHost.lights(self) -> Tuple[List[Tuple[Vec, Optional[Any]]], bool]`
@@ -244,6 +259,7 @@ _Deprecated aliases whose window ran out._
 - `geo_utils/probe_placement.py::ProbeMesh.intersect(self, payload: Any, origin: Sequence[float], direction: Sequence[float], far: float) -> Optional[Tuple[float, Vec, Any]]`
 - `geo_utils/probe_placement.py::ProbeMesh.normal(self, payload: Any, face: Any) -> Vec`
 - `math_utils/progression.py::ProgressionCurves.centered_offsets(cls, count: int, span: float, calculation_mode: str = 'linear', weight_bias: float = 0.5, weight_curve: float = 2.0) -> List[float]`
+- `str_utils/_str_utils.py::StrUtils.to_identifier(name: str, replacement: str = '_') -> str`
 - `vid_utils/sequence_exporter.py::PureSequenceHost(class)`
 - `vid_utils/sequence_exporter.py::PureSequenceHost.audio_source() -> Tuple[Optional[str], float]`
 - `vid_utils/sequence_exporter.py::PureSequenceHost.capture_frames(self, exporter: 'SequenceExporter', directory: str, prefix: str, start: int, end: int, camera: Any, image_format: str, padding: int, overrides: Dict[str, Any]) -> None`
@@ -312,7 +328,7 @@ _Live retirement debt, earliest deadline first. An **EXPIRED** row has outlived 
 - **HELD** `core_utils/engines/scene_export/scene_records.py::SceneRecords.web_shape` — remove in 0.18.0, not before 2026-11-23
 - **HELD** `core_utils/engines/scene_export/scene_records.py::WebProjection` — remove in 0.18.0, not before 2026-11-23
 
-## Signature changed (7)
+## Signature changed (9)
 
 - `core_utils/engines/scene_export/scene_data_sidecar.py::SceneDataSidecarBase.build_clean_path_set`
   - was: `(paths) -> set`
@@ -326,6 +342,12 @@ _Live retirement debt, earliest deadline first. An **EXPIRED** row has outlived 
 - `core_utils/presets/store.py::PresetStore.delete`
   - was: `(self, name: str, *, force: bool = False) -> bool`
   - now: `(self, name: str, *, force: bool = False, trash: bool = False) -> bool`
+- `file_utils/file_naming.py::RenamePlan.apply`
+  - was: `(cls, plan: Sequence[PlanEntry], rename: Callable[[object, str], str], title: str = 'Rename', dry_run: bool = False, logger=None, link: Optional[Callable[[object, str], str]] = None, unit: str = 'item') -> List[Tuple[str, str]]`
+  - now: `(cls, plan: Sequence[PlanEntry], rename: Callable[[object, str], str], title: str = 'Rename', dry_run: bool = False, logger=None, link: Optional[Callable[[object, str], str]] = None, unit: str = 'item', park: Optional[Callable[[object, int], object]] = None) -> List[Tuple[str, str]]`
+- `str_utils/_str_utils.py::StrUtils.strip_any_affix`
+  - was: `(string: str, known, *, exclude=(), one: bool = True, case_sensitive: bool = True) -> str`
+  - now: `(string: str, known, *, exclude=(), one: bool = True, case_sensitive: bool = True, numbered: bool = False) -> str`
 - `vid_utils/sequence_exporter.py::SequenceExporter.capture_sequence`
   - was: `(self, directory: str, prefix: Optional[str] = None, start: Optional[int] = None, end: Optional[int] = None, camera: Optional[str] = None, image_format: str = 'png', **overrides: Any) -> CaptureResult`
   - now: `(self, directory: str, prefix: Optional[str] = None, start: Optional[int] = None, end: Optional[int] = None, camera: Any = None, image_format: str = 'png', **overrides: Any) -> CaptureResult`

@@ -3270,6 +3270,13 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.core_utils.package_requirement",
+    "name": "PackageRequirement",
+    "qualname": "PackageRequirement",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.core_utils.color",
     "name": "Palette",
     "qualname": "Palette",

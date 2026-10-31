@@ -106,6 +106,7 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
 - [`core_utils/namespace_handler.py`](#core_utils--namespace_handler)
 - [`core_utils/naming_convention/_naming_convention.py`](#core_utils--naming_convention--_naming_convention) — Qt-free, zero-dependency **naming convention** — the ecosystem's one answer to
 - [`core_utils/package_manager.py`](#core_utils--package_manager)
+- [`core_utils/package_requirement.py`](#core_utils--package_requirement) — A pip requirement -- a distribution name plus a version range -- read and
 - [`core_utils/presets/library.py`](#core_utils--presets--library) — Whole-root view over the ecosystem's preset stores.
 - [`core_utils/presets/store.py`](#core_utils--presets--store) — Qt-free, zero-dependency named-preset *store* for the ecosystem.
 - [`core_utils/process_exit.py`](#core_utils--process_exit) — Exit a DCC-hosted interpreter without running ``DLL_PROCESS_DETACH``.
@@ -218,7 +219,7 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
 ### `__init__.py`
 
 - [`DEFAULT_INCLUDE`](pythontk/pythontk/__init__.py#L21) — constant
-- [`MOVED_NAMES`](pythontk/pythontk/__init__.py#L628) — constant
+- [`MOVED_NAMES`](pythontk/pythontk/__init__.py#L629) — constant
 
 <a id="audio_utils--_audio_utils"></a>
 ### `audio_utils/_audio_utils.py`
@@ -949,11 +950,15 @@ The Scene Exporter panels' shared contract, written once.
 
 Export assembly: compute every record once, then commit once.
 
-- **[`class ExportContext`](pythontk/pythontk/core_utils/engines/scene_export/export_snapshot.py#L46)** — What an export DECIDES, handed to every producer as input.
+- **[`class ExportContext`](pythontk/pythontk/core_utils/engines/scene_export/export_snapshot.py#L49)** — What an export DECIDES, handed to every producer as input.
+  - `ExportContext.writer_unit(cls, host: str, writer: str, scene_unit: float, options: Optional[Mapping[str, Any]] = None) -> float` *(class)* — The metres one scene unit is in the file *host*'s *writer* writes
+  - `ExportContext.unit(self, scene_unit: Callable[[], float]) -> float` — The unit label a producer gives its record: :attr:`unit_scale`, or
+  - `ExportContext.ships(self, name: Any) -> bool` — Whether the node *name* ships (:attr:`nodes`): matched as a reader
+  - `ExportContext.narrowed(self, spec: RecordSpec, payload: Any) -> Any` — *payload* of *spec* narrowed to the nodes the write ships
   - `ExportContext.note(self, text: str) -> None` — Record one sentence for the report.
   - `ExportContext.record(self, spec: Union[RecordSpec, str], store=None, default: Any = None) -> Any` — The payload of *spec* as produced in THIS assembly, else -- when a
   - `ExportContext.refreshes(self, spec: RecordSpec) -> bool` — Whether this context's mode refreshes *spec*.
-- **[`class ExportSnapshot`](pythontk/pythontk/core_utils/engines/scene_export/export_snapshot.py#L137)** — The records one export ships, assembled once and committed once.
+- **[`class ExportSnapshot`](pythontk/pythontk/core_utils/engines/scene_export/export_snapshot.py#L242)** — The records one export ships, assembled once and committed once.
   - `ExportSnapshot.assemble(cls, producers: Mapping[Union[RecordSpec, str], Producer], ctx: Optional[ExportContext] = None, only: Optional[Iterable[Union[RecordSpec, str]]] = None) -> 'ExportSnapshot'` *(class)* — Run *producers* in dependency order and collect their records.
   - `ExportSnapshot.restore_scene_wide(self, store) -> Optional['ExportSnapshot']` — Put the scene's own copy of every record this write's differed from
   - `ExportSnapshot.publish(cls, store, records: Mapping[Union[RecordSpec, str], Any], ctx: Optional[ExportContext] = None) -> 'ExportSnapshot'` *(class)* — Commit *records* that are already in hand -- the AUTHORING-time
@@ -1137,23 +1142,24 @@ The Scene Exporter's orchestration shell, written once for both DCCs.
 
 Scene records -- every piece of tool-authored scene metadata, declared once.
 
-- **[`class Scope(str, Enum)`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L78)** — Where a record lives, and therefore what it can never do.
-- **[`class Kind(str, Enum)`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L89)** — What a record is a function of, which decides WHEN it is refreshed.
-- **[`class Merge(str, Enum)`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L106)** — What happens to a record when another scene's copy arrives beside the
-- **[`class Clause`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L176)** — A sentence of an assembly that only some files need.
+- **[`class Scope(str, Enum)`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L117)** — Where a record lives, and therefore what it can never do.
+- **[`class Kind(str, Enum)`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L128)** — What a record is a function of, which decides WHEN it is refreshed.
+- **[`class Merge(str, Enum)`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L145)** — What happens to a record when another scene's copy arrives beside the
+- **[`class Clause`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L215)** — A sentence of an assembly that only some files need.
   - `Clause.applies(self, payload: Any) -> bool` — Whether *payload* calls for this clause.
   - `Clause.holds(payload: Any, path: Tuple[str, ...], value: Any = None) -> bool` *(static)* — Whether *payload* holds *value* at *path* (or, with *value*
   - `Clause.condition(self) -> str` *(property)* — When the clause applies, in words (for the generated docs).
   - `Clause.join(text: str, clauses: Iterable['Clause'], payload: Any = None) -> str` *(static)* — *text* and each of *clauses* that *payload* calls for -- every one
-- **[`class GlbBlock`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L251)** — How a deliverable record rides a GLB: a block in its root ``extras``.
+- **[`class GlbBlock`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L290)** — How a deliverable record rides a GLB: a block in its root ``extras``.
   - `GlbBlock.assembly_for(self, payload: Any = None) -> str` — The assembly a block *payload* needs (:meth:`Clause.join`).
   - `GlbBlock.key(self) -> str` *(property)* **DEPRECATED (remove in 0.18.0)** — The record's key, which the block is written under;
-- **[`class WebProjection(GlbBlock)`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L308)** **DEPRECATED (remove in 0.18.0)** — Retired 2026-10-20 (removed in 0.18.0): :class:`GlbBlock`.
-- **[`class Record`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L323)** — One produced value of a :class:`RecordSpec`, ready to store.
+- **[`class WebProjection(GlbBlock)`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L347)** **DEPRECATED (remove in 0.18.0)** — Retired 2026-10-20 (removed in 0.18.0): :class:`GlbBlock`.
+- **[`class Record`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L362)** — One produced value of a :class:`RecordSpec`, ready to store.
   - `Record.key(self) -> str` *(property)*
   - `Record.text(self) -> str` *(property)* — The stored form (JSON).
   - `Record.save(self, store) -> Optional[str]` — Write this record through *store*;
-- **[`class RecordSpec`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L344)** — The one declaration of a record: identity, contract and codec.
+- **[`class RecordSpec`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L383)** — The one declaration of a record: identity, contract and codec.
+  - `RecordSpec.narrowed(self, payload: Any, nodes: Iterable[str]) -> Any` — *payload* with only the entries (:attr:`nodes`) describing a node
   - `RecordSpec.assembly_for(self, payload: Any = None) -> str` — The assembly a record *payload* needs (:meth:`Clause.join`): every
   - `RecordSpec.web(self) -> Optional[GlbBlock]` *(property)* **DEPRECATED (remove in 0.18.0)** — The record's GLB block (:attr:`glb`).
   - `RecordSpec.version_key(self) -> str` *(property)* **DEPRECATED (remove in 0.18.0)** — The key every record's version rides under: ``"version"``.
@@ -1169,7 +1175,7 @@ Scene records -- every piece of tool-authored scene metadata, declared once.
   - `RecordSpec.save(self, store, payload: Any) -> Optional[str]` — Publish *payload* (the publish / clear idiom in one call).
   - `RecordSpec.clear(self, store) -> Optional[str]` — Clear the record;
   - `RecordSpec.is_present(self, store) -> bool` — Whether *store* holds a non-empty value for this record.
-- **[`class SceneRecords`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L746)** — The registry: every record, declared once, and what derives from it.
+- **[`class SceneRecords`](pythontk/pythontk/core_utils/engines/scene_export/scene_records.py#L826)** — The registry: every record, declared once, and what derives from it.
   - `SceneRecords.registered_hooks(cls, host: str, role: str) -> Dict[str, Tuple[str, str, Optional[str]]]` *(class)* — The record hooks installed packages register for *host* and *role*.
   - `SceneRecords.forget_registered_hooks(cls) -> None` *(class)* — Read the hook group's metadata again on the next
   - `SceneRecords.hook_row(cls, row: Optional[Tuple[str, str, str]], host: str, role: str) -> Optional[Tuple[str, str, str]]` *(class)* — The row a single-hook seam resolves: *row*, the library's own
@@ -2734,6 +2740,7 @@ Qt-free, zero-dependency **naming convention** — the ecosystem's one answer to
 
 - **[`class PackageManager(_PkgVersionCheck, _PkgVersionUtils, _PackageManagerHelperMixin, help_mixin.HelpMixin)`](pythontk/pythontk/core_utils/package_manager.py#L564)** — A class that encapsulates package management functionalities using pip.
   - `PackageManager.entry_points(group: str) -> list` *(static)* — The entry points installed distributions declare in *group*, for the
+  - `PackageManager.metadata_version(name: str) -> Optional[str]` *(static)* — The version of distribution *name* installed for the RUNNING
   - `PackageManager.pip(self, command, output_as_string=False)` — Execute a pip command and return the output.
   - `PackageManager.install_targeted(self, specs, target_dir, upgrade=False) -> List[str]` — Resolver-aware install into a directory an embedded host imports from.
   - `PackageManager.get_local_dependency_order(paths: List[Union[str, Path]]) -> List[Path]` *(static)* — Sort a list of local repository paths based on their pyproject.toml dependencies.
@@ -2756,6 +2763,17 @@ Qt-free, zero-dependency **naming convention** — the ecosystem's one answer to
   - `PackageManager.latest_versions(self, package_names, timeout=None)` — Latest index version for several packages at once.
   - `PackageManager.list_outdated_packages(self)` — List all outdated packages.
   - `PackageManager.is_outdated(self, package_name: str) -> bool` — Efficiently check if a specific package is outdated.
+
+<a id="core_utils--package_requirement"></a>
+### `core_utils/package_requirement.py`
+
+A pip requirement -- a distribution name plus a version range -- read and
+
+- **[`class PackageRequirement(_PackageRequirementInternal)`](pythontk/pythontk/core_utils/package_requirement.py#L165)** — A pip requirement -- a distribution name plus a version range.
+  - `PackageRequirement.contains(self, version: Optional[str]) -> bool` — Whether *version* satisfies every specifier.
+  - `PackageRequirement.version_key(cls, version: str) -> tuple` *(class)* — A sort key ordering versions as PEP 440 does.
+  - `PackageRequirement.release(cls, version: Optional[str]) -> Tuple[int, ...]` *(class)* — The leading numeric release segments of *version*;
+  - `PackageRequirement.declared_by(cls, dist: str, name: str, extra: Optional[str] = None) -> Optional['PackageRequirement']` *(class)* — The requirement installed distribution *dist* declares on *name*.
 
 <a id="core_utils--presets--library"></a>
 ### `core_utils/presets/library.py`
@@ -3188,8 +3206,9 @@ File dependencies -- files a record names by *name*, found where they are NOW.
 Batch renaming: a dry-run-aware plan executor and a file-system engine.
 
 - **[`class RenamePlan(LoggingMixin)`](pythontk/pythontk/file_utils/file_naming.py#L37)** — Apply a batch of planned renames with dry-run support and a report.
-  - `RenamePlan.apply(cls, plan: Sequence[PlanEntry], rename: Callable[[object, str], str], title: str = 'Rename', dry_run: bool = False, logger=None, link: Optional[Callable[[object, str], str]] = None, unit: str = 'item') -> List[Tuple[str, str]]` *(class)* — Execute *plan* (unless ``dry_run``) and emit one report for it.
-- **[`class FileNaming(HelpMixin, LoggingMixin)`](pythontk/pythontk/file_utils/file_naming.py#L180)** — Batch find / rename files by name pattern — the DCC naming tools' file tenant.
+  - `RenamePlan.apply(cls, plan: Sequence[PlanEntry], rename: Callable[[object, str], str], title: str = 'Rename', dry_run: bool = False, logger=None, link: Optional[Callable[[object, str], str]] = None, unit: str = 'item', park: Optional[Callable[[object, int], object]] = None) -> List[Tuple[str, str]]` *(class)* — Execute *plan* (unless ``dry_run``) and emit one report for it.
+  - `RenamePlan.predict(cls, plan: Sequence[PlanEntry], scopes: Callable[[object], Tuple[Sequence[object], Sequence[object]]], names: Callable[[object], Optional[Sequence[str]]], uniquify: Callable[[str, set], str]) -> List[str]` *(class)* — The names a host that uniquifies on collision will give *plan*, in order.
+- **[`class FileNaming(HelpMixin, LoggingMixin)`](pythontk/pythontk/file_utils/file_naming.py#L280)** — Batch find / rename files by name pattern — the DCC naming tools' file tenant.
   - `FileNaming.expand(paths) -> List[str]` *(static)* — Resolve *paths* (files and/or directories) to a list of file paths.
   - `FileNaming.stem(path: str) -> str` *(static)* — The file name without directory or extension.
   - `FileNaming.find(cls, paths, fltr: str, regex: bool = False, ignore_case: bool = False, base_names: bool = False) -> List[str]` *(class)* — Files (from *paths*) whose stem matches *fltr*.
@@ -3429,6 +3448,7 @@ Rewrite the payload of a binary FBX -- no DCC, no FBX SDK.
   - `FbxMedia.set_record(cls, src: str, key: str, payload: Any, dst: Optional[str] = None, *, files: Iterable[Any] = ()) -> Dict[str, Any]` *(class)* — Replace the scene record *key* the FBX carries, embedding *files* in the same write.
   - `FbxMedia.split_pivot_instances(cls, src: str, dst: Optional[str] = None, *, tolerance: float = 0.001) -> Dict[str, Any]` *(class)* — Give each pivot set among a geometry's instances a geometry of its own.
   - `FbxMedia.drop_redundant_properties(cls, src: str, markers: Iterable[str] = (), dst: Optional[str] = None) -> Dict[str, int]` *(class)* — Remove the user properties a delivered FBX carries that state
+  - `FbxMedia.repair_null_normals(cls, src: str, dst: Optional[str] = None) -> Dict[str, int]` *(class)* — Fill the zero-length normals, binormals and tangents a written FBX carries.
   - `FbxMedia.drop_host_lighting_media(cls, src: str, dst: Optional[str] = None) -> Dict[str, Any]` *(class)* — Remove the textures only :attr:`HOST_LIGHTING_SLOTS` sample, with their media.
   - `FbxMedia.embed_dependencies(cls, src: str, dst: Optional[str] = None, *, search_dirs: Sequence[str] = (), walk_root: str = '', files: Iterable[Any] = (), logger: Any = None) -> Dict[str, Any]` *(class)* — Embed every file the FBX's scene records name, so nothing ships beside it.
   - `FbxMedia.extract_dependencies(cls, src: str, dst_dir: str) -> Dict[str, str]` *(class)* — Write each file the FBX's records name AND embeds into *dst_dir*.
@@ -3942,13 +3962,15 @@ Emitter geometry for a flat light-fixture plate — pure math, no DCC.
 
 Point-cloud geometry — analyze and group unordered sets of points.
 
-- **[`class PointCloud`](pythontk/pythontk/geo_utils/pointcloud.py#L24)** — Stateless point-cloud geometry (alignment / clustering / hashing).
+- **[`class PointCloud`](pythontk/pythontk/geo_utils/pointcloud.py#L25)** — Stateless point-cloud geometry (alignment / clustering / hashing).
   - `PointCloud.pca_transform(points_a: 'np.ndarray', points_b: 'np.ndarray', tolerance: float = 0.001, robust: bool = False, sample_size: int = 500, symmetry_threshold: float = 0.1, normals_a: Optional['np.ndarray'] = None, normals_b: Optional['np.ndarray'] = None, normal_threshold: float = 0.8) -> Optional[List[float]]` *(static)* — Transform that aligns ``points_b`` onto ``points_a`` via PCA axis alignment.
   - `PointCloud.nn_query(target: 'np.ndarray', query: 'np.ndarray', k: int = 1)` *(static)* — Nearest-neighbor distances/indices of *query* points against *target*.
   - `PointCloud.match_clouds(points_a: 'np.ndarray', points_b: 'np.ndarray', tolerance: float = 0.001, scale_tolerance: float = 0.0, normals_a: Optional['np.ndarray'] = None, normals_b: Optional['np.ndarray'] = None, normal_threshold: float = 0.8, uvs_identical: Optional[Callable[[], bool]] = None, sample_size: int = 500, symmetry_threshold: float = 0.1) -> Tuple[bool, Optional[List[float]]]` *(static)* — Three-stage identity test between two equal-count point clouds.
   - `PointCloud.pca_basis(points: 'np.ndarray') -> Optional[List[float]]` *(static)* — Stabilized PCA rotation frame for a point cloud.
   - `PointCloud.pca_eigenvalue_signature(points: 'np.ndarray', precision: int = 3) -> Tuple` *(static)* — Scale-invariant shape descriptor for signature bucketing.
   - `PointCloud.cluster_by_distance(points: Sequence[Sequence[float]], threshold: float) -> List[List[int]]` *(static)* — Group points into clusters linked by proximity (threshold flood-fill).
+  - `PointCloud.spread_axis(cls, points: Sequence[Sequence[float]], tolerance: float = 0.001) -> str` *(class)* — The world axis the points are most spread along: ``"x"``, ``"y"`` or ``"z"``.
+  - `PointCloud.order_points(cls, points: Sequence[Tuple[object, Sequence[float]]], order_by: str = 'auto', reference: Sequence[float] = (0.0, 0.0, 0.0), tolerance: float = 0.001, reverse: bool = False) -> List[object]` *(class)* — Order keyed points by position, deterministically -- a row numbered along the row.
   - `PointCloud.hash_points(points, precision=4)` *(static)* — Hash the given list of point values (fixed-point, position-stable).
 
 <a id="geo_utils--polyline"></a>
@@ -4793,6 +4815,7 @@ Expose a local HTTP port at a public HTTPS link, through a tunnel CLI.
   - `StrUtils.name_error(cls, name, subject: str = 'names', reason: str = '') -> Optional[str]` *(class)* — Why *name* is not a legal name, as one sentence, or ``None`` when it is.
   - `StrUtils.legal_name_matcher(legal_name: str) -> 're.Pattern'` *(static)* — A pattern matching every name :meth:`to_legal_name` turns into
   - `StrUtils.to_legal_name(name: str) -> str` *(static)* — Every non-alphanumeric becomes ``_``: the objectName rule.
+  - `StrUtils.to_identifier(name: str, replacement: str = '_') -> str` *(static)* — *name* as an identifier: letters, digits and ``_``, not starting with a digit.
   - `StrUtils.to_legal_filename(cls, name: str, replacement: str = '', report: bool = False)` *(class)* — *name* with every character illegal in a file name removed.
   - `StrUtils.strip_ansi(string: str) -> str` *(static)* — Remove ANSI escape sequences (color/cursor codes) from a string.
   - `StrUtils.sanitize(text: Union[str, List[str]], replacement_char: str = '_', char_map: Optional[Dict[str, str]] = None, preserve_trailing: bool = False, preserve_case: bool = False, allow_consecutive: bool = False, return_original: bool = False) -> Union[str, Tuple[str, str], List[str], List[Tuple[str, str]]]` *(static)* — Sanitizes a string or a list of strings by replacing invalid characters.
@@ -4822,7 +4845,7 @@ Expose a local HTTP port at a public HTTPS link, through a tunnel CLI.
   - `StrUtils.retain_suffix(old_name: str, new_name: str, valid_suffixes: Optional[List[str]] = None) -> str` *(static)* — Carry ``old_name``'s trailing ``_TYPE`` suffix over to ``new_name``.
   - `StrUtils.format_suffix(string: str, suffix: str = '', strip: Union[str, List[str]] = '', strip_trailing_ints: bool = False, strip_trailing_alpha: bool = False) -> str` *(static)* — Re-format the suffix for the given string.
   - `StrUtils.strip_known_affix(string: str, prefix: str = '', suffix: str = '', *, case_sensitive: bool = False) -> str` *(static)* — Strip a configured prefix and/or suffix from a string.
-  - `StrUtils.strip_any_affix(string: str, known, *, exclude=(), one: bool = True, case_sensitive: bool = True) -> str` *(static)* — Strip whichever affix in *known* the string carries, from either end.
+  - `StrUtils.strip_any_affix(string: str, known, *, exclude=(), one: bool = True, case_sensitive: bool = True, numbered: bool = False) -> str` *(static)* — Strip whichever affix in *known* the string carries, from either end.
   - `StrUtils.common_name(paths, *, sep: str = '|', strip=(), max_length: int = 32) -> str` *(static)* — A short name for what a set of hierarchy items is collectively called.
   - `StrUtils.infer_affix_mode(text: str, delimiter: str = '_', *, default: str = 'prefix') -> str` *(static)* — Infer ``"prefix"`` or ``"suffix"`` from *delimiter* placement in *text*.
   - `StrUtils.split_affix(text: str, mode: str = 'auto', *, default: str = 'prefix', delimiter: str = '_') -> Tuple[str, str]` *(static)* — Split an affix string into a ``(prefix, suffix)`` pair per *mode*.

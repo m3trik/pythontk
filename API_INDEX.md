@@ -212,7 +212,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `core_utils/engines/scene_export/export_snapshot.py` — Export assembly: compute every record once, then commit once.
 - `class ExportContext`
-  - methods: note, record, refreshes
+  - methods: writer_unit, unit, ships, narrowed, note, record, refreshes
 - `class ExportSnapshot`
   - methods: assemble, restore_scene_wide, publish, commit, records, record, channels, summary
 
@@ -283,7 +283,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class Record`
   - methods: key, text, save
 - `class RecordSpec`
-  - methods: assembly_for, web, version_key, is_current, path_keys, stamp_keys, make, encode, decode, read_text, write_text, load, save, clear, is_present
+  - methods: narrowed, assembly_for, web, version_key, is_current, path_keys, stamp_keys, make, encode, decode, read_text, write_text, load, save, clear, is_present
 - `class SceneRecords`
   - methods: registered_hooks, forget_registered_hooks, hook_row, producer_rows, stager_rows, resolve_row, resolved_producers, resolved_stagers, peek_entry, pop_entry, resolve_class, codec, shape, glb_shape, put_glb_block, glb_block, glb_records, problems, block_problems, web_shape, web_projected, portable, rendering_policy, HANDOFF_INSTRUCTIONS, HANDOFF_ASSEMBLY, all, with_paths, with_stamps, transients, stamp_unsaved, adopt_gone_stamps, map_paths, rebase_paths, deliverable, private, by_key, resolve, ordered, check_producers, declared_takes, handoff_block, describe
 
@@ -666,7 +666,11 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `core_utils/package_manager.py`
 - `class PackageManager(_PkgVersionCheck, _PkgVersionUtils, _PackageManagerHelperMixin, help_mixin.HelpMixin)`
-  - methods: entry_points, pip, install_targeted, get_local_dependency_order, start_version_check, version_check_running, wait_for_version_check, new_version_available, installed_ver, latest_ver, check_version, update_version, update_requirements, install, uninstall, list_packages, package_details, update, installed_version, latest_version, latest_versions, list_outdated_packages, is_outdated
+  - methods: entry_points, metadata_version, pip, install_targeted, get_local_dependency_order, start_version_check, version_check_running, wait_for_version_check, new_version_available, installed_ver, latest_ver, check_version, update_version, update_requirements, install, uninstall, list_packages, package_details, update, installed_version, latest_version, latest_versions, list_outdated_packages, is_outdated
+
+### `core_utils/package_requirement.py` — A pip requirement -- a distribution name plus a version range -- read and
+- `class PackageRequirement(_PackageRequirementInternal)`
+  - methods: contains, version_key, release, declared_by
 
 ### `core_utils/presets/library.py` — Whole-root view over the ecosystem's preset stores.
 - constants: BUNDLE_FORMAT, BUNDLE_HEADER, BUNDLE_ROOT, COLLECTIONS_DIR, BACKUPS_DIR, AUTO_BACKUP_KEEP
@@ -775,7 +779,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `file_utils/file_naming.py` — Batch renaming: a dry-run-aware plan executor and a file-system engine.
 - `class RenamePlan(LoggingMixin)`
-  - methods: apply
+  - methods: apply, predict
 - `class FileNaming(HelpMixin, LoggingMixin)`
   - methods: expand, stem, find, rename, set_case, strip_chars
 
@@ -818,7 +822,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `file_utils/mesh_convert/fbx_media.py` — Rewrite the payload of a binary FBX -- no DCC, no FBX SDK.
 - `class FbxMedia(_FbxMediaInternal)`
-  - methods: embedded, downsize, expand_grayscale, reader_records, named_files, dependencies, audio_events, embed, record, records, set_record, split_pivot_instances, drop_redundant_properties, drop_host_lighting_media, embed_dependencies, extract_dependencies, extract, drop_takes, merge_takes, drop_apparatus, rewrite
+  - methods: embedded, downsize, expand_grayscale, reader_records, named_files, dependencies, audio_events, embed, record, records, set_record, split_pivot_instances, drop_redundant_properties, repair_null_normals, drop_host_lighting_media, embed_dependencies, extract_dependencies, extract, drop_takes, merge_takes, drop_apparatus, rewrite
 
 ### `file_utils/mesh_convert/glb/clips.py` — Rebuild a GLB's shot clips from its one whole-timeline animation.
 - `class GlbClips(_GlbClipsInternal)`
@@ -969,7 +973,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `geo_utils/pointcloud.py` — Point-cloud geometry — analyze and group unordered sets of points.
 - `class PointCloud`
-  - methods: pca_transform, nn_query, match_clouds, pca_basis, pca_eigenvalue_signature, cluster_by_distance, hash_points
+  - methods: pca_transform, nn_query, match_clouds, pca_basis, pca_eigenvalue_signature, cluster_by_distance, spread_axis, order_points, hash_points
 
 ### `geo_utils/polyline.py` — Pure polyline / curve geometry — generate, measure, sample, reshape.
 - `class Polyline`
@@ -1190,7 +1194,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 ### `str_utils/_str_utils.py`
 - constants: ANSI_ESCAPE_RE
 - `class StrUtils(_StrNamePatternInternal, _StrSearchInternal, _StrAffixInternal, CoreUtils)`
-  - methods: apply_name_rule, is_legal_name, illegal_name_chars, name_error, legal_name_matcher, to_legal_name, to_legal_filename, strip_ansi, sanitize, expand_wildcard, split_regex_modifier, apply_regex_modifier, attach_modifier, replace_placeholders, resolve_placeholders, name_pattern_context, resolve_name_pattern, replace_delimited, set_case, get_mangled_name, get_matching_hierarchy_items, split_delimited_string, get_text_between_delimiters, insert, rreplace, collapse_delimiter_runs, truncate, get_trailing_integers, natural_sort_key, find_str, find_str_and_format, strip_suffix, retain_suffix, format_suffix, strip_known_affix, strip_any_affix, common_name, infer_affix_mode, split_affix, delimit_affix, apply_affix, alpha_sequence, sequential_suffixes, resolve_name_collisions, time_stamp
+  - methods: apply_name_rule, is_legal_name, illegal_name_chars, name_error, legal_name_matcher, to_legal_name, to_identifier, to_legal_filename, strip_ansi, sanitize, expand_wildcard, split_regex_modifier, apply_regex_modifier, attach_modifier, replace_placeholders, resolve_placeholders, name_pattern_context, resolve_name_pattern, replace_delimited, set_case, get_mangled_name, get_matching_hierarchy_items, split_delimited_string, get_text_between_delimiters, insert, rreplace, collapse_delimiter_runs, truncate, get_trailing_integers, natural_sort_key, find_str, find_str_and_format, strip_suffix, retain_suffix, format_suffix, strip_known_affix, strip_any_affix, common_name, infer_affix_mode, split_affix, delimit_affix, apply_affix, alpha_sequence, sequential_suffixes, resolve_name_collisions, time_stamp
 
 ### `str_utils/fuzzy_matcher.py`
 - `class FuzzyMatcher`

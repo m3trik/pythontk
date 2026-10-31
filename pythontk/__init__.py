@@ -447,6 +447,7 @@ DEFAULT_INCLUDE = {
     # surface (README gates here and downstream build on it).
     "core_utils.doc_audit": "DocAudit",
     "core_utils.package_manager": "PackageManager",
+    "core_utils.package_requirement": "PackageRequirement",
     "core_utils.class_property": "ClassProperty",
     # LoggerExt / LevelAwareFormatter are reached by raw module path today
     # (uitk's example wiring, mayatk's scene_audit), which is a published
