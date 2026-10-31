@@ -2,16 +2,11 @@
 
 _Diff vs the last release (origin/main @ 892506a)._
 
-## Removed (1)
-
-_A break: each owes a `ptk.Deprecation` alias, or a `MOVED_NAMES` entry when the name left for another package._
-
-- `core_utils/engines/shots/manifest/mapping/_mapping.py::Mapping.retired` — was `(name: str) -> Optional[Tuple[str, Dict[str, Any]]]`
-
-## Moved out (3)
+## Moved out (4)
 
 - `core_utils/engines/scene_export/export_profile.py::ExportProfile.read_values` → `tentacle.slots.tools.scene_exporter.SceneExporterSlots` (from 0.19.0)
 - `core_utils/engines/scene_export/export_profile.py::ExportProfile.value_method` → `tentacle.slots.tools.scene_exporter.SceneExporterSlots` (from 0.19.0)
+- `core_utils/engines/shots/manifest/mapping/_mapping.py::Mapping.retired` → `pythontk.core_utils.engines.shots.manifest.mapping.Mapping.load_mapping` (from 0.19.0)
 - `core_utils/module_reloader.py::reload_package` → `pythontk.ModuleReloader().reload` (from 0.19.0)
 
 ## Retired (2)
