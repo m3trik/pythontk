@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import os
 from fnmatch import fnmatchcase
-from typing import Iterable, List, Optional, Sequence
+from typing import Iterable, List, NamedTuple, Optional, Sequence
 
 from pythontk.file_utils.workspace import Workspace
 from pythontk.str_utils._str_utils import StrUtils
@@ -236,3 +236,96 @@ class SceneListing:
             ):
                 kept.append(f)
         return kept
+
+    class Rows(NamedTuple):
+        """A listing's rows (:meth:`SceneListing.rows`): the files in table
+        order, their labels, and how many of the workspace's files of the
+        checked types the Naming filters left out."""
+
+        paths: List[str]
+        labels: List[str]
+        filtered: int
+
+    @staticmethod
+    def _key(path: str) -> str:
+        """*path* as a listing compares it: normalized, case-folded only where
+        the file system folds case."""
+        return os.path.normcase(os.path.normpath(path)) if path else ""
+
+    @classmethod
+    def rows(
+        cls,
+        files: Iterable[str],
+        workspace: str,
+        extensions: Iterable[str],
+        *,
+        suffix: str = "",
+        filter_suffix: bool = False,
+        structure: str = "",
+        references: Sequence[str] = (),
+        foreign: Sequence[str] = (),
+        foreign_extensions: Iterable[str] = (),
+        hide_extension: bool = False,
+        hide_suffix: bool = False,
+    ) -> "SceneListing.Rows":
+        """The rows a scene browser lists for *workspace*, from plain values.
+
+        The workspace's *files* of the checked *extensions* (lower-case, with
+        the dot), kept by the Naming filters: a stem ending in *suffix*
+        (*filter_suffix*), a folder ending in the *structure* pattern
+        (:meth:`filter_by_folder_structure`; blank: no filter). First, each of
+        the scene's *references* that is neither one of *files* nor one of the
+        *foreign* scenes found (a row stands for its reference), once, labelled
+        by its home workspace (``"<name> (<workspace>)"``, else ``"<name>
+        (External)"``). Last, the *foreign* scenes of a checked foreign type
+        (*foreign_extensions* among *extensions*) not listed yet. Each label is
+        :meth:`display_name`'s, less the extension and/or a trailing *suffix*.
+
+        Returns:
+            :class:`SceneListing.Rows`: ``(paths, labels, filtered)``.
+        """
+        files = list(files)
+        included = {e.lower() for e in extensions}
+        listing = [f for f in files if os.path.splitext(f)[1].lower() in included]
+        checked = len(listing)
+        if filter_suffix and suffix:
+            listing = [
+                f
+                for f in listing
+                if os.path.splitext(os.path.basename(f))[0].endswith(suffix)
+            ]
+        pattern = cls.normalize_structure_pattern(structure)
+        if pattern:
+            listing = cls.filter_by_folder_structure(
+                listing, workspace, pattern, suffix, cls.scenes_folder(workspace)
+            )
+        filtered = checked - len(listing)
+
+        listed = {cls._key(f) for f in files} | {cls._key(p) for p in foreign}
+        external, seen = [], set()
+        for row in references:
+            key = cls._key(row)
+            if key not in listed and key not in seen:
+                seen.add(key)
+                external.append(row)
+        listing = external + listing
+
+        foreign_types = {e.lower() for e in foreign_extensions} & included
+        if foreign_types:
+            existing = {cls._key(p) for p in listing}
+            listing += [
+                p
+                for p in foreign
+                if os.path.splitext(p)[1].lower() in foreign_types
+                and cls._key(p) not in existing
+            ]
+
+        hidden = suffix if hide_suffix else ""
+        labels = []
+        for path in listing:
+            label = cls.display_name(path, hide_extension, hidden)
+            if path in external:
+                home = Workspace.find_containing(path)
+                label += f" ({os.path.basename(home.root)})" if home else " (External)"
+            labels.append(label)
+        return cls.Rows(listing, labels, filtered)

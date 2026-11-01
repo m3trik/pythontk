@@ -48,6 +48,7 @@ one capture and two ffmpeg passes rather than two captures.
 from __future__ import annotations
 
 import os
+import posixpath
 import re
 import subprocess
 from dataclasses import dataclass, field
@@ -786,6 +787,51 @@ class SequenceExporter(SequenceEncoder):
     def scene_fps(cls) -> float:
         """The host scene's frame rate, class-level, else :attr:`DEFAULT_FPS`."""
         return cls.HOST.sequence_fps() or cls.DEFAULT_FPS
+
+    @classmethod
+    def default_output_base(cls, workspace: Any = None) -> str:
+        """Where an output goes by default: ``<movie folder>/<scene name>``
+        (:meth:`scene_name`), class-level, for a panel's blank output field.
+
+        The movie folder of *workspace* -- the scene's project, a
+        :class:`~pythontk.Workspace` (its ``movie`` rule, else ``movies/``) --
+        so both hosts write to the same folder; the Desktop when no project
+        resolves (``None``: an unsaved file with no session project). Asking
+        creates nothing: the writer makes the folder.
+        """
+        if workspace is not None:
+            folder = workspace.movie_dir()
+        else:
+            folder = os.path.expanduser(os.path.join("~", "Desktop"))
+        return os.path.normpath(os.path.join(folder, cls.scene_name()))
+
+    @classmethod
+    def split_output_base(cls, text: str, workspace: Any = None) -> Tuple[str, str]:
+        """``(directory, name)`` an output field's *text* names, for
+        :meth:`export`.
+
+        Blank is :meth:`default_output_base` (of *workspace*); a folder (an
+        existing one, or *text* ending in a separator) takes the scene's name;
+        a typed extension is dropped (each target adds its own); a bare name
+        goes to the default folder. A leading ``//`` (a path relative to the
+        open ``.blend``) is split as the forward-slash path it is and left for
+        the host to resolve: Windows reads ``//x/y`` as a network share.
+        """
+        raw = (text or "").strip()
+        default = cls.default_output_base(workspace)
+        if not raw:
+            # The scene's name whole: ``v1.test`` is no name plus an extension.
+            return os.path.dirname(default), cls.scene_name()
+        base = os.path.expanduser(os.path.expandvars(raw))
+        if base.startswith("//"):
+            directory, name = posixpath.split(base.replace("\\", "/"))
+            return directory, os.path.splitext(name)[0] or cls.scene_name()
+        base = os.path.normpath(base)
+        if os.path.isdir(base) or raw.endswith(("/", "\\")):
+            return base, cls.scene_name()
+        directory, name = os.path.split(base)
+        name = os.path.splitext(name)[0] or cls.scene_name()
+        return directory or os.path.dirname(default), name
 
     @classmethod
     def resolve_frame_range(

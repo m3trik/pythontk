@@ -3529,6 +3529,13 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.geo_utils.uv.transfer_run",
+    "name": "PureTransferHost",
+    "qualname": "PureTransferHost",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.file_utils.workspace_map",
     "name": "PureWorkspaceMapHost",
     "qualname": "PureWorkspaceMapHost",
@@ -4379,6 +4386,27 @@
     "module": "pythontk.core_utils.engines.scene_export.record_transfer",
     "name": "TransferContext",
     "qualname": "TransferContext",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.geo_utils.uv.transfer_run",
+    "name": "TransferHost",
+    "qualname": "TransferHost",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.geo_utils.uv.transfer_run",
+    "name": "TransferResult",
+    "qualname": "TransferResult",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.geo_utils.uv.transfer_run",
+    "name": "TransferRun",
+    "qualname": "TransferRun",
     "tier": "root"
   },
   {

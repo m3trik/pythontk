@@ -22,6 +22,7 @@ from typing import Any, Dict, List
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from pythontk.file_utils.temp_artifacts import TempArtifacts
+from pythontk.file_utils.workspace import Workspace
 from pythontk.vid_utils.sequence_exporter import (
     CaptureResult,
     ExportTarget,
@@ -719,6 +720,73 @@ class SequenceExporterTestCase(unittest.TestCase):
             (25.0, None, wav, 0.0, 40),
         )
         self.assertTrue(os.path.isfile(out))
+
+
+class OutputDefaultTestCase(unittest.TestCase):
+    """Where an output goes when a panel's output field is blank or names only
+    part of it: one rule for both hosts, read off the scene's project."""
+
+    def setUp(self):
+        self.temp = TempArtifacts("test_sequence_output_default", policy="scoped")
+        self.root = self.temp.dir_path()
+        # ``_FakeHost`` names its scene "fake".
+        self.Exporter = _bind(_FakeHost())
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def test_the_default_is_the_projects_movie_folder_under_the_scenes_name(self):
+        ws = Workspace(self.root)
+        self.assertEqual(
+            self.Exporter.default_output_base(ws),
+            os.path.join(os.path.normpath(self.root), "movies", "fake"),
+        )
+        ruled = Workspace(self.root, {"movie": "deliver/clips"})
+        self.assertEqual(
+            self.Exporter.default_output_base(ruled),
+            os.path.join(os.path.normpath(self.root), "deliver", "clips", "fake"),
+        )
+        self.assertEqual(os.listdir(self.root), [], "asking made a folder")
+
+    def test_without_a_project_the_default_is_the_desktop(self):
+        desktop = os.path.normpath(os.path.expanduser(os.path.join("~", "Desktop")))
+        self.assertEqual(
+            self.Exporter.default_output_base(None), os.path.join(desktop, "fake")
+        )
+        unnamed = _bind(PureSequenceHost())
+        self.assertEqual(
+            os.path.basename(unnamed.default_output_base(None)), unnamed.DEFAULT_NAME
+        )
+
+    def test_split_output_base_reads_a_field_into_a_folder_and_a_name(self):
+        ws = Workspace(self.root)
+        split = self.Exporter.split_output_base
+        folder = os.path.normpath(self.root)
+        self.assertEqual(split(self.root, ws), (folder, "fake"))
+        self.assertEqual(split(os.path.join(self.root, "shot.mp4"), ws), (folder, "shot"))
+        self.assertEqual(split(os.path.join(self.root, "new") + os.sep, ws)[1], "fake")
+        self.assertEqual(
+            os.path.join(*split("", ws)), self.Exporter.default_output_base(ws)
+        )
+        # A bare name goes to the default folder.
+        self.assertEqual(
+            split("clip", ws), (os.path.join(folder, "movies"), "clip")
+        )
+        # A .blend-relative path is the exporter's to resolve, never normalized.
+        self.assertEqual(split("//renders/shot", ws), ("//renders", "shot"))
+        self.assertEqual(split("//renders/", ws), ("//renders", "fake"))
+
+    def test_a_blank_field_keeps_a_dotted_scene_name_whole(self):
+        """``v1.test.ma`` playblasts as ``v1.test``: the default's name is the
+        scene's, never split as if ``.test`` were a typed extension."""
+        host = _FakeHost()
+        host.sequence_name = lambda: "v1.test"
+        exporter = _bind(host)
+        ws = Workspace(self.root)
+        self.assertEqual(
+            exporter.split_output_base("", ws),
+            (os.path.join(os.path.normpath(self.root), "movies"), "v1.test"),
+        )
 
 
 if __name__ == "__main__":

@@ -182,6 +182,14 @@ DEFAULT_INCLUDE = {
         "BudgetPage",
     ],
     "geo_utils.uv.transfer": ["UvTransfer", "TransferTable"],
+    # The Texture Combine panel's Transfer run (UVs or textures), written once
+    # over each library's host adapter (``TextureTransfer.run``).
+    "geo_utils.uv.transfer_run": [
+        "TransferRun",
+        "TransferResult",
+        "TransferHost",
+        "PureTransferHost",
+    ],
     "geo_utils.uv.cylinder_seams": "CylinderSeams",
     # Scene-export engine -- the pure half of both DCC Scene Exporters.
     # Declarative widget definitions -> run configuration (the two Scene

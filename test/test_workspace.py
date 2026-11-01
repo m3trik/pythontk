@@ -477,6 +477,22 @@ class WorkspaceProjectStructureTest(unittest.TestCase):
         self.assertEqual(ruled.images_dir(), self._at(ruled, "renders"))
         self.assertEqual(ruled.export_dir(), self._at(ruled, "out"))
 
+    def test_export_path_is_the_export_folder_under_the_scenes_name(self):
+        ws = Workspace(self.tmp, {"FBX export": "deliver/fbx"})
+        scene = os.path.join(self.tmp, "scenes", "hero.rig.ma")
+        self.assertEqual(
+            ws.export_path(scene, ".glb"), self._at(ws, "deliver/fbx", "hero.rig.glb")
+        )
+        # Unsaved: no name of its own.
+        self.assertEqual(
+            ws.export_path("", ".fbx"), self._at(ws, "deliver/fbx", "untitled.fbx")
+        )
+        self.assertEqual(os.listdir(self.tmp), [], "asking made a folder")
+        made = ws.export_path(scene, ".fbx", create=True)
+        self.assertTrue(os.path.isdir(os.path.dirname(made)))
+        self.assertEqual(Workspace.export_name(scene, ".usd"), "hero.rig.usd")
+        self.assertEqual(Workspace.export_name(None, ".usd"), "untitled.usd")
+
     def test_one_texture_default_for_both_dccs_and_textures_still_matches(self):
         ws = Workspace(self.tmp)
         self.assertEqual(ws.source_images_dir, self._at(ws, "sourceimages"))

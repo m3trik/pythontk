@@ -179,5 +179,89 @@ class TestNamingConventions(BaseTestCase):
         self.assertEqual(norm(None), "")
 
 
+class TestListingRows(BaseTestCase):
+    """The table's rows from plain values: the workspace's files of the checked
+    types and the Naming filters, the scene's references from elsewhere first,
+    the foreign scenes of a checked foreign type after."""
+
+    def setUp(self):
+        self.tmp_store = ptk.TempArtifacts("ptk_scene_listing_rows")
+        self.addCleanup(self.tmp_store.cleanup)
+        self.root = self.tmp_store.dir_path()
+        self.ws = os.path.join(self.root, "proj")
+        self.scenes = os.path.join(self.ws, "scenes")
+        os.makedirs(os.path.join(self.scenes, "hero"))
+        self.files = [
+            os.path.join(self.scenes, "hero", "hero_LOC.ma"),
+            os.path.join(self.scenes, "prop.mb"),
+            os.path.join(self.scenes, "cam.fbx"),
+        ]
+
+    def test_the_checked_types_and_the_naming_filters_pick_the_files(self):
+        rows = ptk.SceneListing.rows(self.files, self.ws, {".ma", ".mb"})
+        self.assertEqual(rows.paths, self.files[:2])
+        self.assertEqual(rows.labels, ["hero_LOC.ma", "prop.mb"])
+        self.assertEqual(rows.filtered, 0)
+        rows = ptk.SceneListing.rows(
+            self.files, self.ws, {".ma", ".mb"}, suffix="_LOC", filter_suffix=True
+        )
+        self.assertEqual((rows.paths, rows.filtered), (self.files[:1], 1))
+        rows = ptk.SceneListing.rows(
+            self.files,
+            self.ws,
+            {".ma", ".mb"},
+            suffix="_LOC",
+            structure="{scene}/{name}",
+        )
+        self.assertEqual((rows.paths, rows.filtered), (self.files[:1], 1))
+
+    def test_the_labels_hide_the_suffix_and_the_extension(self):
+        rows = ptk.SceneListing.rows(
+            self.files[:1],
+            self.ws,
+            {".ma"},
+            suffix="_LOC",
+            hide_suffix=True,
+            hide_extension=True,
+        )
+        self.assertEqual(rows.labels, ["hero"])
+
+    def test_a_reference_from_elsewhere_lists_first_under_its_home(self):
+        other = os.path.join(self.root, "other")
+        os.makedirs(other)
+        with open(os.path.join(other, "workspace.mel"), "w") as fh:
+            fh.write('workspace -fr "scene" "scenes";\n')
+        homed = os.path.join(other, "scenes", "set.ma")
+        loose = os.path.join(self.root, "loose", "rock.ma")
+        rows = ptk.SceneListing.rows(
+            self.files,
+            self.ws,
+            {".ma"},
+            references=[homed, self.files[0], loose, homed],
+        )
+        self.assertEqual(rows.paths, [homed, loose, self.files[0]])
+        self.assertEqual(
+            rows.labels, ["set.ma (other)", "rock.ma (External)", "hero_LOC.ma"]
+        )
+
+    def test_the_foreign_scenes_of_a_checked_type_list_last(self):
+        room = os.path.join(self.scenes, "room.blend")
+        rig = os.path.join(self.scenes, "rig.blend")
+        rows = ptk.SceneListing.rows(
+            self.files,
+            self.ws,
+            {".ma", ".blend"},
+            references=[rig],
+            foreign=[room, rig],
+            foreign_extensions={".blend"},
+        )
+        # A foreign scene the workspace lists is never an external reference.
+        self.assertEqual(rows.paths, [self.files[0], room, rig])
+        rows = ptk.SceneListing.rows(
+            self.files, self.ws, {".ma"}, references=[rig], foreign=[room, rig]
+        )
+        self.assertEqual(rows.paths, [self.files[0]])
+
+
 if __name__ == "__main__":
     unittest.main(exit=False)

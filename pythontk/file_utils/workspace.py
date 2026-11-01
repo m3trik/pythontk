@@ -25,7 +25,8 @@ adapters). Three composable primitives:
   :meth:`Workspace.for_scene` -- the one scene-to-project rule both DCCs
   share), and the permanent-file tree both DCCs write into
   (:meth:`Workspace.cache_dir`, ``movie_dir``, ``images_dir``,
-  ``export_dir``, ``backup_dir``, ``relative`` / ``absolute``).
+  ``export_dir`` / ``export_path``, ``backup_dir``, ``relative`` /
+  ``absolute``).
 - :class:`WorkspaceTemplates` — named rule sets: the persistent answer to
   "how is a *new* project built?", shared by every DCC adapter.
 
@@ -362,6 +363,32 @@ class Workspace(_WorkspaceInternal):
         ``FBX``, else ``data/``)."""
         return self._ensure(
             self.resolve_dir(("FBX export", "FBX"), default="data"), create
+        )
+
+    @staticmethod
+    def export_name(scene_path: Optional[str], extension: str) -> str:
+        """The file name an export of the scene *scene_path* takes: the
+        scene's own name (only the extension comes off: ``hero.rig.ma`` gives
+        ``hero.rig``), ``untitled`` while unsaved, with *extension*."""
+        stem = os.path.splitext(os.path.basename(scene_path or ""))[0]
+        return (stem or "untitled") + extension
+
+    def export_path(
+        self, scene_path: Optional[str], extension: str, create: bool = False
+    ) -> str:
+        """Where an export of the scene *scene_path* goes by default: the
+        export folder (:meth:`export_dir`) under :meth:`export_name`.
+
+        Parameters:
+            scene_path: The scene file; empty or None while unsaved.
+            extension: The export's extension, with its dot (``".fbx"``).
+            create: Create the folder.
+
+        Returns:
+            The file path (absolute).
+        """
+        return os.path.join(
+            self.export_dir(create=create), self.export_name(scene_path, extension)
         )
 
     @staticmethod

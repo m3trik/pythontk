@@ -230,6 +230,28 @@ class HierarchyAnalyzerTest(BaseTestCase):
         self.assertIn("1", report)  # Total count
         self.assertIn("MISSING", report)
 
+    def test_generate_diff_report_without_a_limit_lists_every_item(self):
+        """``max_items_per_category=None`` is the full report a file carries:
+        every item and its details, no "... and N more"."""
+        diffs = [
+            HierarchyDifference(DifferenceType.MISSING, f"GRP|m{i}") for i in range(12)
+        ] + [
+            HierarchyDifference(
+                DifferenceType.MOVED, "A|n", {"from_path": "B|n", "to_path": "A|n"}
+            )
+        ]
+
+        report = HierarchyAnalyzer.generate_diff_report(
+            diffs, max_items_per_category=None
+        )
+
+        for i in range(12):
+            self.assertIn(f"GRP|m{i}\n", report)
+        self.assertIn("    from_path: B|n", report)
+        self.assertNotIn("more items", report)
+        capped = HierarchyAnalyzer.generate_diff_report(diffs)
+        self.assertIn("... and 2 more items", capped)
+
     def test_export_differences_to_dict(self):
         """Test exporting differences to dictionary."""
         diffs = [
