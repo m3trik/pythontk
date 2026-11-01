@@ -684,6 +684,9 @@ MOVED_NAMES = {
     # a Pure<Domain>Host default, a HOST class attribute (2026-11-01).
     "EmissiveGroupsAdapter": ("pythontk.EmissiveGroupsHost", "0.19.0"),
     "EmissiveGroupsModel.adapter": ("pythontk.EmissiveGroupsModel.HOST", "0.19.0"),
+    # The removed tasks["version"] pattern it carried: the Output Filename's own
+    # {n} counter states a version (removed 2026-11-01).
+    "ExportRun.version_format": ("pythontk.ExportProfile.VERSION_TOKEN", "0.19.0"),
 }
 
 bootstrap_package(globals(), include=DEFAULT_INCLUDE, moved=MOVED_NAMES)

@@ -730,8 +730,8 @@ class SceneExporterBase(LoggingMixin):
         widget, so the user's naming rule would quietly stop applying. Both
         panels call this when they open -- BEFORE the switchboard restores their
         widgets: the Output Filename's saved pattern and the RegEx field's saved
-        value (:meth:`_saved_widget_values`) fold through the SAME call the
-        export makes (:meth:`pythontk.ExportProfile.fold_legacy_naming`), and
+        value (:meth:`_saved_widget_values`) fold through
+        :meth:`pythontk.ExportProfile.fold_legacy_naming`, and
         *save* stores the result as the Output Filename's value, so the restore
         that follows shows it. (Set on the widget instead, the fold was
         overwritten by that restore.) The retired key goes only once the fold

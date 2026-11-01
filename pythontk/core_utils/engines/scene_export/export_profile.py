@@ -382,45 +382,36 @@ class ExportProfile:
     def fold_legacy_naming(
         cls,
         pattern: Optional[str],
-        version_format: str = "",
-        timestamp: bool = False,
+        *,
         name_regex: Optional[str] = None,
     ) -> Optional[str]:
-        """Fold the retired Version pattern and Timestamp flag into a name pattern.
+        """Fold the retired RegEx field into a name pattern.
 
-        The one fold for the retired naming inputs. An exporter folds a saved
-        ``tasks["version"]`` through it ONCE, at its entry point (that input
-        warns and goes in pythontk 0.19.0), and each panel migrates a saved
-        RegEx field through it.
-        *name_regex* is the retired
-        free-standing RegEx field, which shaped the name token wherever the
+        Each panel migrates a saved RegEx field through it, once
+        (:meth:`SceneExporterBase.migrate_legacy_regex`). *name_regex* is the
+        retired free-standing field, which shaped the name token wherever the
         pattern used it; it folds to an inline modifier on that token
         (:meth:`StrUtils.attach_modifier`), so the rule survives the field and
-        becomes visible in the field that states the name. The other two
-        decorated the name the Output Filename produced -- the timestamp appended, then the Version
-        pattern wrapping the result as ``{stem}`` -- and the field spells both
-        itself now, so substituting its own placeholder form lands the same file.
-        *pattern* comes back untouched when neither is given.
+        becomes visible in the field that states the name. *pattern* comes back
+        untouched when *name_regex* is blank. Keyword-only: the retired Version
+        pattern and Timestamp flag it once took went in pythontk 0.19.0, so a
+        positional caller still passing one is refused rather than read as a
+        regex.
         """
         spec = cls.fold_legacy_regex(name_regex)
-        if not (version_format or timestamp or spec):
+        if not spec:
             return pattern
         folded = StrUtils.expand_wildcard(
             cls.strip_deliverable_extension(pattern),
             key=cls.NAME_KEY,
             wildcard=cls.NAME_WILDCARD,
         )
-        if spec:
-            # Into the pattern, not onto the value: retiring the field must not
-            # drop the rule, and the user can now SEE what it does. Every
-            # spelling of the name token gets it, retired ones included --
-            # the field shaped the NAME, not one way of writing it.
-            for token in (cls.NAME_KEY, *cls.NAME_KEY_ALIASES):
-                folded = StrUtils.attach_modifier(folded, token, spec)
-        if timestamp:
-            folded += "_{date}_{time}"
-        if version_format:
-            folded = version_format.replace("{stem}", folded)
+        # Into the pattern, not onto the value: retiring the field must not
+        # drop the rule, and the user can now SEE what it does. Every
+        # spelling of the name token gets it, retired ones included --
+        # the field shaped the NAME, not one way of writing it.
+        for token in (cls.NAME_KEY, *cls.NAME_KEY_ALIASES):
+            folded = StrUtils.attach_modifier(folded, token, spec)
         return folded
 
     @classmethod
@@ -1076,10 +1067,6 @@ class ExportRun:
     export_path: str = ""
     #: An :attr:`OUTPUT_FORMATS` token.
     output_format: str = "fbx"
-    #: The retired Version pattern (a headless ``tasks["version"]``, which
-    #: warns and goes in 0.19.0), carried to the exporter's entry point to be
-    #: folded into the name once (:meth:`ExportProfile.fold_legacy_naming`).
-    version_format: str = ""
     #: The Texture File Type dial -- the container every texture the export
     #: ships is written in (each destination clamps what it cannot carry).
     #: None is "Original".
@@ -1195,7 +1182,8 @@ class ExportRun:
     )
     #: The ``tasks`` keys that are modes, not tasks -- what :meth:`from_tasks`
     #: pops (legacy spellings included) so none reaches the dispatcher as an
-    #: unknown task.
+    #: unknown task. ``version`` is the removed Version pattern, popped to be
+    #: refused by name (:meth:`from_tasks`).
     MODE_KEYS: ClassVar[Tuple[str, ...]] = (
         "version",
         "output_format",
@@ -1464,7 +1452,9 @@ class ExportRun:
         RDO, key reduction -- each None when off; the key reduction rides
         Optimize Keys and is inert without it). A retired Baked Reflections
         row, which an older panel still sends, is dropped with a note: the
-        deliverable publishes the recipe's own level. A GLB-only format drops
+        deliverable publishes the recipe's own level. A ``version`` key (the
+        Version pattern, removed in 0.19.0) is an ``"error"`` note naming the
+        counter that replaces it. A GLB-only format drops
         :attr:`FBX_KEY_HYGIENE` with a note: the FBX is then a temp
         intermediate the converter resamples per frame. ``optimize_textures``
         and ``convert_textures`` are READ, not
@@ -1487,18 +1477,18 @@ class ExportRun:
         tasks = dict(tasks or {})
         notes: List[Tuple[str, str]] = []
 
-        version_format = tasks.pop("version", "") or ""
-        if version_format:
-            # SAVED data: a profile saved before the retirement still carries
-            # it, so it keeps the longest window (re-dated from 0.12.0 on
-            # 2026-10-24, CODE_STANDARD §0) where the API shims went.
-            Deprecation.warn(
-                "tasks['version']",
-                "a {n} counter in the Output Filename, e.g. '*_v{n:03d}'",
-                remove_in="0.19.0",
-                kind="parameter",
-                since="2026-09-23",
-                reason="Until then the exporter folds it into the name once.",
+        if tasks.pop("version", ""):
+            # Removed in 0.19.0 (retired 2026-09-23). A caller still sending
+            # it asked for a versioned name; writing the unversioned one
+            # instead would land a file nobody asked for, so the run stops
+            # and says what replaces it.
+            notes.append(
+                (
+                    "error",
+                    "Export aborted: tasks['version'] was removed in pythontk "
+                    "0.19.0 -- write a {n} counter into the Output Filename "
+                    "instead, e.g. '*_v{n:03d}'.",
+                )
             )
         output_format = str(tasks.pop("output_format", "") or "").lower()
         if not output_format:
@@ -1617,7 +1607,6 @@ class ExportRun:
                 )
         run = cls(
             output_format=output_format,
-            version_format=str(version_format),
             texture_file_type=texture_file_type,
             ktx2_fallback=ktx2_fallback,
             texture_write_back=bool(write_back),

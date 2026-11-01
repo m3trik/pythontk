@@ -325,18 +325,15 @@ class TestOutputPath(unittest.TestCase):
         levels = [level for level, _ in ExportProfile.naming_report(resolved, {})]
         self.assertIn("error", levels)
 
-    def test_retired_version_and_timestamp_inputs_fold_into_the_same_file(self):
-        """A saved Version pattern / Timestamp flag folds into the pattern once,
-        at the exporter's entry point (:meth:`ExportProfile.fold_legacy_naming`),
-        and the pattern alone resolves to the file they used to make."""
-        folded = ExportProfile.fold_legacy_naming(
-            "WIP_*", version_format="{stem}_v{n:03d}", timestamp=True
-        )
-        # the wildcard expands to the CANONICAL name token (ExportProfile.NAME_KEY)
-        self.assertEqual(folded, "WIP_{scene}_{date}_{time}_v{n:03d}")
-        self.assertEqual(
-            self.resolve(folded)["stem"], "WIP_hero_2026-09-13_10-00-00_v001"
-        )
+    def test_the_removed_version_and_timestamp_inputs_no_longer_fold(self):
+        """The Version pattern and Timestamp flag went in 0.19.0: the fold takes
+        the RegEx field alone, keyword-only, so a caller still passing either
+        is refused by name rather than having it read as a regex."""
+        with self.assertRaises(TypeError):
+            ExportProfile.fold_legacy_naming("WIP_*", "{stem}_v{n:03d}")
+        for retired in ("version_format", "timestamp"):
+            with self.subTest(keyword=retired), self.assertRaises(TypeError):
+                ExportProfile.fold_legacy_naming("WIP_*", **{retired: True})
         self.assertEqual(ExportProfile.fold_legacy_naming("WIP_*"), "WIP_*")
 
     def test_the_report_words_each_diagnostic_at_its_level(self):
@@ -375,22 +372,26 @@ class TestExportRun(unittest.TestCase):
     button's dict, once for both DCC exporters. Added: 2026-09-13
     """
 
-    def test_a_version_pattern_warns_and_still_reaches_the_run(self):
-        """Retired 2026-09-23: a ``tasks["version"]`` warns (removed in 0.19.0:
-        saved data, re-dated from 0.12.0) and is carried on the run for the
-        exporter to fold into the name once; a blank one is no request and
-        says nothing."""
+    def test_a_version_pattern_is_refused_by_name(self):
+        """Removed in 0.19.0 (retired 2026-09-23): a ``tasks["version"]`` is an
+        error note -- the run must not proceed -- that names the key and the
+        counter replacing it, never a quiet unversioned write; nothing carries
+        it any more. A blank one is no request and says nothing."""
         import warnings
 
-        with self.assertWarns(DeprecationWarning) as retired:
-            run = ExportRun.from_tasks({"version": "{stem}_v{n:03d}"})[0]
-        self.assertIn("tasks['version']", str(retired.warning))
-        self.assertIn("0.19.0", str(retired.warning))
-        self.assertEqual(run.version_format, "{stem}_v{n:03d}")
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
-            ExportRun.from_tasks({"version": ""})
+            run, remaining, notes = ExportRun.from_tasks(
+                {"version": "{stem}_v{n:03d}"}
+            )
         self.assertEqual([w for w in caught if w.category is DeprecationWarning], [])
+        errors = [message for level, message in notes if level == "error"]
+        self.assertEqual(len(errors), 1, notes)
+        self.assertIn("tasks['version']", errors[0])
+        self.assertIn("*_v{n:03d}", errors[0])
+        self.assertNotIn("version", remaining)
+        self.assertFalse(hasattr(run, "version_format"))
+        self.assertEqual(ExportRun.from_tasks({"version": ""})[2], [])
 
     def test_the_self_contained_flag_is_retired_and_warns_only_when_set(self):
         """Retired 2026-10-05: every FBX embeds its media, so nothing reads
@@ -410,8 +411,7 @@ class TestExportRun(unittest.TestCase):
     def test_every_mode_key_is_popped_and_no_task_is(self):
         tasks = {key: True for key in ExportRun.MODE_KEYS}
         tasks.update({"smart_bake": True, "check_framerate": "ntsc"})
-        with self.assertWarns(DeprecationWarning):  # "version", retired
-            run, remaining, _notes = ExportRun.from_tasks(tasks)
+        run, remaining, _notes = ExportRun.from_tasks(tasks)  # "version": refused
         self.assertEqual(set(remaining), {"smart_bake", "check_framerate"})
         self.assertEqual(remaining["check_framerate"], "ntsc")
         self.assertTrue(run.texture_write_back)
