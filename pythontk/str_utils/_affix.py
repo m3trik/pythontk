@@ -6,7 +6,19 @@ applying affixes (the bodies behind the :class:`StrUtils` facade).
 
 from __future__ import annotations
 
-from typing import Union, List, Optional, Tuple, Iterable
+import re
+import string
+from collections.abc import Mapping
+from typing import (
+    Callable,
+    Dict,
+    Hashable,
+    Iterable,
+    List,
+    Optional,
+    Tuple,
+    Union,
+)
 
 from pythontk.iter_utils._iter_utils import IterUtils
 
@@ -318,3 +330,112 @@ class _StrAffixInternal:
         if suffix:
             core = core.rstrip("_")
         return f"{prefix}{core}{suffix}"
+
+    @staticmethod
+    def sequential_suffixes(
+        count: int, switch_at: int = 26, lowercase: bool = False
+    ) -> List[str]:
+        """Body of :meth:`StrUtils.sequential_suffixes`."""
+        if count <= 0:
+            return []
+        cap = min(switch_at, 26)
+        if count <= cap:
+            base = ord("a") if lowercase else ord("A")
+            return [chr(base + i) for i in range(count)]
+        pad = max(2, len(str(count)))
+        return [str(i + 1).zfill(pad) for i in range(count)]
+
+    @staticmethod
+    def sequence_names(
+        names: Union[Mapping[Hashable, str], Iterable[str]],
+        order: Optional[Callable[[List[Hashable]], List[Hashable]]] = None,
+        alphabetical: bool = False,
+        strip_trailing_ints: bool = False,
+        strip_defined_suffixes: bool = False,
+        valid_suffixes: Optional[Iterable[str]] = None,
+        independent_groups: bool = False,
+        number_separators: str = "_",
+    ) -> Dict[Hashable, str]:
+        """Body of :meth:`StrUtils.sequence_names`."""
+        if not isinstance(names, Mapping):
+            names = {name: name for name in names}
+        names = dict(names)
+        order = order or list
+        suffixes = sorted(valid_suffixes or [], key=len, reverse=True)
+        strip_for_grouping = strip_defined_suffixes and not independent_groups
+        trailing_int = re.compile(
+            rf"([{re.escape(number_separators)}]\d+|\d+)$"
+            if number_separators
+            else r"\d+$"
+        )
+
+        def strip_ints(name: str) -> str:
+            if strip_trailing_ints and name and name[-1].isdigit():
+                match = trailing_int.search(name)
+                if match:
+                    return name[: match.start()]
+            return name
+
+        def peel(name: str) -> Tuple[str, str]:
+            """``(root, suffix)``: *name* less the defined suffix it ends with."""
+            for suffix in suffixes:
+                if name.endswith(suffix):
+                    return name[: -len(suffix)], suffix
+            return name, ""
+
+        # The letters a previous alphabetical run wrote: the batch's '_A', '_B',
+        # ... (before a kept type suffix too) running from A with no gap. Only
+        # those are stripped (a re-run gave 'tile_C_C'); a side marker ('_L',
+        # '_R') is name content.
+        letters = set()
+        for name in names.values():
+            match = re.search(r"_([A-Z])$", strip_ints(peel(strip_ints(name))[0]))
+            if match:
+                letters.add(match.group(1))
+        own_letters = (
+            alphabetical
+            and bool(letters)
+            and sorted(letters) == list(string.ascii_uppercase[: len(letters)])
+        )
+
+        def base_of(name: str) -> str:
+            # Stacked suffixes (Name_GRP_01_A) come off one per pass.
+            while True:
+                before = name
+                name = strip_ints(name)
+                if own_letters and re.search(r"_[A-Z]$", name):
+                    name = name[:-2]
+                if strip_for_grouping:
+                    name = peel(name)[0]
+                if name == before:
+                    return name
+
+        def labels(count: int) -> List[str]:
+            return _StrAffixInternal.sequential_suffixes(
+                count, switch_at=26 if alphabetical else 0
+            )
+
+        sequenced: Dict[Hashable, str] = {}
+        if not independent_groups:
+            ranked = order(list(names))
+            for key, label in zip(ranked, labels(len(ranked))):
+                sequenced[key] = f"{base_of(names[key])}_{label}"
+            return sequenced
+
+        groups: Dict[str, List[Hashable]] = {}
+        for key, name in names.items():
+            # A kept type suffix: the number or letter before it is this
+            # tool's too (Container_01_GRP), so a re-run groups as before.
+            base = base_of(name)
+            root, suffix = peel(base)
+            groups.setdefault(base_of(root) + suffix if suffix else base, []).append(
+                key
+            )
+        for base, keys in groups.items():
+            ranked = order(keys)
+            root, type_suffix = peel(base)
+            if strip_defined_suffixes:
+                type_suffix = ""
+            for key, label in zip(ranked, labels(len(ranked))):
+                sequenced[key] = f"{root}_{label}{type_suffix}"
+        return sequenced

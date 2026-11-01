@@ -1,7 +1,7 @@
 # !/usr/bin/python
 # coding=utf-8
 import re
-from typing import Union, List, Optional, Dict, Tuple, Callable, Iterable
+from typing import Union, List, Optional, Dict, Tuple, Callable, Iterable, Hashable
 
 # from this package:
 from pythontk.core_utils._core_utils import CoreUtils
@@ -1856,14 +1856,65 @@ class StrUtils(
             >>> StrUtils.sequential_suffixes(3, lowercase=True)
             ['a', 'b', 'c']
         """
-        if count <= 0:
-            return []
-        cap = min(switch_at, 26)
-        if count <= cap:
-            base = ord("a") if lowercase else ord("A")
-            return [chr(base + i) for i in range(count)]
-        pad = max(2, len(str(count)))
-        return [str(i + 1).zfill(pad) for i in range(count)]
+        return _StrAffixInternal.sequential_suffixes(count, switch_at, lowercase)
+
+    @staticmethod
+    def sequence_names(
+        names: Union[Dict[Hashable, str], Iterable[str]],
+        order: Optional[Callable[[List[Hashable]], List[Hashable]]] = None,
+        alphabetical: bool = False,
+        strip_trailing_ints: bool = False,
+        strip_defined_suffixes: bool = False,
+        valid_suffixes: Optional[Iterable[str]] = None,
+        independent_groups: bool = False,
+        number_separators: str = "_",
+    ) -> Dict[Hashable, str]:
+        """Suffix each name with its place in a sequence: ``tile_01``,
+        ``tile_02`` (or ``tile_A``, ``tile_B``) -- the host-free plan behind
+        both DCCs' Suffix By Location, which supply the order.
+
+        Each name first loses what a previous run (or the host) left on it, so
+        a re-run is stable: a trailing number (``tile12``, ``tile_3``; also
+        after any of *number_separators*, Blender's ``tile.001``), a letter this
+        tool wrote (the batch's letters run ``A, B, C, ...`` with no gap; a
+        lone ``_L`` / ``_R`` side marker is content), and with
+        *strip_defined_suffixes* a suffix of *valid_suffixes* -- stacked
+        (``Name_GRP_01_A``) ones one per pass.
+
+        Parameters:
+            names: ``{key: name}`` (a host's object key -> its leaf name), or
+                plain names, each its own key (duplicates collapse).
+            order: Ranks a list of keys (a host orders by location); the
+                given order when omitted. Called once per group.
+            alphabetical: Letters (``_A``) for a group of 26 or fewer, else
+                zero-padded numbers (:meth:`sequential_suffixes`).
+            strip_trailing_ints: Strip a trailing number first.
+            strip_defined_suffixes: Drop a suffix of *valid_suffixes*: from
+                the base, or with *independent_groups* from the result.
+            valid_suffixes: The type suffixes (``_GRP``) this tool knows.
+            independent_groups: Number each base on its own; a kept type
+                suffix moves after the number (``Container_01_GRP``).
+            number_separators: The characters that go with a trailing number
+                when it is stripped (Blender: ``"._"``).
+
+        Returns:
+            ``{key: new_name}``, in sequence order (grouped with
+            *independent_groups*).
+
+        Example:
+            sequence_names({"a": "tile12", "b": "tile_3"}, strip_trailing_ints=True)
+            #returns: {'a': 'tile_01', 'b': 'tile_02'}
+        """
+        return _StrAffixInternal.sequence_names(
+            names,
+            order=order,
+            alphabetical=alphabetical,
+            strip_trailing_ints=strip_trailing_ints,
+            strip_defined_suffixes=strip_defined_suffixes,
+            valid_suffixes=valid_suffixes,
+            independent_groups=independent_groups,
+            number_separators=number_separators,
+        )
 
     @staticmethod
     def resolve_name_collisions(

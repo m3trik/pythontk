@@ -1717,6 +1717,13 @@
   {
     "kind": "function",
     "module": "pythontk.str_utils._str_utils",
+    "name": "sequence_names",
+    "qualname": "StrUtils.sequence_names",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.str_utils._str_utils",
     "name": "sequential_suffixes",
     "qualname": "StrUtils.sequential_suffixes",
     "tier": "bare"

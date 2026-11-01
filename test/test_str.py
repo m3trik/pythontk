@@ -1418,6 +1418,82 @@ class StrTest(BaseTestCase):
         )
 
     # -------------------------------------------------------------------------
+    # sequence_names Tests (the suffix-by-location plan both DCCs share)
+    # -------------------------------------------------------------------------
+
+    def test_sequence_names_numbers_in_the_given_order(self):
+        """Old numbers are stripped and each name gets its place."""
+        out = StrUtils.sequence_names(
+            {"a": "tile12", "b": "tile_3"},
+            order=lambda keys: sorted(keys, reverse=True),
+            strip_trailing_ints=True,
+        )
+        self.assertEqual(list(out.items()), [("b", "tile_01"), ("a", "tile_02")])
+
+    def test_sequence_names_takes_plain_names(self):
+        self.assertEqual(
+            StrUtils.sequence_names(["rock"], alphabetical=True),
+            {"rock": "rock_A"},
+        )
+
+    def test_sequence_names_number_separators(self):
+        """Blender numbers a duplicate ``tile.001``: the dot goes with it."""
+        names = {"x": "tile.001", "y": "tile.002"}
+        kept = StrUtils.sequence_names(names, strip_trailing_ints=True)
+        self.assertEqual(kept, {"x": "tile._01", "y": "tile._02"})
+        dotted = StrUtils.sequence_names(
+            names, strip_trailing_ints=True, number_separators="._"
+        )
+        self.assertEqual(dotted, {"x": "tile_01", "y": "tile_02"})
+
+    def test_sequence_names_rerun_strips_only_its_own_letters(self):
+        """A batch's run of letters from A is this tool's; a lone side marker
+        (``_L``) is content and stays."""
+        rerun = StrUtils.sequence_names(
+            {"1": "tile_A", "2": "tile_B", "3": "tile_C"}, alphabetical=True
+        )
+        self.assertEqual(list(rerun.values()), ["tile_A", "tile_B", "tile_C"])
+        side = StrUtils.sequence_names({"1": "arm_L", "2": "arm_R"}, alphabetical=True)
+        self.assertEqual(list(side.values()), ["arm_L_A", "arm_R_B"])
+
+    def test_sequence_names_independent_groups_keep_a_type_suffix(self):
+        """Each base numbers on its own; a kept type suffix moves to the end
+        (and is dropped with ``strip_defined_suffixes``)."""
+        names = {
+            "c1": "Container_01_GRP",
+            "c2": "Container_02_GRP",
+            "p1": "pipe7",
+        }
+        kept = StrUtils.sequence_names(
+            names,
+            strip_trailing_ints=True,
+            valid_suffixes=["_GRP"],
+            independent_groups=True,
+        )
+        self.assertEqual(
+            kept,
+            {"c1": "Container_01_GRP", "c2": "Container_02_GRP", "p1": "pipe_01"},
+        )
+        dropped = StrUtils.sequence_names(
+            names,
+            strip_trailing_ints=True,
+            strip_defined_suffixes=True,
+            valid_suffixes=["_GRP"],
+            independent_groups=True,
+        )
+        self.assertEqual(dropped["c2"], "Container_02")
+        ungrouped = StrUtils.sequence_names(
+            names,
+            strip_trailing_ints=True,
+            strip_defined_suffixes=True,
+            valid_suffixes=["_GRP"],
+        )
+        self.assertEqual(
+            ungrouped,
+            {"c1": "Container_01", "c2": "Container_02", "p1": "pipe_03"},
+        )
+
+    # -------------------------------------------------------------------------
     # resolve_name_collisions Tests
     # -------------------------------------------------------------------------
 
