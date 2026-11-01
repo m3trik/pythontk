@@ -633,9 +633,17 @@ class _FbxMediaInternal:
     def _carrier_props(
         cls, roots: Iterable[_Record], keys: Iterable[str]
     ) -> Iterator[Tuple[Optional[str], str, Any, _Record]]:
-        """:meth:`_carrier_channels`, each with the ``P`` record it was read from."""
+        """:meth:`_carrier_channels`, each with the ``P`` record it was read from.
+
+        A carrier is a Model :meth:`SceneStoreBase.is_carrier` names one: a
+        property of a record's name on another node is an artist's (Maya's FBX
+        exporter writes every custom string attribute), read by no reader --
+        the materials reader (``MeshConvert._carried_record``) and unitytk's
+        ``CarrierFile`` take carriers alone."""
         wanted = {key.encode("utf-8"): key for key in keys}
         for name, record in cls._models(roots):
+            if not SceneStoreBase.is_carrier(name):
+                continue
             for child in record.children:
                 if child.name != b"Properties70":
                     continue

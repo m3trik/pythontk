@@ -2138,6 +2138,31 @@ class EmbedTestCase(unittest.TestCase):
             ["Room_Lightmap.exr", "Lamp_Lightmap.exr", "Room_Probe.exr"],
         )
 
+    def test_a_record_of_its_name_on_another_node_is_no_record(self):
+        """A property named as a record on a node that is no carrier is an
+        artist's -- Maya's FBX exporter writes every custom string attribute as
+        a user property -- and no reader takes it: not the materials reader
+        (``MeshConvert._carried_record``), not unitytk's ``CarrierFile``, so
+        not ``record`` / ``records`` / ``dependencies`` either, which read it
+        (review, 2026-10-31). Added: 2026-10-31"""
+        lamp = {"version": 1, "materials": []}
+        path = build_carrier_fbx(
+            os.path.join(self.dir, "artist.fbx"),
+            {"shadows": self.SHADOWS},
+            others={"Lamp_geo": {"materials": lamp, "lightmaps": self.LIGHTMAPS}},
+        )
+        self.assertIsNone(FbxMedia.record(path, "materials"))
+        self.assertEqual(FbxMedia.records(path, ["materials", "lightmaps"]), {})
+        self.assertEqual(
+            FbxMedia.dependencies(path),
+            ["Box_shadow.png", "shadow_atlas_horizon.png", "Box_horizon.png"],
+        )
+        # A module's carrier and a numbered copy are carriers.
+        numbered = build_carrier_fbx(
+            os.path.join(self.dir, "numbered.fbx"), {}, others={"NS:data_export1": {"materials": lamp}}
+        )
+        self.assertEqual(FbxMedia.record(numbered, "materials"), lamp)
+
     #: A referenced module's lightmaps as that module was last exported
     #: alone: its own spelling of each name (no namespace), a probe.
     MODULE_LIGHTMAPS = {
