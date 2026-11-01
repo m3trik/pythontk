@@ -183,7 +183,7 @@ DEFAULT_INCLUDE = {
     ],
     "geo_utils.uv.transfer": ["UvTransfer", "TransferTable"],
     # The Texture Combine panel's Transfer run (UVs or textures), written once
-    # over each library's host adapter (``TextureTransfer.run``).
+    # over each library's host adapter (``TextureCombine.run_transfer``).
     "geo_utils.uv.transfer_run": [
         "TransferRun",
         "TransferResult",

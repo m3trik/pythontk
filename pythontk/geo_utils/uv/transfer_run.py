@@ -16,8 +16,8 @@ pair runs (:meth:`~TransferRun.passes`), Auto's pick
 (:meth:`~TransferRun.resolve_auto`), the refusals (:meth:`~TransferRun.gate`)
 -- and the run itself (:meth:`~TransferRun.run`: one undo step), over a host
 adapter (:class:`TransferHost`; mayatk's ``MayaTransferHost``, blendertk's
-``BlenderTransferHost``, which each library's ``TextureTransfer.run`` hands
-it; :class:`PureTransferHost` with no DCC: no scene, nothing selected). A run
+``BlenderTransferHost``, which each library's ``TextureCombine.run_transfer``
+hands it; :class:`PureTransferHost` with no DCC: no scene, nothing selected). A run
 returns a :class:`TransferResult` -- plain values: what was
 decided, what each pass did, what Overwrite target rewrote -- that the Texture
 Combine panel words in its host's terms. Nothing here speaks to a user.
@@ -227,7 +227,7 @@ class TransferRun:
     module docstring).
 
     Parameters:
-        host: The host adapter (each library's ``TextureTransfer.run`` builds
+        host: The host adapter (each library's ``TextureCombine.run_transfer`` builds
             one); ``None``: :class:`PureTransferHost`.
     """
 
