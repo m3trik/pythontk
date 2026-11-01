@@ -926,7 +926,7 @@ The Scene Exporter panels' shared contract, written once.
   - `ExportProfile.texture_size_limit_bytes(max_size_mb: Any) -> Optional[int]` *(static)* — The Max Texture Size row's value as bytes;
   - `ExportProfile.strip_deliverable_extension(name: Optional[str]) -> str` *(static)* — *name* trimmed, without a trailing deliverable extension -- a whitelist
   - `ExportProfile.fold_legacy_regex(cls, name_regex: Optional[str]) -> Optional[str]` *(class)* — The retired free-standing RegEx field's text as an inline modifier spec.
-  - `ExportProfile.fold_legacy_naming(cls, pattern: Optional[str], version_format: str = '', timestamp: bool = False, name_regex: Optional[str] = None) -> Optional[str]` *(class)* — Fold the retired Version pattern and Timestamp flag into a name pattern.
+  - `ExportProfile.fold_legacy_naming(cls, pattern: Optional[str], *, name_regex: Optional[str] = None) -> Optional[str]` *(class)* — Fold the retired RegEx field into a name pattern.
   - `ExportProfile.resolve_output_path(cls, pattern: Optional[str], context: Mapping[str, Any], export_dir: str = '', output_format: str = 'fbx') -> Dict[str, Any]` *(class)* — Resolve the Output Filename field into the file(s) an export writes.
   - `ExportProfile.naming_report(cls, resolved: Mapping[str, Any], tokens: Mapping[str, str]) -> List[Tuple[str, str]]` *(class)* — ``[(level, message), ...]`` for what :meth:`resolve_output_path` hit.
   - `ExportProfile.scoped_tables(cls, manager: type) -> type` *(class)* — Class decorator: give *manager* the shared tables, scoped to it.
@@ -938,7 +938,7 @@ The Scene Exporter panels' shared contract, written once.
   - `ExportProfile.glb_options(cls) -> Dict[str, Dict[str, Any]]` *(class)* — ``{row key: {label: value}}`` for :attr:`GLB_ROWS`, as a producer
   - `ExportProfile.glb_defaults(cls) -> Dict[str, Any]` *(class)* — ``{row key: value}`` -- where each :attr:`GLB_ROWS` row starts in
   - `ExportProfile.frame_rate_options(cls) -> Dict[str, Optional[str]]` *(class)* — Frame Rate check -- every ``VidUtils.FRAME_RATES`` entry labelled
-- **[`class ExportRun`](pythontk/pythontk/core_utils/engines/scene_export/export_profile.py#L1056)** — The modes of ONE Scene Exporter run, decided before its pipeline runs.
+- **[`class ExportRun`](pythontk/pythontk/core_utils/engines/scene_export/export_profile.py#L1047)** — The modes of ONE Scene Exporter run, decided before its pipeline runs.
   - `ExportRun.glb_only(self) -> bool` *(property)* — The GLB is the deliverable;
   - `ExportRun.create_glb(self) -> bool` *(property)* — A ``.glb`` is written this run (alone, or beside the FBX).
   - `ExportRun.usd(self) -> bool` *(property)* — The deliverable is a USD layer.

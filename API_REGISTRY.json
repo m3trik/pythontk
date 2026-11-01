@@ -4847,8 +4847,8 @@
               "name": "fold_legacy_naming",
               "qualname": "ExportProfile.fold_legacy_naming",
               "kind": "classmethod",
-              "signature": "(cls, pattern: Optional[str], version_format: str = '', timestamp: bool = False, name_regex: Optional[str] = None) -> Optional[str]",
-              "summary": "Fold the retired Version pattern and Timestamp flag into a name pattern.",
+              "signature": "(cls, pattern: Optional[str], *, name_regex: Optional[str] = None) -> Optional[str]",
+              "summary": "Fold the retired RegEx field into a name pattern.",
               "line": 382,
               "deprecated": false
             },
@@ -4858,7 +4858,7 @@
               "kind": "classmethod",
               "signature": "(cls, pattern: Optional[str], context: Mapping[str, Any], export_dir: str = '', output_format: str = 'fbx') -> Dict[str, Any]",
               "summary": "Resolve the Output Filename field into the file(s) an export writes.",
-              "line": 427,
+              "line": 418,
               "deprecated": false
             },
             {
@@ -4867,7 +4867,7 @@
               "kind": "classmethod",
               "signature": "(cls, resolved: Mapping[str, Any], tokens: Mapping[str, str]) -> List[Tuple[str, str]]",
               "summary": "``[(level, message), ...]`` for what :meth:`resolve_output_path` hit.",
-              "line": 502,
+              "line": 493,
               "deprecated": false
             },
             {
@@ -4876,7 +4876,7 @@
               "kind": "classmethod",
               "signature": "(cls, manager: type) -> type",
               "summary": "Class decorator: give *manager* the shared tables, scoped to it.",
-              "line": 736,
+              "line": 727,
               "deprecated": false
             },
             {
@@ -4885,7 +4885,7 @@
               "kind": "classmethod",
               "signature": "(cls, manager: Any) -> List[str]",
               "summary": ":attr:`TASK_ORDER` scoped to the tasks *manager* implements.",
-              "line": 756,
+              "line": 747,
               "deprecated": false
             },
             {
@@ -4894,7 +4894,7 @@
               "kind": "classmethod",
               "signature": "(cls, manager: Any) -> Dict[str, List[str]]",
               "summary": "The shared tables' names *manager* has no method for.",
-              "line": 761,
+              "line": 752,
               "deprecated": false
             },
             {
@@ -4903,7 +4903,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> Dict[str, Any]",
               "summary": "Optimize Textures -- the pass switch and its size dial in ONE combo.",
-              "line": 901,
+              "line": 892,
               "deprecated": false
             },
             {
@@ -4912,7 +4912,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> Dict[str, Any]",
               "summary": "Texture File Type -- the container dial for EVERY texture the export",
-              "line": 919,
+              "line": 910,
               "deprecated": false
             },
             {
@@ -4921,7 +4921,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> str",
               "summary": "The Baked Reflections token a row starts at: the one whose level the",
-              "line": 969,
+              "line": 960,
               "deprecated": true,
               "remove_in": "0.17.0"
             },
@@ -4931,7 +4931,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> Dict[str, Dict[str, Any]]",
               "summary": "``{row key: {label: value}}`` for :attr:`GLB_ROWS`, as a producer",
-              "line": 987,
+              "line": 978,
               "deprecated": false
             },
             {
@@ -4940,7 +4940,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> Dict[str, Any]",
               "summary": "``{row key: value}`` -- where each :attr:`GLB_ROWS` row starts in",
-              "line": 1027,
+              "line": 1018,
               "deprecated": false
             },
             {
@@ -4949,7 +4949,7 @@
               "kind": "classmethod",
               "signature": "(cls) -> Dict[str, Optional[str]]",
               "summary": "Frame Rate check -- every ``VidUtils.FRAME_RATES`` entry labelled",
-              "line": 1036,
+              "line": 1027,
               "deprecated": false
             }
           ]
@@ -4957,7 +4957,7 @@
         {
           "name": "ExportRun",
           "summary": "The modes of ONE Scene Exporter run, decided before its pipeline runs.",
-          "line": 1056,
+          "line": 1047,
           "bases": [],
           "members": [
             {
@@ -4966,7 +4966,7 @@
               "kind": "property",
               "signature": "(self) -> bool",
               "summary": "The GLB is the deliverable;",
-              "line": 1249,
+              "line": 1237,
               "deprecated": false
             },
             {
@@ -4975,7 +4975,7 @@
               "kind": "property",
               "signature": "(self) -> bool",
               "summary": "A ``.glb`` is written this run (alone, or beside the FBX).",
-              "line": 1254,
+              "line": 1242,
               "deprecated": false
             },
             {
@@ -4984,7 +4984,7 @@
               "kind": "property",
               "signature": "(self) -> bool",
               "summary": "The deliverable is a USD layer.",
-              "line": 1259,
+              "line": 1247,
               "deprecated": false
             },
             {
@@ -4993,7 +4993,7 @@
               "kind": "property",
               "signature": "(self) -> Dict[str, Dict[str, Any]]",
               "summary": "This run's choices over the lighting recipe its deliverables publish.",
-              "line": 1264,
+              "line": 1252,
               "deprecated": false
             },
             {
@@ -5002,7 +5002,7 @@
               "kind": "classmethod",
               "signature": "(cls, value: Any) -> Optional[float]",
               "summary": "A Baked Reflections row value as its level;",
-              "line": 1283,
+              "line": 1271,
               "deprecated": true,
               "remove_in": "0.17.0"
             },
@@ -5012,7 +5012,7 @@
               "kind": "method",
               "signature": "(self, **changes: Any) -> 'ExportRun'",
               "summary": "A copy with *changes* applied (``dataclasses.replace``).",
-              "line": 1307,
+              "line": 1295,
               "deprecated": false
             },
             {
@@ -5021,7 +5021,7 @@
               "kind": "staticmethod",
               "signature": "(value: Any) -> str",
               "summary": "An Animation Clips row value as one of its modes (``full`` /",
-              "line": 1312,
+              "line": 1300,
               "deprecated": false
             },
             {
@@ -5030,7 +5030,7 @@
               "kind": "method",
               "signature": "(self, tasks: Mapping[str, Any]) -> 'ExportRun'",
               "summary": "A copy carrying the modes derived from the dispatched *tasks*.",
-              "line": 1337,
+              "line": 1325,
               "deprecated": false
             },
             {
@@ -5039,7 +5039,7 @@
               "kind": "method",
               "signature": "(self, logger: Any = None) -> int",
               "summary": "The Optimize Textures ceiling as pixels, ``0`` for none.",
-              "line": 1363,
+              "line": 1351,
               "deprecated": false
             },
             {
@@ -5048,7 +5048,7 @@
               "kind": "method",
               "signature": "(self, logger: Any = None) -> Dict[str, Any]",
               "summary": "``optimize_glb_textures`` kwargs for this run's GLB.",
-              "line": 1390,
+              "line": 1378,
               "deprecated": false
             },
             {
@@ -5057,7 +5057,7 @@
               "kind": "classmethod",
               "signature": "(cls, tasks: Optional[Mapping[str, Any]], texture_file_types: Iterable[Any] = ()) -> Tuple['ExportRun', Dict[str, Any], List[Tuple[str, str]]]",
               "summary": "Pop the per-run modes out of a ``perform_export`` *tasks* dict.",
-              "line": 1446,
+              "line": 1434,
               "deprecated": false
             },
             {
@@ -5066,7 +5066,7 @@
               "kind": "classmethod",
               "signature": "(cls, values: Mapping[str, Any]) -> Tuple['ExportRun', List[Tuple[str, str]]]",
               "summary": "A GLB-only run carrying the Scene Exporter's GLB rows and no other.",
-              "line": 1641,
+              "line": 1630,
               "deprecated": false
             }
           ]

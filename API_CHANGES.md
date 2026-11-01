@@ -470,8 +470,11 @@ _Still resolvable at the same call site -- hoisted to a base class or re-exporte
 
 - `net_utils/preview/bridge.py::PreviewBridge.scope_objects`
 
-## Signature changed (13)
+## Signature changed (14)
 
+- `core_utils/engines/scene_export/export_profile.py::ExportProfile.fold_legacy_naming`
+  - was: `(cls, pattern: Optional[str], version_format: str = '', timestamp: bool = False, name_regex: Optional[str] = None) -> Optional[str]`
+  - now: `(cls, pattern: Optional[str], *, name_regex: Optional[str] = None) -> Optional[str]`
 - `core_utils/engines/scene_export/scene_data_sidecar.py::SceneDataSidecarBase.build_clean_path_set`
   - was: `(paths) -> set`
   - now: `(cls, paths) -> set`
