@@ -1658,15 +1658,18 @@ class ShotStore(_ShotStoreInternal):
         undo step of its own).
 
         It also carries the step's books: the store sets ``changed`` once the
-        body ran (the edit changed what only the store holds), and the host
-        sets ``tag`` when its undo step closes (:meth:`ShotsHost.undo_step`).
+        body ran (the edit changed what only the store holds) and ``refused``
+        when the planner declined it (the :class:`ShotBoundaryConflict` an
+        ``on_refusal`` edit answered), and the host sets ``tag`` when its undo
+        step closes (:meth:`ShotsHost.undo_step`).
         """
 
-        __slots__ = ("cancelled", "changed", "tag")
+        __slots__ = ("cancelled", "changed", "refused", "tag")
 
         def __init__(self):
             self.cancelled = False
             self.changed = False
+            self.refused = None
             self.tag = None
 
         def cancel(self) -> None:
@@ -1674,7 +1677,12 @@ class ShotStore(_ShotStoreInternal):
             self.cancelled = True
 
     @contextmanager
-    def scene_edit(self, label: str = "edit", snapshot: bool = True):
+    def scene_edit(
+        self,
+        label: str = "edit",
+        snapshot: bool = True,
+        on_refusal: Optional[Callable[[Exception], None]] = None,
+    ):
         """Run a shot edit as one step of the scene's undo.
 
         Renames the host follows are followed first (:meth:`follow_renames`),
@@ -1701,14 +1709,29 @@ class ShotStore(_ShotStoreInternal):
         no-op -- the one idiom a panel shared by both hosts writes for an edit
         that turned out to change nothing.
 
+        A refusal is an answer, not a crash: an edit the planner declines
+        raises :class:`ShotBoundaryConflict` (two shots would have to share a
+        sample whose poses disagree), and with *on_refusal* the bracket answers
+        it instead of raising.  The step closes and its restore point settles
+        by the rule above first -- a staged edit can write before a later stage
+        is refused, and its undo must take that back -- then the refusal is
+        set on the handle (``refused``) and handed to *on_refusal*, so a panel
+        that redraws there sees the scene as the edit left it.  Every other
+        error still raises.
+
         Parameters:
             label: The edit's name (the undo step's, and the event's).
             snapshot: Push a restore point before the body; ``False`` for an
                 edit that must not record one (it then only supplies the step).
+            on_refusal: ``callable(conflict)`` answering a refused edit (a
+                panel: log it, redraw, say why); ``None``: the refusal raises.
 
         Yields:
             An :class:`EditHandle`.
         """
+        # shot_plan imports this module: the refusal is resolved here, lazily.
+        from pythontk.core_utils.engines.shots.shot_plan import ShotBoundaryConflict
+
         self.follow_renames()
         if snapshot:
             self.push_boundary_snapshot()
@@ -1721,10 +1744,16 @@ class ShotStore(_ShotStoreInternal):
                 edit.changed = bool(
                     snapshot and not edit.cancelled and self.changed_since_snapshot()
                 )
+        except ShotBoundaryConflict as exc:
+            if on_refusal is None or edit is None:
+                raise
+            edit.refused = exc
         finally:
             if snapshot and edit is not None:
                 self._settle_restore_point(edit)
-        if edit.changed:
+        if edit.refused is not None:
+            on_refusal(edit.refused)
+        elif edit.changed:
             self._notify(ShotsEdited(label=label))
 
     def _settle_restore_point(self, edit: "ShotStore.EditHandle") -> None:

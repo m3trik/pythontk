@@ -1145,6 +1145,17 @@ class TestAClosingSeamStaysOneFrameApartWhereItsPosesDiffer(_SequencerTest):
         self.seq.set_shot_edge(self.sid("C"), new_start=30, push=True)
         self.assertBounds(("A", 1, 15), ("B", 15, 30), ("C", 30, 50))
 
+    @unittest.expectedFailure  # BACKLOG 2026-11-01: the retime asks no pose
+    def test_a_shift_edge_stops_a_frame_short_where_the_poses_differ(self):
+        """A Shift edge (the retime) closing a gap onto another pose lands
+        flush: Maya then holds the retimed opening key 1.7e-7 of a frame after
+        the closing one (``mayatk/test/temp_tests/shift_edge_stacks_key.py``,
+        measured 2026-11-01)."""
+        self.seq.clashing = {("A", "B"), ("B", "C")}
+        self.seq.set_shot_edge(self.sid("A"), new_end=15, scale=True)
+        self.seq.set_shot_edge(self.sid("C"), new_start=30, scale=True)
+        self.assertBounds(("A", 1, 14), ("B", 15, 30), ("C", 31, 50))
+
     def test_a_ctrl_edge_pushed_past_the_neighbour_is_no_closing(self):
         """The frames a push takes are the neighbour's content, one pose
         each: the neighbour's facing bound gives way to the edge, as before."""

@@ -34,7 +34,11 @@ from pythontk.core_utils.engines.shots import shot_model
 from pythontk.core_utils.engines.shots.shot_model import ShotBlock, ShotStore
 from pythontk.core_utils.engines.shots.shot_conformance import ShotStoreConformance
 from pythontk.core_utils.engines.scene_export.scene_records import SceneRecords
-from pythontk.core_utils.engines.shots.shot_plan import ShotPlanner, ShotMove
+from pythontk.core_utils.engines.shots.shot_plan import (
+    ShotBoundaryConflict,
+    ShotMove,
+    ShotPlanner,
+)
 from pythontk.core_utils.engines.shots.shot_apply import ShotApply
 from pythontk.core_utils.engines.shots.shot_detection import (
     ShotDetection,
@@ -4232,6 +4236,82 @@ class TestShotsEdited(unittest.TestCase):
                 self.shot.end = 40.0
                 raise RuntimeError("refused")
         self.assertEqual(self._edited(), [])
+
+
+class TestARefusedEdit(unittest.TestCase):
+    """``scene_edit(on_refusal=)``: an edit the planner refuses
+    (:class:`ShotBoundaryConflict`) is answered, not raised -- the one bracket
+    every panel's refusable edit runs in, where each used to catch it by hand
+    and the copies drifted (one dropped the restore point, one reported before
+    the redraw that overwrote the notice, the gap drags caught nothing)."""
+
+    CONFLICT = [("ctlA_translateX", 20.0, [0.0, 5.0])]
+
+    def setUp(self):
+        self.host = _FakeHost()
+        self.store = ShotStore(host=self.host)
+        self.shot = self.store.define_shot("A", 0, 10)
+        self.events = []
+        self.store.add_listener(self.events.append)
+        self.refusals = []
+
+    def _refuse(self, write=False):
+        if write:  # a staged edit: one stage wrote before a later one refused
+            self.store.update_shot(self.shot.shot_id, end=20)
+        raise ShotBoundaryConflict(self.CONFLICT)
+
+    def test_a_refusal_is_handed_over_not_raised(self):
+        with self.store.scene_edit("Gap", on_refusal=self.refusals.append) as edit:
+            self._refuse()
+        self.assertEqual(len(self.refusals), 1)
+        self.assertIsInstance(self.refusals[0], ShotBoundaryConflict)
+        self.assertIs(edit.refused, self.refusals[0], "the handle carries it")
+        self.assertIn("ctlA_translateX", str(edit.refused), "it names the curves")
+
+    def test_without_on_refusal_it_still_raises(self):
+        with self.assertRaises(ShotBoundaryConflict):
+            with self.store.scene_edit("Gap"):
+                self._refuse()
+
+    def test_an_unrelated_error_still_raises(self):
+        with self.assertRaises(ValueError):
+            with self.store.scene_edit("Gap", on_refusal=self.refusals.append):
+                raise ValueError("unrelated")
+        self.assertEqual(self.refusals, [])
+
+    def test_an_edit_that_ran_was_not_refused(self):
+        with self.store.scene_edit("Grow", on_refusal=self.refusals.append) as edit:
+            self.store.update_shot(self.shot.shot_id, end=20)
+        self.assertIsNone(edit.refused)
+        self.assertEqual(self.refusals, [])
+
+    def test_a_refusal_before_any_write_changes_nothing_and_says_nothing(self):
+        with self.store.scene_edit("Gap", on_refusal=self.refusals.append):
+            self._refuse()
+        self.assertEqual((self.shot.start, self.shot.end), (0.0, 10.0))
+        self.assertFalse(self.store.has_boundary_snapshot(), "no dead restore point")
+        self.assertFalse(
+            [e for e in self.events if isinstance(e, shot_model.ShotsEdited)]
+        )
+
+    def test_a_refusal_after_a_write_keeps_the_point_that_undoes_it(self):
+        with self.store.scene_edit("Gap", on_refusal=self.refusals.append):
+            self._refuse(write=True)
+        self.assertEqual(self.store.peek_boundary_tag(), (False, "Gap"))
+        self.store.restore_boundary_snapshot()
+        self.assertEqual(self.shot.end, 10.0, "an undo puts the stage back")
+
+    def test_the_answer_comes_once_the_step_has_closed(self):
+        """A panel redraws in ``on_refusal``: it must see the step closed and
+        its restore point settled, never the edit half-way."""
+        seen = []
+
+        def answer(exc):
+            seen.append((self.store.peek_boundary_tag(), self.shot.end))
+
+        with self.store.scene_edit("Gap", on_refusal=answer):
+            self._refuse(write=True)
+        self.assertEqual(seen, [((False, "Gap"), 20.0)], "tagged: the step closed")
 
 
 class TestToolMarkers(unittest.TestCase):
