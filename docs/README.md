@@ -14,12 +14,12 @@ Pure Python: no Qt, no DCC imports, two hard dependencies (`numpy`, `Pillow`). E
 
 ## Why
 
-pythontk is the bottom of the chain `pythontk → uitk → mayatk / blendertk → tentacle`: everything above imports it; it imports nothing above it. The environment-independent 80% of every tool lives at this layer — in effect, the ecosystem's standard library.
+pythontk is the bottom of the chain `pythontk → uitk → mayatk / blendertk → tentacle` (also `pythontk → unitytk` and `uitk → extapps`): everything above imports it; it imports nothing above it. The environment-independent 80% of every tool lives at this layer — in effect, the ecosystem's standard library.
 
 Three rules shape it:
 
 - **Primitives are placed by data type, not domain.** Sharpest-frame extraction lives in `vid_utils`, perceptual-hash curation in `img_utils` — not in a "photogrammetry" package — so each stays independently reusable.
-- **A domain pipeline lives here once more than one host needs it**, under `core_utils/engines/`: PBR/texture conversion (`engines/textures`, ~11.9k lines), the shot timeline (`engines/shots`, ~6.4k), the scene export (`engines/scene_export`: scene records, export profile and snapshot, hierarchy baseline, the exporter and sidecar shells), instancing and the key stash. These are compositions of the primitives above, and they are here rather than downstream because Maya and Blender both drive them — "shared code moves down" outranks "placed by data type", and the alternative is two drifting copies. A pipeline only one host will ever use belongs in that host's toolkit.
+- **A domain pipeline lives here once more than one host needs it**, under `core_utils/engines/`: PBR/texture conversion (`engines/textures`), the shot timeline (`engines/shots`), the scene export (`engines/scene_export`: scene records, export profile and snapshot, hierarchy baseline, the exporter and sidecar shells), rig intent (`engines/rig_graph`), the light layers behind look match (`engines/lighting`), instancing and the key stash. These are compositions of the primitives above, and they are here rather than downstream because Maya and Blender both drive them — "shared code moves down" outranks "placed by data type", and the alternative is two drifting copies. A pipeline only one host will ever use belongs in that host's toolkit.
 - **Shared code moves down.** When two downstream tools need the same helper, it moves here and becomes the single source of truth — Maya and Blender panels share one calculator engine, one material-report formatter, one point-clustering routine, instead of drifting copies.
 
 ## Install
@@ -56,10 +56,10 @@ ptk.ImgUtils.pack_channels(...)     # class-qualified — explicit, collision-pr
 | `audio_utils` | FFmpeg-backed conversion, composite WAV building, silence trimming, waveform envelopes |
 | [`core_utils`](../pythontk/core_utils/README.md) | The infrastructure layer: mixins (`LoggingMixin`, `HelpMixin`, `SingletonMixin`), `listify`, package bootstrap, hot-reload, app orchestration (`AppLauncher`, `HandoffBridge`), cooperative cancellation (`CancelScope`), task pipeline, process output streaming, config/template stores, QC gates, `ExecutionMonitor`, hierarchy diffing, color primitives — plus the shared domain engines (`shots`, `scene_export`, `instancing`, `textures`, `rig_graph`, `key_stash`, `lighting`) |
 | [`file_utils`](../pythontk/file_utils/README.md) | Filtered directory traversal, atomic writes, policy-scoped temp artifacts (`TempArtifacts`), cloud-placeholder detection, FBX→GLB conversion + glTF repair (`MeshConvert`), zero-dependency USD/USDZ authoring, UV unwrapping, project workspaces, embedded metadata |
-| `geo_utils` | Pure geometry — `Polyline` (order/resample/smooth/simplify, arc-length sampling), `PointCloud` (PCA, clustering), `RailSurface` (line-pair framing), `PlateEmitter`, and the UV-layout family in `geo_utils/uv/` (`UvPack` island packing, `UvBudget` map-count planning, `UvTransfer` texel remap, `CylinderSeams` tube / turned-part seam placement) |
+| `geo_utils` | Pure geometry — `Polyline` (order/resample/smooth/simplify, arc-length sampling), `PointCloud` (PCA, clustering), `RailSurface` (line-pair framing), `PlateEmitter`, and the UV-layout family in `geo_utils/uv/` (`UvPack` island packing, `UvBudget` map-count planning, `UvCombine` several texture sets' islands packed into one atlas, `UvTransfer` texel remap, `TransferRun` the UV-or-texture transfer run both hosts share, `CylinderSeams` tube / turned-part seam placement) |
 | `img_utils` | Pillow-backed image ops, channel packing, atlas layout/assembly, KTX2 encoding (`Ktx2Encoder`), exposure equalization, image curation, mask generation |
 | `iter_utils` | Flatten, dedupe, wildcard filtering of lists/dicts, integer-sequence collapse |
-| `math_utils` | Vectors, clustering, remap/lerp/clamp, easing curves (`ProgressionCurves`), band-limited noise, morph-weight math (`Weights`), safe expression evaluation |
+| `math_utils` | Vectors, clustering, remap/lerp/clamp, rotation math in one convention (`Quaternion`: quaternions, matrices, Euler, `euler_near` for keyed rotation), easing curves (`ProgressionCurves`), band-limited noise, morph-weight math (`Weights`), safe expression evaluation |
 | [`net_utils`](../pythontk/net_utils/README.md) | SSH client, both ends of the plugin-hosted JSON-RPC protocol + DCC plugin installer, credentials, port/RDP helpers, URL file reads (`RemoteFile`, Google Sheets share links), [live WebXR preview server](webxr_preview.md) |
 | `str_utils` | Sanitizing, batch rename, affix handling, `FuzzyMatcher`, hotkey-token parsing |
 | `vid_utils` | Frame rate probing, compression, sharpest-frame extraction |
@@ -153,7 +153,7 @@ ptk.MapFactory.resolve_map_types(["Hero_Coat_BaseColor.png", "Hero_Coat_Roughnes
 # {"Hero_Coat_BaseColor.png": "Base_Color", "Hero_Coat_Roughness.png": "Roughness"}
 ```
 
-All three surfaces are runtime-extensible — new map types, workflow handlers, and conversions register without touching the engine ([worked example](../examples/texture_factory_extensibility_example.py)). The Qt panels that drive these engines interactively — **Map Converter**, **Map Packer**, **Map Compositor** — are [tentacle](https://github.com/m3trik/tentacle)'s standalone panels; pythontk itself stays UI-agnostic.
+All three surfaces are runtime-extensible — new map types, workflow handlers, and conversions register without touching the engine ([worked example](../examples/texture_factory_extensibility_example.py)). The Qt panels that drive these engines interactively — **Map Converter**, **Map Packer**, **Map Compositor** — are [extapps](https://github.com/m3trik/extapps)' `texture_maps` apps (`converter`, `packer`, `compositor`); pythontk itself stays UI-agnostic.
 
 ### Capture ingest — sharpest-frame extraction & image curation
 

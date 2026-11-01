@@ -6,7 +6,7 @@ tinted -- is their sum, predicted in milliseconds and held up against the refere
 mix looks right it is saved as a light rig a DCC builds and bakes for real.
 
 **Nav**: [← pythontk docs](README.md) · Related: [Live WebXR preview](webxr_preview.md) (the
-viewer a look match is judged in) · panel: [tentacle](https://github.com/m3trik/tentacle)
+viewer a look match is judged in) · panel: [extapps `look_match`](https://github.com/m3trik/extapps/tree/main/extapps/look_match)
 
 ---
 
@@ -53,7 +53,7 @@ platform's trash, where a mix can be restored.
 
 ## The panel
 
-**Look Match** (a tentacle standalone panel) is the panel over all of this. Open a session from the *Session*
+**Look Match** (extapps' `look_match` app) is the panel over all of this. Open a session from the *Session*
 combo's option box; the panel loads its layers off the UI thread and keeps the session it had
 open usable meanwhile.
 

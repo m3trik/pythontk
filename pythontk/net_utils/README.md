@@ -29,7 +29,7 @@ Both ends of one protocol, deliberately co-located so the wire format cannot dri
 
   **Stdlib-only, no pythontk imports — by contract.** Installed plugin payloads (mayatk/blendertk's `marmoset_rpc` / `substance_rpc`) carry a verbatim copy as `_rpc_core.py`, staged by `m3trik/scripts/sync_rpc_core.py` (`--check` is a drift CI gate). Never hand-edit a staged copy — edit `plugin_core.py` and re-run the sync.
 - **`installer.py` — `PluginInstaller`** — install *strategy* only (the adapter resolves the destination): symlink first (zero drift, live edits), `copytree` fallback. Because the fallback is a snapshot, installs are **content**-checked, not presence-checked — otherwise a machine without symlink rights keeps serving the ops it shipped with and an update surfaces as "unknown op". Bytecode is filtered (the host DCC's Python may not match the workspace Python).
-- **`job.py` — `RpcJob`** — one-shot batch pipeline over an `RpcClient`: ping once, run every `Call`, capture per-call ok/value/error (`stop_on_error` to short-circuit). Deliberately does not auto-launch the host.
+- **`job.py` — `RpcJob`** — one-shot batch pipeline over an `RpcClient`: ping once, run every `RpcJob.Call`, capture per-call ok/value/error as an `RpcJob.Result` (`stop_on_error` to short-circuit); both value types are reached through the class. Deliberately does not auto-launch the host.
 
 ## Links
 
