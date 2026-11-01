@@ -206,7 +206,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `core_utils/engines/scene_export/export_profile.py` — The Scene Exporter panels' shared contract, written once.
 - `class ExportProfile`
-  - methods: legal_name, widget_key, run_config, optimize_textures_tasks, texture_size_limit_bytes, strip_deliverable_extension, fold_legacy_regex, fold_legacy_naming, resolve_output_path, naming_report, scoped_tables, task_order, unimplemented, optimize_textures_options, texture_file_type_options, baked_reflections_default, glb_options, glb_defaults, frame_rate_options
+  - methods: legal_name, widget_key, run_config, optimize_textures_tasks, retired_row_notes, retired_row_keys, texture_size_limit_bytes, strip_deliverable_extension, fold_legacy_regex, fold_legacy_naming, resolve_output_path, naming_report, scoped_tables, task_order, unimplemented, optimize_textures_options, texture_file_type_options, baked_reflections_default, glb_options, glb_defaults, frame_rate_options
 - `class ExportRun`
   - methods: glb_only, create_glb, usd, rendering, baked_reflection_level, replace, clip_mode, with_tasks, glb_max_size, glb_texture_params, from_tasks, for_glb
 
@@ -272,6 +272,8 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
   - methods: export_cancelled, confirm, decide_check_failure, check_label, check_failure_html, confirm_check_override, definition_tables, run_config_from_values, note_retired_preset_rows, note_retired_panel_state, migrate_legacy_regex, resolve_export_dir, log_file_path, generate_log_file_path, setup_file_logging, close_file_handlers
 
 ### `core_utils/engines/scene_export/scene_records.py` — Scene records -- every piece of tool-authored scene metadata, declared once.
+- `class NodeNames`
+  - methods: leaf
 - `class Scope(str, Enum)`
 - `class Kind(str, Enum)`
 - `class Merge(str, Enum)`
@@ -429,7 +431,9 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
   - methods: swap_up_axis, encode, decode, merge, section_out, section_in, merge_record, respell_record
 
 ### `core_utils/engines/textures/emissive_groups.py` — Emissive groups: named face sets that gate emissive regions at runtime.
-- `class EmissiveGroupsAdapter(Protocol)`
+- `class EmissiveGroupsHost(Protocol)`
+  - methods: faces, add_members, remove_members, members, select, membership_stores, carrier_weights, weight_exists, ensure_weight, delete_weight, sync_weight, key_weight, foreign_color_sets, write_colors, uv_triangles, mask_path, object_names, face_count, mesh, merge_stores, discard_stores, publish, extra_warnings
+- `class PureEmissiveGroupsHost`
   - methods: faces, add_members, remove_members, members, select, membership_stores, carrier_weights, weight_exists, ensure_weight, delete_weight, sync_weight, key_weight, foreign_color_sets, write_colors, uv_triangles, mask_path, object_names, face_count, mesh, merge_stores, discard_stores, publish, extra_warnings
 - `class EmissiveGroupsModel(_EmissiveGroupsModelInternal, pythontk.LoggingMixin, pythontk.HelpMixin)`
   - methods: add_group, remove_group, list_groups, weight_attrs, select_group, set_default, compact_slots, make_weights_keyable, remove_keyable_weights, key_weight, validate, bake_vertex_colors, bake_mask, transfer_out, transfer_in, merge_carrier, discard_carrier, export_record, refresh_export_metadata
@@ -783,7 +787,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `file_utils/file_dependencies.py` — File dependencies -- files a record names by *name*, found where they are NOW.
 - `class FileDependencies(LoggingMixin)`
-  - methods: claims, strangers, remove_superseded, superseded, set_aside, written_here, writer_gone, find_files, walk, on_disk, same_content, choose, candidates, resolve, search_dirs, keep_read_elsewhere, copy_files, relocate, reference_bytes, scan_references, open_decompressed
+  - methods: file_name, spelled, claims, strangers, remove_superseded, superseded, set_aside, written_here, writer_gone, find_files, walk, on_disk, same_content, choose, candidates, resolve, search_dirs, keep_read_elsewhere, copy_files, relocate, reference_bytes, scan_references, open_decompressed
 
 ### `file_utils/file_naming.py` — Batch renaming: a dry-run-aware plan executor and a file-system engine.
 - `class RenamePlan(LoggingMixin)`
@@ -826,7 +830,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 ### `file_utils/mesh_convert/fbx_file.py` — Zero-dependency binary-FBX reader: header, node records, objects, takes.
 - constants: FBX_MAGIC
 - `class FbxFile(_FbxFileInternal)`
-  - methods: load, is_fbx, section, iter_objects, objects_census, object_names, object_name, take_names, materials, user_properties, user_property_items, take_curves, take_spans, take_keys, take_layout, connections
+  - methods: load, is_fbx, section, iter_objects, objects_census, object_names, display_name, object_name, take_names, materials, user_properties, user_property_items, take_curves, take_spans, take_keys, take_samplers, take_layout, connections
 
 ### `file_utils/mesh_convert/fbx_media.py` — Rewrite the payload of a binary FBX -- no DCC, no FBX SDK.
 - `class FbxMedia(_FbxMediaInternal)`
@@ -892,7 +896,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `file_utils/scene_listing.py` — A project's scene files as a scene browser lists and saves them -- pure, host-free.
 - `class SceneListing`
-  - methods: display_name, split_patterns, text_matches_filter, matches_notes_filter, scenes_folder, format_name, strip_all_suffixes, normalize_structure_pattern, default_save_name, save_target, filter_by_folder_structure
+  - methods: display_name, split_patterns, text_matches_filter, matches_notes_filter, scenes_folder, format_name, strip_all_suffixes, normalize_structure_pattern, default_save_name, save_target, filter_by_folder_structure, rows
 
 ### `file_utils/scene_notes.py` — Per-scene notes kept with the project -- one file per project, any host.
 - `class SceneNotes(LoggingMixin)`
@@ -928,7 +932,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 ### `file_utils/workspace.py` — Shared project-workspace model + ``workspace.mel`` codec.
 - constants: WORKSPACE_MARKER, DEFAULT_FILE_RULES, RULE_NICE_NAMES, SCENE_RULES
 - `class Workspace(_WorkspaceInternal)`
-  - methods: marker_path, is_marked, load, save, create, promote, resolve, resolve_dir, scene_dir, source_images_dir, cache_dir, movie_dir, images_dir, export_dir, backup_dir, relative, absolute, find, find_containing, for_path, for_scene, parse_workspace_mel, write_workspace_mel
+  - methods: marker_path, is_marked, load, save, create, promote, resolve, resolve_dir, scene_dir, source_images_dir, cache_dir, movie_dir, images_dir, export_dir, export_name, export_path, backup_dir, relative, absolute, find, find_containing, for_path, for_scene, parse_workspace_mel, write_workspace_mel
 - `class WorkspaceTemplates(object)`
   - methods: store, list, rules, rules_from, save, delete
 
@@ -1074,6 +1078,16 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class UvTransfer(HelpMixin)`
   - methods: build, transfer, transfer_normals, pad, merge_layouts, layout_jobs, layout_overlaps, output_labels, transfer_materials, in_place_paths, concatenation_order, find_combined, layouts_match, remap_lightmap, resample_lightmaps, dominant_source, normal_convention, load_map, save_map, triangle_frames
 
+### `geo_utils/uv/transfer_run.py` — A Transfer run -- UVs OR textures, source -> targets -- written once for both hosts.
+- `class TransferHost(Protocol)`
+  - methods: selection_sides, face_materials, material_maps, pair_sources, default_name, transfer_uvs, transfer_uvs_to_similar, texture_transfer, has_lightmap, transfer_lightmaps, undo_chunk
+- `class PureTransferHost`
+  - methods: selection_sides, face_materials, material_maps, pair_sources, default_name, transfer_uvs, transfer_uvs_to_similar, texture_transfer, has_lightmap, transfer_lightmaps, undo_chunk
+- `class TransferResult`
+  - methods: map_count, maps_folder, resampled, produced
+- `class TransferRun`
+  - methods: passes, resolve_auto, pair, gate, path_key, read_files, split_written, run
+
 ### `img_utils/_img_utils.py`
 - `class ImageFormat(NamedTuple)`
 - `class ImgUtils(_ImgHeaderInternal, _ImgCodecInternal, _ImgChannelInternal, _ImgFilterInternal, _ImgAtlasInternal, _ImgRasterizeInternal, _ImgColorSpaceInternal, LoggingMixin, HelpMixin)`
@@ -1108,7 +1122,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `iter_utils/_iter_utils.py`
 - `class IterUtils(HelpMixin)`
-  - methods: make_iterable, nested_depth, flatten, collapse_integer_sequence, bit_array_to_list, insert_into_dict, rindex, indices, remove_duplicates, filter_results, filter_list, filter_dict, split_list, find_flat_interior_indices, find_extrema_indices
+  - methods: make_iterable, nested_depth, flatten, collapse_integer_sequence, bit_array_to_list, insert_into_dict, values_at, rindex, indices, remove_duplicates, filter_results, filter_list, filter_dict, split_list, find_flat_interior_indices, find_extrema_indices
 
 ### `math_utils/_math_utils.py`
 - `class MathUtils(_MathClusteringInternal, _MathCurveFitInternal, HelpMixin)`
@@ -1130,7 +1144,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `math_utils/quaternion.py` — Rotation math on plain tuples -- quaternions, rotation matrices and Euler
 - `class Quaternion`
-  - methods: multiply, conjugate, normalize, rotate, from_axis_angle, from_euler, to_matrix, from_matrix, matrix_euler, arc, slerp
+  - methods: multiply, conjugate, normalize, rotate, from_axis_angle, from_euler, to_matrix, from_matrix, matrix_euler, euler_near, arc, slerp
 
 ### `math_utils/ramp_keys.py` — Render-effect key timelines -- the pulse and fade shapes, as ``(frame, value)`` pairs.
 - `class RampKeys`
@@ -1210,7 +1224,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 ### `str_utils/_str_utils.py`
 - constants: ANSI_ESCAPE_RE
 - `class StrUtils(_StrNamePatternInternal, _StrSearchInternal, _StrAffixInternal, CoreUtils)`
-  - methods: apply_name_rule, is_legal_name, illegal_name_chars, name_error, legal_name_matcher, to_legal_name, to_identifier, to_legal_filename, strip_ansi, sanitize, expand_wildcard, split_regex_modifier, apply_regex_modifier, attach_modifier, replace_placeholders, resolve_placeholders, name_pattern_context, resolve_name_pattern, replace_delimited, set_case, get_mangled_name, get_matching_hierarchy_items, split_delimited_string, get_text_between_delimiters, insert, rreplace, collapse_delimiter_runs, truncate, get_trailing_integers, natural_sort_key, find_str, find_str_and_format, strip_suffix, retain_suffix, format_suffix, strip_known_affix, strip_any_affix, common_name, infer_affix_mode, split_affix, delimit_affix, apply_affix, alpha_sequence, sequential_suffixes, resolve_name_collisions, time_stamp
+  - methods: apply_name_rule, is_legal_name, illegal_name_chars, name_error, legal_name_matcher, to_legal_name, to_identifier, to_legal_filename, strip_ansi, sanitize, expand_wildcard, split_regex_modifier, apply_regex_modifier, attach_modifier, replace_placeholders, resolve_placeholders, name_pattern_context, resolve_name_pattern, replace_delimited, set_case, get_mangled_name, get_matching_hierarchy_items, split_delimited_string, get_text_between_delimiters, insert, rreplace, collapse_delimiter_runs, truncate, get_trailing_integers, natural_sort_key, find_str, find_str_and_format, strip_suffix, retain_suffix, format_suffix, strip_known_affix, strip_any_affix, common_name, infer_affix_mode, split_affix, delimit_affix, apply_affix, alpha_sequence, sequential_suffixes, sequence_names, resolve_name_collisions, time_stamp
 
 ### `str_utils/fuzzy_matcher.py`
 - `class FuzzyMatcher`
@@ -1249,4 +1263,4 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class SequenceEncoder(LoggingMixin)`
   - methods: sequence_fps, sequence_name, encode_sequence
 - `class SequenceExporter(SequenceEncoder)`
-  - methods: available_targets, scene_name, scene_fps, resolve_frame_range, capture_sequence, capture_still, export
+  - methods: available_targets, scene_name, scene_fps, default_output_base, split_output_base, resolve_frame_range, capture_sequence, capture_still, export

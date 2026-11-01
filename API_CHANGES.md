@@ -24,7 +24,7 @@ _Deprecated aliases whose window ran out._
 - `core_utils/engines/shots/manifest/manifest_model.py::ManifestModel.asset_column`
 - `core_utils/engines/shots/manifest/manifest_model.py::ManifestModel.column_clipboard`
 
-## Added (323)
+## Added (401)
 
 - `audio_utils/_audio_utils.py::AudioUtils.media_digests(cls, events: Iterable[Mapping[str, Any]], files: Mapping[str, bytes]) -> Dict[str, str]`
 - `core_utils/engines/key_stash/key_stash_model.py::KeyStash.merge_carrier(cls, carriers: Any, other: Dict[Any, Any], ctx: Any) -> None`
@@ -55,6 +55,8 @@ _Deprecated aliases whose window ran out._
 - `core_utils/engines/lighting/look_match/session.py::LookSession.mixes(cls, path: str, data: Mapping[str, Any]) -> PresetStore`
 - `core_utils/engines/scene_export/bake_baseline.py::BakeBaseline.atlas_files(cls, markers: Mapping[str, Mapping[str, Any]], path_of: Mapping[str, str], record: Mapping[str, Any], group_of: Callable[[List[str]], Mapping[str, str]], objects: Sequence[str] = ()) -> Optional['BakeBaseline.AtlasFiles']`
 - `core_utils/engines/scene_export/bake_baseline.py::BakeBaseline.keep_baked(cls, record: Any, before: Any, objects: Iterable[str]) -> Dict[str, Any]`
+- `core_utils/engines/scene_export/export_profile.py::ExportProfile.retired_row_keys(cls, task_definitions: Mapping[str, Mapping[str, Any]], check_definitions: Mapping[str, Mapping[str, Any]]) -> Tuple[str, ...]`
+- `core_utils/engines/scene_export/export_profile.py::ExportProfile.retired_row_notes(cls, stored: Mapping[str, Any], task_definitions: Mapping[str, Mapping[str, Any]], check_definitions: Mapping[str, Mapping[str, Any]]) -> List[Tuple[str, str]]`
 - `core_utils/engines/scene_export/export_snapshot.py::ExportContext.narrowed(self, spec: RecordSpec, payload: Any) -> Any`
 - `core_utils/engines/scene_export/export_snapshot.py::ExportContext.ships(self, name: Any) -> bool`
 - `core_utils/engines/scene_export/export_snapshot.py::ExportContext.unit(self, scene_unit: Callable[[], float]) -> float`
@@ -74,6 +76,8 @@ _Deprecated aliases whose window ran out._
 - `core_utils/engines/scene_export/scene_exporter.py::SceneExporterBase.note_retired_panel_state(self, store: Any) -> None`
 - `core_utils/engines/scene_export/scene_exporter.py::SceneExporterBase.note_retired_preset_rows(self, name: str, stored: Optional[Dict[str, Any]]) -> None`
 - `core_utils/engines/scene_export/scene_exporter.py::SceneExporterBase.resolve_export_dir(self, export_dir: Optional[str]) -> str`
+- `core_utils/engines/scene_export/scene_records.py::NodeNames(class)`
+- `core_utils/engines/scene_export/scene_records.py::NodeNames.leaf(name: str) -> str`
 - `core_utils/engines/scene_export/scene_records.py::RecordSpec.narrowed(self, payload: Any, nodes: Iterable[str]) -> Any`
 - `core_utils/engines/scene_export/scene_records.py::SceneRecords.peek_entry(entries: Optional[List[dict]], entry_id: Optional[str] = None) -> Optional[dict]`
 - `core_utils/engines/scene_export/scene_records.py::SceneRecords.pop_entry(entries: Optional[List[dict]], entry_id: Optional[str] = None) -> Optional[dict]`
@@ -162,30 +166,30 @@ _Deprecated aliases whose window ran out._
 - `core_utils/engines/shots/shot_report.py::ShotReport.scope_label(cls, scope: str) -> str`
 - `core_utils/engines/shots/shot_sequencer.py::ShotSequencer.keyed_transforms(self, start: float, end: float, **kwargs) -> List[str]`
 - `core_utils/engines/shots/shot_sequencer.py::ShotSequencer.source_shot_id(self, seq: Dict[str, Any]) -> Optional[int]`
-- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsAdapter(class)`
-- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsAdapter.add_members(self, store: str, face_map: FaceMap) -> None`
-- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsAdapter.carrier_weights(self, prefix: str) -> List[str]`
-- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsAdapter.delete_weight(self, attr: str) -> bool`
-- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsAdapter.discard_stores(self, stores: List[str], ctx) -> None`
-- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsAdapter.ensure_weight(self, attr: str, default: float) -> str`
-- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsAdapter.extra_warnings(self) -> List[str]`
-- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsAdapter.face_count(self, obj: str) -> int`
-- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsAdapter.faces(self, faces=None) -> FaceMap`
-- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsAdapter.foreign_color_sets(self, objects: List[str], color_set: str) -> Dict[str, List[str]]`
-- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsAdapter.key_weight(self, attr: str, value: Optional[float], frame: Optional[float]) -> str`
-- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsAdapter.mask_path(self, suffix: str) -> str`
-- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsAdapter.members(self, store: str) -> Optional[FaceMap]`
-- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsAdapter.membership_stores(self, prefix: str) -> Iterable[Tuple[str, str]]`
-- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsAdapter.merge_stores(self, stores: List[str], ctx) -> None`
-- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsAdapter.mesh(self, name: str) -> Optional[str]`
-- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsAdapter.object_names(self, objects) -> List[str]`
-- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsAdapter.publish(self, records: Mapping[Any, Any]) -> None`
-- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsAdapter.remove_members(self, store: str) -> None`
-- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsAdapter.select(self, face_map: FaceMap) -> None`
-- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsAdapter.sync_weight(self, attr: str, value: float) -> None`
-- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsAdapter.uv_triangles(self, obj: str, indices: List[int], uv_set: Optional[str]) -> list`
-- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsAdapter.weight_exists(self, attr: str) -> bool`
-- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsAdapter.write_colors(self, obj: str, channels: Mapping[int, List[float]], color_set: str) -> None`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsHost(class)`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsHost.add_members(self, store: str, face_map: FaceMap) -> None`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsHost.carrier_weights(self, prefix: str) -> List[str]`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsHost.delete_weight(self, attr: str) -> bool`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsHost.discard_stores(self, stores: List[str], ctx) -> None`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsHost.ensure_weight(self, attr: str, default: float) -> str`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsHost.extra_warnings(self) -> List[str]`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsHost.face_count(self, obj: str) -> int`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsHost.faces(self, faces=None) -> FaceMap`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsHost.foreign_color_sets(self, objects: List[str], color_set: str) -> Dict[str, List[str]]`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsHost.key_weight(self, attr: str, value: Optional[float], frame: Optional[float]) -> str`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsHost.mask_path(self, suffix: str) -> str`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsHost.members(self, store: str) -> Optional[FaceMap]`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsHost.membership_stores(self, prefix: str) -> Iterable[Tuple[str, str]]`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsHost.merge_stores(self, stores: List[str], ctx) -> None`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsHost.mesh(self, name: str) -> Optional[str]`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsHost.object_names(self, objects) -> List[str]`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsHost.publish(self, records: Mapping[Any, Any]) -> None`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsHost.remove_members(self, store: str) -> None`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsHost.select(self, face_map: FaceMap) -> None`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsHost.sync_weight(self, attr: str, value: float) -> None`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsHost.uv_triangles(self, obj: str, indices: List[int], uv_set: Optional[str]) -> list`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsHost.weight_exists(self, attr: str) -> bool`
+- `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsHost.write_colors(self, obj: str, channels: Mapping[int, List[float]], color_set: str) -> None`
 - `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsModel(class)`
 - `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsModel.add_group(cls, name: str, faces=None, default: float = 1.0) -> str`
 - `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsModel.bake_mask(cls, output_path: Optional[str] = None, resolution: int = 512, padding_px: int = 4, uv_set: Optional[str] = None) -> dict`
@@ -206,6 +210,30 @@ _Deprecated aliases whose window ran out._
 - `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsModel.transfer_out(cls, ctx: 'ptk.TransferContext') -> Optional[dict]`
 - `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsModel.validate(cls) -> List[str]`
 - `core_utils/engines/textures/emissive_groups.py::EmissiveGroupsModel.weight_attrs(cls) -> Dict[str, str]`
+- `core_utils/engines/textures/emissive_groups.py::PureEmissiveGroupsHost(class)`
+- `core_utils/engines/textures/emissive_groups.py::PureEmissiveGroupsHost.add_members(self, store: str, face_map: FaceMap) -> None`
+- `core_utils/engines/textures/emissive_groups.py::PureEmissiveGroupsHost.carrier_weights(self, prefix: str) -> List[str]`
+- `core_utils/engines/textures/emissive_groups.py::PureEmissiveGroupsHost.delete_weight(self, attr: str) -> bool`
+- `core_utils/engines/textures/emissive_groups.py::PureEmissiveGroupsHost.discard_stores(self, stores: List[str], ctx) -> None`
+- `core_utils/engines/textures/emissive_groups.py::PureEmissiveGroupsHost.ensure_weight(self, attr: str, default: float) -> str`
+- `core_utils/engines/textures/emissive_groups.py::PureEmissiveGroupsHost.extra_warnings(self) -> List[str]`
+- `core_utils/engines/textures/emissive_groups.py::PureEmissiveGroupsHost.face_count(self, obj: str) -> int`
+- `core_utils/engines/textures/emissive_groups.py::PureEmissiveGroupsHost.faces(self, faces=None) -> FaceMap`
+- `core_utils/engines/textures/emissive_groups.py::PureEmissiveGroupsHost.foreign_color_sets(self, objects: List[str], color_set: str) -> Dict[str, List[str]]`
+- `core_utils/engines/textures/emissive_groups.py::PureEmissiveGroupsHost.key_weight(self, attr: str, value: Optional[float], frame: Optional[float]) -> str`
+- `core_utils/engines/textures/emissive_groups.py::PureEmissiveGroupsHost.mask_path(self, suffix: str) -> str`
+- `core_utils/engines/textures/emissive_groups.py::PureEmissiveGroupsHost.members(self, store: str) -> Optional[FaceMap]`
+- `core_utils/engines/textures/emissive_groups.py::PureEmissiveGroupsHost.membership_stores(self, prefix: str) -> Iterable[Tuple[str, str]]`
+- `core_utils/engines/textures/emissive_groups.py::PureEmissiveGroupsHost.merge_stores(self, stores: List[str], ctx) -> None`
+- `core_utils/engines/textures/emissive_groups.py::PureEmissiveGroupsHost.mesh(self, name: str) -> Optional[str]`
+- `core_utils/engines/textures/emissive_groups.py::PureEmissiveGroupsHost.object_names(self, objects) -> List[str]`
+- `core_utils/engines/textures/emissive_groups.py::PureEmissiveGroupsHost.publish(self, records: Mapping[Any, Any]) -> None`
+- `core_utils/engines/textures/emissive_groups.py::PureEmissiveGroupsHost.remove_members(self, store: str) -> None`
+- `core_utils/engines/textures/emissive_groups.py::PureEmissiveGroupsHost.select(self, face_map: FaceMap) -> None`
+- `core_utils/engines/textures/emissive_groups.py::PureEmissiveGroupsHost.sync_weight(self, attr: str, value: float) -> None`
+- `core_utils/engines/textures/emissive_groups.py::PureEmissiveGroupsHost.uv_triangles(self, obj: str, indices: List[int], uv_set: Optional[str]) -> list`
+- `core_utils/engines/textures/emissive_groups.py::PureEmissiveGroupsHost.weight_exists(self, attr: str) -> bool`
+- `core_utils/engines/textures/emissive_groups.py::PureEmissiveGroupsHost.write_colors(self, obj: str, channels: Mapping[int, List[float]], color_set: str) -> None`
 - `core_utils/handoff/app_handoff.py::HandoffBridge.scope_objects(self, scope: str = HandoffScope.SELECTED) -> List[Any]`
 - `core_utils/package_manager.py::PackageManager.metadata_version(name: str) -> Optional[str]`
 - `core_utils/package_requirement.py::PackageRequirement(class)`
@@ -244,13 +272,17 @@ _Deprecated aliases whose window ran out._
 - `file_utils/file_collect.py::PureCollectHost.stored_path(self, node: Any) -> str`
 - `file_utils/file_dependencies.py::FileDependencies.candidates(cls, names: Iterable[str], search_dirs: Iterable[str] = (), walk_root: str = '', find_files: Optional[Callable[[List[str], str], List[str]]] = None) -> Dict[str, List[str]]`
 - `file_utils/file_dependencies.py::FileDependencies.choose(cls, paths: Iterable[str]) -> Tuple[Optional[str], List[str]]`
+- `file_utils/file_dependencies.py::FileDependencies.file_name(path: Any) -> str`
 - `file_utils/file_dependencies.py::FileDependencies.keep_read_elsewhere(deps: Iterable[Dict[str, Any]], claims: Mapping[str, Any], reader: Any) -> List[str]`
 - `file_utils/file_dependencies.py::FileDependencies.on_disk(path: str) -> bool`
 - `file_utils/file_dependencies.py::FileDependencies.same_content(cls, path_a: str, path_b: str) -> bool`
+- `file_utils/file_dependencies.py::FileDependencies.spelled(path: str) -> str`
 - `file_utils/file_dependencies.py::FileDependencies.strangers(folder: str, stem: str, ext: str, claims: Mapping[str, Any], wrote: Callable[[str], bool]) -> Set[str]`
 - `file_utils/file_naming.py::RenamePlan.predict(cls, plan: Sequence[PlanEntry], scopes: Callable[[object], Tuple[Sequence[object], Sequence[object]]], names: Callable[[object], Optional[Sequence[str]]], uniquify: Callable[[str, set], str]) -> List[str]`
 - `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.fix_glb_nonfinite_keys(cls, glb: GlbTarget) -> Dict[str, int]`
 - `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.restore_glb_rotations(cls, glb: GlbTarget, fbx: str, fps: Optional[float] = None) -> Dict[str, int]`
+- `file_utils/mesh_convert/fbx_file.py::FbxFile.display_name(raw: Any) -> Optional[str]`
+- `file_utils/mesh_convert/fbx_file.py::FbxFile.take_samplers(self, properties: Collection[str] = (), user: bool = False, kind: str = 'Model') -> Dict[str, Dict[Tuple[str, str, str], Callable[[int], float]]]`
 - `file_utils/mesh_convert/fbx_media.py::FbxMedia.legacy_material_values(entry: Mapping[str, Any]) -> Dict[str, Tuple[float, ...]]`
 - `file_utils/mesh_convert/fbx_media.py::FbxMedia.repair_null_normals(cls, src: str, dst: Optional[str] = None) -> Dict[str, int]`
 - `file_utils/mesh_convert/fbx_media.py::FbxMedia.state_materials(cls, src: str, dst: Optional[str] = None) -> Dict[str, Any]`
@@ -263,11 +295,14 @@ _Deprecated aliases whose window ran out._
 - `file_utils/scene_listing.py::SceneListing.format_name(name: str, case_style: str = 'None', suffix: str = '') -> str`
 - `file_utils/scene_listing.py::SceneListing.matches_notes_filter(cls, notes_text: str, filter_text: str, ignore_case: bool = True) -> bool`
 - `file_utils/scene_listing.py::SceneListing.normalize_structure_pattern(pattern: Optional[str]) -> str`
+- `file_utils/scene_listing.py::SceneListing.rows(cls, files: Iterable[str], workspace: str, extensions: Iterable[str], *, suffix: str = '', filter_suffix: bool = False, structure: str = '', references: Sequence[str] = (), foreign: Sequence[str] = (), foreign_extensions: Iterable[str] = (), hide_extension: bool = False, hide_suffix: bool = False) -> 'SceneListing.Rows'`
 - `file_utils/scene_listing.py::SceneListing.save_target(cls, workspace: str, name: str, case_style: str = 'None', suffix: str = '', pattern: str = '', extension: str = '') -> str`
 - `file_utils/scene_listing.py::SceneListing.scenes_folder(workspace: str) -> str`
 - `file_utils/scene_listing.py::SceneListing.split_patterns(cls, text: str) -> List[str]`
 - `file_utils/scene_listing.py::SceneListing.strip_all_suffixes(base: str, suffix: str) -> str`
 - `file_utils/scene_listing.py::SceneListing.text_matches_filter(text: str, filter_patterns: Sequence[str], ignore_case: bool = True) -> bool`
+- `file_utils/workspace.py::Workspace.export_name(scene_path: Optional[str], extension: str) -> str`
+- `file_utils/workspace.py::Workspace.export_path(self, scene_path: Optional[str], extension: str, create: bool = False) -> str`
 - `file_utils/workspace_map.py::PureWorkspaceMapHost(class)`
 - `file_utils/workspace_map.py::PureWorkspaceMapHost.create_workspace(root: str) -> Optional[Workspace]`
 - `file_utils/workspace_map.py::PureWorkspaceMapHost.current_workspace() -> str`
@@ -307,10 +342,50 @@ _Deprecated aliases whose window ran out._
 - `geo_utils/probe_placement.py::ProbeMesh(class)`
 - `geo_utils/probe_placement.py::ProbeMesh.intersect(self, payload: Any, origin: Sequence[float], direction: Sequence[float], far: float) -> Optional[Tuple[float, Vec, Any]]`
 - `geo_utils/probe_placement.py::ProbeMesh.normal(self, payload: Any, face: Any) -> Vec`
+- `geo_utils/uv/transfer_run.py::PureTransferHost(class)`
+- `geo_utils/uv/transfer_run.py::PureTransferHost.default_name(self, nodes)`
+- `geo_utils/uv/transfer_run.py::PureTransferHost.face_materials(self, mesh)`
+- `geo_utils/uv/transfer_run.py::PureTransferHost.has_lightmap(self, mesh)`
+- `geo_utils/uv/transfer_run.py::PureTransferHost.material_maps(self, material)`
+- `geo_utils/uv/transfer_run.py::PureTransferHost.pair_sources(self, targets, sources)`
+- `geo_utils/uv/transfer_run.py::PureTransferHost.selection_sides(self, mode, stored)`
+- `geo_utils/uv/transfer_run.py::PureTransferHost.texture_transfer(self)`
+- `geo_utils/uv/transfer_run.py::PureTransferHost.transfer_lightmaps(self, targets, source, **options)`
+- `geo_utils/uv/transfer_run.py::PureTransferHost.transfer_uvs(self, sources, targets)`
+- `geo_utils/uv/transfer_run.py::PureTransferHost.transfer_uvs_to_similar(self, source, candidates, tolerance)`
+- `geo_utils/uv/transfer_run.py::PureTransferHost.undo_chunk(self, name)`
+- `geo_utils/uv/transfer_run.py::TransferHost(class)`
+- `geo_utils/uv/transfer_run.py::TransferHost.default_name(self, nodes: Sequence) -> str`
+- `geo_utils/uv/transfer_run.py::TransferHost.face_materials(self, mesh) -> Tuple[list, Any]`
+- `geo_utils/uv/transfer_run.py::TransferHost.has_lightmap(self, mesh) -> bool`
+- `geo_utils/uv/transfer_run.py::TransferHost.material_maps(self, material) -> Dict[str, str]`
+- `geo_utils/uv/transfer_run.py::TransferHost.pair_sources(self, targets: Sequence, sources: Sequence) -> Dict[Any, Any]`
+- `geo_utils/uv/transfer_run.py::TransferHost.selection_sides(self, mode: str, stored: Sequence) -> Tuple[str, Optional[list], list]`
+- `geo_utils/uv/transfer_run.py::TransferHost.texture_transfer(self) -> Any`
+- `geo_utils/uv/transfer_run.py::TransferHost.transfer_lightmaps(self, targets, source, **options) -> Dict[Any, dict]`
+- `geo_utils/uv/transfer_run.py::TransferHost.transfer_uvs(self, sources: Sequence, targets: Sequence) -> List[tuple]`
+- `geo_utils/uv/transfer_run.py::TransferHost.transfer_uvs_to_similar(self, source, candidates: Optional[Sequence], tolerance: float) -> list`
+- `geo_utils/uv/transfer_run.py::TransferHost.undo_chunk(self, name: str) -> ContextManager`
+- `geo_utils/uv/transfer_run.py::TransferResult(class)`
+- `geo_utils/uv/transfer_run.py::TransferResult.map_count(self) -> int`
+- `geo_utils/uv/transfer_run.py::TransferResult.maps_folder(self) -> str`
+- `geo_utils/uv/transfer_run.py::TransferResult.produced(self) -> bool`
+- `geo_utils/uv/transfer_run.py::TransferResult.resampled(self) -> List[str]`
+- `geo_utils/uv/transfer_run.py::TransferRun(class)`
+- `geo_utils/uv/transfer_run.py::TransferRun.gate(self, mode: str, scope: str, source: Optional[list], targets: Optional[list], do_uvs: bool, do_textures: bool) -> Tuple[Optional[list], Optional[list], Optional[list], Optional[str], str]`
+- `geo_utils/uv/transfer_run.py::TransferRun.pair(self, targets: Sequence, sources: Sequence, do_uvs: bool) -> Tuple[Optional[list], Optional[str], str]`
+- `geo_utils/uv/transfer_run.py::TransferRun.passes(cls, source_mode: str, transfer_mode: Optional[str]) -> Tuple[bool, bool]`
+- `geo_utils/uv/transfer_run.py::TransferRun.path_key(path: str) -> str`
+- `geo_utils/uv/transfer_run.py::TransferRun.read_files(self, targets: Sequence) -> Set[str]`
+- `geo_utils/uv/transfer_run.py::TransferRun.resolve_auto(self, source_meshes: Sequence, has_lightmap: Optional[Callable] = None) -> str`
+- `geo_utils/uv/transfer_run.py::TransferRun.run(self, source: str = AUTO, transfer: str = AUTO, scope: str = 'order', stored: Sequence = (), similarity: float = 0.9, lightmaps: bool = False, output_name: str = '', output_dir: Optional[str] = None, source_uv_set: Optional[str] = None, target_uv_set: Optional[str] = None, size: Optional[int] = None, supersample: int = 2, padding: int = -1, assign: bool = True, assign_prefix: str = '', assign_suffix: Optional[str] = None, assign_from: str = 'source', assign_shader_type: Optional[str] = None, progress: Optional[Callable[[str], Any]] = None) -> TransferResult`
+- `geo_utils/uv/transfer_run.py::TransferRun.split_written(cls, before: Set[str], maps: Dict[str, Dict[str, str]]) -> Tuple[List[str], List[str]]`
+- `iter_utils/_iter_utils.py::IterUtils.values_at(data: Any, path: Sequence[Any]) -> Iterator[Any]`
 - `math_utils/progression.py::ProgressionCurves.centered_offsets(cls, count: int, span: float, calculation_mode: str = 'linear', weight_bias: float = 0.5, weight_curve: float = 2.0) -> List[float]`
 - `math_utils/quaternion.py::Quaternion(class)`
 - `math_utils/quaternion.py::Quaternion.arc(cls, a: Sequence[float], b: Sequence[float]) -> Callable[[float], Quat]`
 - `math_utils/quaternion.py::Quaternion.conjugate(q: Sequence[float]) -> Quat`
+- `math_utils/quaternion.py::Quaternion.euler_near(cls, order: str, euler: Sequence[float], previous: Optional[Sequence[float]] = None) -> Vec`
 - `math_utils/quaternion.py::Quaternion.from_axis_angle(cls, axis: Union[int, Sequence[float]], degrees: float) -> Quat`
 - `math_utils/quaternion.py::Quaternion.from_euler(cls, order: str, degrees: Sequence[float]) -> Quat`
 - `math_utils/quaternion.py::Quaternion.from_matrix(m: Sequence[Sequence[float]]) -> Quat`
@@ -320,6 +395,7 @@ _Deprecated aliases whose window ran out._
 - `math_utils/quaternion.py::Quaternion.rotate(q: Sequence[float], v: Sequence[float]) -> Vec`
 - `math_utils/quaternion.py::Quaternion.slerp(cls, a: Sequence[float], b: Sequence[float], u: float) -> Quat`
 - `math_utils/quaternion.py::Quaternion.to_matrix(q: Sequence[float]) -> List[List[float]]`
+- `str_utils/_str_utils.py::StrUtils.sequence_names(names: Union[Dict[Hashable, str], Iterable[str]], order: Optional[Callable[[List[Hashable]], List[Hashable]]] = None, alphabetical: bool = False, strip_trailing_ints: bool = False, strip_defined_suffixes: bool = False, valid_suffixes: Optional[Iterable[str]] = None, independent_groups: bool = False, number_separators: str = '_') -> Dict[Hashable, str]`
 - `str_utils/_str_utils.py::StrUtils.to_identifier(name: str, replacement: str = '_') -> str`
 - `vid_utils/sequence_exporter.py::PureSequenceHost(class)`
 - `vid_utils/sequence_exporter.py::PureSequenceHost.audio_source() -> Tuple[Optional[str], float]`
@@ -334,8 +410,10 @@ _Deprecated aliases whose window ran out._
 - `vid_utils/sequence_exporter.py::PureSequenceHost.sequence_name() -> Optional[str]`
 - `vid_utils/sequence_exporter.py::PureSequenceHost.sound_source() -> Optional[str]`
 - `vid_utils/sequence_exporter.py::PureSequenceHost.warn(message: str) -> bool`
+- `vid_utils/sequence_exporter.py::SequenceExporter.default_output_base(cls, workspace: Any = None) -> str`
 - `vid_utils/sequence_exporter.py::SequenceExporter.scene_fps(cls) -> float`
 - `vid_utils/sequence_exporter.py::SequenceExporter.scene_name(cls) -> str`
+- `vid_utils/sequence_exporter.py::SequenceExporter.split_output_base(cls, text: str, workspace: Any = None) -> Tuple[str, str]`
 - `vid_utils/sequence_exporter.py::SequenceHost(class)`
 - `vid_utils/sequence_exporter.py::SequenceHost.audio_source(self) -> Tuple[Optional[str], float]`
 - `vid_utils/sequence_exporter.py::SequenceHost.capture_frames(self, exporter: 'SequenceExporter', directory: str, prefix: str, start: int, end: int, camera: Any, image_format: str, padding: int, overrides: Dict[str, Any]) -> None`
@@ -392,7 +470,7 @@ _Still resolvable at the same call site -- hoisted to a base class or re-exporte
 
 - `net_utils/preview/bridge.py::PreviewBridge.scope_objects`
 
-## Signature changed (11)
+## Signature changed (13)
 
 - `core_utils/engines/scene_export/scene_data_sidecar.py::SceneDataSidecarBase.build_clean_path_set`
   - was: `(paths) -> set`
@@ -403,6 +481,12 @@ _Still resolvable at the same call site -- hoisted to a base class or re-exporte
 - `core_utils/engines/scene_export/scene_data_sidecar.py::SceneDataSidecarBase.expand_to_descendants`
   - was: `(objects) -> list`
   - now: `(cls, objects) -> list`
+- `core_utils/engines/shots/shot_model.py::ShotStore.scene_edit`
+  - was: `(self, label: str = 'edit', snapshot: bool = True)`
+  - now: `(self, label: str = 'edit', snapshot: bool = True, on_refusal: Optional[Callable[[Exception], None]] = None)`
+- `core_utils/hierarchy_utils/hierarchy_analyzer.py::HierarchyAnalyzer.generate_diff_report`
+  - was: `(differences: List[HierarchyDifference], include_details: bool = True, max_items_per_category: int = 10) -> str`
+  - now: `(differences: List[HierarchyDifference], include_details: bool = True, max_items_per_category: Optional[int] = 10) -> str`
 - `core_utils/presets/store.py::PresetStore.delete`
   - was: `(self, name: str, *, force: bool = False) -> bool`
   - now: `(self, name: str, *, force: bool = False, trash: bool = False) -> bool`
