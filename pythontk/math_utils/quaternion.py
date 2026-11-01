@@ -18,7 +18,7 @@ changed here is a step changed in every port.
 """
 
 import math
-from typing import Callable, List, Sequence, Tuple, Union
+from typing import Callable, List, Optional, Sequence, Tuple, Union
 
 Quat = Tuple[float, float, float, float]
 Vec = Tuple[float, float, float]
@@ -176,6 +176,60 @@ class Quaternion:
         out[b] = math.degrees(angle_b)
         out[c] = math.degrees(angle_c)
         return (out[0], out[1], out[2])
+
+    @classmethod
+    def euler_near(
+        cls,
+        order: str,
+        euler: Sequence[float],
+        previous: Optional[Sequence[float]] = None,
+    ) -> Vec:
+        """The spelling of Euler *euler* (degrees, Maya's *order*) nearest
+        *previous*: the filter a keyed rotation needs, so a curve built from
+        per-key decompositions never flips.
+
+        Each rotation has a second triple (``A + 180, 180 - B, C + 180`` in
+        order) and every angle is good to a multiple of 360; of those, the
+        one nearest *previous* (summed degrees) is taken. At gimbal lock
+        (``cos`` of the middle under :attr:`GIMBAL`) only the inner and outer
+        angles' sum or difference is fixed, and a reader puts the whole turn
+        on one of them (:meth:`matrix_euler` on the outer, Maya's
+        ``MEulerRotation`` on the inner): of the splits as near *previous* as
+        any, the one nearest the reader's is taken, so a key carries the turn
+        as the key before it did -- a fixed split spiked whichever curve a
+        sweep through the lock did not ride by the whole turn for one frame.
+        With no *previous* (a first key) *euler* is returned as given.
+        """
+        e = [float(v) for v in euler]
+        if previous is None:
+            return (e[0], e[1], e[2])
+        prev = [float(v) for v in previous]
+
+        def wrapped(degrees: float) -> float:  # the shortest way round
+            return degrees - 360.0 * round(degrees / 360.0)
+
+        inner, middle, outer = (cls.AXES[axis] for axis in order)
+        if math.cos(math.radians(e[middle])) <= cls.GIMBAL:
+            # Moving the pair (t, k t) keeps the rotation: k is the middle
+            # angle's sign times the order's parity (+1 cyclic).
+            k = (1.0 if e[middle] > 0.0 else -1.0) * (
+                1.0 if (middle - inner) % 3 == 1 else -1.0
+            )
+            lo, hi = sorted(
+                (wrapped(prev[inner] - e[inner]), wrapped(k * (prev[outer] - e[outer])))
+            )
+            shift = min(max(0.0, lo), hi)
+            e[inner] += shift
+            e[outer] += k * shift
+        twin = [v + 180.0 for v in e]
+        twin[middle] = 180.0 - e[middle]
+        best, best_cost = None, None
+        for candidate in (e, twin):
+            near = [v + 360.0 * round((p - v) / 360.0) for v, p in zip(candidate, prev)]
+            cost = sum(abs(v - p) for v, p in zip(near, prev))
+            if best_cost is None or cost < best_cost:
+                best, best_cost = near, cost
+        return (best[0], best[1], best[2])
 
     @classmethod
     def arc(cls, a: Sequence[float], b: Sequence[float]) -> Callable[[float], Quat]:

@@ -112,6 +112,47 @@ class QuaternionTest(unittest.TestCase):
                 self.assertAlmostEqual(got["xyz".index(order[1])], middle, places=4)
                 self.assertLess(turn(q, Q.from_euler(order, got)), 1e-4, order)
 
+    # ------------------------------------------------------------ the filter
+    def test_euler_near_takes_the_spelling_nearest_the_last_key(self):
+        """The second triple and the 360 wraps; a first key as given."""
+        self.assertEqual(
+            Q.euler_near("xyz", (180.0, 90.0, 180.0), (0.0, 0.0, 0.0)), (0.0, 90.0, 0.0)
+        )
+        self.assertEqual(
+            Q.euler_near("xyz", (-170.0, 0.0, 0.0), (175.0, 0.0, 0.0)), (190.0, 0.0, 0.0)
+        )
+        self.assertEqual(Q.euler_near("zxy", (400.0, 10.0, -5.0)), (400.0, 10.0, -5.0))
+
+    def test_euler_near_keeps_a_sweep_through_gimbal_lock_on_its_axis(self):
+        """At the lock only the inner and outer angles' sum or difference is
+        fixed, and a reader puts the whole turn on one of them (this one's
+        matrix_euler on the outer, Maya's MEulerRotation on the inner): a key
+        takes the split the key before it carried, in every order, whichever
+        axis the sweep rides and whichever one the reader chose."""
+        for order in ORDERS:
+            inner, middle, outer = ("xyz".index(c) for c in order)
+            for lock in (90.0, -90.0):
+                for carried in (inner, outer):
+                    for reader_axis in (inner, outer):
+                        with self.subTest(order=order, lock=lock, carried=carried, reader=reader_axis):
+                            previous = None
+                            # From inside the middle's range: a first key is
+                            # taken as read.
+                            for step in (-6.0, -3.0, 0.0, 3.0, 6.0)[:: 1 if lock > 0 else -1]:
+                                want = [0.0, 0.0, 0.0]
+                                want[middle], want[carried] = lock + step, 30.0
+                                q = Q.from_euler(order, want)
+                                read = list(Q.matrix_euler(order, Q.to_matrix(q)))
+                                if step == 0.0 and reader_axis == inner:
+                                    # Maya's split: the turn on the inner angle.
+                                    k = (1 if lock > 0 else -1) * (
+                                        1 if (middle - inner) % 3 == 1 else -1
+                                    )
+                                    read[inner], read[outer] = -k * read[outer], 0.0
+                                    self.assertLess(turn(q, Q.from_euler(order, read)), 1e-9)
+                                previous = Q.euler_near(order, read, previous)
+                                self.assertClose(previous, want, places=6)
+
     # ------------------------------------------------------------- slerp
     def test_slerp_takes_the_shorter_arc_whichever_sign_it_is_given(self):
         a = Q.IDENTITY

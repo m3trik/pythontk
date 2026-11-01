@@ -779,16 +779,6 @@ class Gltf2FbxTestCase(unittest.TestCase):
             MeshConvert.gltf_to_fbx(src, dst)
 
     # ------------------------------------------------------------ math
-    def test_euler_takes_the_spelling_nearest_the_last_key(self):
-        self.assertEqual(
-            _gltf2fbx._euler_near((180.0, 90.0, 180.0), (0.0, 0.0, 0.0)),
-            (0.0, 90.0, 0.0),
-        )
-        self.assertEqual(
-            _gltf2fbx._euler_near((-170.0, 0.0, 0.0), (175.0, 0.0, 0.0)),
-            (190.0, 0.0, 0.0),
-        )
-
     def test_map_suffix_matches_the_blender_pull_rules(self):
         suffix = _gltf2fbx._map_suffix
         self.assertEqual(suffix({"Base Color", "Alpha"}), "Base_Color")

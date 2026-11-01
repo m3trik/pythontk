@@ -241,43 +241,6 @@ def _decompose(m: Sequence[float]):
     return list(m[12:15]), rot, scale
 
 
-def _wrapped_delta(degrees: float) -> float:
-    """*degrees* brought into ``[-180, 180]``: the shortest way round."""
-    return degrees - 360.0 * round(degrees / 360.0)
-
-
-def _euler_near(euler: Sequence[float], prev: Sequence[float]) -> Tuple[float, ...]:
-    """The spelling of *euler* closest to *prev* -- keyed rotation must not flip.
-
-    Each XYZ rotation has a second Euler solution, and every angle is good to
-    a multiple of 360; the key nearest the previous one keeps the curve
-    continuous where independent extraction would jump 360 degrees.
-
-    At gimbal lock (``Quaternion.matrix_euler``'s, Y at +-90) only ``X - Z``
-    (Y 90) or ``X + Z`` (Y -90) is fixed, and the reader puts the whole turn
-    on Z: of the splits as near *prev* as any, the one nearest the reader's
-    is taken, so a key carries the turn as the key before it did -- a fixed
-    split spiked whichever curve a sweep through the lock did not ride by
-    the whole turn for one frame. A first key (*prev* zero) keeps the
-    reader's.
-    """
-    x, y, z = euler
-    if math.cos(math.radians(y)) <= Quaternion.GIMBAL:
-        sign = 1.0 if y > 0.0 else -1.0
-        lo, hi = sorted(
-            (_wrapped_delta(prev[0] - x), _wrapped_delta(sign * (prev[2] - z)))
-        )
-        shift = min(max(0.0, lo), hi)
-        x, z = x + shift, z + sign * shift
-    best, best_cost = None, None
-    for cand in ((x, y, z), (x + 180.0, 180.0 - y, z + 180.0)):
-        wrapped = tuple(v + 360.0 * round((p - v) / 360.0) for v, p in zip(cand, prev))
-        cost = sum(abs(v - p) for v, p in zip(wrapped, prev))
-        if best_cost is None or cost < best_cost:
-            best, best_cost = wrapped, cost
-    return best
-
-
 class _GltfDocument(object):
     """A glTF 2.0 document -- ``.glb`` or ``.gltf`` -- with its buffers resolved."""
 
@@ -1122,7 +1085,9 @@ class _GltfToFbx(object):
             )
             s = list(node.get("scale") or (1.0, 1.0, 1.0))
         # The spelling nearest zero: (360, 90, 360) is (0, 90, 0).
-        euler = _euler_near(Quaternion.matrix_euler("xyz", rot), (0.0, 0.0, 0.0))
+        euler = Quaternion.euler_near(
+            "xyz", Quaternion.matrix_euler("xyz", rot), (0.0, 0.0, 0.0)
+        )
         return [v * _UNIT for v in t], euler, s
 
     def _model(self, name: str, kind: str, parent_id: int, t, euler, s) -> int:
@@ -1376,7 +1341,9 @@ class _GltfToFbx(object):
                 e = Quaternion.matrix_euler(
                     "xyz", Quaternion.to_matrix(Quaternion.normalize(q))
                 )
-                e = _euler_near(e, prev if prev is not None else (0.0, 0.0, 0.0))
+                e = Quaternion.euler_near(
+                    "xyz", e, prev if prev is not None else (0.0, 0.0, 0.0)
+                )
                 out.append(e)
                 prev = e
         else:
