@@ -14013,6 +14013,39 @@ class TestMaterialsRecordThroughTheConverter(unittest.TestCase):
         self.assertNotIn("orm", report)
         self.assertEqual(report["handoff"]["source"], {"application": "test"})
 
+    def test_a_map_only_the_record_names_reaches_the_glb_built_from_the_file(self):
+        """An openPBRSurface reaches the FBX as a placeholder with no map, so
+        the map its ``materials`` entry names is in the file only once the
+        dependency pass embeds it; a GLB built from the delivered file alone
+        -- no folder holding the map -- then binds it from the file itself.
+        Added: 2026-10-31"""
+        from pythontk import FbxMedia, GlbPipeline
+
+        maps = os.path.join(self.tmp, "sourceimages")
+        os.makedirs(maps)
+        with open(os.path.join(maps, "OP_Base.png"), "wb") as fh:
+            fh.write(self._png((40, 160, 220)))
+        entry = {
+            "name": "orm", "baseColorFactor": [1.0, 1.0, 1.0, 1.0],
+            "baseColorTexture": "OP_Base.png", "metallicFactor": 0.0,
+            "roughnessFactor": 0.5, "emissiveFactor": [0.0, 0.0, 0.0], "alphaMode": "OPAQUE",
+        }
+        fbx = self._stingray(maps={}, records={"materials": {"version": 1, "materials": [entry]}})
+        report = FbxMedia.embed_dependencies(fbx, search_dirs=[maps])
+        self.assertEqual(report["embedded"], ["OP_Base.png"])
+        shutil.rmtree(maps)  # the file alone
+        built = GlbPipeline.build(fbx, os.path.join(self.tmp, "alone.glb"), downsize=False)
+        with MeshConvert.open_glb(built["glb"]) as edit:
+            (mat,) = edit.materials
+            texture = mat["pbrMetallicRoughness"].get("baseColorTexture")
+            self.assertIsNotNone(texture, "the record's map did not reach the GLB")
+            # The map's own pixels (the build re-encodes it: a code value apart).
+            image = edit.image_for_texture(texture["index"])
+            for channel, value in (("R", 40), ("G", 160), ("B", 220)):
+                low, high = edit.channel_extrema(image, channel)
+                self.assertLessEqual(abs(low - value), 2, channel)
+                self.assertLessEqual(abs(high - value), 2, channel)
+
     def test_the_record_the_fbx_carries_states_the_glb_and_leaves_its_extras(self):
         """The export's statement wins over the file's own reading (an unlit
         the material cannot say), and the GLB keeps no second account of its

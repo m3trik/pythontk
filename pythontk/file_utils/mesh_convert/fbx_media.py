@@ -64,6 +64,7 @@ from typing import (
     Tuple,
 )
 
+from pythontk.core_utils.engines.scene_export.material_record import MaterialFamilies
 from pythontk.core_utils.engines.scene_export.scene_records import Scope, SceneRecords
 from pythontk.core_utils.engines.scene_export.scene_store import SceneStoreBase
 from pythontk.file_utils._file_utils import FileUtils
@@ -1464,9 +1465,13 @@ class FbxMedia(_FbxMediaInternal):
         )
 
     #: Where each scene record names a file by FILE NAME -- what a deliverable
-    #: depends on beyond the textures its materials reference: ``{record key:
-    #: (field path, ...)}``, ``"*"`` walking a list. A record that starts
-    #: naming a file adds its paths here and :meth:`embed_dependencies` ships it.
+    #: depends on: ``{record key: (field path, ...)}``, ``"*"`` walking a list.
+    #: A record that starts naming a file adds its paths here and
+    #: :meth:`embed_dependencies` ships it. The ``materials`` record's maps
+    #: are among them: the FBX exporter embeds only what a material's slots
+    #: carry, and an openPBRSurface reaches the file as a placeholder with
+    #: none, so the map its entry names reached neither Unity nor a GLB built
+    #: from the file (2026-10-31); one the exporter embedded is left as it is.
     DEPENDENCY_FIELDS: Dict[str, Tuple[Tuple[str, ...], ...]] = {
         SceneRecords.LIGHTMAPS.key: (
             ("objects", "*", "map"),
@@ -1477,6 +1482,9 @@ class FbxMedia(_FbxMediaInternal):
             ("planes", "*", "texture"),
             ("planes", "*", "atlas", "texture"),
             ("planes", "*", "horizon", "texture"),
+        ),
+        SceneRecords.MATERIALS.key: tuple(
+            ("materials", "*", field) for field in MaterialFamilies.TEXTURE_FIELDS
         ),
     }
 
@@ -1586,7 +1594,8 @@ class FbxMedia(_FbxMediaInternal):
         (:meth:`reader_records`: the scene's own record wins, a referenced
         module's names only the nodes the file carries): the lightmaps and
         the reflection probe ``lightmaps`` names, the silhouette,
-        atlas and horizon maps ``shadows`` names. In record order,
+        atlas and horizon maps ``shadows`` names, and every map ``materials``
+        names. In record order,
         each name once (compared without case); a name a manifest wrote with
         a folder (one published before 0.11.0) is its file name.
 
@@ -2383,10 +2392,13 @@ class FbxMedia(_FbxMediaInternal):
         The post-write step both Scene Exporters and the Unity hand-off run on
         an FBX deliverable. The records name their files by FILE NAME --
         ``lightmaps`` its maps and its reflection probe,
-        ``shadows`` its silhouette, atlas and horizon maps
-        (:meth:`dependencies`) -- and a lighting-only bake leaves its maps on
-        no material, so the FBX used to carry none of them: the consumer
-        copied them in by hand, or imported unlit with a silhouette shadow.
+        ``shadows`` its silhouette, atlas and horizon maps, ``materials``
+        each material's maps (:meth:`dependencies`) -- and a lighting-only
+        bake leaves its maps on no material, so the FBX used to carry none of
+        them: the consumer copied them in by hand, or imported unlit with a
+        silhouette shadow. A material's own map is usually inside already
+        (left as it is); one its slots cannot carry -- an openPBRSurface's --
+        goes in here.
         The ``audio`` record then states what went in: its ``media`` is the
         SHA-256 of each audio file the FBX now carries, by the event name that
         is its stem (:meth:`AudioUtils.media_digests

@@ -963,7 +963,7 @@ class ExportVerifier(_ExportVerifierInternal):
         """Every file the FBX's records name by file name is inside it.
 
         ``lightmaps``' maps and reflection probe, ``shadows``' silhouette,
-        atlas and horizon maps: the exporters embed each one
+        atlas and horizon maps, ``materials``' maps: the exporters embed each one
         (``FbxMedia.embed_dependencies``) and ship nothing beside the file, so
         a consumer resolves them from the FBX alone. One the file lacks is a
         Unity import without its lightmap, and a GLB built from the file

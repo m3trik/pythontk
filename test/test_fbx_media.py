@@ -2360,6 +2360,55 @@ class EmbedTestCase(unittest.TestCase):
         self.assertEqual(payloads["Lamp_Lightmap.exr"], self.files["Lamp_Lightmap.exr"])
         self.assertEqual(payloads["Box_shadow.png"], self.silhouette)
 
+    def test_the_materials_records_maps_ride_in_like_the_other_records(self):
+        """A map the ``materials`` record names that Maya's FBX exporter leaves
+        out -- an openPBRSurface's: the FBX knows no slot of it -- reached
+        neither Unity nor a GLB built from the file (2026-10-31, a Scene
+        Exporter deliverable). The pass embeds it as it does a lightmap,
+        resolved through the same folders; one the material already embeds is
+        left, one found nowhere is reported; each name once, though two
+        materials share it. Added: 2026-10-31"""
+        own = png_bytes((4, 4), "RGBA")
+        with open(os.path.join(self.maps, "OP_Base.png"), "wb") as fh:
+            fh.write(b"an openPBR colour map" + bytes(range(256)))
+
+        def entry(name, **maps):
+            return {
+                "name": name, "baseColorFactor": [1.0, 1.0, 1.0, 1.0], "metallicFactor": 0.0,
+                "roughnessFactor": 0.5, "emissiveFactor": [0.0, 0.0, 0.0],
+                "alphaMode": "OPAQUE", **maps,
+            }
+
+        record = {
+            "version": 1,
+            "materials": [
+                entry("OP_mat", baseColorTexture="OP_Base.png", normalTexture="OP_Gone.png"),
+                entry("SS_mat", baseColorTexture="SS_Own.png", roughnessTexture="OP_Base.png"),
+            ],
+        }
+        src = build_carrier_fbx(
+            os.path.join(self.dir, "materials.fbx"),
+            {"lightmaps": self.LIGHTMAPS, "materials": record},
+            media={"SS_Own.png": own},
+        )
+        named = self.NAMED[:3] + ["OP_Base.png", "SS_Own.png", "OP_Gone.png"]
+        self.assertEqual(FbxMedia.dependencies(src), named)
+        out = os.path.join(self.dir, "out.fbx")
+        with self.assertLogs("pythontk.file_utils.mesh_convert.fbx_media", "WARNING"):
+            report = FbxMedia.embed_dependencies(src, out, search_dirs=[self.maps])
+        self.assertEqual(report["named"], named)
+        self.assertIn("OP_Base.png", report["embedded"])
+        self.assertEqual(report["present"], ["SS_Own.png"])
+        self.assertEqual(report["missing"], ["OP_Gone.png"])
+        # What the GLB applier reads a map off the file by (_apply_fbx_materials).
+        read = os.path.join(self.dir, "read")
+        os.makedirs(read)
+        got = FbxMedia.extract(out, read, ["OP_Base.png", "SS_Own.png"])
+        with open(got["OP_Base.png"], "rb") as fh:
+            self.assertEqual(fh.read(), b"an openPBR colour map" + bytes(range(256)))
+        with open(got["SS_Own.png"], "rb") as fh:
+            self.assertEqual(fh.read(), own)
+
     def test_a_name_the_folders_miss_is_found_under_the_walk_root(self):
         """The folders a host records can lag the disk; the root it keeps its
         files under is walked for what they miss, and the warning names that
