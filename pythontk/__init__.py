@@ -126,6 +126,7 @@ DEFAULT_INCLUDE = {
     "math_utils.weights": "Weights",
     "math_utils.ramp_keys": "RampKeys",
     "math_utils.key_curve": ["KeyCurve", "CurveKey"],
+    "math_utils.quaternion": "Quaternion",
     "geo_utils.polyline": "Polyline",
     "geo_utils.pointcloud": "PointCloud",
     "geo_utils.rail_surface": "RailSurface",

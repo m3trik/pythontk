@@ -39,11 +39,11 @@ from __future__ import annotations
 
 import bisect
 import logging
-import math
 import struct
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from pythontk.file_utils.mesh_convert.glb.edit import GlbEdit
+from pythontk.math_utils.quaternion import Quaternion
 
 __all__ = ["GlbClips"]
 
@@ -135,26 +135,6 @@ class _GlbClipsInternal:
     def _lerp(a: Sequence[float], b: Sequence[float], u: float) -> Tuple[float, ...]:
         return tuple(x + (y - x) * u for x, y in zip(a, b))
 
-    @classmethod
-    def _slerp(
-        cls, a: Sequence[float], b: Sequence[float], u: float
-    ) -> Tuple[float, ...]:
-        """Shortest-arc quaternion interpolation, per the glTF LINEAR rule."""
-        dot = sum(x * y for x, y in zip(a, b))
-        if dot < 0.0:
-            b = tuple(-x for x in b)
-            dot = -dot
-        if dot > 0.9995:  # nearly parallel: lerp, then renormalize
-            out = cls._lerp(a, b, u)
-        else:
-            theta = math.acos(max(-1.0, min(1.0, dot)))
-            sin_theta = math.sin(theta)
-            wa = math.sin((1.0 - u) * theta) / sin_theta
-            wb = math.sin(u * theta) / sin_theta
-            out = tuple(x * wa + y * wb for x, y in zip(a, b))
-        norm = math.sqrt(sum(x * x for x in out)) or 1.0
-        return tuple(x / norm for x in out)
-
     @staticmethod
     def _upper(times: Sequence[float], at: float) -> int:
         """Index of the key *at* interpolates toward -- always a valid pair.
@@ -191,8 +171,8 @@ class _GlbClipsInternal:
         if span <= 0:
             return tuple(values[lo])
         u = (at - times[lo]) / span
-        if quaternion:
-            return cls._slerp(values[lo], values[hi], u)
+        if quaternion:  # shortest arc, the glTF LINEAR rule for rotations
+            return Quaternion.slerp(values[lo], values[hi], u)
         return cls._lerp(values[lo], values[hi], u)
 
     # ---- slicing ------------------------------------------------------

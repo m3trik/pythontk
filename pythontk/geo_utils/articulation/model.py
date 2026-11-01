@@ -48,6 +48,8 @@ from __future__ import annotations
 import math
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
+from pythontk.math_utils.quaternion import Quaternion
+
 Vec = Tuple[float, float, float]
 Quat = Tuple[float, float, float, float]
 
@@ -64,12 +66,10 @@ _ORIGIN: Vec = (0.0, 0.0, 0.0)
 
 
 class _ArticulationModelInternal:
-    """Vector, quaternion and Euler helpers -- the part every port copies.
-
-    Quaternions are ``(x, y, z, w)``; ``a (x) b`` applies ``b`` first, so a
-    child's world rotation is ``parent (x) local``. Matrices are 3 x 3 row
-    lists for COLUMN vectors (``v' = M v``).
-    """
+    """Vector helpers -- the part every port copies, beside the rotation
+    math it shares with every other reader (:class:`Quaternion`: ``(x, y, z,
+    w)``, ``a (x) b`` applies ``b`` first, 3 x 3 row lists for COLUMN
+    vectors, Maya's rotate orders)."""
 
     @staticmethod
     def _add(a: Sequence[float], b: Sequence[float]) -> Vec:
@@ -100,93 +100,10 @@ class _ArticulationModelInternal:
         return math.sqrt(a[0] * a[0] + a[1] * a[1] + a[2] * a[2])
 
     @staticmethod
-    def _qmul(a: Sequence[float], b: Sequence[float]) -> Quat:
-        """``a (x) b``: the rotation ``b`` followed by ``a``."""
-        ax, ay, az, aw = a
-        bx, by, bz, bw = b
-        return (
-            aw * bx + ax * bw + ay * bz - az * by,
-            aw * by - ax * bz + ay * bw + az * bx,
-            aw * bz + ax * by - ay * bx + az * bw,
-            aw * bw - ax * bx - ay * by - az * bz,
-        )
-
-    @staticmethod
-    def _qconj(q: Sequence[float]) -> Quat:
-        return (-q[0], -q[1], -q[2], q[3])
-
-    @staticmethod
-    def _qnormalize(q: Sequence[float]) -> Quat:
-        n = math.sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3])
-        if n < 1.0e-12:
-            return _IDENTITY
-        return (q[0] / n, q[1] / n, q[2] / n, q[3] / n)
-
-    @classmethod
-    def _qrot(cls, q: Sequence[float], v: Sequence[float]) -> Vec:
-        """*v* rotated by the unit quaternion *q*."""
-        u = (q[0], q[1], q[2])
-        t = cls._scale(cls._cross(u, v), 2.0)
-        return cls._add(cls._add(v, cls._scale(t, q[3])), cls._cross(u, t))
-
-    @staticmethod
-    def _qaxis(axis: int, degrees: float) -> Quat:
-        """A rotation of *degrees* about the unit axis *axis* (0, 1, 2)."""
-        half = math.radians(degrees) * 0.5
-        s = math.sin(half)
-        return (
-            s if axis == 0 else 0.0,
-            s if axis == 1 else 0.0,
-            s if axis == 2 else 0.0,
-            math.cos(half),
-        )
-
-    @classmethod
-    def _euler_quat(cls, order: str, angles: Mapping[str, float]) -> Quat:
-        """The rotation of Euler *angles* (``{"rx": deg, ...}``, a missing
-        channel 0) in Maya's *order*: ``"xyz"`` applies x first, so the
-        rotation is ``Rz (x) Ry (x) Rx``."""
-        q = _IDENTITY
-        for c in order:  # innermost first; each later one is applied after
-            q = cls._qmul(cls._qaxis(_AXIS[c], angles.get("r" + c, 0.0)), q)
-        return q
-
-    @staticmethod
-    def _qmatrix(q: Sequence[float]) -> List[List[float]]:
-        x, y, z, w = q
-        return [
-            [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
-            [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
-            [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
-        ]
-
-    @staticmethod
-    def _matrix_euler(order: str, m: Sequence[Sequence[float]]) -> Dict[str, float]:
-        """Euler degrees ``{"rx", "ry", "rz"}`` of the rotation matrix *m* in
-        Maya's *order*.
-
-        *order* ``o0 o1 o2`` composes ``M = R_o2 R_o1 R_o0``. With ``a, b, c =
-        o2, o1, o0`` and ``s`` the parity of ``(a, b, c)`` (+1 cyclic), the
-        middle angle is ``asin(s M[a][c])`` and the outer two come from the
-        row and column it leaves; at gimbal lock the innermost is taken as 0
-        and the outermost absorbs the whole turn. The middle angle is always
-        in [-90, 90].
-        """
-        a, b, c = _AXIS[order[2]], _AXIS[order[1]], _AXIS[order[0]]
-        s = 1.0 if (b - a) % 3 == 1 else -1.0
-        sin_b = max(-1.0, min(1.0, s * m[a][c]))
-        angle_b = math.asin(sin_b)
-        if math.cos(angle_b) > 1.0e-6:
-            angle_a = math.atan2(-s * m[b][c], m[c][c])
-            angle_c = math.atan2(-s * m[a][b], m[a][a])
-        else:
-            angle_c = 0.0
-            angle_a = math.atan2(s * m[c][b], m[b][b])
-        out = {"rx": 0.0, "ry": 0.0, "rz": 0.0}
-        out["r" + order[2]] = math.degrees(angle_a)
-        out["r" + order[1]] = math.degrees(angle_b)
-        out["r" + order[0]] = math.degrees(angle_c)
-        return out
+    def _degrees(values: Mapping[str, float]) -> Tuple[float, float, float]:
+        """A joint's rotation channels as Euler degrees ``(x, y, z)`` -- a
+        missing channel 0 -- for :meth:`Quaternion.from_euler`."""
+        return (values.get("rx", 0.0), values.get("ry", 0.0), values.get("rz", 0.0))
 
     @classmethod
     def _euler_for(
@@ -201,7 +118,7 @@ class _ArticulationModelInternal:
         far).
 
         Every rotation has two Euler triples, ``(A, B, C)`` and ``(A + 180,
-        180 - B, C + 180)``; :meth:`_matrix_euler` returns the one whose
+        180 - B, C + 180)``; :meth:`Quaternion.matrix_euler` returns the one whose
         middle angle is within +-90. Which one is right depends on the joint:
 
         - lacking a channel, the triple that puts THAT channel at 0 -- a hinge
@@ -212,7 +129,7 @@ class _ArticulationModelInternal:
           the middle axis past 90 must not flip to the other triple halfway
           through, or the next grab starts from a jump.
         """
-        first = cls._matrix_euler(order, m)
+        first = dict(zip(ROTATE_CHANNELS, Quaternion.matrix_euler(order, m)))
         second = {
             "r" + order[2]: first["r" + order[2]] + 180.0,
             "r" + order[1]: 180.0 - first["r" + order[1]],
@@ -367,7 +284,7 @@ class ArticulationModel(_ArticulationModelInternal):
         if order not in ROTATE_ORDERS:
             raise ValueError(f"Joint {name!r}: unknown rotate order {order!r}.")
         t = tuple(float(v) for v in (spec.get("t") or _ORIGIN))
-        q = self._qnormalize(tuple(float(v) for v in (spec.get("q") or _IDENTITY)))
+        q = Quaternion.normalize(tuple(float(v) for v in (spec.get("q") or _IDENTITY)))
         slots: List[Tuple[int, str]] = []
         seen = set()
         for entry in spec.get("channels") or []:
@@ -459,9 +376,12 @@ class ArticulationModel(_ArticulationModelInternal):
         """Joint *joint*'s local ``(translation, rotation)`` at *state*."""
         spec = self.joints[joint]
         values = self._values(state, joint)
-        rotation = self._qmul(spec["q"], self._euler_quat(spec["rotate_order"], values))
+        rotation = Quaternion.multiply(
+            spec["q"],
+            Quaternion.from_euler(spec["rotate_order"], self._degrees(values)),
+        )
         slide = (values.get("tx", 0.0), values.get("ty", 0.0), values.get("tz", 0.0))
-        translation = self._add(spec["t"], self._qrot(spec["q"], slide))
+        translation = self._add(spec["t"], Quaternion.rotate(spec["q"], slide))
         return translation, rotation
 
     def pose(self, state: Sequence[float]) -> List[Tuple[Vec, Quat]]:
@@ -478,7 +398,12 @@ class ArticulationModel(_ArticulationModelInternal):
                 out.append((t, q))
             else:
                 pp, pq = out[parent]
-                out.append((self._add(pp, self._qrot(pq, t)), self._qmul(pq, q)))
+                out.append(
+                    (
+                        self._add(pp, Quaternion.rotate(pq, t)),
+                        Quaternion.multiply(pq, q),
+                    )
+                )
         return out
 
     def point(
@@ -486,7 +411,7 @@ class ArticulationModel(_ArticulationModelInternal):
     ) -> Vec:
         """*local_point* (in joint *joint*'s frame) in rig space at *state*."""
         p, q = self.world(state)[joint]
-        return self._add(p, self._qrot(q, local_point))
+        return self._add(p, Quaternion.rotate(q, local_point))
 
     def to_local(
         self, state: Sequence[float], joint: int, point: Sequence[float]
@@ -494,7 +419,7 @@ class ArticulationModel(_ArticulationModelInternal):
         """The rig-space *point* in joint *joint*'s frame at *state* -- where a
         grab records what it holds."""
         p, q = self.world(state)[joint]
-        return self._qrot(self._qconj(q), self._sub(point, p))
+        return Quaternion.rotate(Quaternion.conjugate(q), self._sub(point, p))
 
     # ---------------------------------------------------------------- inverse
     def read(
@@ -518,14 +443,18 @@ class ArticulationModel(_ArticulationModelInternal):
             if not slots:
                 continue
             spec = self.joints[index]
-            relative = self._qmul(self._qconj(spec["q"]), self._qnormalize(q))
+            relative = Quaternion.multiply(
+                Quaternion.conjugate(spec["q"]), Quaternion.normalize(q)
+            )
             angles = self._euler_for(
                 spec["rotate_order"],
-                self._qmatrix(relative),
+                Quaternion.to_matrix(relative),
                 [c for _s, c in slots if c in ROTATE_CHANNELS],
                 {c: state[s] for s, c in slots},
             )
-            slide = self._qrot(self._qconj(spec["q"]), self._sub(t, spec["t"]))
+            slide = Quaternion.rotate(
+                Quaternion.conjugate(spec["q"]), self._sub(t, spec["t"])
+            )
             for slot, channel in slots:
                 if channel in ROTATE_CHANNELS:
                     state[slot] = angles[channel]
@@ -605,11 +534,11 @@ class ArticulationModel(_ArticulationModelInternal):
         reach = self._reach(chain, local_point)
         if not wrist:
             return self._dls(current, slots, joint, local_point, target, reach)
-        rotation = self._qnormalize(rotation)
+        rotation = Quaternion.normalize(rotation)
         placed = [s for s in slots if self.channels[s] not in self._rotations(joint)]
         held = rotation
         for _ in range(self.PASSES):
-            centre = self._sub(target, self._qrot(held, local_point))
+            centre = self._sub(target, Quaternion.rotate(held, local_point))
             current = self._dls(current, placed, joint, _ORIGIN, centre, reach)
             current = self._turn(current, joint, rotation)
             held = self.world(current)[joint][1]
@@ -641,12 +570,12 @@ class ArticulationModel(_ArticulationModelInternal):
         spec = self.joints[joint]
         parent = spec["parent"]
         parent_q = _IDENTITY if parent is None else self.world(state)[parent][1]
-        frame = self._qmul(parent_q, spec["q"])
-        local = self._qmul(self._qconj(frame), rotation)
+        frame = Quaternion.multiply(parent_q, spec["q"])
+        local = Quaternion.multiply(Quaternion.conjugate(frame), rotation)
         out = list(state)
         angles = self._euler_for(
             spec["rotate_order"],
-            self._qmatrix(local),
+            Quaternion.to_matrix(local),
             ROTATE_CHANNELS,
             {c: out[s] for s, c in self._slots[joint]},
         )
@@ -670,11 +599,11 @@ class ArticulationModel(_ArticulationModelInternal):
         spec = self.joints[joint]
         parent = spec["parent"]
         parent_q = _IDENTITY if parent is None else world[parent][1]
-        frame = self._qmul(parent_q, spec["q"])
+        frame = Quaternion.multiply(parent_q, spec["q"])
         if channel in TRANSLATE_CHANNELS:
             axis = [0.0, 0.0, 0.0]
             axis[TRANSLATE_CHANNELS.index(channel)] = 1.0
-            return self._scale(self._qrot(frame, axis), reach)
+            return self._scale(Quaternion.rotate(frame, axis), reach)
         values = self._values(state, joint)
         wanted = _AXIS[channel[1]]
         # Outermost first: each rotation's axis is carried by those applied
@@ -683,9 +612,11 @@ class ArticulationModel(_ArticulationModelInternal):
             if _AXIS[c] == wanted:
                 axis = [0.0, 0.0, 0.0]
                 axis[wanted] = 1.0
-                world_axis = self._qrot(frame, axis)
+                world_axis = Quaternion.rotate(frame, axis)
                 return self._cross(world_axis, self._sub(point, world[joint][0]))
-            frame = self._qmul(frame, self._qaxis(_AXIS[c], values.get("r" + c, 0.0)))
+            frame = Quaternion.multiply(
+                frame, Quaternion.from_axis_angle(_AXIS[c], values.get("r" + c, 0.0))
+            )
         return _ORIGIN  # unreachable: every channel's axis is in the order
 
     def _unit(self, slot: int, reach: float) -> float:
@@ -782,5 +713,5 @@ class ArticulationModel(_ArticulationModelInternal):
         *local_point* on *joint* is, and how far it is from *target*."""
         world = self.world(state)
         p, q = world[joint]
-        point = self._add(p, self._qrot(q, local_point))
+        point = self._add(p, Quaternion.rotate(q, local_point))
         return world, point, self._norm(self._sub(target, point))

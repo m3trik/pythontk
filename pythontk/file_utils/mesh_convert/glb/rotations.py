@@ -68,14 +68,14 @@ from typing import (
 
 from pythontk.file_utils.mesh_convert.fbx_file import FbxFile
 from pythontk.file_utils.mesh_convert.glb.edit import GlbEdit, GlbTarget
-from pythontk.geo_utils.articulation.model import _ArticulationModelInternal as _Q
+from pythontk.math_utils.quaternion import Quaternion
 
 __all__ = ["GlbRotations"]
 
 logger = logging.getLogger(__name__)
 
 Quat = Tuple[float, float, float, float]
-_IDENTITY: Quat = (0.0, 0.0, 0.0, 1.0)
+_IDENTITY: Quat = Quaternion.IDENTITY
 
 
 class _GlbRotationsInternal:
@@ -201,25 +201,6 @@ class _GlbRotationsInternal:
             )
         return poses
 
-    @staticmethod
-    def _matrix_quat(m: Sequence[Sequence[float]]) -> Quat:
-        """The unit quaternion of rotation matrix *m* (rows, column vectors)."""
-        trace = m[0][0] + m[1][1] + m[2][2]
-        if trace > 0.0:
-            s = 2.0 * math.sqrt(trace + 1.0)
-            return (
-                (m[2][1] - m[1][2]) / s,
-                (m[0][2] - m[2][0]) / s,
-                (m[1][0] - m[0][1]) / s,
-                0.25 * s,
-            )
-        i = max(range(3), key=lambda k: m[k][k])
-        j, k = (i + 1) % 3, (i + 2) % 3
-        s = 2.0 * math.sqrt(1.0 + m[i][i] - m[j][j] - m[k][k])
-        q = [0.0, 0.0, 0.0, (m[k][j] - m[j][k]) / s]
-        q[i], q[j], q[k] = 0.25 * s, (m[j][i] + m[i][j]) / s, (m[k][i] + m[i][k]) / s
-        return (q[0], q[1], q[2], q[3])
-
     @classmethod
     def _axis_turn(cls, fbx: FbxFile) -> Optional[Quat]:
         """The turn FBX2glTF gives the root's children, bringing *fbx*'s axis
@@ -247,11 +228,7 @@ class _GlbRotationsInternal:
             - a[1] * (b[0] * c[2] - b[2] * c[0])
             + a[2] * (b[0] * c[1] - b[1] * c[0])
         )
-        return cls._matrix_quat(rows) if det > 0.5 else None
-
-    @staticmethod
-    def _euler(order: str, degrees: Sequence[float]) -> Quat:
-        return _Q._euler_quat(order, dict(zip(("rx", "ry", "rz"), degrees)))
+        return Quaternion.from_matrix(rows) if det > 0.5 else None
 
     @staticmethod
     def _vector(props: Dict[str, Sequence[Any]], name: str) -> List[float]:
@@ -270,11 +247,15 @@ class _GlbRotationsInternal:
         if active:
             index = (props.get("RotationOrder") or (0,))[0]
             order = cls.ORDERS[index] if index in range(len(cls.ORDERS)) else "xyz"
-            pre = cls._euler("xyz", cls._vector(props, "PreRotation"))
-            post = _Q._qconj(cls._euler("xyz", cls._vector(props, "PostRotation")))
-        head = _Q._qmul(lead, pre)
-        return lambda degrees: _Q._qnormalize(
-            _Q._qmul(_Q._qmul(head, cls._euler(order, degrees)), post)
+            pre = Quaternion.from_euler("xyz", cls._vector(props, "PreRotation"))
+            post = Quaternion.conjugate(
+                Quaternion.from_euler("xyz", cls._vector(props, "PostRotation"))
+            )
+        head = Quaternion.multiply(lead, pre)
+        return lambda degrees: Quaternion.normalize(
+            Quaternion.multiply(
+                Quaternion.multiply(head, Quaternion.from_euler(order, degrees)), post
+            )
         )
 
     @staticmethod

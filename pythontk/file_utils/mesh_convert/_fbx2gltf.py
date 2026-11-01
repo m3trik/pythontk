@@ -1278,6 +1278,7 @@ class _Fbx2Gltf:
         or held from the nearest at an end. A spline's repaired key keeps its
         value's place between its tangents and takes flat ones."""
         from pythontk.file_utils.mesh_convert.glb.clips import GlbClips
+        from pythontk.math_utils.quaternion import Quaternion
 
         part = group // 3 if cubic else group
         offset = part if cubic else 0
@@ -1294,7 +1295,7 @@ class _Fbx2Gltf:
                 if a is None or b is None:
                     values[k * group + i] = list(a if b is None else b)
                 elif rotation and len(a) == 4:
-                    values[k * group + i] = list(GlbClips._slerp(a, b, u))
+                    values[k * group + i] = list(Quaternion.slerp(a, b, u))
                 else:
                     values[k * group + i] = list(GlbClips._lerp(a, b, u))
             if cubic:

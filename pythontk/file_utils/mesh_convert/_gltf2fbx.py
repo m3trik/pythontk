@@ -53,6 +53,7 @@ from pythontk.file_utils.mesh_convert._fbx_writer import (
     FbxWriter,
 )
 from pythontk.file_utils.mesh_convert.glb.edit import GlbEdit
+from pythontk.math_utils.quaternion import Quaternion
 
 logger = logging.getLogger(__name__)
 
@@ -215,40 +216,14 @@ def _identity() -> List[float]:
     return [1.0 if i % 5 == 0 else 0.0 for i in range(16)]
 
 
-def _quat_matrix3(q: Sequence[float]) -> List[List[float]]:
-    """Rotation rows of quaternion ``(x, y, z, w)`` (column-vector convention)."""
-    x, y, z, w = q
-    n = math.sqrt(x * x + y * y + z * z + w * w) or 1.0
-    x, y, z, w = x / n, y / n, z / n, w / n
-    return [
-        [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
-        [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
-        [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
-    ]
-
-
 def _trs_matrix(t, q, s) -> List[float]:
-    rot = _quat_matrix3(q)
+    rot = Quaternion.to_matrix(Quaternion.normalize(q))
     m = _identity()
     for c in range(3):
         for r in range(3):
             m[c * 4 + r] = rot[r][c] * s[c]
     m[12], m[13], m[14] = t
     return m
-
-
-def _euler_xyz(rot: List[List[float]]) -> Tuple[float, float, float]:
-    """Degrees ``(x, y, z)`` for rotation rows *rot* in FBX's XYZ order
-    (``R = Rz * Ry * Rx``: X applied first)."""
-    sy = max(-1.0, min(1.0, -rot[2][0]))
-    y = math.asin(sy)
-    if abs(sy) < 0.9999999:
-        x = math.atan2(rot[2][1], rot[2][2])
-        z = math.atan2(rot[1][0], rot[0][0])
-    else:  # gimbal: fold Z into X
-        x = math.atan2(-rot[1][2], rot[1][1])
-        z = 0.0
-    return (math.degrees(x), math.degrees(y), math.degrees(z))
 
 
 def _decompose(m: Sequence[float]):
@@ -281,20 +256,6 @@ def _euler_near(euler: Sequence[float], prev: Sequence[float]) -> Tuple[float, .
         if best_cost is None or cost < best_cost:
             best, best_cost = wrapped, cost
     return best
-
-
-def _slerp(a, b, t):
-    dot = sum(x * y for x, y in zip(a, b))
-    if dot < 0.0:
-        b, dot = [-v for v in b], -dot
-    if dot > 0.9995:
-        out = [x + (y - x) * t for x, y in zip(a, b)]
-    else:
-        theta = math.acos(dot)
-        sa, sb = math.sin((1 - t) * theta), math.sin(t * theta)
-        out = [(x * sa + y * sb) / math.sin(theta) for x, y in zip(a, b)]
-    n = math.sqrt(sum(v * v for v in out)) or 1.0
-    return [v / n for v in out]
 
 
 class _GltfDocument(object):
@@ -1136,10 +1097,12 @@ class _GltfToFbx(object):
             t, rot, s = _decompose(node["matrix"])
         else:
             t = list(node.get("translation") or (0.0, 0.0, 0.0))
-            rot = _quat_matrix3(node.get("rotation") or (0.0, 0.0, 0.0, 1.0))
+            rot = Quaternion.to_matrix(
+                Quaternion.normalize(node.get("rotation") or Quaternion.IDENTITY)
+            )
             s = list(node.get("scale") or (1.0, 1.0, 1.0))
         # The spelling nearest zero: (360, 90, 360) is (0, 90, 0).
-        euler = _euler_near(_euler_xyz(rot), (0.0, 0.0, 0.0))
+        euler = _euler_near(Quaternion.matrix_euler("xyz", rot), (0.0, 0.0, 0.0))
         return [v * _UNIT for v in t], euler, s
 
     def _model(self, name: str, kind: str, parent_id: int, t, euler, s) -> int:
@@ -1359,11 +1322,10 @@ class _GltfToFbx(object):
                 for p0, m0, p1, m1 in zip(v0, b0, v1, a1)
             ]
             if path == "rotation":
-                length = math.sqrt(sum(x * x for x in out)) or 1.0
-                out = [x / length for x in out]
+                out = list(Quaternion.normalize(out))
             return out
         if path == "rotation":
-            return _slerp(value(k), value(k + 1), u)
+            return list(Quaternion.slerp(value(k), value(k + 1), u))
         return [x + (y - x) * u for x, y in zip(value(k), value(k + 1))]
 
     def _keys(self, path, times, values, interp, fps):
@@ -1391,7 +1353,9 @@ class _GltfToFbx(object):
         elif path == "rotation":
             out, prev = [], None
             for q in samples:
-                e = _euler_xyz(_quat_matrix3(q))
+                e = Quaternion.matrix_euler(
+                    "xyz", Quaternion.to_matrix(Quaternion.normalize(q))
+                )
                 e = _euler_near(e, prev if prev is not None else (0.0, 0.0, 0.0))
                 out.append(e)
                 prev = e

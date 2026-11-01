@@ -41,13 +41,13 @@ to run standalone on any GLB.
 from __future__ import annotations
 
 import logging
-import math
 import struct
 from collections import Counter
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from pythontk.file_utils.mesh_convert.glb.clips import GlbClips
 from pythontk.file_utils.mesh_convert.glb.edit import GlbEdit
+from pythontk.math_utils.quaternion import Quaternion
 
 __all__ = ["GlbKeyReduction"]
 
@@ -94,26 +94,13 @@ class _GlbKeyReductionInternal:
         a, b = tuple(values[lo]), tuple(values[hi])
         span = times[hi] - times[lo]
         worst_i, worst_e = -1, 0.0
-        theta = sin_theta = 0.0
-        if quaternion:
-            dot = sum(x * y for x, y in zip(a, b))
-            if dot < 0.0:  # shortest arc, the glTF LINEAR rule for rotations
-                b = tuple(-x for x in b)
-                dot = -dot
-            if dot <= 0.9995:  # else nearly parallel: lerp, then renormalize
-                theta = math.acos(max(-1.0, min(1.0, dot)))
-                sin_theta = math.sin(theta)
+        # The pair's arc, once: every key between reads it (shortest arc,
+        # the glTF LINEAR rule for rotations).
+        arc = Quaternion.arc(a, b) if quaternion else None
         for i in range(lo + 1, hi):
             u = (times[i] - times[lo]) / span if span > 0 else 0.0
-            if quaternion:
-                if sin_theta:
-                    wa = math.sin((1.0 - u) * theta) / sin_theta
-                    wb = math.sin(u * theta) / sin_theta
-                    out = [x * wa + y * wb for x, y in zip(a, b)]
-                else:
-                    out = [x + (y - x) * u for x, y in zip(a, b)]
-                norm = math.sqrt(sum(x * x for x in out)) or 1.0
-                error = cls._error([x / norm for x in out], values[i], True)
+            if arc is not None:
+                error = cls._error(arc(u), values[i], True)
             else:
                 error = max(
                     abs(x + (y - x) * u - v) for x, y, v in zip(a, b, values[i])

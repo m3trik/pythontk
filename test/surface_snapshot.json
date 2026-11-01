@@ -3535,6 +3535,13 @@
     "tier": "root"
   },
   {
+    "kind": "class",
+    "module": "pythontk.math_utils.quaternion",
+    "name": "Quaternion",
+    "qualname": "Quaternion",
+    "tier": "root"
+  },
+  {
     "kind": "tuple",
     "module": "pythontk.core_utils.handoff.app_handoff",
     "name": "RIG_MODES",
