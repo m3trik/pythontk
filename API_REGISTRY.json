@@ -23,7 +23,7 @@
           "kind": "constant",
           "signature": "",
           "summary": "",
-          "line": 633,
+          "line": 634,
           "deprecated": false
         }
       ]
@@ -21424,7 +21424,7 @@
         {
           "name": "CollectHost",
           "summary": "What a Collect asks of the host whose readers it gathers files for.",
-          "line": 57,
+          "line": 60,
           "bases": [
             "Protocol"
           ],
@@ -21435,7 +21435,7 @@
               "kind": "method",
               "signature": "(self, node: Any) -> str",
               "summary": "The path *node* stores, as stored (``\"\"`` for none).",
-              "line": 64,
+              "line": 67,
               "deprecated": false
             },
             {
@@ -21444,7 +21444,7 @@
               "kind": "method",
               "signature": "(self, path: str, file_node: Any = None) -> Tuple[bool, str]",
               "summary": "``(on disk, absolute path)`` for *path* as *file_node* reads it --",
-              "line": 67,
+              "line": 70,
               "deprecated": false
             },
             {
@@ -21453,7 +21453,7 @@
               "kind": "method",
               "signature": "(self, path: str, file_node: Any = None) -> str",
               "summary": "The spelling *file_node* would store for the absolute *path* (a",
-              "line": 71,
+              "line": 74,
               "deprecated": false
             },
             {
@@ -21462,7 +21462,7 @@
               "kind": "method",
               "signature": "(self, rows: List[Dict[str, Any]]) -> int",
               "summary": "Point the reader of each landed row at its ``destination`` (one undo",
-              "line": 75,
+              "line": 78,
               "deprecated": false
             },
             {
@@ -21471,7 +21471,7 @@
               "kind": "method",
               "signature": "(self, nodes: Sequence[Any]) -> Iterable[str]",
               "summary": "The files the scene reads through readers OTHER than *nodes* --",
-              "line": 80,
+              "line": 83,
               "deprecated": false
             }
           ]
@@ -21479,7 +21479,7 @@
         {
           "name": "PureCollectHost",
           "summary": "The :class:`CollectHost` with no host: a reader is a key of *paths*, its",
-          "line": 87,
+          "line": 90,
           "bases": [],
           "members": [
             {
@@ -21488,7 +21488,7 @@
               "kind": "method",
               "signature": "(self, node: Any) -> str",
               "summary": "",
-              "line": 101,
+              "line": 104,
               "deprecated": false
             },
             {
@@ -21497,7 +21497,7 @@
               "kind": "method",
               "signature": "(self, path: str, file_node: Any = None) -> Tuple[bool, str]",
               "summary": "",
-              "line": 104,
+              "line": 107,
               "deprecated": false
             },
             {
@@ -21506,7 +21506,7 @@
               "kind": "method",
               "signature": "(self, path: str, file_node: Any = None) -> str",
               "summary": "",
-              "line": 110,
+              "line": 113,
               "deprecated": false
             },
             {
@@ -21515,7 +21515,7 @@
               "kind": "method",
               "signature": "(self, rows: List[Dict[str, Any]]) -> int",
               "summary": "",
-              "line": 115,
+              "line": 118,
               "deprecated": false
             },
             {
@@ -21524,7 +21524,7 @@
               "kind": "staticmethod",
               "signature": "(nodes: Sequence[Any]) -> Iterable[str]",
               "summary": "",
-              "line": 125,
+              "line": 128,
               "deprecated": false
             }
           ]
@@ -21532,7 +21532,7 @@
         {
           "name": "FileCollect",
           "summary": "Resolve, plan and apply a Collect;",
-          "line": 129,
+          "line": 132,
           "bases": [
             "LoggingMixin"
           ],
@@ -21543,25 +21543,25 @@
               "kind": "method",
               "signature": "(self, nodes: Iterable[Any], search_dir: str = '', find_files: Optional[Callable[[List[str], str], List[str]]] = None) -> List[Dict[str, Any]]",
               "summary": "The Resolve step: what file each of *nodes* reads, or could.",
-              "line": 180,
+              "line": 184,
               "deprecated": false
             },
             {
               "name": "plan",
               "qualname": "FileCollect.plan",
               "kind": "classmethod",
-              "signature": "(cls, entries: Iterable[Mapping[str, Any]], dest_dir: str, choices: Optional[Mapping[Hashable, str]] = None, keep: Iterable[str] = ()) -> List[Dict[str, Any]]",
+              "signature": "(cls, entries: Iterable[Mapping[str, Any]], dest_dir: str, choices: Optional[Mapping[Hashable, str]] = None, keep: Iterable[str] = (), flat: bool = False) -> List[Dict[str, Any]]",
               "summary": "The Collect step: where each entry's file lands in *dest_dir*.",
-              "line": 243,
+              "line": 247,
               "deprecated": false
             },
             {
               "name": "plan_nodes",
               "qualname": "FileCollect.plan_nodes",
               "kind": "method",
-              "signature": "(self, nodes: Iterable[Any], dest_dir: str, search_dir: str = '', find_files: Optional[Callable[[List[str], str], List[str]]] = None, choices: Optional[Mapping[Hashable, str]] = None, kind: str = 'file', extra: Iterable[Mapping[str, Any]] = ()) -> List[Dict[str, Any]]",
+              "signature": "(self, nodes: Iterable[Any], dest_dir: str, search_dir: str = '', find_files: Optional[Callable[[List[str], str], List[str]]] = None, choices: Optional[Mapping[Hashable, str]] = None, kind: str = 'file', extra: Iterable[Mapping[str, Any]] = (), flat: bool = False) -> List[Dict[str, Any]]",
               "summary": "Resolve *nodes* and plan them, with *extra* entries beside them.",
-              "line": 305,
+              "line": 321,
               "deprecated": false
             },
             {
@@ -21570,7 +21570,7 @@
               "kind": "staticmethod",
               "signature": "(row: Mapping[str, Any]) -> Tuple[str, Any]",
               "summary": "``(kind, owner)`` -- what a pick (``plan(choices=)``) names a row by.",
-              "line": 343,
+              "line": 365,
               "deprecated": false
             },
             {
@@ -21579,7 +21579,16 @@
               "kind": "classmethod",
               "signature": "(cls, rows: Iterable[Dict[str, Any]], mode: str = 'copy', copy: Optional[Callable[[List[str], str, str], List[Tuple[str, str]]]] = None, progress: Optional[Callable[[int, int], Any]] = None) -> List[Dict[str, Any]]",
               "summary": "Do a plan's file work;",
-              "line": 349,
+              "line": 371,
+              "deprecated": false
+            },
+            {
+              "name": "finish_move",
+              "qualname": "FileCollect.finish_move",
+              "kind": "classmethod",
+              "signature": "(cls, pairs: Iterable[Tuple[str, str]], keep: Iterable[str] = ()) -> Tuple[List[str], List[str]]",
+              "summary": "A move's last step, for a host that placed its copies itself (the",
+              "line": 518,
               "deprecated": false
             },
             {
@@ -21588,7 +21597,7 @@
               "kind": "classmethod",
               "signature": "(cls, rows: Iterable[Mapping[str, Any]]) -> Set[str]",
               "summary": "The files a move of *rows* copies instead (``keep_source``, decided per",
-              "line": 462,
+              "line": 591,
               "deprecated": false
             },
             {
@@ -21597,7 +21606,16 @@
               "kind": "staticmethod",
               "signature": "(path: str) -> Set[str]",
               "summary": "The files *path* names (a set: its tiles), normalized.",
-              "line": 474,
+              "line": 603,
+              "deprecated": false
+            },
+            {
+              "name": "set_directory",
+              "qualname": "FileCollect.set_directory",
+              "kind": "method",
+              "signature": "(self, nodes: Iterable[Any], target_dir: str, mode: str = 'rewrite', allow_missing: bool = False, copy: Optional[Callable[[List[str], str, str], List[Tuple[str, str]]]] = None, kind: str = 'file') -> Dict[str, Any]",
+              "summary": "Set Directory's file work: point each reader at the file of its name",
+              "line": 619,
               "deprecated": false
             },
             {
@@ -21606,7 +21624,7 @@
               "kind": "method",
               "signature": "(self, rows: List[Dict[str, Any]], dest_dir: str, mode: str = 'copy', dry_run: bool = False, search_dir: str = '', copy: Optional[Callable[[List[str], str, str], List[Tuple[str, str]]]] = None, progress: Optional[Callable[[str], Any]] = None) -> bool",
               "summary": "Report a plan, or commit it and repath: a whole Collect over the host.",
-              "line": 487,
+              "line": 698,
               "deprecated": false
             },
             {
@@ -21615,7 +21633,7 @@
               "kind": "classmethod",
               "signature": "(cls, rows: Sequence[Mapping[str, Any]], search_dir: str = '') -> List[Tuple[str, str, List[str]]]",
               "summary": "``[(level, message, items)]`` naming the rows a plan cannot place.",
-              "line": 549,
+              "line": 760,
               "deprecated": false
             },
             {
@@ -21624,7 +21642,7 @@
               "kind": "method",
               "signature": "(self, rows: Sequence[Mapping[str, Any]], dest_dir: str, mode: str) -> Tuple[bool, List[Tuple[str, str, List[str]]]]",
               "summary": "``(anything to do, [(level, message, items)])`` -- what a commit of",
-              "line": 601,
+              "line": 812,
               "deprecated": false
             },
             {
@@ -21632,8 +21650,8 @@
               "qualname": "FileCollect.outcome",
               "kind": "classmethod",
               "signature": "(cls, rows: Sequence[Mapping[str, Any]], landed: Sequence[Mapping[str, Any]], mode: str) -> List[Tuple[str, str, List[str]]]",
-              "summary": "``[(level, message, items)]`` -- what a commit did, per kind.",
-              "line": 675,
+              "summary": "``[(level, message, items)]`` -- what a commit did, per kind;",
+              "line": 886,
               "deprecated": false
             },
             {
@@ -21642,7 +21660,7 @@
               "kind": "method",
               "signature": "(self, rows: Sequence[Mapping[str, Any]]) -> List[Tuple[str, str, List[str]]]",
               "summary": "The honest close: the readers (of *rows* that store a path) whose",
-              "line": 709,
+              "line": 938,
               "deprecated": false
             },
             {
@@ -21651,7 +21669,7 @@
               "kind": "classmethod",
               "signature": "(cls, lines: Iterable[str]) -> List[str]",
               "summary": "*lines* capped at :attr:`PREVIEW_ROWS`, the remainder counted: a cut",
-              "line": 734,
+              "line": 963,
               "deprecated": false
             }
           ]
@@ -22293,7 +22311,7 @@
           "kind": "constant",
           "signature": "",
           "summary": "",
-          "line": 60,
+          "line": 61,
           "deprecated": false
         },
         {
@@ -22302,7 +22320,7 @@
           "kind": "constant",
           "signature": "",
           "summary": "",
-          "line": 64,
+          "line": 65,
           "deprecated": false
         }
       ]
@@ -22438,12 +22456,21 @@
               "deprecated": false
             },
             {
+              "name": "restore_glb_rotations",
+              "qualname": "MeshConvert.restore_glb_rotations",
+              "kind": "classmethod",
+              "signature": "(cls, glb: GlbTarget, fbx: str, fps: Optional[float] = None) -> Dict[str, int]",
+              "summary": "Give each node scaled flat on an axis the rotation FBX2glTF dropped.",
+              "line": 704,
+              "deprecated": false
+            },
+            {
               "name": "SHADOW_PLANE_DEFAULTS",
               "qualname": "MeshConvert.SHADOW_PLANE_DEFAULTS",
               "kind": "method",
               "signature": "(cls) -> Dict[str, Any]",
               "summary": "A shadow plane's starting values, as 0.16.1 served them:",
-              "line": 912,
+              "line": 942,
               "deprecated": true,
               "remove_in": "0.18.0"
             },
@@ -22453,7 +22480,7 @@
               "kind": "classmethod",
               "signature": "(cls, overrides: Optional[Mapping[str, Mapping[str, Any]]] = None, carrier: str = 'glb') -> Dict[str, Any]",
               "summary": "The lighting recipe with a deliverable's own choices laid over it",
-              "line": 926,
+              "line": 956,
               "deprecated": true,
               "remove_in": "0.18.0"
             },
@@ -22463,7 +22490,7 @@
               "kind": "classmethod",
               "signature": "(cls, sections: Optional[Dict[str, Any]], source: Dict[str, str], asset: Optional[str] = None, rendering: Optional[Mapping[str, Mapping[str, Any]]] = None) -> Dict[str, Any]",
               "summary": "The envelope a host built before the materials record: the GLB's",
-              "line": 942,
+              "line": 972,
               "deprecated": true,
               "remove_in": "0.18.0"
             },
@@ -22473,7 +22500,7 @@
               "kind": "classmethod",
               "signature": "(cls, gltf: dict) -> int",
               "summary": "Drop what the source FBX's records left in a converted glTF's nodes.",
-              "line": 955,
+              "line": 985,
               "deprecated": false
             },
             {
@@ -22482,7 +22509,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, rendering: Optional[Mapping[str, Mapping[str, Any]]] = None) -> bool",
               "summary": "State a GLB as every deliverable states itself, whatever wrote it.",
-              "line": 989,
+              "line": 1019,
               "deprecated": false
             },
             {
@@ -22491,7 +22518,7 @@
               "kind": "classmethod",
               "signature": "(cls, gltf: dict) -> int",
               "summary": "Drop the FBX's handoff block from a converted glTF's node extras --",
-              "line": 1023,
+              "line": 1053,
               "deprecated": true,
               "remove_in": "0.18.0"
             },
@@ -22501,7 +22528,7 @@
               "kind": "classmethod",
               "signature": "(cls, channels: Union[Iterable[str], Mapping[str, Any]], source: Optional[Dict[str, str]] = None) -> Dict[str, Any]",
               "summary": "The FBX's handoff block for a carrier holding *channels*, or ``{}``",
-              "line": 1038,
+              "line": 1068,
               "deprecated": true,
               "remove_in": "0.18.0"
             },
@@ -22511,7 +22538,7 @@
               "kind": "classmethod",
               "signature": "(cls, edit: 'GlbEdit', handoff: Mapping[str, Any]) -> None",
               "summary": "Write *handoff* (``HandoffRecord.block(\"glb\", ...)``) as the open GLB's",
-              "line": 1048,
+              "line": 1078,
               "deprecated": false
             },
             {
@@ -22520,7 +22547,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]",
               "summary": "The handoff block a GLB carries (``extras.handoff``), or ``None``.",
-              "line": 1061,
+              "line": 1091,
               "deprecated": false
             },
             {
@@ -22529,7 +22556,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]",
               "summary": "The handoff block a GLB carries (:meth:`read_glb_handoff`).",
-              "line": 1076,
+              "line": 1106,
               "deprecated": true,
               "remove_in": "0.18.0"
             },
@@ -22539,7 +22566,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> Dict[str, Any]",
               "summary": "Check a delivered GLB against what it says of itself.",
-              "line": 1081,
+              "line": 1111,
               "deprecated": false
             },
             {
@@ -22548,7 +22575,7 @@
               "kind": "classmethod",
               "signature": "(cls, gltf: dict, key: str) -> Optional[Any]",
               "summary": "Decoded value of one ``data_export`` channel in a parsed glTF, or ``None``.",
-              "line": 1110,
+              "line": 1140,
               "deprecated": false
             },
             {
@@ -22557,7 +22584,7 @@
               "kind": "classmethod",
               "signature": "(cls, gltf: dict, channels: Dict[str, Any]) -> List[str]",
               "summary": "Replace ``data_export`` channels in a parsed glTF, ahead of every reader.",
-              "line": 1133,
+              "line": 1163,
               "deprecated": false
             },
             {
@@ -22566,7 +22593,7 @@
               "kind": "classmethod",
               "signature": "(cls, materials: Dict[str, float], carrier: str = 'occlusion', probe: Optional[Dict[str, Any]] = None) -> Dict[str, Any]",
               "summary": "The ``lightmaps`` block a GLB carries (``SceneRecords.LIGHTMAPS.glb``),",
-              "line": 1185,
+              "line": 1215,
               "deprecated": false
             },
             {
@@ -22575,7 +22602,7 @@
               "kind": "classmethod",
               "signature": "(cls, data_export: Dict[str, Any]) -> Dict[str, Any]",
               "summary": "*data_export* as given: the folder hints this removed went with",
-              "line": 1215,
+              "line": 1245,
               "deprecated": true,
               "remove_in": "0.18.0"
             },
@@ -22585,7 +22612,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]",
               "summary": "The ``lightmaps`` record riding a GLB's carrier node, or ``None`` --",
-              "line": 1228,
+              "line": 1258,
               "deprecated": true,
               "remove_in": "0.18.0"
             },
@@ -22595,7 +22622,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> int",
               "summary": "Leave a GLB its one statement of its lightmaps: ``extras.lightmaps``.",
-              "line": 1255,
+              "line": 1285,
               "deprecated": true,
               "remove_in": "0.18.0"
             },
@@ -22605,7 +22632,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> Dict[str, List[str]]",
               "summary": "Split a GLB's bake manifest by whether this GLB actually carries each object.",
-              "line": 1280,
+              "line": 1310,
               "deprecated": false
             },
             {
@@ -22614,7 +22641,7 @@
               "kind": "staticmethod",
               "signature": "(coverage: Dict[str, List[str]], bound: Sequence[Dict[str, Any]]) -> Dict[str, Any]",
               "summary": "``{\"expected\", \"bound\", \"unbound\", \"out_of_scope\"}`` for one bind.",
-              "line": 1302,
+              "line": 1332,
               "deprecated": false
             },
             {
@@ -22623,7 +22650,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, probe: Optional[Dict[str, Any]], search_dirs: Sequence[str], hdr_codec: Any = None) -> Optional[Dict[str, Any]]",
               "summary": "Embed a bake's reflection probe in a GLB that ships its lightmaps;",
-              "line": 1320,
+              "line": 1350,
               "deprecated": false
             },
             {
@@ -22632,7 +22659,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> List[str]",
               "summary": "Drop every ``KHR_lights_punctual`` light from a lightmapped GLB.",
-              "line": 1358,
+              "line": 1388,
               "deprecated": false
             },
             {
@@ -22641,7 +22668,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, search_dirs: Sequence[str] = (), carrier: str = 'occlusion', percentile: Optional[float] = None, replace_authored: bool = True, hdr_codec: Any = None) -> List[Dict[str, Any]]",
               "summary": "Wire a host DCC's committed lightmaps into a GLB for the web viewer.",
-              "line": 1376,
+              "line": 1406,
               "deprecated": false
             },
             {
@@ -22650,7 +22677,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb, lights: Optional[Sequence[Dict[str, Any]]], probe: Optional[Dict[str, Any]] = None, width: Optional[int] = None, baked: Optional[Sequence[str]] = None, eye: Optional[Sequence[float]] = None) -> List[Dict[str, Any]]",
               "summary": "The probe's highlight copies: for each receiver group, the lights it is shown.",
-              "line": 1507,
+              "line": 1537,
               "deprecated": false
             },
             {
@@ -22659,7 +22686,7 @@
               "kind": "classmethod",
               "signature": "(cls, lights: Optional[Sequence[Dict[str, Any]]], unit_scale: Optional[float] = None) -> Optional[List[Dict[str, Any]]]",
               "summary": "The bake's lights in metres and the viewer's units, or ``None``.",
-              "line": 1548,
+              "line": 1578,
               "deprecated": false
             },
             {
@@ -22668,7 +22695,7 @@
               "kind": "classmethod",
               "signature": "(cls, fbx: str, glb: Optional[str] = None, *, search_dirs: Sequence[str] = (), hdr_codec: Any = None, logger: Optional[logging.Logger] = None) -> List[str]",
               "summary": "Give an FBX deliverable's probe the highlight copies its GLB ships.",
-              "line": 1568,
+              "line": 1598,
               "deprecated": false
             },
             {
@@ -22677,7 +22704,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, *, search_dirs: Sequence[str] = ()) -> Optional[Dict[str, Any]]",
               "summary": "Bind a scene's shadow-rig maps into a GLB;",
-              "line": 1671,
+              "line": 1701,
               "deprecated": false
             },
             {
@@ -22686,7 +22713,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]",
               "summary": "Publish ``extras.articulation``: the scene's articulated rigs,",
-              "line": 1729,
+              "line": 1759,
               "deprecated": false
             },
             {
@@ -22695,7 +22722,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, *, mode: str = 'both') -> Optional[Dict[str, Any]]",
               "summary": "Rebuild the declared shot clips as exact slices of the whole timeline.",
-              "line": 1773,
+              "line": 1803,
               "deprecated": false
             },
             {
@@ -22704,7 +22731,7 @@
               "kind": "classmethod",
               "signature": "(cls, frames: Iterable[float], takes: Iterable[Any], stack_range: Optional[Sequence[float]] = None, key_spans: Optional[Callable[[List[Tuple[Optional[float], Optional[float]]]], Sequence[Optional[Sequence[float]]]]] = None) -> Dict[str, List[float]]",
               "summary": "Per take, the first and last authored frame inside its window.",
-              "line": 1825,
+              "line": 1855,
               "deprecated": false
             },
             {
@@ -22713,7 +22740,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> List[str]",
               "summary": "Drop every animation that carries no channels or no samplers.",
-              "line": 1881,
+              "line": 1911,
               "deprecated": false
             },
             {
@@ -22722,7 +22749,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> Dict[str, int]",
               "summary": "Collapse every animation channel that never moves to two keys.",
-              "line": 1913,
+              "line": 1943,
               "deprecated": false
             },
             {
@@ -22731,7 +22758,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, tolerance: float, rotation_tolerance: Optional[float] = None) -> Dict[str, int]",
               "summary": "Drop the keys a GLB's samplers do not need to reproduce their motion.",
-              "line": 1950,
+              "line": 1980,
               "deprecated": false
             },
             {
@@ -22740,7 +22767,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]",
               "summary": "Publish ``extras.animation``: the FBX's shots, inherited whole, and",
-              "line": 1979,
+              "line": 2009,
               "deprecated": false
             },
             {
@@ -22749,7 +22776,7 @@
               "kind": "classmethod",
               "signature": "(cls, nodes: Sequence[str], channel: str, keys: Sequence[Sequence[float]], colors: Optional[Sequence[Optional[Sequence[float]]]] = None, fps: float = 30.0) -> Dict[str, Any]",
               "summary": "The :meth:`overlay_data_export` channels that preview ONE render effect.",
-              "line": 2063,
+              "line": 2093,
               "deprecated": false
             },
             {
@@ -22758,7 +22785,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]",
               "summary": "Realize keyed visibility as STEP ``scale`` channels the file can play.",
-              "line": 2103,
+              "line": 2133,
               "deprecated": false
             },
             {
@@ -22767,7 +22794,7 @@
               "kind": "classmethod",
               "signature": "(cls, tracks: Sequence[Dict[str, Any]], fps: Optional[float] = None, clip_spans: Optional[Dict[str, List[float]]] = None) -> Optional[Dict[str, Any]]",
               "summary": "Wrap *tracks* in the versioned ``render_effects`` envelope.",
-              "line": 2154,
+              "line": 2184,
               "deprecated": false
             },
             {
@@ -22776,7 +22803,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]",
               "summary": "Realize authored opacity ramps as animated material alpha.",
-              "line": 2183,
+              "line": 2213,
               "deprecated": false
             },
             {
@@ -22785,7 +22812,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> List[Dict[str, str]]",
               "summary": "Inspect a GLB for materials flagged transparent that should be opaque.",
-              "line": 2231,
+              "line": 2261,
               "deprecated": false
             },
             {
@@ -22794,7 +22821,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> List[Dict]",
               "summary": "Repair the Maya phong → FBX → FBX2glTF transparency translation bug.",
-              "line": 2259,
+              "line": 2289,
               "deprecated": false
             },
             {
@@ -22803,7 +22830,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, *, described: Optional[Iterable[str]] = None) -> Dict[str, Dict[str, str]]",
               "summary": "Materials whose delivered ORM binding this pipeline never validated.",
-              "line": 2293,
+              "line": 2323,
               "deprecated": false
             },
             {
@@ -22812,7 +22839,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, scale: float, lightmapped_only: bool = True) -> int",
               "summary": "Write ``normalTexture.scale`` into a GLB's materials.",
-              "line": 2346,
+              "line": 2376,
               "deprecated": false
             },
             {
@@ -22821,7 +22848,7 @@
               "kind": "classmethod",
               "signature": "(cls, fbx: FbxSource, *, logger: Optional[logging.Logger] = None) -> Dict[str, Any]",
               "summary": "The ``materials`` record for *fbx*: every material it carries.",
-              "line": 2389,
+              "line": 2419,
               "deprecated": false
             },
             {
@@ -22830,7 +22857,7 @@
               "kind": "classmethod",
               "signature": "(cls, fbx: FbxSource, *, logger: Optional[logging.Logger] = None) -> Dict[str, Any]",
               "summary": "*fbx*'s own materials read into the record, whatever it carries.",
-              "line": 2415,
+              "line": 2445,
               "deprecated": false
             },
             {
@@ -22839,7 +22866,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, record: Optional[Mapping[str, Any]], textures: Optional[Mapping[str, str]] = None) -> List[Dict[str, Any]]",
               "summary": "Set each GLB material *record* states to exactly what it states.",
-              "line": 2434,
+              "line": 2464,
               "deprecated": false
             },
             {
@@ -22848,7 +22875,7 @@
               "kind": "method",
               "signature": "(cls) -> int",
               "summary": "Deprecated alias of :attr:`ImgUtils.ENCODE_WORKERS`, for one release.",
-              "line": 2494,
+              "line": 2524,
               "deprecated": false
             },
             {
@@ -22857,7 +22884,7 @@
               "kind": "method",
               "signature": "(cls) -> float",
               "summary": "The RDO lambda a normal map is capped at whatever the caller asks:",
-              "line": 2507,
+              "line": 2537,
               "deprecated": false
             },
             {
@@ -22866,7 +22893,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> Dict[str, int]",
               "summary": "Drop the PNG/JPEG twin of every texture that also ships KTX2.",
-              "line": 2516,
+              "line": 2546,
               "deprecated": false
             },
             {
@@ -22875,7 +22902,7 @@
               "kind": "classmethod",
               "signature": "(cls, summary: Dict[str, Any], image_format: str, max_size: int = 0, secondary_max_size: int = 0, uastc_rdo: Optional[float] = None, uastc_rdo_dictionary: Optional[int] = None) -> str",
               "summary": "Human-readable outcome of :meth:`optimize_glb_textures`, for log lines.",
-              "line": 2556,
+              "line": 2586,
               "deprecated": false
             },
             {
@@ -22884,7 +22911,7 @@
               "kind": "classmethod",
               "signature": "(cls, image_format: Optional[str] = None, max_size: Optional[int] = None, ktx2_fallback: Optional[bool] = None, secondary_max_size: Optional[int] = None, uastc_rdo: Optional[float] = None, uastc_rdo_dictionary: Optional[int] = None) -> Dict[str, Any]",
               "summary": ":meth:`optimize_glb_textures` kwargs for a WEB deliverable.",
-              "line": 2604,
+              "line": 2634,
               "deprecated": false
             },
             {
@@ -22893,7 +22920,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget, max_size: int = WEB_DELIVERY_MAX_SIZE, image_format: str = WEB_DELIVERY_FORMAT, quality: int = 85, workers: Optional[int] = None, ktx2_fallback: bool = WEB_DELIVERY_KTX2_FALLBACK, secondary_max_size: int = WEB_DELIVERY_SECONDARY_MAX_SIZE, uastc_rdo: Optional[float] = WEB_DELIVERY_UASTC_RDO, uastc_rdo_dictionary: Optional[int] = WEB_DELIVERY_UASTC_RDO_DICTIONARY) -> Dict[str, Any]",
               "summary": "Downsize and re-encode a GLB's embedded images for web delivery.",
-              "line": 2677,
+              "line": 2707,
               "deprecated": false
             },
             {
@@ -22902,7 +22929,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: str, dst: str, *, overwrite: bool = False) -> Optional[str]",
               "summary": "Write a copy of *glb* whose KTX2 images are PNG;",
-              "line": 2854,
+              "line": 2884,
               "deprecated": false
             },
             {
@@ -22911,7 +22938,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> Dict[str, int]",
               "summary": "Collapse byte-identical embedded images onto one copy.",
-              "line": 2887,
+              "line": 2917,
               "deprecated": false
             },
             {
@@ -22920,7 +22947,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: GlbTarget) -> Dict[str, int]",
               "summary": "Drop textures no material samples, and the images/bufferViews only they used.",
-              "line": 2927,
+              "line": 2957,
               "deprecated": false
             },
             {
@@ -22929,7 +22956,7 @@
               "kind": "classmethod",
               "signature": "(cls, src: str, dst: Optional[str] = None, *, texture_dir: Optional[str] = None, include_animation: bool = True, fps: Optional[float] = None, manifest: bool = True, overwrite: bool = False, report: Optional[Dict[str, Any]] = None) -> str",
               "summary": "Convert a ``.glb`` / ``.gltf`` to a binary FBX -- no DCC involved.",
-              "line": 2973,
+              "line": 3003,
               "deprecated": false
             }
           ]
@@ -23429,7 +23456,7 @@
               "kind": "method",
               "signature": "(self, tolerance: float = 0.0001) -> Dict[str, Any]",
               "summary": "Which takes, imported together, carry ALL of the file's animation.",
-              "line": 1565,
+              "line": 1582,
               "deprecated": false
             },
             {
@@ -23438,7 +23465,7 @@
               "kind": "method",
               "signature": "(self) -> List[Tuple[str, Any, Any, Optional[str]]]",
               "summary": "Every ``C`` record as ``(kind, child_id, parent_id, property)``.",
-              "line": 1683,
+              "line": 1700,
               "deprecated": false
             }
           ]
@@ -23464,7 +23491,7 @@
         {
           "name": "FbxMedia",
           "summary": "Read and rewrite the media a binary FBX embeds.",
-          "line": 1282,
+          "line": 1291,
           "bases": [
             "_FbxMediaInternal"
           ],
@@ -23475,7 +23502,7 @@
               "kind": "classmethod",
               "signature": "(cls, path: str) -> List[Dict[str, Any]]",
               "summary": "Every embedded image: ``{\"name\", \"format\", \"size\", \"bytes\"}``.",
-              "line": 1286,
+              "line": 1295,
               "deprecated": false
             },
             {
@@ -23484,7 +23511,7 @@
               "kind": "classmethod",
               "signature": "(cls, src: str, dst: Optional[str] = None, *, max_size: int, exempt: Iterable[str] = (), png_compress_level: int = 1, jpeg_quality: int = 90, workers: Optional[int] = None) -> Dict[str, Any]",
               "summary": "Resize every embedded PNG/JPEG whose longest edge exceeds *max_size*.",
-              "line": 1318,
+              "line": 1327,
               "deprecated": false
             },
             {
@@ -23493,7 +23520,7 @@
               "kind": "classmethod",
               "signature": "(cls, src: str, dst: Optional[str] = None, *, png_compress_level: int = 1, jpeg_quality: int = 95, workers: Optional[int] = None) -> Dict[str, Any]",
               "summary": "Re-encode every embedded grayscale PNG/JPEG with colour channels.",
-              "line": 1401,
+              "line": 1410,
               "deprecated": false
             },
             {
@@ -23502,7 +23529,7 @@
               "kind": "classmethod",
               "signature": "(cls, channels: Iterable[Tuple[Optional[str], str, Any]], nodes: Optional[Iterable[str]] = None) -> Dict[str, Any]",
               "summary": "Each scene record as a reader of the file applies it.",
-              "line": 1494,
+              "line": 1510,
               "deprecated": false
             },
             {
@@ -23511,7 +23538,7 @@
               "kind": "classmethod",
               "signature": "(cls, payloads: Mapping[str, Iterable[Any]]) -> List[str]",
               "summary": "The file names decoded scene records name (:attr:`DEPENDENCY_FIELDS`).",
-              "line": 1549,
+              "line": 1565,
               "deprecated": false
             },
             {
@@ -23520,7 +23547,7 @@
               "kind": "classmethod",
               "signature": "(cls, path: str) -> List[str]",
               "summary": "The file names the FBX's scene records name (:attr:`DEPENDENCY_FIELDS`).",
-              "line": 1582,
+              "line": 1598,
               "deprecated": false
             },
             {
@@ -23529,7 +23556,7 @@
               "kind": "classmethod",
               "signature": "(cls, path: str) -> List[str]",
               "summary": "The tracks the FBX's ``audio`` events play, by event name.",
-              "line": 1610,
+              "line": 1627,
               "deprecated": false
             },
             {
@@ -23538,7 +23565,7 @@
               "kind": "classmethod",
               "signature": "(cls, src: str, dst: Optional[str] = None, *, files: Iterable[Any]) -> Dict[str, Any]",
               "summary": "Embed each of *files* in the FBX as media no material uses.",
-              "line": 1654,
+              "line": 1671,
               "deprecated": false
             },
             {
@@ -23547,7 +23574,7 @@
               "kind": "classmethod",
               "signature": "(cls, path: str, key: str) -> Optional[Any]",
               "summary": "The scene record *key* the FBX carries, as a reader applies it.",
-              "line": 1705,
+              "line": 1722,
               "deprecated": false
             },
             {
@@ -23556,7 +23583,7 @@
               "kind": "classmethod",
               "signature": "(cls, path: str, keys: Optional[Iterable[str]] = None) -> Dict[str, Any]",
               "summary": "Every scene record the FBX carries, as a reader applies it",
-              "line": 1725,
+              "line": 1742,
               "deprecated": false
             },
             {
@@ -23565,7 +23592,7 @@
               "kind": "classmethod",
               "signature": "(cls, src: str, key: str, payload: Any, dst: Optional[str] = None, *, files: Iterable[Any] = ()) -> Dict[str, Any]",
               "summary": "Replace the scene record *key* the FBX carries, embedding *files* in the same write.",
-              "line": 1753,
+              "line": 1770,
               "deprecated": false
             },
             {
@@ -23574,7 +23601,7 @@
               "kind": "classmethod",
               "signature": "(cls, src: str, dst: Optional[str] = None, *, tolerance: float = 0.001) -> Dict[str, Any]",
               "summary": "Give each pivot set among a geometry's instances a geometry of its own.",
-              "line": 1813,
+              "line": 1830,
               "deprecated": false
             },
             {
@@ -23583,7 +23610,7 @@
               "kind": "staticmethod",
               "signature": "(entry: Mapping[str, Any]) -> Dict[str, Tuple[float, ...]]",
               "summary": "A ``materials`` record entry in FBX's legacy terms -- what a stock",
-              "line": 1952,
+              "line": 1969,
               "deprecated": false
             },
             {
@@ -23592,7 +23619,7 @@
               "kind": "classmethod",
               "signature": "(cls, src: str, dst: Optional[str] = None) -> Dict[str, Any]",
               "summary": "Write each ``materials`` record entry onto its FBX material's legacy",
-              "line": 1989,
+              "line": 2006,
               "deprecated": false
             },
             {
@@ -23601,7 +23628,7 @@
               "kind": "classmethod",
               "signature": "(cls, src: str, markers: Iterable[str] = (), dst: Optional[str] = None) -> Dict[str, int]",
               "summary": "Remove the user properties a delivered FBX carries that state",
-              "line": 2094,
+              "line": 2111,
               "deprecated": false
             },
             {
@@ -23610,7 +23637,7 @@
               "kind": "classmethod",
               "signature": "(cls, src: str, dst: Optional[str] = None) -> Dict[str, int]",
               "summary": "Fill the zero-length normals, binormals and tangents a written FBX carries.",
-              "line": 2165,
+              "line": 2182,
               "deprecated": false
             },
             {
@@ -23619,7 +23646,7 @@
               "kind": "classmethod",
               "signature": "(cls, src: str, dst: Optional[str] = None) -> Dict[str, Any]",
               "summary": "Remove the textures only :attr:`HOST_LIGHTING_SLOTS` sample, with their media.",
-              "line": 2278,
+              "line": 2295,
               "deprecated": false
             },
             {
@@ -23628,7 +23655,7 @@
               "kind": "classmethod",
               "signature": "(cls, src: str, dst: Optional[str] = None, *, search_dirs: Sequence[str] = (), walk_root: str = '', files: Iterable[Any] = (), logger: Any = None) -> Dict[str, Any]",
               "summary": "Embed every file the FBX's scene records name, so nothing ships beside it.",
-              "line": 2371,
+              "line": 2388,
               "deprecated": false
             },
             {
@@ -23637,7 +23664,7 @@
               "kind": "classmethod",
               "signature": "(cls, src: str, dst_dir: str) -> Dict[str, str]",
               "summary": "Write each file the FBX's records name AND embeds into *dst_dir*.",
-              "line": 2551,
+              "line": 2571,
               "deprecated": false
             },
             {
@@ -23646,7 +23673,7 @@
               "kind": "classmethod",
               "signature": "(cls, src: str, dst_dir: str, names: Optional[Iterable[str]] = None) -> Dict[str, str]",
               "summary": "Write each of *names* the FBX embeds into *dst_dir*, byte for byte.",
-              "line": 2576,
+              "line": 2596,
               "deprecated": false
             },
             {
@@ -23655,7 +23682,7 @@
               "kind": "classmethod",
               "signature": "(cls, src: str, dst: Optional[str] = None, *, names: Optional[Iterable[str]] = None) -> Dict[str, Any]",
               "summary": "Remove the named animation takes, and everything only they own.",
-              "line": 2623,
+              "line": 2643,
               "deprecated": false
             },
             {
@@ -23664,7 +23691,7 @@
               "kind": "classmethod",
               "signature": "(cls, src: str, dst: Optional[str] = None, *, takes: Optional[Iterable[str]] = None, name: Optional[str] = MERGED_TAKE, tolerance: float = 0.0001, keep: Iterable[str] = ()) -> Dict[str, Any]",
               "summary": "Rewrite the file's animation as ONE take: the union of *takes*.",
-              "line": 2696,
+              "line": 2716,
               "deprecated": false
             },
             {
@@ -23673,7 +23700,7 @@
               "kind": "classmethod",
               "signature": "(cls, src: str, dst: Optional[str] = None, *, section: Mapping[str, str], separator: str = '|') -> Dict[str, Any]",
               "summary": "Remove the rig apparatus *section* names, and everything only it owns.",
-              "line": 3014,
+              "line": 3034,
               "deprecated": false
             },
             {
@@ -23682,7 +23709,7 @@
               "kind": "classmethod",
               "signature": "(cls, src: str, dst: str) -> None",
               "summary": "Re-serialise *src* to *dst* unchanged -- the writer's own round trip.",
-              "line": 3362,
+              "line": 3382,
               "deprecated": false
             }
           ]
@@ -23698,7 +23725,7 @@
         {
           "name": "GlbClips",
           "summary": "Build a GLB's declared shot clips from its whole-timeline animation.",
-          "line": 286,
+          "line": 266,
           "bases": [
             "_GlbClipsInternal"
           ],
@@ -23709,7 +23736,7 @@
               "kind": "classmethod",
               "signature": "(cls, edit: Any, takes: Sequence[Dict[str, Any]], fps: float, source_zero: float = 0.0, *, cut_shots: bool = True, keep_sequence: bool = True) -> Optional[Dict[str, Any]]",
               "summary": "Replace the declared clips with exact slices of the source stack.",
-              "line": 304,
+              "line": 284,
               "deprecated": false
             }
           ]
@@ -24110,7 +24137,7 @@
         {
           "name": "GlbKeyReduction",
           "summary": "Tolerance-bound key reduction for a GLB's animation samplers.",
-          "line": 165,
+          "line": 152,
           "bases": [
             "_GlbKeyReductionInternal"
           ],
@@ -24121,7 +24148,7 @@
               "kind": "staticmethod",
               "signature": "(gltf: Dict[str, Any], blob: Optional[bytes], sampler: Dict[str, Any]) -> Optional[Sampler]",
               "summary": "``(times, values, interpolation)`` for one sampler, or ``None``.",
-              "line": 175,
+              "line": 162,
               "deprecated": false
             },
             {
@@ -24130,7 +24157,7 @@
               "kind": "staticmethod",
               "signature": "(times: Sequence[float], values: Sequence[Sequence[float]], at: float, interpolation: str = 'LINEAR', quaternion: bool = False) -> Tuple[float, ...]",
               "summary": "The sampler's value at *at* under glTF's rules, held outside its range.",
-              "line": 182,
+              "line": 169,
               "deprecated": false
             },
             {
@@ -24139,7 +24166,7 @@
               "kind": "classmethod",
               "signature": "(cls, reference: Sampler, candidate: Sampler, quaternion: bool = False) -> float",
               "summary": "Worst component error of *candidate* against *reference*, sampled at",
-              "line": 193,
+              "line": 180,
               "deprecated": false
             },
             {
@@ -24148,7 +24175,7 @@
               "kind": "classmethod",
               "signature": "(cls, glb: Any, tolerance: float, rotation_tolerance: Optional[float] = None) -> Dict[str, int]",
               "summary": "Rewrite every reducible sampler of *glb* with the keys it needs.",
-              "line": 207,
+              "line": 194,
               "deprecated": false
             }
           ]
@@ -24210,7 +24237,7 @@
         {
           "name": "GlbReader",
           "summary": "Read-only GLB inspector: accessors, animation evaluation, node worlds.",
-          "line": 147,
+          "line": 141,
           "bases": [
             "_GlbReaderInternal"
           ],
@@ -24221,7 +24248,7 @@
               "kind": "classmethod",
               "signature": "(cls, path: str) -> 'GlbReader'",
               "summary": "Open *path* read-only and return a reader.",
-              "line": 176,
+              "line": 170,
               "deprecated": false
             },
             {
@@ -24230,7 +24257,7 @@
               "kind": "method",
               "signature": "(self) -> Dict[str, int]",
               "summary": "Section lengths for the usual census keys (missing -> 0).",
-              "line": 188,
+              "line": 182,
               "deprecated": false
             },
             {
@@ -24239,7 +24266,7 @@
               "kind": "method",
               "signature": "(self) -> Dict[str, int]",
               "summary": "``{mimeType: count}`` over ``images`` (missing type -> \"?\").",
-              "line": 206,
+              "line": 200,
               "deprecated": false
             },
             {
@@ -24248,7 +24275,7 @@
               "kind": "method",
               "signature": "(self) -> Tuple[List[str], List[str]]",
               "summary": "``(extensionsUsed, extensionsRequired)`` (each possibly empty).",
-              "line": 214,
+              "line": 208,
               "deprecated": false
             },
             {
@@ -24257,7 +24284,7 @@
               "kind": "method",
               "signature": "(self) -> Dict[str, int]",
               "summary": "Counts the skin checks need: skins, with-IBM, skinned mesh nodes.",
-              "line": 221,
+              "line": 215,
               "deprecated": false
             },
             {
@@ -24266,7 +24293,7 @@
               "kind": "method",
               "signature": "(self, index: int) -> Optional[List[Tuple[float, ...]]]",
               "summary": "Decode accessor *index* into element tuples, or ``None``.",
-              "line": 236,
+              "line": 230,
               "deprecated": false
             },
             {
@@ -24275,7 +24302,7 @@
               "kind": "method",
               "signature": "(self) -> List[str]",
               "summary": "Clip names, in file order (unnamed -> ``\"<i>\"``).",
-              "line": 279,
+              "line": 273,
               "deprecated": false
             },
             {
@@ -24284,7 +24311,7 @@
               "kind": "method",
               "signature": "(self, key: Union[int, str]) -> Optional[Dict[str, Any]]",
               "summary": "The animation dict for an index or name, or ``None``.",
-              "line": 286,
+              "line": 280,
               "deprecated": false
             },
             {
@@ -24293,7 +24320,7 @@
               "kind": "method",
               "signature": "(self, fps: float = 30.0) -> Dict[str, Tuple[float, float, int]]",
               "summary": "Per clip: ``(min_seconds, max_seconds, end_frame)``.",
-              "line": 296,
+              "line": 290,
               "deprecated": false
             },
             {
@@ -24302,7 +24329,7 @@
               "kind": "method",
               "signature": "(self, key: Union[int, str], tolerance: float = 0.001) -> Optional[Tuple[float, float]]",
               "summary": "The clip's MOTION extent in seconds: ``(low, high)``, or ``None``.",
-              "line": 318,
+              "line": 312,
               "deprecated": false
             },
             {
@@ -24311,7 +24338,7 @@
               "kind": "method",
               "signature": "(self, key: Union[int, str]) -> List[Dict[str, Any]]",
               "summary": "One row per channel: node index/name, path, interpolation, keys.",
-              "line": 373,
+              "line": 367,
               "deprecated": false
             },
             {
@@ -24320,7 +24347,7 @@
               "kind": "method",
               "signature": "(self, key: Union[int, str], node: Union[int, str], path: str, time: float) -> Optional[Tuple[float, ...]]",
               "summary": "Evaluate one channel at *time* seconds, or ``None`` when absent.",
-              "line": 401,
+              "line": 395,
               "deprecated": false
             },
             {
@@ -24329,7 +24356,7 @@
               "kind": "method",
               "signature": "(self, huge: float = 10000000.0, deep: bool = False) -> List[str]",
               "summary": "Animation outputs that are NaN or beyond *huge* world units.",
-              "line": 461,
+              "line": 455,
               "deprecated": false
             },
             {
@@ -24338,7 +24365,7 @@
               "kind": "method",
               "signature": "(self, name: str) -> Optional[int]",
               "summary": "First node index with *name*, or ``None``.",
-              "line": 503,
+              "line": 497,
               "deprecated": false
             },
             {
@@ -24347,7 +24374,7 @@
               "kind": "method",
               "signature": "(self, index: int) -> Optional[int]",
               "summary": "Parent node index, or ``None`` for a root.",
-              "line": 511,
+              "line": 505,
               "deprecated": false
             },
             {
@@ -24356,7 +24383,7 @@
               "kind": "method",
               "signature": "(self, index: int, time: Optional[float] = None, animation: Union[int, str, None] = None) -> List[List[float]]",
               "summary": "Node *index*'s local matrix, animated when *time* is given.",
-              "line": 520,
+              "line": 514,
               "deprecated": false
             },
             {
@@ -24365,7 +24392,7 @@
               "kind": "method",
               "signature": "(self, node: Union[int, str], time: Optional[float] = None, animation: Union[int, str, None] = None) -> Optional[List[List[float]]]",
               "summary": "World matrix of *node* (name or index), or ``None`` when absent.",
-              "line": 544,
+              "line": 538,
               "deprecated": false
             },
             {
@@ -24374,7 +24401,7 @@
               "kind": "method",
               "signature": "(self, node: Union[int, str], time: Optional[float] = None, animation: Union[int, str, None] = None) -> Optional[Tuple[float, float, float]]",
               "summary": "World-space translation of *node*, or ``None`` when absent.",
-              "line": 561,
+              "line": 555,
               "deprecated": false
             },
             {
@@ -24383,7 +24410,34 @@
               "kind": "method",
               "signature": "(self) -> Iterator[Tuple[int, Optional[str]]]",
               "summary": "Yield ``(index, name)`` for every node, in file order.",
-              "line": 571,
+              "line": 565,
+              "deprecated": false
+            }
+          ]
+        }
+      ],
+      "constants": []
+    },
+    {
+      "relpath": "file_utils/mesh_convert/glb/rotations.py",
+      "summary": "Restore the rotation FBX2glTF drops from a node scaled flat on one axis.",
+      "functions": [],
+      "classes": [
+        {
+          "name": "GlbRotations",
+          "summary": "Restore the rotation FBX2glTF drops from a node scaled flat on one axis.",
+          "line": 433,
+          "bases": [
+            "_GlbRotationsInternal"
+          ],
+          "members": [
+            {
+              "name": "restore",
+              "qualname": "GlbRotations.restore",
+              "kind": "classmethod",
+              "signature": "(cls, glb: GlbTarget, fbx: str, fps: float, skip: Collection[int] = ()) -> Dict[str, int]",
+              "summary": "Give each flat node the rotation FBX2glTF dropped from it.",
+              "line": 444,
               "deprecated": false
             }
           ]
@@ -26302,7 +26356,7 @@
         {
           "name": "ArticulationModel",
           "summary": "One rig's joints, channels and limits, and the solver that poses them.",
-          "line": 274,
+          "line": 191,
           "bases": [
             "_ArticulationModelInternal"
           ],
@@ -26313,7 +26367,7 @@
               "kind": "classmethod",
               "signature": "(cls, payload: Mapping[str, Any], name: Optional[str] = None) -> 'ArticulationModel'",
               "summary": "The model of the rig *name* (default: the first) in an",
-              "line": 399,
+              "line": 316,
               "deprecated": false
             },
             {
@@ -26322,7 +26376,7 @@
               "kind": "method",
               "signature": "(self, name: str) -> int",
               "summary": "The index of the joint called *name*.",
-              "line": 414,
+              "line": 331,
               "deprecated": false
             },
             {
@@ -26331,7 +26385,7 @@
               "kind": "method",
               "signature": "(self, joint: int) -> List[int]",
               "summary": "The joints from *joint*'s root down to *joint*, root first.",
-              "line": 425,
+              "line": 342,
               "deprecated": false
             },
             {
@@ -26340,7 +26394,7 @@
               "kind": "method",
               "signature": "(self) -> List[float]",
               "summary": "Every channel at 0: the rig at rest.",
-              "line": 434,
+              "line": 351,
               "deprecated": false
             },
             {
@@ -26349,7 +26403,7 @@
               "kind": "method",
               "signature": "(self, slot: int) -> Tuple[Optional[float], Optional[float]]",
               "summary": "``(min, max)`` of state slot *slot*;",
-              "line": 438,
+              "line": 355,
               "deprecated": false
             },
             {
@@ -26358,7 +26412,7 @@
               "kind": "method",
               "signature": "(self, state: Sequence[float]) -> List[float]",
               "summary": "*state* with every channel inside its limits.",
-              "line": 442,
+              "line": 359,
               "deprecated": false
             },
             {
@@ -26367,7 +26421,7 @@
               "kind": "method",
               "signature": "(self, state: Sequence[float], joint: int) -> Tuple[Vec, Quat]",
               "summary": "Joint *joint*'s local ``(translation, rotation)`` at *state*.",
-              "line": 458,
+              "line": 375,
               "deprecated": false
             },
             {
@@ -26376,7 +26430,7 @@
               "kind": "method",
               "signature": "(self, state: Sequence[float]) -> List[Tuple[Vec, Quat]]",
               "summary": "Every joint's local ``(translation, rotation)`` at *state*.",
-              "line": 467,
+              "line": 387,
               "deprecated": false
             },
             {
@@ -26385,7 +26439,7 @@
               "kind": "method",
               "signature": "(self, state: Sequence[float]) -> List[Tuple[Vec, Quat]]",
               "summary": "Every joint's ``(position, rotation)`` in rig space at *state*.",
-              "line": 471,
+              "line": 391,
               "deprecated": false
             },
             {
@@ -26394,7 +26448,7 @@
               "kind": "method",
               "signature": "(self, state: Sequence[float], joint: int, local_point: Sequence[float]) -> Vec",
               "summary": "*local_point* (in joint *joint*'s frame) in rig space at *state*.",
-              "line": 484,
+              "line": 409,
               "deprecated": false
             },
             {
@@ -26403,7 +26457,7 @@
               "kind": "method",
               "signature": "(self, state: Sequence[float], joint: int, point: Sequence[float]) -> Vec",
               "summary": "The rig-space *point* in joint *joint*'s frame at *state* -- where a",
-              "line": 491,
+              "line": 416,
               "deprecated": false
             },
             {
@@ -26412,7 +26466,7 @@
               "kind": "method",
               "signature": "(self, locals_: Sequence[Tuple[Sequence[float], Sequence[float]]], hint: Optional[Sequence[float]] = None) -> List[float]",
               "summary": "The state that poses the joints at *locals_* -- one local",
-              "line": 500,
+              "line": 425,
               "deprecated": false
             },
             {
@@ -26421,7 +26475,7 @@
               "kind": "method",
               "signature": "(self, locals_: Sequence[Tuple[Sequence[float], Sequence[float]]]) -> float",
               "summary": "How many of the runtime's units one of the record's makes, measured",
-              "line": 536,
+              "line": 465,
               "deprecated": false
             },
             {
@@ -26430,7 +26484,7 @@
               "kind": "method",
               "signature": "(self, state: Sequence[float], joint: int, local_point: Sequence[float], target: Sequence[float], rotation: Optional[Sequence[float]] = None) -> List[float]",
               "summary": "The state that brings *local_point* on joint *joint*'s link to the",
-              "line": 562,
+              "line": 491,
               "deprecated": false
             }
           ]
@@ -26443,7 +26497,7 @@
           "kind": "constant",
           "signature": "",
           "summary": "",
-          "line": 55,
+          "line": 57,
           "deprecated": false
         },
         {
@@ -26452,7 +26506,7 @@
           "kind": "constant",
           "signature": "",
           "summary": "",
-          "line": 56,
+          "line": 58,
           "deprecated": false
         },
         {
@@ -26461,7 +26515,7 @@
           "kind": "constant",
           "signature": "",
           "summary": "",
-          "line": 57,
+          "line": 59,
           "deprecated": false
         },
         {
@@ -26470,7 +26524,7 @@
           "kind": "constant",
           "signature": "",
           "summary": "",
-          "line": 59,
+          "line": 61,
           "deprecated": false
         }
       ]
@@ -26483,7 +26537,7 @@
         {
           "name": "ArticulationPlan",
           "summary": "The plan of an articulated rig: checked, framed, recorded and edited.",
-          "line": 163,
+          "line": 164,
           "bases": [
             "_ArticulationPlanInternal"
           ],
@@ -26494,7 +26548,7 @@
               "kind": "classmethod",
               "signature": "(cls, position: Sequence[float], aim: Sequence[float], normal: Sequence[float]) -> Matrix",
               "summary": "A rest frame: X along *aim*, Z the *normal* made perpendicular to",
-              "line": 187,
+              "line": 188,
               "deprecated": false
             },
             {
@@ -26503,7 +26557,7 @@
               "kind": "classmethod",
               "signature": "(cls, spec: Mapping[str, Any]) -> Dict[int, Matrix]",
               "summary": "Each link's rest frame in the group's space, by link index: its",
-              "line": 225,
+              "line": 226,
               "deprecated": false
             },
             {
@@ -26512,7 +26566,7 @@
               "kind": "classmethod",
               "signature": "(cls, spec: Mapping[str, Any]) -> List[Dict[str, Any]]",
               "summary": "Each planned joint's rest in its parent's space, in plan order:",
-              "line": 236,
+              "line": 237,
               "deprecated": false
             },
             {
@@ -26521,7 +26575,7 @@
               "kind": "classmethod",
               "signature": "(cls, spec: Mapping[str, Any]) -> List[Dict[str, Any]]",
               "summary": "The record's joints: each one's rest (translate and rotation in its",
-              "line": 268,
+              "line": 269,
               "deprecated": false
             },
             {
@@ -26530,7 +26584,7 @@
               "kind": "classmethod",
               "signature": "(cls, spec: Mapping[str, Any], name_of: Optional[Callable[[Mapping[str, Any]], str]] = None) -> Dict[str, Any]",
               "summary": "The rig's entry in the ``articulation`` record: its joints",
-              "line": 299,
+              "line": 300,
               "deprecated": false
             },
             {
@@ -26539,7 +26593,7 @@
               "kind": "staticmethod",
               "signature": "(spec: Mapping[str, Any]) -> Dict[str, int]",
               "summary": "The joint index each moving part rides, by the part's uuid (the",
-              "line": 324,
+              "line": 325,
               "deprecated": false
             },
             {
@@ -26548,7 +26602,7 @@
               "kind": "classmethod",
               "signature": "(cls, spec: Mapping[str, Any]) -> List[Tuple[str, str]]",
               "summary": "``(joint id, channel)`` per state slot, in the model's order.",
-              "line": 334,
+              "line": 335,
               "deprecated": false
             },
             {
@@ -26557,7 +26611,7 @@
               "kind": "staticmethod",
               "signature": "(proposal: Mapping[str, Any], links: Sequence[Any], control_scale: float) -> Dict[str, Any]",
               "summary": "A plan to build from an ``ArticulationAnalysis.propose`` result.",
-              "line": 344,
+              "line": 345,
               "deprecated": false
             },
             {
@@ -26566,7 +26620,7 @@
               "kind": "classmethod",
               "signature": "(cls, joint: Mapping[str, Any], joint_id: str, inverse: Sequence[float]) -> Dict[str, Any]",
               "summary": "One joint, as a caller states it in WORLD space, moved into the rig",
-              "line": 385,
+              "line": 386,
               "deprecated": false
             },
             {
@@ -26575,7 +26629,7 @@
               "kind": "classmethod",
               "signature": "(cls, spec: Dict[str, Any], parts: Optional[Callable[[Dict[str, Any]], None]] = None) -> None",
               "summary": "Refuse a plan the build cannot keep: a part named twice, a link",
-              "line": 442,
+              "line": 443,
               "deprecated": false
             },
             {
@@ -26584,7 +26638,7 @@
               "kind": "staticmethod",
               "signature": "(spec: Mapping[str, Any]) -> Optional[int]",
               "summary": "The index of the joint the end control holds -- the joint of the",
-              "line": 506,
+              "line": 507,
               "deprecated": false
             },
             {
@@ -26593,7 +26647,7 @@
               "kind": "staticmethod",
               "signature": "(spec: Mapping[str, Any], uuid: Optional[str]) -> Optional[int]",
               "summary": "The index of the link holding the part *uuid*, or None.",
-              "line": 519,
+              "line": 520,
               "deprecated": false
             },
             {
@@ -26602,7 +26656,7 @@
               "kind": "staticmethod",
               "signature": "(spec: Mapping[str, Any]) -> Optional[int]",
               "summary": "The link at the end of the plan's longest chain (the deepest leaf;",
-              "line": 531,
+              "line": 532,
               "deprecated": false
             },
             {
@@ -26611,7 +26665,7 @@
               "kind": "classmethod",
               "signature": "(cls, spec: Mapping[str, Any], inverse: Sequence[float], points: Callable[[int], Iterable[Sequence[float]]], link: Optional[int] = None) -> Optional[Dict[str, Any]]",
               "summary": "Where the end control goes on a plan AT REST: on *link* (default",
-              "line": 545,
+              "line": 546,
               "deprecated": false
             },
             {
@@ -26620,7 +26674,7 @@
               "kind": "classmethod",
               "signature": "(cls, spec: Mapping[str, Any], end_index: int) -> Matrix",
               "summary": "The end link's rest frame in the end control's rest frame: the",
-              "line": 585,
+              "line": 586,
               "deprecated": false
             },
             {
@@ -26629,7 +26683,7 @@
               "kind": "classmethod",
               "signature": "(cls, spec: Mapping[str, Any], end_index: int) -> Tuple[Vec, Quat]",
               "summary": "What a solve of the end control needs of :meth:`end_offset`: the",
-              "line": 594,
+              "line": 595,
               "deprecated": false
             },
             {
@@ -26638,7 +26692,7 @@
               "kind": "staticmethod",
               "signature": "(spec: Mapping[str, Any], joint_id: str) -> Dict[str, Any]",
               "summary": "The plan's joint *joint_id* (the dict itself: edits land in the",
-              "line": 607,
+              "line": 608,
               "deprecated": false
             },
             {
@@ -26647,7 +26701,7 @@
               "kind": "staticmethod",
               "signature": "(spec: Mapping[str, Any], uuids: Iterable[str]) -> Tuple[int, List[Dict[str, Any]], List[Dict[str, Any]]]",
               "summary": "``(link, kept members, split members)`` for parts *uuids* leaving",
-              "line": 620,
+              "line": 621,
               "deprecated": false
             },
             {
@@ -26656,7 +26710,7 @@
               "kind": "classmethod",
               "signature": "(cls, spec: Dict[str, Any], uuids: Iterable[str], joint: Dict[str, Any], world: Sequence[float], keep_points: Iterable[Sequence[float]], split_points: Iterable[Sequence[float]]) -> Dict[str, Any]",
               "summary": "Split a link: parts *uuids* leave the link they ride",
-              "line": 648,
+              "line": 649,
               "deprecated": false
             },
             {
@@ -26665,7 +26719,7 @@
               "kind": "classmethod",
               "signature": "(cls, spec: Dict[str, Any], joint_id: str) -> Dict[str, Any]",
               "summary": "Fold *joint_id*'s link back into the link it hangs off: its parts",
-              "line": 696,
+              "line": 697,
               "deprecated": false
             },
             {
@@ -26674,7 +26728,7 @@
               "kind": "classmethod",
               "signature": "(cls, spec: Dict[str, Any], joint_id: str, world: Sequence[float], **fields: Any) -> Dict[str, Any]",
               "summary": "Change a joint's ``type``, ``position``, ``aim`` or ``normal``",
-              "line": 726,
+              "line": 727,
               "deprecated": false
             },
             {
@@ -26683,7 +26737,7 @@
               "kind": "classmethod",
               "signature": "(cls, spec: Mapping[str, Any], joint_id: str, channel: str, minimum: Optional[float], maximum: Optional[float]) -> Dict[str, Any]",
               "summary": "Bound one channel (degrees, or a slide's units in the rig's",
-              "line": 770,
+              "line": 771,
               "deprecated": false
             },
             {
@@ -26692,7 +26746,7 @@
               "kind": "classmethod",
               "signature": "(cls, spec: Mapping[str, Any], joint_id: str, channel: str, side: str, value: float) -> Tuple[Optional[float], Optional[float]]",
               "summary": "The channel's ``(min, max)`` with *value* taken as its *side*",
-              "line": 797,
+              "line": 798,
               "deprecated": false
             },
             {
@@ -26701,7 +26755,7 @@
               "kind": "classmethod",
               "signature": "(cls, spec: Mapping[str, Any], joint_id: str, weight: float, channel: Optional[str] = None) -> Dict[str, Any]",
               "summary": "How readily *joint_id* moves when the end control or a grab pulls",
-              "line": 824,
+              "line": 825,
               "deprecated": false
             },
             {
@@ -26710,7 +26764,7 @@
               "kind": "classmethod",
               "signature": "(cls, joint: Dict[str, Any], kind: str) -> Dict[str, Any]",
               "summary": "Make *joint* a *kind*, keeping only the limits that type has -- a",
-              "line": 854,
+              "line": 855,
               "deprecated": false
             },
             {
@@ -26719,7 +26773,7 @@
               "kind": "classmethod",
               "signature": "(cls, spec: Mapping[str, Any]) -> Dict[str, Matrix]",
               "summary": "Where each joint turns, in the frame of the link it hangs off (its",
-              "line": 870,
+              "line": 871,
               "deprecated": false
             },
             {
@@ -26728,7 +26782,7 @@
               "kind": "classmethod",
               "signature": "(cls, spec: Mapping[str, Any], handles: Mapping[str, Sequence[float]], eps: Optional[float] = None) -> Optional[Dict[str, Any]]",
               "summary": "A copy of *spec* with each joint's rest frame and the end",
-              "line": 889,
+              "line": 890,
               "deprecated": false
             },
             {
@@ -26737,7 +26791,7 @@
               "kind": "classmethod",
               "signature": "(cls, joint: Mapping[str, Any]) -> float",
               "summary": "A joint's give: its channels' weight (the stiffest, when they",
-              "line": 942,
+              "line": 943,
               "deprecated": false
             },
             {
@@ -26746,7 +26800,7 @@
               "kind": "staticmethod",
               "signature": "(limits: Optional[Mapping[str, Sequence[Optional[float]]]]) -> str",
               "summary": "*limits* as a panel shows them: ``rz -30..95`` per channel, ``-``",
-              "line": 950,
+              "line": 951,
               "deprecated": false
             },
             {
@@ -26755,7 +26809,7 @@
               "kind": "staticmethod",
               "signature": "(text: str, channels: Sequence[str]) -> Dict[str, Tuple[Optional[float], Optional[float]]]",
               "summary": "The limits typed into a Limits cell: ``rz -30..95`` per channel,",
-              "line": 969,
+              "line": 970,
               "deprecated": false
             }
           ]
@@ -31034,6 +31088,121 @@
               "signature": "(cls, count: int, span: float, calculation_mode: str = 'linear', weight_bias: float = 0.5, weight_curve: float = 2.0) -> List[float]",
               "summary": "Signed offsets from a midpoint for *count* points across *span*.",
               "line": 335,
+              "deprecated": false
+            }
+          ]
+        }
+      ],
+      "constants": []
+    },
+    {
+      "relpath": "math_utils/quaternion.py",
+      "summary": "Rotation math on plain tuples -- quaternions, rotation matrices and Euler",
+      "functions": [],
+      "classes": [
+        {
+          "name": "Quaternion",
+          "summary": "Unit-quaternion rotation math on ``(x, y, z, w)`` tuples (module",
+          "line": 27,
+          "bases": [],
+          "members": [
+            {
+              "name": "multiply",
+              "qualname": "Quaternion.multiply",
+              "kind": "staticmethod",
+              "signature": "(a: Sequence[float], b: Sequence[float]) -> Quat",
+              "summary": "``a (x) b``: the rotation *b* followed by *a*.",
+              "line": 51,
+              "deprecated": false
+            },
+            {
+              "name": "conjugate",
+              "qualname": "Quaternion.conjugate",
+              "kind": "staticmethod",
+              "signature": "(q: Sequence[float]) -> Quat",
+              "summary": "The inverse of the unit quaternion *q*.",
+              "line": 63,
+              "deprecated": false
+            },
+            {
+              "name": "normalize",
+              "qualname": "Quaternion.normalize",
+              "kind": "classmethod",
+              "signature": "(cls, q: Sequence[float]) -> Quat",
+              "summary": "*q* at unit length;",
+              "line": 68,
+              "deprecated": false
+            },
+            {
+              "name": "rotate",
+              "qualname": "Quaternion.rotate",
+              "kind": "staticmethod",
+              "signature": "(q: Sequence[float], v: Sequence[float]) -> Vec",
+              "summary": "*v* rotated by the unit quaternion *q*.",
+              "line": 77,
+              "deprecated": false
+            },
+            {
+              "name": "from_axis_angle",
+              "qualname": "Quaternion.from_axis_angle",
+              "kind": "classmethod",
+              "signature": "(cls, axis: Union[int, Sequence[float]], degrees: float) -> Quat",
+              "summary": "A rotation of *degrees* about *axis*: an axis index (0, 1, 2 for",
+              "line": 90,
+              "deprecated": false
+            },
+            {
+              "name": "from_euler",
+              "qualname": "Quaternion.from_euler",
+              "kind": "classmethod",
+              "signature": "(cls, order: str, degrees: Sequence[float]) -> Quat",
+              "summary": "The rotation of Euler *degrees* ``(x, y, z)`` in Maya's *order*:",
+              "line": 109,
+              "deprecated": false
+            },
+            {
+              "name": "to_matrix",
+              "qualname": "Quaternion.to_matrix",
+              "kind": "staticmethod",
+              "signature": "(q: Sequence[float]) -> List[List[float]]",
+              "summary": "The rotation matrix of the unit quaternion *q* (rows, column",
+              "line": 120,
+              "deprecated": false
+            },
+            {
+              "name": "from_matrix",
+              "qualname": "Quaternion.from_matrix",
+              "kind": "staticmethod",
+              "signature": "(m: Sequence[Sequence[float]]) -> Quat",
+              "summary": "The unit quaternion of rotation matrix *m* (rows, column vectors);",
+              "line": 131,
+              "deprecated": false
+            },
+            {
+              "name": "matrix_euler",
+              "qualname": "Quaternion.matrix_euler",
+              "kind": "classmethod",
+              "signature": "(cls, order: str, m: Sequence[Sequence[float]]) -> Vec",
+              "summary": "Euler degrees ``(x, y, z)`` of rotation matrix *m* in Maya's",
+              "line": 151,
+              "deprecated": false
+            },
+            {
+              "name": "arc",
+              "qualname": "Quaternion.arc",
+              "kind": "classmethod",
+              "signature": "(cls, a: Sequence[float], b: Sequence[float]) -> Callable[[float], Quat]",
+              "summary": "The shorter arc from *a* to *b*, as ``u -> rotation``: :meth:`slerp`",
+              "line": 181,
+              "deprecated": false
+            },
+            {
+              "name": "slerp",
+              "qualname": "Quaternion.slerp",
+              "kind": "classmethod",
+              "signature": "(cls, a: Sequence[float], b: Sequence[float], u: float) -> Quat",
+              "summary": "The rotation *u* of the way from *a* to *b* along the shorter arc,",
+              "line": 210,
               "deprecated": false
             }
           ]

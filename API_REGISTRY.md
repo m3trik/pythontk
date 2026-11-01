@@ -143,6 +143,7 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
 - [`file_utils/mesh_convert/glb/key_reduction.py`](#file_utils--mesh_convert--glb--key_reduction) — Reduce a GLB's animation keys to what its interpolation needs.
 - [`file_utils/mesh_convert/glb/pipeline.py`](#file_utils--mesh_convert--glb--pipeline) — FBX -> GLB: the one build every GLB deliverable goes through.
 - [`file_utils/mesh_convert/glb/reader.py`](#file_utils--mesh_convert--glb--reader) — Read-only structured access to a GLB: accessors, animation sampling, worlds.
+- [`file_utils/mesh_convert/glb/rotations.py`](#file_utils--mesh_convert--glb--rotations) — Restore the rotation FBX2glTF drops from a node scaled flat on one axis.
 - [`file_utils/mesh_convert/glb/skin_weights.py`](#file_utils--mesh_convert--glb--skin_weights) — Restore the skin weights FBX2glTF hands one mesh from another.
 - [`file_utils/mesh_convert/glb/tangents.py`](#file_utils--mesh_convert--glb--tangents) — Repair a GLB's shipped tangents against the UVs they describe.
 - [`file_utils/mesh_convert/render_effects_record.py`](#file_utils--mesh_convert--render_effects_record) — The ``render_effects`` record's payload, declared once.
@@ -188,6 +189,7 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
 - [`math_utils/key_curve.py`](#math_utils--key_curve) — Keyed 1-D animation curves: cubic Bezier spans, step holds and infinity.
 - [`math_utils/noise.py`](#math_utils--noise)
 - [`math_utils/progression.py`](#math_utils--progression)
+- [`math_utils/quaternion.py`](#math_utils--quaternion) — Rotation math on plain tuples -- quaternions, rotation matrices and Euler
 - [`math_utils/ramp_keys.py`](#math_utils--ramp_keys) — Render-effect key timelines -- the pulse and fade shapes, as ``(frame, value)`` pairs.
 - [`math_utils/weights.py`](#math_utils--weights) — Weight math for blendShape / shape-key morph animation — pure, DCC-agnostic.
 - [`net_utils/_net_utils.py`](#net_utils--_net_utils)
@@ -220,7 +222,7 @@ _Auto-generated. Do not edit by hand. Refresh via `m3trik/scripts/generate_api_r
 ### `__init__.py`
 
 - [`DEFAULT_INCLUDE`](pythontk/pythontk/__init__.py#L21) — constant
-- [`MOVED_NAMES`](pythontk/pythontk/__init__.py#L633) — constant
+- [`MOVED_NAMES`](pythontk/pythontk/__init__.py#L634) — constant
 
 <a id="audio_utils--_audio_utils"></a>
 ### `audio_utils/_audio_utils.py`
@@ -3186,30 +3188,32 @@ A project's files baked from other files: one slot per source, kept with
 
 Collect: gather the files a set of readers use into one folder, keyed by reader.
 
-- **[`class CollectHost(Protocol)`](pythontk/pythontk/file_utils/file_collect.py#L57)** — What a Collect asks of the host whose readers it gathers files for.
+- **[`class CollectHost(Protocol)`](pythontk/pythontk/file_utils/file_collect.py#L60)** — What a Collect asks of the host whose readers it gathers files for.
   - `CollectHost.stored_path(self, node: Any) -> str` — The path *node* stores, as stored (``""`` for none).
   - `CollectHost.resolve_path(self, path: str, file_node: Any = None) -> Tuple[bool, str]` — ``(on disk, absolute path)`` for *path* as *file_node* reads it --
   - `CollectHost.stored_form(self, path: str, file_node: Any = None) -> str` — The spelling *file_node* would store for the absolute *path* (a
   - `CollectHost.repath(self, rows: List[Dict[str, Any]]) -> int` — Point the reader of each landed row at its ``destination`` (one undo
   - `CollectHost.read_elsewhere(self, nodes: Sequence[Any]) -> Iterable[str]` — The files the scene reads through readers OTHER than *nodes* --
-- **[`class PureCollectHost`](pythontk/pythontk/file_utils/file_collect.py#L87)** — The :class:`CollectHost` with no host: a reader is a key of *paths*, its
+- **[`class PureCollectHost`](pythontk/pythontk/file_utils/file_collect.py#L90)** — The :class:`CollectHost` with no host: a reader is a key of *paths*, its
   - `PureCollectHost.stored_path(self, node: Any) -> str`
   - `PureCollectHost.resolve_path(self, path: str, file_node: Any = None) -> Tuple[bool, str]`
   - `PureCollectHost.stored_form(self, path: str, file_node: Any = None) -> str`
   - `PureCollectHost.repath(self, rows: List[Dict[str, Any]]) -> int`
   - `PureCollectHost.read_elsewhere(nodes: Sequence[Any]) -> Iterable[str]` *(static)*
-- **[`class FileCollect(LoggingMixin)`](pythontk/pythontk/file_utils/file_collect.py#L129)** — Resolve, plan and apply a Collect;
+- **[`class FileCollect(LoggingMixin)`](pythontk/pythontk/file_utils/file_collect.py#L132)** — Resolve, plan and apply a Collect;
   - `FileCollect.entries(self, nodes: Iterable[Any], search_dir: str = '', find_files: Optional[Callable[[List[str], str], List[str]]] = None) -> List[Dict[str, Any]]` — The Resolve step: what file each of *nodes* reads, or could.
-  - `FileCollect.plan(cls, entries: Iterable[Mapping[str, Any]], dest_dir: str, choices: Optional[Mapping[Hashable, str]] = None, keep: Iterable[str] = ()) -> List[Dict[str, Any]]` *(class)* — The Collect step: where each entry's file lands in *dest_dir*.
-  - `FileCollect.plan_nodes(self, nodes: Iterable[Any], dest_dir: str, search_dir: str = '', find_files: Optional[Callable[[List[str], str], List[str]]] = None, choices: Optional[Mapping[Hashable, str]] = None, kind: str = 'file', extra: Iterable[Mapping[str, Any]] = ()) -> List[Dict[str, Any]]` — Resolve *nodes* and plan them, with *extra* entries beside them.
+  - `FileCollect.plan(cls, entries: Iterable[Mapping[str, Any]], dest_dir: str, choices: Optional[Mapping[Hashable, str]] = None, keep: Iterable[str] = (), flat: bool = False) -> List[Dict[str, Any]]` *(class)* — The Collect step: where each entry's file lands in *dest_dir*.
+  - `FileCollect.plan_nodes(self, nodes: Iterable[Any], dest_dir: str, search_dir: str = '', find_files: Optional[Callable[[List[str], str], List[str]]] = None, choices: Optional[Mapping[Hashable, str]] = None, kind: str = 'file', extra: Iterable[Mapping[str, Any]] = (), flat: bool = False) -> List[Dict[str, Any]]` — Resolve *nodes* and plan them, with *extra* entries beside them.
   - `FileCollect.row_key(row: Mapping[str, Any]) -> Tuple[str, Any]` *(static)* — ``(kind, owner)`` -- what a pick (``plan(choices=)``) names a row by.
   - `FileCollect.apply(cls, rows: Iterable[Dict[str, Any]], mode: str = 'copy', copy: Optional[Callable[[List[str], str, str], List[Tuple[str, str]]]] = None, progress: Optional[Callable[[int, int], Any]] = None) -> List[Dict[str, Any]]` *(class)* — Do a plan's file work;
+  - `FileCollect.finish_move(cls, pairs: Iterable[Tuple[str, str]], keep: Iterable[str] = ()) -> Tuple[List[str], List[str]]` *(class)* — A move's last step, for a host that placed its copies itself (the
   - `FileCollect.kept_files(cls, rows: Iterable[Mapping[str, Any]]) -> Set[str]` *(class)* — The files a move of *rows* copies instead (``keep_source``, decided per
   - `FileCollect.source_files(path: str) -> Set[str]` *(static)* — The files *path* names (a set: its tiles), normalized.
+  - `FileCollect.set_directory(self, nodes: Iterable[Any], target_dir: str, mode: str = 'rewrite', allow_missing: bool = False, copy: Optional[Callable[[List[str], str, str], List[Tuple[str, str]]]] = None, kind: str = 'file') -> Dict[str, Any]` — Set Directory's file work: point each reader at the file of its name
   - `FileCollect.run(self, rows: List[Dict[str, Any]], dest_dir: str, mode: str = 'copy', dry_run: bool = False, search_dir: str = '', copy: Optional[Callable[[List[str], str, str], List[Tuple[str, str]]]] = None, progress: Optional[Callable[[str], Any]] = None) -> bool` — Report a plan, or commit it and repath: a whole Collect over the host.
   - `FileCollect.problems(cls, rows: Sequence[Mapping[str, Any]], search_dir: str = '') -> List[Tuple[str, str, List[str]]]` *(class)* — ``[(level, message, items)]`` naming the rows a plan cannot place.
   - `FileCollect.preview(self, rows: Sequence[Mapping[str, Any]], dest_dir: str, mode: str) -> Tuple[bool, List[Tuple[str, str, List[str]]]]` — ``(anything to do, [(level, message, items)])`` -- what a commit of
-  - `FileCollect.outcome(cls, rows: Sequence[Mapping[str, Any]], landed: Sequence[Mapping[str, Any]], mode: str) -> List[Tuple[str, str, List[str]]]` *(class)* — ``[(level, message, items)]`` -- what a commit did, per kind.
+  - `FileCollect.outcome(cls, rows: Sequence[Mapping[str, Any]], landed: Sequence[Mapping[str, Any]], mode: str) -> List[Tuple[str, str, List[str]]]` *(class)* — ``[(level, message, items)]`` -- what a commit did, per kind;
   - `FileCollect.unresolved(self, rows: Sequence[Mapping[str, Any]]) -> List[Tuple[str, str, List[str]]]` — The honest close: the readers (of *rows* that store a path) whose
   - `FileCollect.listing(cls, lines: Iterable[str]) -> List[str]` *(class)* — *lines* capped at :attr:`PREVIEW_ROWS`, the remainder counted: a cut
 
@@ -3312,8 +3316,8 @@ Zero-dependency binary-FBX writer: the encoding half of :class:`FbxFile`.
 
 glTF -> FBX with no DCC in the loop: :meth:`MeshConvert.gltf_to_fbx`.
 
-- [`GLTF_EXTENSIONS`](pythontk/pythontk/file_utils/mesh_convert/_gltf2fbx.py#L60) — constant
-- [`GLTF_UNDECODABLE_EXTENSIONS`](pythontk/pythontk/file_utils/mesh_convert/_gltf2fbx.py#L64) — constant
+- [`GLTF_EXTENSIONS`](pythontk/pythontk/file_utils/mesh_convert/_gltf2fbx.py#L61) — constant
+- [`GLTF_UNDECODABLE_EXTENSIONS`](pythontk/pythontk/file_utils/mesh_convert/_gltf2fbx.py#L65) — constant
 
 <a id="file_utils--mesh_convert--_mesh_convert"></a>
 ### `file_utils/mesh_convert/_mesh_convert.py`
@@ -3334,6 +3338,7 @@ FBX -> GLB through FBX2glTF, and the GLB repair and enrichment passes.
   - `MeshConvert.fbx_media_dirs(fbx_path: str) -> List[str]` *(static)* — Where a file an FBX names loosely is looked for beside it.
   - `MeshConvert.fix_glb_tangents(cls, glb: GlbTarget) -> Dict[str, int]` *(class)* — Point every shipped TANGENT the way its UVs run, and give a
   - `MeshConvert.restore_glb_skin_weights(cls, glb: GlbTarget, fbx: str) -> Dict[str, int]` *(class)* — Give every skinned mesh the weights its FBX clusters hold.
+  - `MeshConvert.restore_glb_rotations(cls, glb: GlbTarget, fbx: str, fps: Optional[float] = None) -> Dict[str, int]` *(class)* — Give each node scaled flat on an axis the rotation FBX2glTF dropped.
   - `MeshConvert.SHADOW_PLANE_DEFAULTS(cls) -> Dict[str, Any]` **DEPRECATED (remove in 0.18.0)** — A shadow plane's starting values, as 0.16.1 served them:
   - `MeshConvert.rendering_policy(cls, overrides: Optional[Mapping[str, Mapping[str, Any]]] = None, carrier: str = 'glb') -> Dict[str, Any]` *(class)* **DEPRECATED (remove in 0.18.0)** — The lighting recipe with a deliverable's own choices laid over it
   - `MeshConvert.build_scene_sidecar(cls, sections: Optional[Dict[str, Any]], source: Dict[str, str], asset: Optional[str] = None, rendering: Optional[Mapping[str, Mapping[str, Any]]] = None) -> Dict[str, Any]` *(class)* **DEPRECATED (remove in 0.18.0)** — The envelope a host built before the materials record: the GLB's
@@ -3467,7 +3472,7 @@ Zero-dependency binary-FBX reader: header, node records, objects, takes.
 
 Rewrite the payload of a binary FBX -- no DCC, no FBX SDK.
 
-- **[`class FbxMedia(_FbxMediaInternal)`](pythontk/pythontk/file_utils/mesh_convert/fbx_media.py#L1282)** — Read and rewrite the media a binary FBX embeds.
+- **[`class FbxMedia(_FbxMediaInternal)`](pythontk/pythontk/file_utils/mesh_convert/fbx_media.py#L1291)** — Read and rewrite the media a binary FBX embeds.
   - `FbxMedia.embedded(cls, path: str) -> List[Dict[str, Any]]` *(class)* — Every embedded image: ``{"name", "format", "size", "bytes"}``.
   - `FbxMedia.downsize(cls, src: str, dst: Optional[str] = None, *, max_size: int, exempt: Iterable[str] = (), png_compress_level: int = 1, jpeg_quality: int = 90, workers: Optional[int] = None) -> Dict[str, Any]` *(class)* — Resize every embedded PNG/JPEG whose longest edge exceeds *max_size*.
   - `FbxMedia.expand_grayscale(cls, src: str, dst: Optional[str] = None, *, png_compress_level: int = 1, jpeg_quality: int = 95, workers: Optional[int] = None) -> Dict[str, Any]` *(class)* — Re-encode every embedded grayscale PNG/JPEG with colour channels.
@@ -3498,7 +3503,7 @@ Rewrite the payload of a binary FBX -- no DCC, no FBX SDK.
 
 Rebuild a GLB's shot clips from its one whole-timeline animation.
 
-- **[`class GlbClips(_GlbClipsInternal)`](pythontk/pythontk/file_utils/mesh_convert/glb/clips.py#L286)** — Build a GLB's declared shot clips from its whole-timeline animation.
+- **[`class GlbClips(_GlbClipsInternal)`](pythontk/pythontk/file_utils/mesh_convert/glb/clips.py#L266)** — Build a GLB's declared shot clips from its whole-timeline animation.
   - `GlbClips.rebuild(cls, edit: Any, takes: Sequence[Dict[str, Any]], fps: float, source_zero: float = 0.0, *, cut_shots: bool = True, keep_sequence: bool = True) -> Optional[Dict[str, Any]]` *(class)* — Replace the declared clips with exact slices of the source stack.
 
 <a id="file_utils--mesh_convert--glb--edit"></a>
@@ -3559,7 +3564,7 @@ Write authored per-object material ramps into a GLB as ``KHR_animation_pointer``
 
 Reduce a GLB's animation keys to what its interpolation needs.
 
-- **[`class GlbKeyReduction(_GlbKeyReductionInternal)`](pythontk/pythontk/file_utils/mesh_convert/glb/key_reduction.py#L165)** — Tolerance-bound key reduction for a GLB's animation samplers.
+- **[`class GlbKeyReduction(_GlbKeyReductionInternal)`](pythontk/pythontk/file_utils/mesh_convert/glb/key_reduction.py#L152)** — Tolerance-bound key reduction for a GLB's animation samplers.
   - `GlbKeyReduction.read_sampler(gltf: Dict[str, Any], blob: Optional[bytes], sampler: Dict[str, Any]) -> Optional[Sampler]` *(static)* — ``(times, values, interpolation)`` for one sampler, or ``None``.
   - `GlbKeyReduction.evaluate(times: Sequence[float], values: Sequence[Sequence[float]], at: float, interpolation: str = 'LINEAR', quaternion: bool = False) -> Tuple[float, ...]` *(static)* — The sampler's value at *at* under glTF's rules, held outside its range.
   - `GlbKeyReduction.deviation(cls, reference: Sampler, candidate: Sampler, quaternion: bool = False) -> float` *(class)* — Worst component error of *candidate* against *reference*, sampled at
@@ -3580,7 +3585,7 @@ FBX -> GLB: the one build every GLB deliverable goes through.
 
 Read-only structured access to a GLB: accessors, animation sampling, worlds.
 
-- **[`class GlbReader(_GlbReaderInternal)`](pythontk/pythontk/file_utils/mesh_convert/glb/reader.py#L147)** — Read-only GLB inspector: accessors, animation evaluation, node worlds.
+- **[`class GlbReader(_GlbReaderInternal)`](pythontk/pythontk/file_utils/mesh_convert/glb/reader.py#L141)** — Read-only GLB inspector: accessors, animation evaluation, node worlds.
   - `GlbReader.load(cls, path: str) -> 'GlbReader'` *(class)* — Open *path* read-only and return a reader.
   - `GlbReader.counts(self) -> Dict[str, int]` — Section lengths for the usual census keys (missing -> 0).
   - `GlbReader.image_mimes(self) -> Dict[str, int]` — ``{mimeType: count}`` over ``images`` (missing type -> "?").
@@ -3600,6 +3605,14 @@ Read-only structured access to a GLB: accessors, animation sampling, worlds.
   - `GlbReader.world_matrix(self, node: Union[int, str], time: Optional[float] = None, animation: Union[int, str, None] = None) -> Optional[List[List[float]]]` — World matrix of *node* (name or index), or ``None`` when absent.
   - `GlbReader.world_position(self, node: Union[int, str], time: Optional[float] = None, animation: Union[int, str, None] = None) -> Optional[Tuple[float, float, float]]` — World-space translation of *node*, or ``None`` when absent.
   - `GlbReader.walk(self) -> Iterator[Tuple[int, Optional[str]]]` — Yield ``(index, name)`` for every node, in file order.
+
+<a id="file_utils--mesh_convert--glb--rotations"></a>
+### `file_utils/mesh_convert/glb/rotations.py`
+
+Restore the rotation FBX2glTF drops from a node scaled flat on one axis.
+
+- **[`class GlbRotations(_GlbRotationsInternal)`](pythontk/pythontk/file_utils/mesh_convert/glb/rotations.py#L433)** — Restore the rotation FBX2glTF drops from a node scaled flat on one axis.
+  - `GlbRotations.restore(cls, glb: GlbTarget, fbx: str, fps: float, skip: Collection[int] = ()) -> Dict[str, int]` *(class)* — Give each flat node the rotation FBX2glTF dropped from it.
 
 <a id="file_utils--mesh_convert--glb--skin_weights"></a>
 ### `file_utils/mesh_convert/glb/skin_weights.py`
@@ -3896,11 +3909,11 @@ The golden cases every port of :class:`ArticulationModel` is held to.
 
 The articulated-rig joint model and its grab solver -- pure math, no DCC.
 
-- [`ROTATE_CHANNELS`](pythontk/pythontk/geo_utils/articulation/model.py#L55) — constant
-- [`TRANSLATE_CHANNELS`](pythontk/pythontk/geo_utils/articulation/model.py#L56) — constant
-- [`CHANNELS`](pythontk/pythontk/geo_utils/articulation/model.py#L57) — constant
-- [`ROTATE_ORDERS`](pythontk/pythontk/geo_utils/articulation/model.py#L59) — constant
-- **[`class ArticulationModel(_ArticulationModelInternal)`](pythontk/pythontk/geo_utils/articulation/model.py#L274)** — One rig's joints, channels and limits, and the solver that poses them.
+- [`ROTATE_CHANNELS`](pythontk/pythontk/geo_utils/articulation/model.py#L57) — constant
+- [`TRANSLATE_CHANNELS`](pythontk/pythontk/geo_utils/articulation/model.py#L58) — constant
+- [`CHANNELS`](pythontk/pythontk/geo_utils/articulation/model.py#L59) — constant
+- [`ROTATE_ORDERS`](pythontk/pythontk/geo_utils/articulation/model.py#L61) — constant
+- **[`class ArticulationModel(_ArticulationModelInternal)`](pythontk/pythontk/geo_utils/articulation/model.py#L191)** — One rig's joints, channels and limits, and the solver that poses them.
   - `ArticulationModel.from_record(cls, payload: Mapping[str, Any], name: Optional[str] = None) -> 'ArticulationModel'` *(class)* — The model of the rig *name* (default: the first) in an
   - `ArticulationModel.joint_index(self, name: str) -> int` — The index of the joint called *name*.
   - `ArticulationModel.chain(self, joint: int) -> List[int]` — The joints from *joint*'s root down to *joint*, root first.
@@ -3921,7 +3934,7 @@ The articulated-rig joint model and its grab solver -- pure math, no DCC.
 
 An articulated rig's PLAN -- what a DCC builds, edited as plain data.
 
-- **[`class ArticulationPlan(_ArticulationPlanInternal)`](pythontk/pythontk/geo_utils/articulation/plan.py#L163)** — The plan of an articulated rig: checked, framed, recorded and edited.
+- **[`class ArticulationPlan(_ArticulationPlanInternal)`](pythontk/pythontk/geo_utils/articulation/plan.py#L164)** — The plan of an articulated rig: checked, framed, recorded and edited.
   - `ArticulationPlan.frame(cls, position: Sequence[float], aim: Sequence[float], normal: Sequence[float]) -> Matrix` *(class)* — A rest frame: X along *aim*, Z the *normal* made perpendicular to
   - `ArticulationPlan.frames(cls, spec: Mapping[str, Any]) -> Dict[int, Matrix]` *(class)* — Each link's rest frame in the group's space, by link index: its
   - `ArticulationPlan.rest(cls, spec: Mapping[str, Any]) -> List[Dict[str, Any]]` *(class)* — Each planned joint's rest in its parent's space, in plan order:
@@ -4555,6 +4568,24 @@ Keyed 1-D animation curves: cubic Bezier spans, step holds and infinity.
   - `ProgressionCurves.get_curve_function(cls, calculation_mode: str)` *(class)* — Get the curve function by name.
   - `ProgressionCurves.generate_curve_samples(cls, calculation_mode: str, num_samples: int = 100, weight_bias: float = 0.5, weight_curve: float = 1.0) -> List[float]` *(class)* — Generate a list of samples from a curve for visualization or analysis.
   - `ProgressionCurves.centered_offsets(cls, count: int, span: float, calculation_mode: str = 'linear', weight_bias: float = 0.5, weight_curve: float = 2.0) -> List[float]` *(class)* — Signed offsets from a midpoint for *count* points across *span*.
+
+<a id="math_utils--quaternion"></a>
+### `math_utils/quaternion.py`
+
+Rotation math on plain tuples -- quaternions, rotation matrices and Euler
+
+- **[`class Quaternion`](pythontk/pythontk/math_utils/quaternion.py#L27)** — Unit-quaternion rotation math on ``(x, y, z, w)`` tuples (module
+  - `Quaternion.multiply(a: Sequence[float], b: Sequence[float]) -> Quat` *(static)* — ``a (x) b``: the rotation *b* followed by *a*.
+  - `Quaternion.conjugate(q: Sequence[float]) -> Quat` *(static)* — The inverse of the unit quaternion *q*.
+  - `Quaternion.normalize(cls, q: Sequence[float]) -> Quat` *(class)* — *q* at unit length;
+  - `Quaternion.rotate(q: Sequence[float], v: Sequence[float]) -> Vec` *(static)* — *v* rotated by the unit quaternion *q*.
+  - `Quaternion.from_axis_angle(cls, axis: Union[int, Sequence[float]], degrees: float) -> Quat` *(class)* — A rotation of *degrees* about *axis*: an axis index (0, 1, 2 for
+  - `Quaternion.from_euler(cls, order: str, degrees: Sequence[float]) -> Quat` *(class)* — The rotation of Euler *degrees* ``(x, y, z)`` in Maya's *order*:
+  - `Quaternion.to_matrix(q: Sequence[float]) -> List[List[float]]` *(static)* — The rotation matrix of the unit quaternion *q* (rows, column
+  - `Quaternion.from_matrix(m: Sequence[Sequence[float]]) -> Quat` *(static)* — The unit quaternion of rotation matrix *m* (rows, column vectors);
+  - `Quaternion.matrix_euler(cls, order: str, m: Sequence[Sequence[float]]) -> Vec` *(class)* — Euler degrees ``(x, y, z)`` of rotation matrix *m* in Maya's
+  - `Quaternion.arc(cls, a: Sequence[float], b: Sequence[float]) -> Callable[[float], Quat]` *(class)* — The shorter arc from *a* to *b*, as ``u -> rotation``: :meth:`slerp`
+  - `Quaternion.slerp(cls, a: Sequence[float], b: Sequence[float], u: float) -> Quat` *(class)* — The rotation *u* of the way from *a* to *b* along the shorter arc,
 
 <a id="math_utils--ramp_keys"></a>
 ### `math_utils/ramp_keys.py`

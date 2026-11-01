@@ -779,7 +779,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 - `class PureCollectHost`
   - methods: stored_path, resolve_path, stored_form, repath, read_elsewhere
 - `class FileCollect(LoggingMixin)`
-  - methods: entries, plan, plan_nodes, row_key, apply, kept_files, source_files, run, problems, preview, outcome, unresolved, listing
+  - methods: entries, plan, plan_nodes, row_key, apply, finish_move, kept_files, source_files, set_directory, run, problems, preview, outcome, unresolved, listing
 
 ### `file_utils/file_dependencies.py` — File dependencies -- files a record names by *name*, found where they are NOW.
 - `class FileDependencies(LoggingMixin)`
@@ -810,7 +810,7 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 
 ### `file_utils/mesh_convert/_mesh_convert.py` — FBX -> GLB through FBX2glTF, and the GLB repair and enrichment passes.
 - `class MeshConvert(HelpMixin)`
-  - methods: open_glb, finish_fbx_deliverable, conversion_timeout, bake_node_frames, resolve_binary, fbx_to_glb, strip_glb_curve_proxies, prune_glb_unused_skins, fix_glb_skin_skeletons, fix_glb_nonfinite_keys, fbx_media_dirs, fix_glb_tangents, restore_glb_skin_weights, SHADOW_PLANE_DEFAULTS, rendering_policy, build_scene_sidecar, strip_fbx_records, finish_glb, strip_fbx_handoff, build_fbx_handoff, embed_glb_handoff, read_glb_handoff, read_scene_sidecar, verify_glb, data_export_channel, overlay_data_export, lightmaps_block, without_locate_hints, read_glb_lightmap_manifest, fix_glb_lightmap_metadata, lightmap_manifest_coverage, lightmap_report, embed_glb_lightmap_probe, strip_glb_baked_lights, apply_glb_lightmaps, highlight_probe_layers, lights_in_metres, embed_fbx_highlight_probes, apply_glb_shadows, apply_glb_articulation, apply_glb_clips, clip_spans, prune_glb_animations, compact_glb_animations, reduce_glb_animations, apply_glb_animations, effect_preview_channels, apply_glb_visibility, build_visibility_tracks, apply_glb_fades, check_glb_materials, fix_glb_phantom_opaque_alpha, suspect_orm_materials, set_glb_normal_scale, fbx_materials, read_fbx_materials, apply_glb_materials, OPTIMIZE_WORKERS, UASTC_RDO_NORMAL_MAX, drop_glb_texture_fallbacks, describe_texture_pass, web_delivery_texture_params, optimize_glb_textures, decode_glb_textures, dedupe_glb_images, prune_glb_unreferenced_textures, gltf_to_fbx
+  - methods: open_glb, finish_fbx_deliverable, conversion_timeout, bake_node_frames, resolve_binary, fbx_to_glb, strip_glb_curve_proxies, prune_glb_unused_skins, fix_glb_skin_skeletons, fix_glb_nonfinite_keys, fbx_media_dirs, fix_glb_tangents, restore_glb_skin_weights, restore_glb_rotations, SHADOW_PLANE_DEFAULTS, rendering_policy, build_scene_sidecar, strip_fbx_records, finish_glb, strip_fbx_handoff, build_fbx_handoff, embed_glb_handoff, read_glb_handoff, read_scene_sidecar, verify_glb, data_export_channel, overlay_data_export, lightmaps_block, without_locate_hints, read_glb_lightmap_manifest, fix_glb_lightmap_metadata, lightmap_manifest_coverage, lightmap_report, embed_glb_lightmap_probe, strip_glb_baked_lights, apply_glb_lightmaps, highlight_probe_layers, lights_in_metres, embed_fbx_highlight_probes, apply_glb_shadows, apply_glb_articulation, apply_glb_clips, clip_spans, prune_glb_animations, compact_glb_animations, reduce_glb_animations, apply_glb_animations, effect_preview_channels, apply_glb_visibility, build_visibility_tracks, apply_glb_fades, check_glb_materials, fix_glb_phantom_opaque_alpha, suspect_orm_materials, set_glb_normal_scale, fbx_materials, read_fbx_materials, apply_glb_materials, OPTIMIZE_WORKERS, UASTC_RDO_NORMAL_MAX, drop_glb_texture_fallbacks, describe_texture_pass, web_delivery_texture_params, optimize_glb_textures, decode_glb_textures, dedupe_glb_images, prune_glb_unreferenced_textures, gltf_to_fbx
 
 ### `file_utils/mesh_convert/export_fingerprint.py` — A deterministic structural summary of an exported GLB or FBX, and its diff.
 - `class ExportFingerprint`
@@ -858,6 +858,10 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 ### `file_utils/mesh_convert/glb/reader.py` — Read-only structured access to a GLB: accessors, animation sampling, worlds.
 - `class GlbReader(_GlbReaderInternal)`
   - methods: load, counts, image_mimes, extensions, skins_summary, accessor, animations, animation, clip_spans, motion_span, channel_table, sample, nan_findings, node_index, parent_of, local_matrix, world_matrix, world_position, walk
+
+### `file_utils/mesh_convert/glb/rotations.py` — Restore the rotation FBX2glTF drops from a node scaled flat on one axis.
+- `class GlbRotations(_GlbRotationsInternal)`
+  - methods: restore
 
 ### `file_utils/mesh_convert/glb/skin_weights.py` — Restore the skin weights FBX2glTF hands one mesh from another.
 - `class GlbSkinWeights(_GlbSkinWeightsInternal)`
@@ -1123,6 +1127,10 @@ _Auto-generated. Do not edit by hand. Compact symbol index — grep this for a n
 ### `math_utils/progression.py`
 - `class ProgressionCurves`
   - methods: linear, exponential, logarithmic, sine, ease_in, ease_out, ease_in_out, smooth_step, bounce, elastic, weighted, calculate_progression_factor, get_curve_function, generate_curve_samples, centered_offsets
+
+### `math_utils/quaternion.py` — Rotation math on plain tuples -- quaternions, rotation matrices and Euler
+- `class Quaternion`
+  - methods: multiply, conjugate, normalize, rotate, from_axis_angle, from_euler, to_matrix, from_matrix, matrix_euler, arc, slerp
 
 ### `math_utils/ramp_keys.py` — Render-effect key timelines -- the pulse and fade shapes, as ``(frame, value)`` pairs.
 - `class RampKeys`

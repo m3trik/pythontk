@@ -24,7 +24,7 @@ _Deprecated aliases whose window ran out._
 - `core_utils/engines/shots/manifest/manifest_model.py::ManifestModel.asset_column`
 - `core_utils/engines/shots/manifest/manifest_model.py::ManifestModel.column_clipboard`
 
-## Added (306)
+## Added (323)
 
 - `audio_utils/_audio_utils.py::AudioUtils.media_digests(cls, events: Iterable[Mapping[str, Any]], files: Mapping[str, bytes]) -> Dict[str, str]`
 - `core_utils/engines/key_stash/key_stash_model.py::KeyStash.merge_carrier(cls, carriers: Any, other: Dict[Any, Any], ctx: Any) -> None`
@@ -223,15 +223,17 @@ _Deprecated aliases whose window ran out._
 - `file_utils/file_collect.py::FileCollect(class)`
 - `file_utils/file_collect.py::FileCollect.apply(cls, rows: Iterable[Dict[str, Any]], mode: str = 'copy', copy: Optional[Callable[[List[str], str, str], List[Tuple[str, str]]]] = None, progress: Optional[Callable[[int, int], Any]] = None) -> List[Dict[str, Any]]`
 - `file_utils/file_collect.py::FileCollect.entries(self, nodes: Iterable[Any], search_dir: str = '', find_files: Optional[Callable[[List[str], str], List[str]]] = None) -> List[Dict[str, Any]]`
+- `file_utils/file_collect.py::FileCollect.finish_move(cls, pairs: Iterable[Tuple[str, str]], keep: Iterable[str] = ()) -> Tuple[List[str], List[str]]`
 - `file_utils/file_collect.py::FileCollect.kept_files(cls, rows: Iterable[Mapping[str, Any]]) -> Set[str]`
 - `file_utils/file_collect.py::FileCollect.listing(cls, lines: Iterable[str]) -> List[str]`
 - `file_utils/file_collect.py::FileCollect.outcome(cls, rows: Sequence[Mapping[str, Any]], landed: Sequence[Mapping[str, Any]], mode: str) -> List[Tuple[str, str, List[str]]]`
-- `file_utils/file_collect.py::FileCollect.plan(cls, entries: Iterable[Mapping[str, Any]], dest_dir: str, choices: Optional[Mapping[Hashable, str]] = None, keep: Iterable[str] = ()) -> List[Dict[str, Any]]`
-- `file_utils/file_collect.py::FileCollect.plan_nodes(self, nodes: Iterable[Any], dest_dir: str, search_dir: str = '', find_files: Optional[Callable[[List[str], str], List[str]]] = None, choices: Optional[Mapping[Hashable, str]] = None, kind: str = 'file', extra: Iterable[Mapping[str, Any]] = ()) -> List[Dict[str, Any]]`
+- `file_utils/file_collect.py::FileCollect.plan(cls, entries: Iterable[Mapping[str, Any]], dest_dir: str, choices: Optional[Mapping[Hashable, str]] = None, keep: Iterable[str] = (), flat: bool = False) -> List[Dict[str, Any]]`
+- `file_utils/file_collect.py::FileCollect.plan_nodes(self, nodes: Iterable[Any], dest_dir: str, search_dir: str = '', find_files: Optional[Callable[[List[str], str], List[str]]] = None, choices: Optional[Mapping[Hashable, str]] = None, kind: str = 'file', extra: Iterable[Mapping[str, Any]] = (), flat: bool = False) -> List[Dict[str, Any]]`
 - `file_utils/file_collect.py::FileCollect.preview(self, rows: Sequence[Mapping[str, Any]], dest_dir: str, mode: str) -> Tuple[bool, List[Tuple[str, str, List[str]]]]`
 - `file_utils/file_collect.py::FileCollect.problems(cls, rows: Sequence[Mapping[str, Any]], search_dir: str = '') -> List[Tuple[str, str, List[str]]]`
 - `file_utils/file_collect.py::FileCollect.row_key(row: Mapping[str, Any]) -> Tuple[str, Any]`
 - `file_utils/file_collect.py::FileCollect.run(self, rows: List[Dict[str, Any]], dest_dir: str, mode: str = 'copy', dry_run: bool = False, search_dir: str = '', copy: Optional[Callable[[List[str], str, str], List[Tuple[str, str]]]] = None, progress: Optional[Callable[[str], Any]] = None) -> bool`
+- `file_utils/file_collect.py::FileCollect.set_directory(self, nodes: Iterable[Any], target_dir: str, mode: str = 'rewrite', allow_missing: bool = False, copy: Optional[Callable[[List[str], str, str], List[Tuple[str, str]]]] = None, kind: str = 'file') -> Dict[str, Any]`
 - `file_utils/file_collect.py::FileCollect.source_files(path: str) -> Set[str]`
 - `file_utils/file_collect.py::FileCollect.unresolved(self, rows: Sequence[Mapping[str, Any]]) -> List[Tuple[str, str, List[str]]]`
 - `file_utils/file_collect.py::PureCollectHost(class)`
@@ -248,9 +250,12 @@ _Deprecated aliases whose window ran out._
 - `file_utils/file_dependencies.py::FileDependencies.strangers(folder: str, stem: str, ext: str, claims: Mapping[str, Any], wrote: Callable[[str], bool]) -> Set[str]`
 - `file_utils/file_naming.py::RenamePlan.predict(cls, plan: Sequence[PlanEntry], scopes: Callable[[object], Tuple[Sequence[object], Sequence[object]]], names: Callable[[object], Optional[Sequence[str]]], uniquify: Callable[[str, set], str]) -> List[str]`
 - `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.fix_glb_nonfinite_keys(cls, glb: GlbTarget) -> Dict[str, int]`
+- `file_utils/mesh_convert/_mesh_convert.py::MeshConvert.restore_glb_rotations(cls, glb: GlbTarget, fbx: str, fps: Optional[float] = None) -> Dict[str, int]`
 - `file_utils/mesh_convert/fbx_media.py::FbxMedia.legacy_material_values(entry: Mapping[str, Any]) -> Dict[str, Tuple[float, ...]]`
 - `file_utils/mesh_convert/fbx_media.py::FbxMedia.repair_null_normals(cls, src: str, dst: Optional[str] = None) -> Dict[str, int]`
 - `file_utils/mesh_convert/fbx_media.py::FbxMedia.state_materials(cls, src: str, dst: Optional[str] = None) -> Dict[str, Any]`
+- `file_utils/mesh_convert/glb/rotations.py::GlbRotations(class)`
+- `file_utils/mesh_convert/glb/rotations.py::GlbRotations.restore(cls, glb: GlbTarget, fbx: str, fps: float, skip: Collection[int] = ()) -> Dict[str, int]`
 - `file_utils/scene_listing.py::SceneListing(class)`
 - `file_utils/scene_listing.py::SceneListing.default_save_name(cls, scene_path: Optional[str], case_style: str = 'None', suffix: str = '') -> str`
 - `file_utils/scene_listing.py::SceneListing.display_name(path: str, hide_extension: bool, hide_suffix: str) -> str`
@@ -303,6 +308,18 @@ _Deprecated aliases whose window ran out._
 - `geo_utils/probe_placement.py::ProbeMesh.intersect(self, payload: Any, origin: Sequence[float], direction: Sequence[float], far: float) -> Optional[Tuple[float, Vec, Any]]`
 - `geo_utils/probe_placement.py::ProbeMesh.normal(self, payload: Any, face: Any) -> Vec`
 - `math_utils/progression.py::ProgressionCurves.centered_offsets(cls, count: int, span: float, calculation_mode: str = 'linear', weight_bias: float = 0.5, weight_curve: float = 2.0) -> List[float]`
+- `math_utils/quaternion.py::Quaternion(class)`
+- `math_utils/quaternion.py::Quaternion.arc(cls, a: Sequence[float], b: Sequence[float]) -> Callable[[float], Quat]`
+- `math_utils/quaternion.py::Quaternion.conjugate(q: Sequence[float]) -> Quat`
+- `math_utils/quaternion.py::Quaternion.from_axis_angle(cls, axis: Union[int, Sequence[float]], degrees: float) -> Quat`
+- `math_utils/quaternion.py::Quaternion.from_euler(cls, order: str, degrees: Sequence[float]) -> Quat`
+- `math_utils/quaternion.py::Quaternion.from_matrix(m: Sequence[Sequence[float]]) -> Quat`
+- `math_utils/quaternion.py::Quaternion.matrix_euler(cls, order: str, m: Sequence[Sequence[float]]) -> Vec`
+- `math_utils/quaternion.py::Quaternion.multiply(a: Sequence[float], b: Sequence[float]) -> Quat`
+- `math_utils/quaternion.py::Quaternion.normalize(cls, q: Sequence[float]) -> Quat`
+- `math_utils/quaternion.py::Quaternion.rotate(q: Sequence[float], v: Sequence[float]) -> Vec`
+- `math_utils/quaternion.py::Quaternion.slerp(cls, a: Sequence[float], b: Sequence[float], u: float) -> Quat`
+- `math_utils/quaternion.py::Quaternion.to_matrix(q: Sequence[float]) -> List[List[float]]`
 - `str_utils/_str_utils.py::StrUtils.to_identifier(name: str, replacement: str = '_') -> str`
 - `vid_utils/sequence_exporter.py::PureSequenceHost(class)`
 - `vid_utils/sequence_exporter.py::PureSequenceHost.audio_source() -> Tuple[Optional[str], float]`
