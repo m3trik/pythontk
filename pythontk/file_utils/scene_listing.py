@@ -15,12 +15,15 @@ rule names the ``{scenes}`` folder); nothing here touches a scene.
 
 from __future__ import annotations
 
+import logging
 import os
 from fnmatch import fnmatchcase
 from typing import Iterable, List, NamedTuple, Optional, Sequence
 
 from pythontk.file_utils.workspace import Workspace
 from pythontk.str_utils._str_utils import StrUtils
+
+logger = logging.getLogger(__name__)
 
 
 class SceneListing:
@@ -106,14 +109,20 @@ class SceneListing:
     @staticmethod
     def format_name(name: str, case_style: str = "None", suffix: str = "") -> str:
         """*name* in the *case_style* convention (``StrUtils.set_case``; ``"None"``
-        leaves it), with *suffix* appended -- excluded from the case."""
+        leaves it), with *suffix* appended -- excluded from the case. A style
+        :attr:`StrUtils.CASES` does not name leaves the name too, and says so."""
         if case_style and case_style.startswith("Case: "):
             case_style = case_style[len("Case: ") :]
         if case_style and case_style != "None":
-            try:
+            if case_style in StrUtils.CASES:
                 name = StrUtils.set_case(name, case_style)
-            except Exception:  # noqa: BLE001 - an unknown style leaves the name
-                pass
+            else:
+                logger.warning(
+                    "Unknown case style %r: the name is left as it is (the styles: "
+                    "%s).",
+                    case_style,
+                    ", ".join(StrUtils.CASES),
+                )
         return name + suffix if suffix else name
 
     @staticmethod

@@ -70,6 +70,7 @@ from pythontk.core_utils.engines.scene_export.scene_store import SceneStoreBase
 from pythontk.file_utils._file_utils import FileUtils
 from pythontk.file_utils.file_dependencies import FileDependencies
 from pythontk.file_utils.mesh_convert.fbx_file import FBX_MAGIC, FbxFile
+from pythontk.iter_utils._iter_utils import IterUtils
 
 logger = logging.getLogger(__name__)
 
@@ -281,7 +282,7 @@ class _FbxMediaInternal:
         for child in video.children:
             if child.name == b"Filename" and len(child.props) > 5:
                 filename = bytes(child.props[5:]).decode("utf-8", "replace")
-        return os.path.basename(filename.replace("\\", "/"))
+        return FileDependencies.file_name(filename)
 
     @classmethod
     def _wired_ids(cls, roots: Iterable[_Record]) -> set:
@@ -371,7 +372,7 @@ class _FbxMediaInternal:
         if isinstance(entry, (tuple, list)) and len(entry) == 2:
             return str(entry[0]), str(entry[1])
         path = str(entry)
-        return os.path.basename(path.replace("\\", "/")), path
+        return FileDependencies.file_name(path), path
 
     @staticmethod
     def _media_id(name: str, taken: set) -> int:
@@ -626,7 +627,7 @@ class _FbxMediaInternal:
             for record in root.children:
                 if record.name == b"Model":
                     head = cls._scalars(record)
-                    name = FbxFile._display_name(head[1]) if len(head) > 1 else None
+                    name = FbxFile.display_name(head[1]) if len(head) > 1 else None
                     yield name, record
 
     @classmethod
@@ -697,23 +698,6 @@ class _FbxMediaInternal:
             elif key != SceneRecords.HANDOFF.key:
                 first.setdefault(key, (prop, payload))
         return {**first, **own}
-
-
-    @staticmethod
-    def _field_values(payload: Any, path: Sequence[str]) -> Iterator[Any]:
-        """The values at *path* in *payload*; ``"*"`` walks a list."""
-        if not path:
-            yield payload
-            return
-        step, rest = path[0], path[1:]
-        if step == "*":
-            items = payload if isinstance(payload, list) else []
-        elif isinstance(payload, dict) and step in payload:
-            items = [payload[step]]
-        else:
-            items = []
-        for item in items:
-            yield from _FbxMediaInternal._field_values(item, rest)
 
     @staticmethod
     def _scalars(record: _Record) -> List[Any]:
@@ -914,7 +898,7 @@ class _FbxMediaInternal:
                 continue
             head = cls._scalars(record)
             if len(head) > 1 and isinstance(head[0], int):
-                stacks[head[0]] = FbxFile._display_name(head[1]) or ""
+                stacks[head[0]] = FbxFile.display_name(head[1]) or ""
         return stacks
 
     @classmethod
@@ -1035,7 +1019,7 @@ class _FbxMediaInternal:
                     for child in record.children
                     if child.name in wanted and child.prop_count
                 }
-            display = FbxFile._display_name(head[1]) if len(head) > 1 else None
+            display = FbxFile.display_name(head[1]) if len(head) > 1 else None
             rows.append(
                 (record.name.decode("ascii", "replace"), head[0], display or "", arrays)
             )
@@ -1212,7 +1196,7 @@ class _FbxMediaInternal:
         head = cls._scalars(record)
         if new == old or len(head) < 3 or record.prop_count != 3:
             return
-        if FbxFile._display_name(head[1]) != old:
+        if FbxFile.display_name(head[1]) != old:
             return
         label = new.encode("utf-8") + b"\x00\x01" + kind
         record.replaced = (
@@ -1585,10 +1569,10 @@ class FbxMedia(_FbxMediaInternal):
         for key, paths in cls.DEPENDENCY_FIELDS.items():
             for payload in payloads.get(key) or ():
                 for path in paths:
-                    for value in cls._field_values(payload, path):
+                    for value in IterUtils.values_at(payload, path):
                         if not isinstance(value, str):
                             continue
-                        name = os.path.basename(value.strip().replace("\\", "/"))
+                        name = FileDependencies.file_name(value.strip())
                         if name and name.casefold() not in seen:
                             seen.add(name.casefold())
                             names.append(name)
@@ -1907,7 +1891,7 @@ class FbxMedia(_FbxMediaInternal):
                 if gid in driven:
                     head = cls._scalars(source)
                     label = head[1] if len(head) > 1 and isinstance(head[1], bytes) else b""
-                    report["deformed"].append(FbxFile._display_name(label) or str(gid))
+                    report["deformed"].append(FbxFile.display_name(label) or str(gid))
                     continue
                 raw = bytes(source.payload)
                 start, end = cls._prop_span(raw, 0)
@@ -1975,10 +1959,6 @@ class FbxMedia(_FbxMediaInternal):
         (``TransparentColor`` one minus it, ``TransparencyFactor`` 1,
         ``Opacity`` it). Read back through ``MaterialFamilies``' ``legacy``
         family: the same colour, emission and alpha."""
-        from pythontk.core_utils.engines.scene_export.material_record import (
-            MaterialFamilies,
-        )
-
         base = MaterialFamilies.as_floats(entry.get("baseColorFactor"), 4, 1.0)
         glow = MaterialFamilies.as_floats(entry.get("emissiveFactor"), 3, 0.0)
 
@@ -2054,7 +2034,7 @@ class FbxMedia(_FbxMediaInternal):
                     if material.name != b"Material":
                         continue
                     head = cls._scalars(material)
-                    name = FbxFile._display_name(head[1]) if len(head) > 1 else None
+                    name = FbxFile.display_name(head[1]) if len(head) > 1 else None
                     if not name:
                         continue
                     entry = entries.get(name) or leaves.get(name.rsplit(":", 1)[-1])
@@ -2227,7 +2207,7 @@ class FbxMedia(_FbxMediaInternal):
                     head = cls._scalars(record)
                     name = (
                         model_of.get(gid)
-                        or (FbxFile._display_name(head[1]) if len(head) > 1 else "")
+                        or (FbxFile.display_name(head[1]) if len(head) > 1 else "")
                         or f"Geometry {gid}"
                     )
                     report[name] = report.get(name, 0) + filled
@@ -3193,7 +3173,7 @@ class FbxMedia(_FbxMediaInternal):
                 classes[oid] = head[2]
             if record.name == b"Model":
                 label = head[1] if len(head) > 1 and isinstance(head[1], bytes) else b""
-                names[oid] = FbxFile._display_name(label) or ""
+                names[oid] = FbxFile.display_name(label) or ""
                 records[oid] = record
         rows = [
             (record, cls._scalars(record))

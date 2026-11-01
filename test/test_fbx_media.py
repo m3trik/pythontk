@@ -1503,7 +1503,7 @@ class MergeTakesTestCase(unittest.TestCase):
 
         fbx = FbxFile.load(out)
         layers = [
-            FbxFile._display_name(r["props"][1])
+            FbxFile.display_name(r["props"][1])
             for r in fbx.iter_objects()
             if r["name"] == "AnimationLayer"
         ]
@@ -3016,7 +3016,7 @@ class SplitPivotInstancesTestCase(unittest.TestCase):
         names, vertices = {}, {}
         for record in loaded.iter_objects():
             if record["name"] == "Model":
-                names[record["props"][0]] = FbxFile._display_name(record["props"][1])
+                names[record["props"][0]] = FbxFile.display_name(record["props"][1])
             elif record["name"] == "Geometry":
                 vertices[record["props"][0]] = next(
                     c["props"][0] for c in record["children"] if c["name"] == "Vertices"

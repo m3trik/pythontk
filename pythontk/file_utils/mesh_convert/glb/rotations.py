@@ -318,7 +318,7 @@ class _GlbRotationsInternal:
             ):
                 refused.add(str(name))
 
-        curves = source._take_key_curves(("Lcl Rotation",))
+        curves = source.take_samplers(("Lcl Rotation",))
         extents = cls._extents(source)
         per_frame = FbxFile.TICKS_PER_SECOND / fps
         animations = edit.gltf.get("animations") or []
@@ -354,7 +354,7 @@ class _GlbRotationsInternal:
                     ticks = round((first + frame) * per_frame)
                     q = compose(
                         [
-                            FbxFile._evaluate_curve(curve, ticks) if curve else still[i]
+                            curve(ticks) if curve else still[i]
                             for i, curve in enumerate(own)
                         ]
                     )

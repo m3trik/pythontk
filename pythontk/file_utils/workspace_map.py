@@ -22,12 +22,13 @@ folder and its scenes are the files with the host's scene extensions.
 """
 
 import os
-from typing import Dict, List, Optional, Protocol, Sequence
+from typing import Dict, List, Optional, Protocol, Sequence, runtime_checkable
 
 from pythontk.core_utils.logging_mixin import LoggingMixin
 from pythontk.file_utils.workspace import Workspace, WorkspaceTemplates
 
 
+@runtime_checkable
 class WorkspaceMapHost(Protocol):
     """What the Workspace Map asks of the host whose projects it browses.
 

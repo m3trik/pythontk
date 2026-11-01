@@ -7,7 +7,7 @@
 ## Hard rules
 
 - **No DCC imports.** No `maya`, `nuke`, `bpy`, `PySide`, `PyQt` — this is the bottom of the stack; everything above imports it. Sole exception: `net_utils/rpc/plugin_core.py` resolves its host app's own PySide lazily, inside that app (Painter, Toolbag).
-- **Host adapters, not host subclasses.** A shared class reaches its host through a small Protocol beside it with a `Pure*` default (`ShotsHost` / `PureShotsHost`), injected or resolved from the running host; a library class keeping its own name for it is a binding that configures and adds, never overrides ([CODE_STANDARD](../m3trik/docs/CODE_STANDARD.md) §0; `check_dcc_twins.py` `HOST_BINDINGS`).
+- **Host adapters, not host subclasses.** A shared class reaches its host through a small `runtime_checkable` `<Domain>Host` Protocol beside it with a `Pure<Domain>Host` default each host's adapter subclasses (`ShotsHost` / `PureShotsHost`), injected or resolved from the running host: a `HOST` class attribute for a class-level model, `host=` for an instance, `HOST_CLASS` only for per-run state, `set_host` only for a process-global store (`test_host_seams.py`); a library class keeping its own name for it is a binding that configures and adds, never overrides ([CODE_STANDARD](../m3trik/docs/CODE_STANDARD.md) §0; `check_dcc_twins.py` `HOST_BINDINGS`).
 - **Zero-dependency preferred.** If you must add a dep, justify it and keep it optional.
 
 ## API surface

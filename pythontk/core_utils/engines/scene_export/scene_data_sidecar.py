@@ -77,11 +77,12 @@ import logging
 import os
 import re
 import shutil
-from typing import Any, Iterable, List, Optional, Protocol, Set, Tuple
+from typing import Any, Iterable, List, Optional, Protocol, Set, Tuple, runtime_checkable
 
 import pythontk as ptk
 
 
+@runtime_checkable
 class SidecarHost(Protocol):
     """What the scene-data sidecar asks of the host whose exports it records.
 

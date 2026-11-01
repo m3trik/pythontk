@@ -181,7 +181,7 @@ class StrUtils(
         This one is positional -- one character in, one out -- because the
         result is an IDENTITY two sides derive independently and must agree
         on: the widget uitk's switchboard builds from a definition
-        (``SwitchboardNameMixin.convert_to_legal_name``) and the key a
+        (``Switchboard.convert_to_legal_name``) and the key a
         headless reader looks that widget up by (``ExportProfile.widget_key``).
         Collapsing would make ``"a  b"`` and ``"a b"`` the same objectName.
 

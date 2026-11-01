@@ -8,6 +8,7 @@ references, so real files in a scratch folder are all a test needs -- no host.
 """
 
 import os
+import posixpath
 import unittest
 import unittest.mock
 
@@ -538,6 +539,25 @@ class TestResolve(_FilesCase):
         self.assertEqual(deps["B.exr"]["owners"], ["|b", "|b2"])
         self.assertTrue(self._same(deps["B.exr"]["path"], found))
 
+    def test_a_name_stored_on_windows_is_its_file_name_on_posix(self):
+        """A record written on Windows names ``C:\\tex\\wood.png``: POSIX's
+        ``os.path.basename`` hands the whole string back, a name no file
+        carries, so the search found nothing (``posixpath`` stands in for a
+        POSIX host). Added: 2026-11-01"""
+        wood = self._file("found", "wood.png").replace("\\", "/")
+        with unittest.mock.patch("os.path.basename", posixpath.basename):
+            (dep,) = FileDependencies.resolve(
+                [("|lamp", "C:\\tex\\wood.png", "")],
+                walk_root=self.tmp,
+                find_files=lambda names, root: [wood],
+            )
+            self.assertEqual(FileDependencies.file_name("C:\\tex\\wood.png"), "wood.png")
+        self.assertEqual(dep["name"], "wood.png")
+        self.assertTrue(dep["path"] and self._same(dep["path"], wood), dep)
+        for spelled in ("C:\\tex\\wood.png", "C:/tex/wood.png", "wood.png", "/mnt/t/wood.png"):
+            self.assertEqual(FileDependencies.file_name(spelled), "wood.png", spelled)
+        self.assertEqual(FileDependencies.file_name(None), "")
+
     def test_a_portable_hint_resolves_through_the_host(self):
         real = self._file("project", "lm", "C.exr")
         project = os.path.join(self.tmp, "project")
@@ -968,10 +988,10 @@ class TestResolveHints(_FilesCase):
 
     def test_a_unc_path_keeps_its_prefix_when_respelled(self):
         self.assertEqual(
-            FileDependencies._spelled("\\\\nas\\share\\lm\\A.exr"),
+            FileDependencies.spelled("\\\\nas\\share\\lm\\A.exr"),
             "\\\\nas/share/lm/A.exr",
         )
-        self.assertEqual(FileDependencies._spelled("C:\\lm\\A.exr"), "C:/lm/A.exr")
+        self.assertEqual(FileDependencies.spelled("C:\\lm\\A.exr"), "C:/lm/A.exr")
 
     def test_search_dirs_lists_existing_folders_only(self):
         deps = FileDependencies.resolve([("|x", "X.exr", "")])

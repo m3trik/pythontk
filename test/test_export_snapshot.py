@@ -132,7 +132,7 @@ class TestShips(_Case):
             ["door"],
             "a rig ships when any joint does",
         )
-        shots = {"shots": [{"name": "a"}]}
+        shots = {"shots": [{"clip": "a", "start": 1, "end": 9}]}
         self.assertIs(SR.SHOTS.narrowed(shots, names), shots, "no node entries")
 
 
@@ -160,7 +160,7 @@ class TestProducedCopy(_Case):
         self.assertIn(SR.SHADOWS.key, snap.produced, "produced as None: cleared on commit")
 
     def test_a_timeline_record_ships_whole(self):
-        shots = {"fps": 24.0, "shots": [{"name": "a", "start": 1.0, "end": 9.0}]}
+        shots = {"fps": 24.0, "shots": [{"clip": "a", "start": 1, "end": 9}]}
         snap = ExportSnapshot.assemble(
             {SR.SHOTS: lambda ctx: SR.SHOTS.make(shots)},
             ExportContext(scope=("|x",), nodes=frozenset({"x"})),
@@ -178,7 +178,7 @@ class TestStoredCopy(_Case):
     def _stored(self):
         SR.LIGHTMAPS.save(_Store, _lightmaps("KEEP_cube", "DROP_cube"))
         SR.SHADOWS.save(_Store, _shadows("DROP_cube_shadow"))
-        SR.SHOTS.save(_Store, {"fps": 24.0, "shots": [{"name": "a", "start": 1, "end": 5}]})
+        SR.SHOTS.save(_Store, {"fps": 24.0, "shots": [{"clip": "a", "start": 1, "end": 5}]})
 
     def _handoff(self, nodes=frozenset({"KEEP_cube", "KEEP_cubeShape"})):
         return ExportContext(mode=ExportContext.HANDOFF, scope=("|KEEP_cube",), nodes=nodes)

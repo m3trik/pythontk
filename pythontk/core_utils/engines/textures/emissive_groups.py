@@ -26,10 +26,10 @@ against them. Removing a group *retires* its slot; :meth:`compact_slots` is
 the explicit, binding-breaking reclaim.
 
 This module is host-free: every scene read and write goes through the
-adapter (:class:`EmissiveGroupsAdapter`), which speaks membership as
+host adapter (:class:`EmissiveGroupsHost`), which speaks membership as
 ``{object: [face index, ...]}``; mayatk's and blendertk's ``EmissiveGroups``
-are this model over their host's half (``MayaEmissiveGroups``,
-``BlenderEmissiveGroups``).
+are this model bound to their host's half (``MayaEmissiveGroups``,
+``BlenderEmissiveGroups``, each built on :class:`PureEmissiveGroupsHost`).
 
 Constraints artists should know (also in the panel help): a face's group
 membership tracks face *indices*, so topology edits can silently shift it;
@@ -39,7 +39,17 @@ toggles.
 """
 
 import json
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Protocol, Tuple
+from typing import (
+    Any,
+    Dict,
+    Iterable,
+    List,
+    Mapping,
+    Optional,
+    Protocol,
+    Tuple,
+    runtime_checkable,
+)
 
 import pythontk as ptk
 
@@ -47,12 +57,14 @@ import pythontk as ptk
 FaceMap = Dict[str, List[int]]
 
 
-class EmissiveGroupsAdapter(Protocol):
+@runtime_checkable
+class EmissiveGroupsHost(Protocol):
     """A host's half of Emissive Groups: what :class:`EmissiveGroupsModel` asks of
     the scene. A membership *store* is the host's container for one group
     (Maya: an ``objectSet``; Blender: a boolean FACE attribute), named
     ``emissiveGroup_<name>``; a group's keyable weight on the ``data_export``
-    carrier takes the same name."""
+    carrier takes the same name. :class:`PureEmissiveGroupsHost` holds the
+    answers with no scene, and each host's adapter is built on it."""
 
     #: The host's scene-record store (``DataNodes``): the registry and the
     #: manifest are read and written through it.
@@ -152,6 +164,119 @@ class EmissiveGroupsAdapter(Protocol):
         """The host's own validation warnings (Blender: leftover curve proxies)."""
 
 
+class _NoSceneRecords:
+    """The scene-record store of no scene: nothing to read, nowhere to write
+    (a clear has nothing to do)."""
+
+    @staticmethod
+    def read(scope: Any, key: str) -> Optional[str]:
+        return None
+
+    @staticmethod
+    def write(scope: Any, key: str, text: Optional[str]) -> Optional[str]:
+        if text:
+            PureEmissiveGroupsHost._refuse(f"store the {key!r} record")
+        return None
+
+    @staticmethod
+    def values(scope: Any) -> Dict[str, Any]:
+        return {}
+
+
+class PureEmissiveGroupsHost:
+    """The :class:`EmissiveGroupsHost` with no scene behind it: the pure
+    defaults, and the base each host's adapter is built on. It never guesses:
+    every read finds nothing -- no selection, store, weight, record or
+    foreign color set -- and every write refuses (``RuntimeError``), naming
+    the binding: with no scene there is nowhere to keep a group, and a write
+    that went nowhere would read as done."""
+
+    data_nodes: Any = _NoSceneRecords
+    COLOR_SET_NOUN = "color set"
+    WEIGHT_NOUN = "weight"
+
+    @staticmethod
+    def _refuse(what: str) -> None:
+        raise RuntimeError(
+            f"No scene to {what} in: Emissive Groups runs on a host's scene "
+            "(mayatk / blendertk EmissiveGroups, or an EmissiveGroupsHost bound "
+            "as EmissiveGroupsModel.HOST)."
+        )
+
+    def faces(self, faces=None) -> FaceMap:
+        if faces is None:
+            return {}  # no scene, no selection
+        return {str(obj): [int(i) for i in indices] for obj, indices in dict(faces).items()}
+
+    def add_members(self, store: str, face_map: FaceMap) -> None:
+        self._refuse(f"add faces to {store!r}")
+
+    def remove_members(self, store: str) -> None:
+        return None  # no store to delete
+
+    def members(self, store: str) -> Optional[FaceMap]:
+        return None
+
+    def select(self, face_map: FaceMap) -> None:
+        self._refuse("select faces")
+
+    def membership_stores(self, prefix: str) -> Iterable[Tuple[str, str]]:
+        return []
+
+    def carrier_weights(self, prefix: str) -> List[str]:
+        return []
+
+    def weight_exists(self, attr: str) -> bool:
+        return False
+
+    def ensure_weight(self, attr: str, default: float) -> str:
+        self._refuse(f"create the weight {attr!r}")
+        return ""
+
+    def delete_weight(self, attr: str) -> bool:
+        return False
+
+    def sync_weight(self, attr: str, value: float) -> None:
+        return None  # no weight to set
+
+    def key_weight(self, attr: str, value: Optional[float], frame: Optional[float]) -> str:
+        self._refuse(f"key the weight {attr!r}")
+        return ""
+
+    def foreign_color_sets(self, objects: List[str], color_set: str) -> Dict[str, List[str]]:
+        return {}
+
+    def write_colors(self, obj: str, channels: Mapping[int, List[float]], color_set: str) -> None:
+        self._refuse(f"write {color_set!r} on {obj!r}")
+
+    def uv_triangles(self, obj: str, indices: List[int], uv_set: Optional[str]) -> list:
+        return []
+
+    def mask_path(self, suffix: str) -> str:
+        raise ValueError("No scene, so no project to write the mask into.")
+
+    def object_names(self, objects) -> List[str]:
+        return [str(obj) for obj in objects]
+
+    def face_count(self, obj: str) -> int:
+        return 0
+
+    def mesh(self, name: str) -> Optional[str]:
+        return None
+
+    def merge_stores(self, stores: List[str], ctx) -> None:
+        return None  # no scene for an import to join
+
+    def discard_stores(self, stores: List[str], ctx) -> None:
+        return None
+
+    def publish(self, records: Mapping[Any, Any]) -> None:
+        self._refuse("publish the export records")
+
+    def extra_warnings(self) -> List[str]:
+        return []
+
+
 class _EmissiveGroupsModelInternal:
     """Implementation-detail base for :class:`EmissiveGroupsModel`."""
 
@@ -163,7 +288,7 @@ class _EmissiveGroupsModelInternal:
 
     @classmethod
     def _registry(cls) -> "ptk.RegionGroupRegistry":
-        nodes = cls.adapter.data_nodes
+        nodes = cls.HOST.data_nodes
         return ptk.RegionGroupRegistry(
             load=lambda: ptk.SceneRecords.EMISSIVE_REGISTRY.read_text(nodes),
             save=lambda text: ptk.SceneRecords.EMISSIVE_REGISTRY.write_text(
@@ -186,7 +311,7 @@ class _EmissiveGroupsModelInternal:
         creating it early is scene clutter. Once one exists, leaving it stale
         would ship wrong data.
         """
-        if ptk.SceneRecords.EMISSIVE_GROUPS.is_present(cls.adapter.data_nodes):
+        if ptk.SceneRecords.EMISSIVE_GROUPS.is_present(cls.HOST.data_nodes):
             cls.refresh_export_metadata()
 
     @classmethod
@@ -234,16 +359,16 @@ class _EmissiveGroupsModelInternal:
         warnings = [
             f"{where} has no registry entry — re-add it with add_group({name!r}) "
             "to assign a slot."
-            for where, name in cls.adapter.membership_stores(cls.SET_PREFIX)
+            for where, name in cls.HOST.membership_stores(cls.SET_PREFIX)
             if name not in known
         ]
         # An FBX REimport restores the carrier's keyable weights but not the
         # registry (data_internal never rides the FBX).
-        for attr in cls.adapter.carrier_weights(cls.SET_PREFIX):
+        for attr in cls.HOST.carrier_weights(cls.SET_PREFIX):
             name = attr[len(cls.SET_PREFIX) :]
             if name not in known:
                 warnings.append(
-                    f"Carrier {cls.adapter.WEIGHT_NOUN} {attr!r} has no "
+                    f"Carrier {cls.HOST.WEIGHT_NOUN} {attr!r} has no "
                     "registry entry — a stale "
                     "keyable weight (removed or imported group); re-add the "
                     f"group or remove_keyable_weights([{name!r}])."
@@ -254,7 +379,7 @@ class _EmissiveGroupsModelInternal:
     def _mask_triangles(cls, face_map: FaceMap, uv_set: Optional[str]) -> list:
         tris = []
         for obj, indices in face_map.items():
-            tris.extend(cls.adapter.uv_triangles(obj, indices, uv_set))
+            tris.extend(cls.HOST.uv_triangles(obj, indices, uv_set))
         return tris
 
 
@@ -262,13 +387,13 @@ class EmissiveGroupsModel(_EmissiveGroupsModelInternal, ptk.LoggingMixin, ptk.He
     """Author, bake, and export named emissive face groups (see module doc).
 
     All state lives in the scene, so the class holds only its host's half:
-    each library subclasses it and sets :attr:`adapter` (mayatk's and
-    blendertk's ``EmissiveGroups``), and every method is a classmethod over it.
+    each library binds it by setting :attr:`HOST` (mayatk's and blendertk's
+    ``EmissiveGroups``), and every method is a classmethod over it.
     """
 
-    #: The host's scene operations (an :class:`EmissiveGroupsAdapter`), set by
-    #: the host library's subclass.
-    adapter: Any = None
+    #: The host's scene operations (an :class:`EmissiveGroupsHost`), set by the
+    #: host library's binding; the pure default has no scene.
+    HOST: EmissiveGroupsHost = PureEmissiveGroupsHost()
 
     # ------------------------------------------------------------------
     # Authoring
@@ -289,12 +414,12 @@ class EmissiveGroupsModel(_EmissiveGroupsModelInternal, ptk.LoggingMixin, ptk.He
             The membership store's name (``emissiveGroup_<name>``).
         """
         name = ptk.RegionGroupRegistry.sanitize(name)
-        face_map = cls.adapter.faces(faces)
+        face_map = cls.HOST.faces(faces)
         if not face_map:
             raise ValueError("No faces in the input or selection.")
         slot, is_new = cls._registry().add(name, default)
         store = cls._store(name)
-        cls.adapter.add_members(store, face_map)
+        cls.HOST.add_members(store, face_map)
         count = sum(len(indices) for indices in face_map.values())
         cls.logger.info(
             f"Added group {name!r} (slot {slot})."
@@ -309,8 +434,8 @@ class EmissiveGroupsModel(_EmissiveGroupsModelInternal, ptk.LoggingMixin, ptk.He
         """Delete a group's membership, registry entry and any keyable weight;
         its slot is retired (never auto-reused) so engine bindings stay valid."""
         cls._registry().remove(name)
-        cls.adapter.remove_members(cls._store(name))
-        cls.adapter.delete_weight(cls._store(name))
+        cls.HOST.remove_members(cls._store(name))
+        cls.HOST.delete_weight(cls._store(name))
         cls._refresh_export_if_published()
         cls.logger.info(f"Removed group {name!r}.")
 
@@ -321,7 +446,7 @@ class EmissiveGroupsModel(_EmissiveGroupsModelInternal, ptk.LoggingMixin, ptk.He
         out = {}
         for entry in cls._registry().groups():
             name = entry["name"]
-            members = cls.adapter.members(cls._store(name))
+            members = cls.HOST.members(cls._store(name))
             out[name] = {
                 "slot": entry["slot"],
                 "default": entry["default"],
@@ -340,10 +465,10 @@ class EmissiveGroupsModel(_EmissiveGroupsModelInternal, ptk.LoggingMixin, ptk.He
     @classmethod
     def select_group(cls, name: str) -> None:
         """Select the group's faces."""
-        members = cls.adapter.members(cls._store(name))
+        members = cls.HOST.members(cls._store(name))
         if not members:
             raise ValueError(f"Group {name!r} has no members.")
-        cls.adapter.select(members)
+        cls.HOST.select(members)
 
     @classmethod
     def set_default(cls, name: str, default: float) -> None:
@@ -351,7 +476,7 @@ class EmissiveGroupsModel(_EmissiveGroupsModelInternal, ptk.LoggingMixin, ptk.He
         keyable weight follows the default; a keyed one is animation-owned and
         left alone."""
         value = cls._registry().set_default(name, default)
-        cls.adapter.sync_weight(cls._store(name), value)
+        cls.HOST.sync_weight(cls._store(name), value)
         cls._refresh_export_if_published()
 
     @classmethod
@@ -398,7 +523,7 @@ class EmissiveGroupsModel(_EmissiveGroupsModelInternal, ptk.LoggingMixin, ptk.He
         plugs = {}
         for name in cls._resolve_names(names, known):
             attr = cls._store(name)
-            plugs[name] = cls.adapter.ensure_weight(
+            plugs[name] = cls.HOST.ensure_weight(
                 attr, float(known[name]["default"])
             )
             registry.set_attr(name, attr)
@@ -422,7 +547,7 @@ class EmissiveGroupsModel(_EmissiveGroupsModelInternal, ptk.LoggingMixin, ptk.He
         names = sorted(known) if names is None else [str(n) for n in names]
         removed = []
         for name in names:
-            if cls.adapter.delete_weight(cls._store(name)):
+            if cls.HOST.delete_weight(cls._store(name)):
                 removed.append(name)
             if name in known:
                 registry.set_attr(name, None)
@@ -451,7 +576,7 @@ class EmissiveGroupsModel(_EmissiveGroupsModelInternal, ptk.LoggingMixin, ptk.He
             The keyed weight's path.
         """
         attr = cls._store(name)
-        if not cls.adapter.weight_exists(attr):
+        if not cls.HOST.weight_exists(attr):
             if not auto_keyable:
                 raise ValueError(
                     f"Group {name!r} has no keyable weight; run "
@@ -460,7 +585,7 @@ class EmissiveGroupsModel(_EmissiveGroupsModelInternal, ptk.LoggingMixin, ptk.He
             cls.make_weights_keyable([name])
         if value is not None:
             value = max(0.0, min(1.0, float(value)))
-        return cls.adapter.key_weight(attr, value, frame)
+        return cls.HOST.key_weight(attr, value, frame)
 
     # ------------------------------------------------------------------
     # Validation
@@ -471,7 +596,7 @@ class EmissiveGroupsModel(_EmissiveGroupsModelInternal, ptk.LoggingMixin, ptk.He
         """Non-fatal authoring warnings (empty list = clean)."""
         groups = cls._registry().groups()
         known = {entry["name"] for entry in groups}
-        members = {e["name"]: cls.adapter.members(cls._store(e["name"])) for e in groups}
+        members = {e["name"]: cls.HOST.members(cls._store(e["name"])) for e in groups}
         warnings = []
         for name, face_map in members.items():
             if face_map is None:
@@ -482,13 +607,13 @@ class EmissiveGroupsModel(_EmissiveGroupsModelInternal, ptk.LoggingMixin, ptk.He
                 warnings.append(f"Group {name!r} is empty.")
         warnings += cls._overlap_warnings(members)
         warnings += cls._orphan_warnings(known)
-        warnings += cls.adapter.extra_warnings()
+        warnings += cls.HOST.extra_warnings()
         # Foreign color sets fight ours for Unity's single color stream.
         objects = cls._member_objects(members)
-        for obj, others in cls.adapter.foreign_color_sets(objects, cls.COLOR_SET).items():
+        for obj, others in cls.HOST.foreign_color_sets(objects, cls.COLOR_SET).items():
             for other in others:
                 warnings.append(
-                    f"{obj}: foreign {cls.adapter.COLOR_SET_NOUN} {other!r} — "
+                    f"{obj}: foreign {cls.HOST.COLOR_SET_NOUN} {other!r} — "
                     "Unity imports only one "
                     "color stream; vertex-color encoding may not survive."
                 )
@@ -518,14 +643,14 @@ class EmissiveGroupsModel(_EmissiveGroupsModelInternal, ptk.LoggingMixin, ptk.He
         groups = registry.groups()
         if not groups:
             raise ValueError("No emissive groups to bake.")
-        members = {e["name"]: cls.adapter.members(cls._store(e["name"])) for e in groups}
+        members = {e["name"]: cls.HOST.members(cls._store(e["name"])) for e in groups}
         objects = cls._member_objects(members)
         if not objects:
             raise ValueError("No member meshes found (empty groups?).")
-        foreign = cls.adapter.foreign_color_sets(objects, cls.COLOR_SET)
+        foreign = cls.HOST.foreign_color_sets(objects, cls.COLOR_SET)
         if foreign and not force:
             raise ValueError(
-                f"Foreign {cls.adapter.COLOR_SET_NOUN}(s) present: {foreign} — "
+                f"Foreign {cls.HOST.COLOR_SET_NOUN}(s) present: {foreign} — "
                 "Unity imports only "
                 "one color stream. Remove them, use the channels encoding, or "
                 "pass force=True."
@@ -536,11 +661,11 @@ class EmissiveGroupsModel(_EmissiveGroupsModelInternal, ptk.LoggingMixin, ptk.He
             for entry in groups:
                 for index in (members[entry["name"]] or {}).get(obj, []):
                     channels.setdefault(index, [0.0, 0.0, 0.0, 0.0])[entry["slot"]] = 1.0
-            cls.adapter.write_colors(obj, channels, cls.COLOR_SET)
+            cls.HOST.write_colors(obj, channels, cls.COLOR_SET)
         registry.set_encoding("vertex-color")
         manifest = cls.refresh_export_metadata()
         cls.logger.info(
-            f"Baked {len(groups)} group(s) into {cls.adapter.COLOR_SET_NOUN} "
+            f"Baked {len(groups)} group(s) into {cls.HOST.COLOR_SET_NOUN} "
             f"{cls.COLOR_SET!r} on "
             f"{len(objects)} mesh(es)."
         )
@@ -579,11 +704,11 @@ class EmissiveGroupsModel(_EmissiveGroupsModelInternal, ptk.LoggingMixin, ptk.He
         if not groups:
             raise ValueError("No emissive groups to bake.")
         if output_path is None:
-            output_path = cls.adapter.mask_path("_EMask.png")
+            output_path = cls.HOST.mask_path("_EMask.png")
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         packer = ptk.RegionMaskPacker(resolution=resolution, padding_px=padding_px)
         for entry in groups:
-            face_map = cls.adapter.members(cls._store(entry["name"])) or {}
+            face_map = cls.HOST.members(cls._store(entry["name"])) or {}
             if not face_map:
                 cls.logger.warning(f"Group {entry['name']!r} is empty; skipped.")
                 continue
@@ -618,21 +743,21 @@ class EmissiveGroupsModel(_EmissiveGroupsModelInternal, ptk.LoggingMixin, ptk.He
         survived the crossing. Objects are spelled as the carrier writes them
         (``ctx.rename``) and scoped to ``ctx.objects``; ``None`` without groups.
         Either host reads it."""
-        registry = ptk.SceneRecords.EMISSIVE_REGISTRY.load(cls.adapter.data_nodes)
+        registry = ptk.SceneRecords.EMISSIVE_REGISTRY.load(cls.HOST.data_nodes)
         if not registry or not registry.get("groups"):
             return None
         spell = ctx.rename or str
-        scope = None if ctx.objects is None else set(cls.adapter.object_names(ctx.objects))
+        scope = None if ctx.objects is None else set(cls.HOST.object_names(ctx.objects))
         members: Dict[str, FaceMap] = {}
         faces: Dict[str, int] = {}
         for name in registry["groups"]:
             by_object: FaceMap = {}
-            for obj, indices in (cls.adapter.members(cls._store(name)) or {}).items():
+            for obj, indices in (cls.HOST.members(cls._store(name)) or {}).items():
                 if scope is not None and obj not in scope:
                     continue
                 spelled = spell(obj)
                 by_object[spelled] = sorted({int(i) for i in indices})
-                faces.setdefault(spelled, cls.adapter.face_count(obj))
+                faces.setdefault(spelled, cls.HOST.face_count(obj))
             if by_object:
                 members[name] = by_object
         return {"registry": registry, "members": members, "faces": faces}
@@ -648,7 +773,7 @@ class EmissiveGroupsModel(_EmissiveGroupsModelInternal, ptk.LoggingMixin, ptk.He
         registry = (payload or {}).get("registry")
         if registry:
             ptk.RecordTransfer.merge_record(
-                cls.adapter.data_nodes, ptk.SceneRecords.EMISSIVE_REGISTRY, registry, ctx
+                cls.HOST.data_nodes, ptk.SceneRecords.EMISSIVE_REGISTRY, registry, ctx
             )
         counts = (payload or {}).get("faces") or {}
         known = {g["name"] for g in cls._registry().groups()}
@@ -665,14 +790,14 @@ class EmissiveGroupsModel(_EmissiveGroupsModelInternal, ptk.LoggingMixin, ptk.He
         face_map: FaceMap = {}
         for spelled, indices in by_object.items():
             target = ctx.rename(spelled) if ctx.rename else spelled
-            obj = cls.adapter.mesh(target) if target else None
+            obj = cls.HOST.mesh(target) if target else None
             if obj is None:
                 ctx.note(
                     f"Emissive group {name!r}: {spelled!r} did not arrive; "
                     "its faces were not added."
                 )
                 continue
-            count = cls.adapter.face_count(obj)
+            count = cls.HOST.face_count(obj)
             if counts.get(spelled) not in (None, count):
                 ctx.note(
                     f"Emissive group {name!r}: {spelled!r} has {count} faces "
@@ -689,7 +814,7 @@ class EmissiveGroupsModel(_EmissiveGroupsModelInternal, ptk.LoggingMixin, ptk.He
         stores join this scene's (the host decides how)."""
         registry = other.get(ptk.SceneRecords.EMISSIVE_REGISTRY) or {}
         stores = [cls._store(name) for name in registry.get("groups") or {}]
-        cls.adapter.merge_stores(stores, ctx)
+        cls.HOST.merge_stores(stores, ctx)
 
     @classmethod
     def discard_carrier(cls, carriers, other, ctx) -> None:
@@ -697,7 +822,7 @@ class EmissiveGroupsModel(_EmissiveGroupsModelInternal, ptk.LoggingMixin, ptk.He
         which no registry entry describes any more, go too."""
         registry = other.get(ptk.SceneRecords.EMISSIVE_REGISTRY) or {}
         stores = [cls._store(name) for name in registry.get("groups") or {}]
-        cls.adapter.discard_stores(stores, ctx)
+        cls.HOST.discard_stores(stores, ctx)
 
     # ------------------------------------------------------------------
     # Export carrier
@@ -713,7 +838,7 @@ class EmissiveGroupsModel(_EmissiveGroupsModelInternal, ptk.LoggingMixin, ptk.He
         Parameters:
             ctx: The export's decisions; only its ``nodes`` is read. A scoped
                 write names the groups with a member face on a mesh it ships
-                (the host's :meth:`EmissiveGroupsAdapter.members`), and none
+                (the host's :meth:`EmissiveGroupsHost.members`), and none
                 when no group has: a group whose faces stay behind has nothing
                 to light (the record is ``export_scoped``).
         """
@@ -727,7 +852,7 @@ class EmissiveGroupsModel(_EmissiveGroupsModelInternal, ptk.LoggingMixin, ptk.He
                 for group in payload["groups"]
                 if any(
                     ctx.ships(obj)
-                    for obj in (cls.adapter.members(cls._store(group["name"])) or {})
+                    for obj in (cls.HOST.members(cls._store(group["name"])) or {})
                 )
             ]
             if not payload["groups"]:
@@ -745,5 +870,5 @@ class EmissiveGroupsModel(_EmissiveGroupsModelInternal, ptk.LoggingMixin, ptk.He
             The published JSON string, or None when cleared.
         """
         record = cls.export_record(ptk.ExportContext(mode=ptk.ExportContext.AUTHORING))
-        cls.adapter.publish({ptk.SceneRecords.EMISSIVE_GROUPS: record})
+        cls.HOST.publish({ptk.SceneRecords.EMISSIVE_GROUPS: record})
         return record.text if record is not None else None

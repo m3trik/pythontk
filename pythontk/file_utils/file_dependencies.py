@@ -38,6 +38,7 @@ records and hands the rules the data.
 import errno
 import fnmatch
 import os
+import posixpath
 import re
 import shutil
 from typing import (
@@ -120,8 +121,18 @@ class FileDependencies(LoggingMixin):
     )
 
     @staticmethod
-    def _spelled(path: str) -> str:
-        """*path* with forward slashes -- except a UNC path's leading ``\\\\``.
+    def file_name(path: Any) -> str:
+        """The file name *path* ends in, whichever system spelled it: a record
+        written on Windows names ``C:\\tex\\wood.png``, whose POSIX
+        ``os.path.basename`` is the whole string -- a name no file carries.
+        ``""`` for none."""
+        return posixpath.basename(str(path or "").replace("\\", "/"))
+
+    @staticmethod
+    def spelled(path: str) -> str:
+        """*path* with forward slashes -- except a UNC path's leading ``\\\\``:
+        the spelling every path this class and :class:`FileCollect` hand back
+        takes.
 
         ``//server/share`` is a valid spelling to Windows, but Blender reads a
         leading ``//`` as RELATIVE TO THE .blend, so a UNC folder spelled that
@@ -149,7 +160,7 @@ class FileDependencies(LoggingMixin):
         """
         readers: Dict[str, set] = {}
         for owner, name, *_rest in refs:
-            key = os.path.basename(str(name or "")).lower()
+            key = FileDependencies.file_name(name).lower()
             if key:
                 readers.setdefault(key, set()).add(owner)
         return {key: frozenset(owners) for key, owners in readers.items()}
@@ -276,7 +287,7 @@ class FileDependencies(LoggingMixin):
             if FileUtils.is_rooted_path(path):
                 read.setdefault(key(path), path)
             else:
-                lost.add(os.path.basename(str(name or path)).lower())
+                lost.add(cls.file_name(name or path).lower())
         identities: Optional[set] = None
         out: List[str] = []
         seen: set = set()
@@ -371,7 +382,7 @@ class FileDependencies(LoggingMixin):
             os.path.basename(path),
             folder,
         )
-        return cls._spelled(target)
+        return cls.spelled(target)
 
     @staticmethod
     def _cross_device(error: OSError) -> bool:
@@ -495,7 +506,7 @@ class FileDependencies(LoggingMixin):
         wanted: Set[str] = set()
         patterns: List[str] = []
         for name in names:
-            base = os.path.basename(str(name)).lower()
+            base = FileDependencies.file_name(name).lower()
             if TiledPath.has_token(base):
                 patterns.append(TiledPath.wildcard(base, None).lower())
             elif base:
@@ -594,7 +605,7 @@ class FileDependencies(LoggingMixin):
                 for kept in distinct
             ):
                 continue
-            distinct.append(cls._spelled(os.path.abspath(path)))
+            distinct.append(cls.spelled(os.path.abspath(path)))
         if len(distinct) == 1:
             return distinct[0], []
         return None, distinct
@@ -629,7 +640,7 @@ class FileDependencies(LoggingMixin):
         """
         asked: Dict[str, str] = {}
         for name in names:
-            base = os.path.basename(str(name or ""))
+            base = cls.file_name(name)
             if base:
                 asked.setdefault(base.lower(), base)
         found: Dict[str, List[str]] = {key: [] for key in asked}
@@ -639,7 +650,7 @@ class FileDependencies(LoggingMixin):
             for key, base in asked.items():
                 path = os.path.join(folder, base)
                 if cls.on_disk(path):
-                    found[key].append(cls._spelled(os.path.abspath(path)))
+                    found[key].append(cls.spelled(os.path.abspath(path)))
         if asked and walk_root and os.path.isdir(walk_root):
             sets = {
                 key: TiledPath.wildcard(key, None).lower()
@@ -649,12 +660,12 @@ class FileDependencies(LoggingMixin):
             for hit in (find_files or cls.find_files)(list(asked.values()), walk_root):
                 low = os.path.basename(hit).lower()
                 if low in found and low not in sets:
-                    found[low].append(cls._spelled(os.path.abspath(hit)))
+                    found[low].append(cls.spelled(os.path.abspath(hit)))
                     continue
                 for key, pattern in sets.items():
                     if fnmatch.fnmatchcase(low, pattern):
                         spelled = os.path.join(os.path.dirname(hit), asked[key])
-                        spelled = cls._spelled(os.path.abspath(spelled))
+                        spelled = cls.spelled(os.path.abspath(spelled))
                         if spelled not in found[key]:
                             found[key].append(spelled)
         return found
@@ -718,7 +729,7 @@ class FileDependencies(LoggingMixin):
         deps: Dict[Hashable, Dict[str, Any]] = {}
         recorded: Dict[Hashable, List[str]] = {}  # record key -> distinct folders
         for owner, name, folder, *_rest in refs:
-            name = os.path.basename(str(name or ""))
+            name = cls.file_name(name)
             if not name:
                 continue
             rec = key_of(owner, name)
@@ -746,7 +757,7 @@ class FileDependencies(LoggingMixin):
                 where = resolve_hint(folder, dep["name"]) if resolve_hint else folder
                 candidate = os.path.join(where, dep["name"]) if where else ""
                 if candidate and cls.on_disk(candidate):
-                    dep["path"] = cls._spelled(os.path.abspath(candidate))
+                    dep["path"] = cls.spelled(os.path.abspath(candidate))
                     dep["found_by"] = cls.FOUND_BY_HINT
                     dep["dir"] = folder  # the recorded folder that held it
                     break
@@ -900,7 +911,7 @@ class FileDependencies(LoggingMixin):
         """
         kept = []
         for dep in deps:
-            name = os.path.basename(str(dep.get("name") or dep.get("map") or ""))
+            name = FileDependencies.file_name(dep.get("name") or dep.get("map"))
             if reader in claims.get(name.lower(), ()):
                 dep["keep_source"] = True
                 kept.append(name)
@@ -1030,7 +1041,7 @@ class FileDependencies(LoggingMixin):
         }
         if not deps:
             return result
-        dest_dir = cls._spelled(dest_dir)
+        dest_dir = cls.spelled(dest_dir)
 
         pending = [d["name"] for d in deps if not d.get("path")]
         found = (

@@ -377,6 +377,22 @@ class IterTest(BaseTestCase):
         """Test indices finding None values."""
         self.assertEqual(tuple(IterUtils.indices([None, 1, None], None)), (0, 2))
 
+    def test_values_at_walks_keys_and_fans_out_over_lists(self):
+        """One walker for a payload path (the scene records' node entries,
+        FbxMedia's dependency fields). Added: 2026-11-01"""
+        payload = {
+            "objects": [{"name": "a", "maps": ["x.png"]}, {"name": "b"}, {}, "s"],
+            "rigs": {"*": "a key named '*' is no wildcard"},
+        }
+        at = lambda *path: list(IterUtils.values_at(payload, path))  # noqa: E731
+        self.assertEqual(at("objects", "*", "name"), ["a", "b"])
+        self.assertEqual(at("objects", "*", "maps", "*"), ["x.png"])
+        self.assertEqual(at(), [payload])
+        self.assertEqual(at("missing", "*"), [])
+        self.assertEqual(at("objects", "name"), [], "a key into a list finds nothing")
+        self.assertEqual(at("rigs", "*"), [], "'*' fans out over a list alone")
+        self.assertEqual(list(IterUtils.values_at(None, ("a",))), [])
+
     def test_rindex_basic(self):
         """Test rindex finds last occurrence of value."""
         self.assertEqual(IterUtils.rindex([0, 1, 2, 2, 3], 2), 3)

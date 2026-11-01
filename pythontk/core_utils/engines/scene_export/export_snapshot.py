@@ -35,11 +35,11 @@ from typing import (
 from pythontk.core_utils.engines.scene_export.handoff_record import HandoffRecord
 from pythontk.core_utils.engines.scene_export.scene_records import (
     Kind,
+    NodeNames,
     Record,
     RecordSpec,
     SceneRecords,
     Scope,
-    _NodeNames,
 )
 
 logger = logging.getLogger(__name__)
@@ -182,7 +182,7 @@ class ExportContext:
     nodes: Optional[FrozenSet[str]] = None
     unit_scale: Optional[float] = None
     #: :attr:`nodes` as a reader matches them, built on first use.
-    _names: Optional[_NodeNames] = field(
+    _names: Optional[NodeNames] = field(
         default=None, init=False, repr=False, compare=False
     )
 
@@ -203,11 +203,11 @@ class ExportContext:
             return payload
         return spec.narrowed(payload, names)
 
-    def _node_names(self) -> Optional[_NodeNames]:
+    def _node_names(self) -> Optional[NodeNames]:
         if self.nodes is None:
             return None
         if self._names is None:
-            self._names = _NodeNames(self.nodes)
+            self._names = NodeNames(self.nodes)
         return self._names
 
     def note(self, text: str) -> None:

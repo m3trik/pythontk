@@ -1277,7 +1277,7 @@ class _Fbx2Gltf:
         keys either side by time -- a slerp for a rotation, a lerp otherwise --
         or held from the nearest at an end. A spline's repaired key keeps its
         value's place between its tangents and takes flat ones."""
-        from pythontk.file_utils.mesh_convert.glb.clips import GlbClips
+        from pythontk.math_utils._math_utils import MathUtils
         from pythontk.math_utils.quaternion import Quaternion
 
         part = group // 3 if cubic else group
@@ -1297,7 +1297,7 @@ class _Fbx2Gltf:
                 elif rotation and len(a) == 4:
                     values[k * group + i] = list(Quaternion.slerp(a, b, u))
                 else:
-                    values[k * group + i] = list(GlbClips._lerp(a, b, u))
+                    values[k * group + i] = list(MathUtils.lerp(tuple(a), tuple(b), u))
             if cubic:
                 for i in list(range(part)) + list(range(2 * part, group)):
                     values[k * group + i] = [0.0] * len(values[k * group + i])

@@ -62,6 +62,7 @@ from typing import (
     Sequence,
     Tuple,
     Union,
+    runtime_checkable,
 )
 
 from pythontk.core_utils.cancel_scope import CancelScope
@@ -138,6 +139,7 @@ class ExportResult:
         return self.error is None
 
 
+@runtime_checkable
 class SequenceHost(Protocol):
     """What a sequence exporter asks of the host whose frames it captures.
 

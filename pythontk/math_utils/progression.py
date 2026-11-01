@@ -346,8 +346,10 @@ class ProgressionCurves:
         parameter ``t`` in ``[0, 1]`` centred on ``0.5``: ``"linear"`` spaces
         them evenly and symmetrically, a non-linear curve warps the interior
         toward one end while the ends stay at ``-span / 2`` and ``span / 2``. A
-        single point sits on the midpoint. What a cut tool places its cuts by
-        (both hosts' ``EditUtils.cut_along_axis``).
+        single point is the curve read at the centre (``t = 0.5``): on the
+        midpoint for ``"linear"`` (and an unbiased ``"weighted"``), warped off
+        it, as an interior point is, by any other. What a cut tool places its
+        cuts by (both hosts' ``EditUtils.cut_along_axis``).
 
         Parameters:
             count (int): Number of points; none for 0 or fewer.

@@ -10,6 +10,8 @@ needs.
 """
 
 import os
+import posixpath
+from unittest import mock
 
 import pythontk as ptk
 from pythontk import FileCollect, PureCollectHost
@@ -67,6 +69,19 @@ class _CollectCase(BaseTestCase):
 
 
 class TestPlan(_CollectCase):
+    def test_a_path_stored_on_windows_is_searched_by_its_file_name_on_posix(self):
+        """A reader storing ``C:\\gone\\wood.png`` read on POSIX resolves to
+        ``<cwd>/C:\\gone\\wood.png``, whose ``os.path.basename`` is the whole
+        Windows path: the search looked for that and found nothing
+        (``posixpath`` stands in for a POSIX host). Added: 2026-11-01"""
+        wood = self._file("tex", "wood.png").replace("\\", "/")
+        collect = FileCollect(PureCollectHost({"lamp": "C:\\gone_2026\\wood.png"}))
+        with mock.patch("os.path.basename", posixpath.basename):
+            (entry,) = collect.entries(
+                ["lamp"], search_dir=self.tmp, find_files=lambda names, root: [wood]
+            )
+        self.assertTrue(entry["source"] and self._same(entry["source"], wood), entry)
+
     def test_a_lone_file_goes_flat(self):
         rows = self._plan({"a": self._file("ext", "valid.png")})
         self.assertEqual(rows["a"]["status"], FileCollect.RELOCATE)
@@ -457,6 +472,7 @@ class TestApply(_CollectCase):
         self.assertFalse(os.path.exists(self.dest), "a preview wrote")
         self.assertEqual(host.paths["wood"], wood)
         self.assertIn("Nothing has been written", said[-1][1])
+        self.assertNotIn("Apply", said[-1][1], "a panel's button is the panel's to name")
 
         said.clear()
         self.assertTrue(collect.run(rows, self.dest))

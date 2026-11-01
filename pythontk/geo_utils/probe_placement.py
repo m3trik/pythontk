@@ -66,6 +66,7 @@ from typing import (
     Protocol,
     Sequence,
     Tuple,
+    runtime_checkable,
 )
 
 Vec = Tuple[float, float, float]
@@ -82,6 +83,7 @@ class ProbeHit(NamedTuple):
     mesh: int
 
 
+@runtime_checkable
 class ProbeMesh(Protocol):
     """How a host intersects its meshes: what :class:`ProbeRays` asks of each
     mesh's *payload* (the host's handle on it, given to :meth:`ProbeRays.add`)."""
@@ -235,12 +237,20 @@ class _Look(NamedTuple):
     enclosed: bool = False
 
 
+@runtime_checkable
 class ProbeHost(Protocol):
     """What :class:`ProbePlacement` asks of the host scene: a short, fixed
     interface each DCC implements (``MayaProbeHost``, ``BlenderProbeHost``:
     each library's ``ProbePlacement.HOST_CLASS``) and a fake stands in for in a
     plain-Python test. One adapter serves one placement (it may hold what it
-    read)."""
+    read).
+
+    It has no ``PureProbeHost``, unlike the other host seams: every answer is
+    a reading of a scene's geometry and lights, and a default answering with
+    an empty scene would place nothing where a placement bound to no host
+    should be refused (:attr:`ProbePlacement.HOST_CLASS` ``None``) -- the
+    units and the up axis alone have host-free answers, and they are each
+    host's own facts."""
 
     #: The host's internal linear unit in metres (Maya: 0.01 -- centimetres,
     #: whatever the scene's UI unit; Blender: the scene's ``scale_length``).

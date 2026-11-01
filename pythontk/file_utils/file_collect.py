@@ -34,7 +34,6 @@ how it resolves), with :class:`PureCollectHost` the answer for plain paths.
 """
 
 import os
-import posixpath
 from typing import (
     Any,
     Callable,
@@ -48,6 +47,7 @@ from typing import (
     Sequence,
     Set,
     Tuple,
+    runtime_checkable,
 )
 
 from pythontk.core_utils.cancel_scope import OperationCancelled
@@ -57,6 +57,7 @@ from pythontk.file_utils.file_dependencies import FileDependencies
 from pythontk.file_utils.tiled_path import TiledPath
 
 
+@runtime_checkable
 class CollectHost(Protocol):
     """What a Collect asks of the host whose readers it gathers files for.
 
@@ -216,15 +217,13 @@ class FileCollect(LoggingMixin):
             entry = {
                 "owner": node,
                 "path": stored,
-                "source": FileDependencies._spelled(absolute) if exists else None,
+                "source": FileDependencies.spelled(absolute) if exists else None,
                 "candidates": [],
                 "note": "" if stored else "no path",
             }
             entries.append(entry)
             if stored and not exists:
-                name = os.path.basename(absolute) or posixpath.basename(
-                    stored.replace("\\", "/")
-                )
+                name = FileDependencies.file_name(absolute or stored)
                 refs.append((node, name, ""))
         if refs and search_dir:
             deps = FileDependencies.resolve(
@@ -296,12 +295,12 @@ class FileCollect(LoggingMixin):
             row["candidates"] = list(row.get("candidates") or [])
             picked = choices.get(cls.row_key(row))
             if picked and FileDependencies.on_disk(picked):
-                row["source"] = FileDependencies._spelled(os.path.abspath(picked))
+                row["source"] = FileDependencies.spelled(os.path.abspath(picked))
             if not row["source"]:
                 row["status"] = cls.AMBIGUOUS if row["candidates"] else cls.MISSING
             rows.append(row)
         _Destinations(
-            FileDependencies._spelled(os.path.abspath(dest_dir)), flat=flat
+            FileDependencies.spelled(os.path.abspath(dest_dir)), flat=flat
         ).place([row for row in rows if row["source"]])
         # By file, however spelled: an outside reader storing the share's UNC
         # path keeps the file a batch node reads through a mapped drive.
@@ -684,8 +683,8 @@ class FileCollect(LoggingMixin):
                 continue
             stored = self.host.stored_path(node)
             absolute = self.host.resolve_path(stored, node)[1] or stored
-            name = posixpath.basename(absolute.replace("\\", "/"))
-            destination = FileDependencies._spelled(os.path.join(target_dir, name))
+            name = FileDependencies.file_name(absolute)
+            destination = FileDependencies.spelled(os.path.join(target_dir, name))
             if self.host.stored_form(destination, node) == stored:
                 continue  # already there, in its final form
             if allow_missing or self.host.resolve_path(destination, node)[0]:
@@ -875,8 +874,7 @@ class FileCollect(LoggingMixin):
         lines.append(
             (
                 "warning",
-                f"Nothing has been written — press Apply to {verb} and repath "
-                "exactly this.",
+                "Nothing has been written.",
                 [],
             )
         )
@@ -984,7 +982,7 @@ class FileCollect(LoggingMixin):
     @staticmethod
     def _label(row: Mapping[str, Any]) -> str:
         """``owner:  file name  (note)`` for a report line."""
-        name = posixpath.basename(str(row.get("path") or "").replace("\\", "/"))
+        name = FileDependencies.file_name(row.get("path"))
         note = row.get("note") or ""
         return f"{row['owner']}" + (f":  {name}" if name else "") + (
             f"  ({note})" if note else ""
@@ -1026,7 +1024,7 @@ class FileCollect(LoggingMixin):
             return [(source, destination)]
         folder = os.path.dirname(destination)
         return [
-            (tile, FileDependencies._spelled(os.path.join(folder, os.path.basename(tile))))
+            (tile, FileDependencies.spelled(os.path.join(folder, os.path.basename(tile))))
             for tile in TiledPath.tiles(source)
         ]
 
@@ -1170,7 +1168,7 @@ class _Destinations:
         run: str,
         status: str = FileCollect.IN_PLACE,
     ) -> None:
-        member.destination = FileDependencies._spelled(
+        member.destination = FileDependencies.spelled(
             os.path.join(folder, member.name)
         )
         member.folder = run

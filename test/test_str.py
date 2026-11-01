@@ -2099,7 +2099,7 @@ class StrTest(BaseTestCase):
     def test_export_profile_reads_the_rule_from_here(self):
         """`ExportProfile.legal_name` is a pass-through, not a second copy.
 
-        uitk's `SwitchboardNameMixin.convert_to_legal_name` calls this too, so
+        uitk's `Switchboard.convert_to_legal_name` calls this too, so
         the widget the switchboard builds and the key the reader derives agree
         by construction rather than by two implementations staying in step.
         """

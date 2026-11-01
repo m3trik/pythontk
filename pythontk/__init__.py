@@ -443,10 +443,11 @@ DEFAULT_INCLUDE = {
         "EmissiveGroupsRecord",
     ],
     # Emissive groups: the host-free model mayatk and blendertk drive through
-    # their own half (``EmissiveGroupsAdapter``).
+    # their own half (an ``EmissiveGroupsHost``).
     "core_utils.engines.textures.emissive_groups": [
         "EmissiveGroupsModel",
-        "EmissiveGroupsAdapter",
+        "EmissiveGroupsHost",
+        "PureEmissiveGroupsHost",
     ],
     "core_utils.engines.textures.mat_report": ["MatReport"],
     "core_utils._core_utils": "*",
@@ -679,6 +680,10 @@ MOVED_NAMES = {
     "MeshConvert.set_glb_metallic_roughness": ("pythontk.MeshConvert.apply_glb_materials", "0.19.0"),
     "MeshConvert.set_glb_alpha_mode": ("pythontk.MeshConvert.apply_glb_materials", "0.19.0"),
     "MeshConvert.set_glb_unlit": ("pythontk.MeshConvert.apply_glb_materials", "0.19.0"),
+    # The host seam's one convention: a <Domain>Host Protocol beside the model,
+    # a Pure<Domain>Host default, a HOST class attribute (2026-11-01).
+    "EmissiveGroupsAdapter": ("pythontk.EmissiveGroupsHost", "0.19.0"),
+    "EmissiveGroupsModel.adapter": ("pythontk.EmissiveGroupsModel.HOST", "0.19.0"),
 }
 
 bootstrap_package(globals(), include=DEFAULT_INCLUDE, moved=MOVED_NAMES)

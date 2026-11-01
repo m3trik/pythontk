@@ -13,13 +13,17 @@ import pythontk as ptk
 from pythontk.core_utils.engines.scene_export.scene_store import SceneStoreBase
 from pythontk.core_utils.engines.scene_export.scene_records import Scope
 
-from pythontk.core_utils.engines.textures.emissive_groups import EmissiveGroupsModel
+from pythontk.core_utils.engines.textures.emissive_groups import (
+    EmissiveGroupsHost,
+    EmissiveGroupsModel,
+    PureEmissiveGroupsHost,
+)
 
 
 def _bound(host):
     """The model over *host*, bound as a host library binds it: a subclass whose
-    ``adapter`` is the host's half."""
-    return type("EmissiveGroups", (EmissiveGroupsModel,), {"adapter": host})
+    ``HOST`` is the host's half."""
+    return type("EmissiveGroups", (EmissiveGroupsModel,), {"HOST": host})
 
 
 class _Store(SceneStoreBase):
@@ -353,6 +357,26 @@ class TestRecords(_ModelCase):
                 ("discard", ["emissiveGroup_a", "emissiveGroup_b"]),
             ],
         )
+
+
+class TestPureHost(unittest.TestCase):
+    """The model with no host bound runs on the pure defaults: it reads an
+    empty scene and refuses every write, never one that goes nowhere.
+    Added: 2026-11-01"""
+
+    def test_an_unbound_model_reads_nothing_and_refuses_to_write(self):
+        self.assertIsInstance(EmissiveGroupsModel.HOST, PureEmissiveGroupsHost)
+        self.assertIsInstance(EmissiveGroupsModel.HOST, EmissiveGroupsHost)
+        self.assertEqual(EmissiveGroupsModel.list_groups(), {})
+        self.assertEqual(EmissiveGroupsModel.validate(), [])
+        with self.assertRaisesRegex(ValueError, "No faces"):
+            EmissiveGroupsModel.add_group("front")
+        with self.assertRaisesRegex(RuntimeError, "No scene to .*EmissiveGroupsModel.HOST"):
+            EmissiveGroupsModel.add_group("front", {"cube": [0]})
+
+    def test_the_pure_host_and_the_fake_satisfy_the_protocol(self):
+        self.assertIsInstance(PureEmissiveGroupsHost(), EmissiveGroupsHost)
+        self.assertIsInstance(_Host(), EmissiveGroupsHost)
 
 
 if __name__ == "__main__":

@@ -1041,7 +1041,7 @@ class TestBakedReflections(unittest.TestCase):
 
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
-            notes = ExportProfile._retired_row_notes(
+            notes = ExportProfile.retired_row_notes(
                 {"baked_reflections": "Quarter"}, {}, {}
             )
         self.assertEqual([str(w.message) for w in caught], [])
@@ -1065,7 +1065,7 @@ class TestRetiredPresetRows(unittest.TestCase):
     }
 
     def notes(self, stored, tasks=None, checks=None):
-        return ExportProfile._retired_row_notes(
+        return ExportProfile.retired_row_notes(
             stored, self.FIXES if tasks is None else tasks, checks or {}
         )
 
@@ -1119,7 +1119,7 @@ class TestRetiredPresetRows(unittest.TestCase):
         Reflections row, and the writability check -- each only while the
         panel does not build it."""
         self.assertEqual(
-            ExportProfile._retired_row_keys(self.FIXES, {}),
+            ExportProfile.retired_row_keys(self.FIXES, {}),
             (
                 "check_mangled_names",
                 "check_floating_point_keys",
@@ -1130,7 +1130,7 @@ class TestRetiredPresetRows(unittest.TestCase):
         )
         offered = {"check_untied_keyframes": {}, "check_output_writable": {}}
         self.assertEqual(
-            ExportProfile._retired_row_keys(
+            ExportProfile.retired_row_keys(
                 {**self.FIXES, "baked_reflections": {}}, offered
             ),
             ("check_mangled_names", "check_floating_point_keys"),

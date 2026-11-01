@@ -631,7 +631,7 @@ class SceneExporterBase(LoggingMixin):
         Both panels call this when a preset is picked: the load skips a key no
         widget takes, so a preset saved before a row retired would otherwise
         stop doing what it asked without a word
-        (:meth:`pythontk.ExportProfile._retired_row_notes`).
+        (:meth:`pythontk.ExportProfile.retired_row_notes`).
 
         Parameters:
             name: The preset's name, as its combo shows it.
@@ -641,7 +641,7 @@ class SceneExporterBase(LoggingMixin):
         if not name or not stored:
             return
         tasks_def, checks_def = self.definition_tables()
-        for level, message in ptk.ExportProfile._retired_row_notes(
+        for level, message in ptk.ExportProfile.retired_row_notes(
             stored, tasks_def, checks_def
         ):
             getattr(self.logger, level)(f"Preset '{name}': {message}")
@@ -675,7 +675,7 @@ class SceneExporterBase(LoggingMixin):
         with nothing said (:meth:`note_retired_preset_rows` says the same for
         a preset). Both panels call this when they open, with their window's
         settings store; the notes are
-        :meth:`pythontk.ExportProfile._retired_row_notes`, read off the
+        :meth:`pythontk.ExportProfile.retired_row_notes`, read off the
         retired rows' saved values and the live fix rows' (saved, or their
         definition's default). The retired rows' keys are then removed
         through the same store, so the notes are said once.
@@ -688,7 +688,7 @@ class SceneExporterBase(LoggingMixin):
         try:
             profile = ptk.ExportProfile
             tasks_def, checks_def = self.definition_tables()
-            retired = profile._retired_row_keys(tasks_def, checks_def)
+            retired = profile.retired_row_keys(tasks_def, checks_def)
             fixes = {
                 profile.widget_key(task, tasks_def[task]): tasks_def[task]
                 for task in profile.VERIFYING_CHECKS
@@ -705,7 +705,7 @@ class SceneExporterBase(LoggingMixin):
                 if "setChecked" in spec
             }
             stored.update(saved)
-            for level, message in profile._retired_row_notes(
+            for level, message in profile.retired_row_notes(
                 stored, tasks_def, checks_def
             ):
                 getattr(self.logger, level)(f"The panel's saved state: {message}")

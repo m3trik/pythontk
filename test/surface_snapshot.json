@@ -1975,6 +1975,13 @@
   },
   {
     "kind": "function",
+    "module": "pythontk.iter_utils._iter_utils",
+    "name": "values_at",
+    "qualname": "IterUtils.values_at",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
     "module": "pythontk.img_utils._img_utils",
     "name": "warp_quad",
     "qualname": "ImgUtils.warp_quad",
@@ -2424,8 +2431,8 @@
   {
     "kind": "class",
     "module": "pythontk.core_utils.engines.textures.emissive_groups",
-    "name": "EmissiveGroupsAdapter",
-    "qualname": "EmissiveGroupsAdapter",
+    "name": "EmissiveGroupsHost",
+    "qualname": "EmissiveGroupsHost",
     "tier": "root"
   },
   {
@@ -3497,6 +3504,13 @@
     "module": "pythontk.file_utils.file_collect",
     "name": "PureCollectHost",
     "qualname": "PureCollectHost",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.textures.emissive_groups",
+    "name": "PureEmissiveGroupsHost",
+    "qualname": "PureEmissiveGroupsHost",
     "tier": "root"
   },
   {

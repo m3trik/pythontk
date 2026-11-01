@@ -151,7 +151,7 @@ class ExportProfile:
         return tasks
 
     @classmethod
-    def _retired_row_notes(
+    def retired_row_notes(
         cls,
         stored: Mapping[str, Any],
         task_definitions: Mapping[str, Mapping[str, Any]],
@@ -247,13 +247,13 @@ class ExportProfile:
         return notes
 
     @classmethod
-    def _retired_row_keys(
+    def retired_row_keys(
         cls,
         task_definitions: Mapping[str, Mapping[str, Any]],
         check_definitions: Mapping[str, Mapping[str, Any]],
     ) -> Tuple[str, ...]:
         """The objectNames of the rows retired 2026-10-19 that this panel no
-        longer builds -- the keys :meth:`_retired_row_notes` reads beside the
+        longer builds -- the keys :meth:`retired_row_notes` reads beside the
         live fix rows', and the ones a panel's saved state can drop once said.
 
         Parameters:
@@ -877,7 +877,7 @@ class ExportProfile:
     }
     #: The retired Baked Reflections row's table: label -> TOKEN (the levels
     #: are :attr:`ExportRun._BAKED_REFLECTION_LEVELS`). Read privately by the
-    #: rule that still names an older preset's choice (:meth:`_retired_row_notes`).
+    #: rule that still names an older preset's choice (:meth:`retired_row_notes`).
     _BAKED_REFLECTIONS_OPTIONS: Dict[str, str] = {
         "Off (Pure Bake)": "off",
         "Quarter": "quarter",

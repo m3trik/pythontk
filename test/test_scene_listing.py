@@ -73,6 +73,17 @@ class TestListingRules(BaseTestCase):
         self.assertEqual(fmt("hero", "Case: upper"), "HERO")
         self.assertEqual(fmt("hero", "None", ""), "hero")
 
+    def test_an_unknown_case_style_leaves_the_name_and_says_so(self):
+        """A style ``StrUtils.CASES`` does not name (a typo'd preset, a
+        retired one) left the name as it was with nothing said -- or, for a
+        ``str`` method by that name, ran it (``"split"``). Added: 2026-11-01"""
+        fmt = ptk.SceneListing.format_name
+        for style in ("Case: shout", "split"):
+            with self.subTest(style=style):
+                with self.assertLogs("pythontk.file_utils.scene_listing", "WARNING") as said:
+                    self.assertEqual(fmt("hero", style, "_v01"), "hero_v01")
+                self.assertIn(style.replace("Case: ", ""), said.output[0])
+
     def test_every_trailing_suffix_comes_off(self):
         self.assertEqual(
             ptk.SceneListing.strip_all_suffixes("hero_v01_v01", "_v01"), "hero"

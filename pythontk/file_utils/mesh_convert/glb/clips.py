@@ -43,6 +43,7 @@ import struct
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from pythontk.file_utils.mesh_convert.glb.edit import GlbEdit
+from pythontk.math_utils._math_utils import MathUtils
 from pythontk.math_utils.quaternion import Quaternion
 
 __all__ = ["GlbClips"]
@@ -132,10 +133,6 @@ class _GlbClipsInternal:
     # ---- sampling -----------------------------------------------------
 
     @staticmethod
-    def _lerp(a: Sequence[float], b: Sequence[float], u: float) -> Tuple[float, ...]:
-        return tuple(x + (y - x) * u for x, y in zip(a, b))
-
-    @staticmethod
     def _upper(times: Sequence[float], at: float) -> int:
         """Index of the key *at* interpolates toward -- always a valid pair.
 
@@ -173,7 +170,7 @@ class _GlbClipsInternal:
         u = (at - times[lo]) / span
         if quaternion:  # shortest arc, the glTF LINEAR rule for rotations
             return Quaternion.slerp(values[lo], values[hi], u)
-        return cls._lerp(values[lo], values[hi], u)
+        return MathUtils.lerp(tuple(values[lo]), tuple(values[hi]), u)
 
     # ---- slicing ------------------------------------------------------
 

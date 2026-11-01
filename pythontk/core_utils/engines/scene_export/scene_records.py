@@ -71,15 +71,18 @@ from typing import (
 
 from pythontk.core_utils.class_property import ClassProperty
 from pythontk.core_utils.deprecation import Deprecation
+from pythontk.iter_utils._iter_utils import IterUtils
 
 logger = logging.getLogger(__name__)
 
 
-class _NodeNames:
+class NodeNames:
     """The names of the nodes an export ships, matched as a reader of the file
     binds a record entry to its node: a name exactly, else its leaf -- what
     follows a DAG path's last ``|`` and a namespace's last ``:`` -- against
-    theirs (the GLB and Unity appliers' join)."""
+    theirs (the GLB and Unity appliers' join). Built once for many records
+    (:meth:`RecordSpec.narrowed`, ``ExportContext.ships``): ``name in
+    names``."""
 
     __slots__ = ("names", "leaves")
 
@@ -96,22 +99,6 @@ class _NodeNames:
             return False
         name = name.rsplit("|", 1)[-1]
         return name in self.names or self.leaf(name) in self.leaves
-
-    @staticmethod
-    def values(value: Any, path: Tuple[str, ...]) -> Iterable[Any]:
-        """The values at *path* in *value*; ``"*"`` walks a list."""
-        if not path:
-            yield value
-            return
-        step, rest = path[0], path[1:]
-        if step == "*":
-            items = value if isinstance(value, list) else []
-        elif isinstance(value, Mapping) and step in value:
-            items = [value[step]]
-        else:
-            items = []
-        for item in items:
-            yield from _NodeNames.values(item, rest)
 
 
 class Scope(str, Enum):
@@ -517,6 +504,7 @@ class RecordSpec:
         namespace-stripped leaf); ``None`` when none is, or when the payload
         holds no entry list. A record that declares no node entries is
         returned as it is, and so is a payload every entry of which ships.
+        *nodes* may be a :class:`NodeNames` built once for many records.
 
         The one narrowing every reader of the rule applies: a scoped export's
         snapshot (:class:`ExportSnapshot`), and the post-write embed reading a
@@ -524,7 +512,7 @@ class RecordSpec:
         """
         if self.nodes is None:
             return payload
-        names = nodes if isinstance(nodes, _NodeNames) else _NodeNames(nodes)
+        names = nodes if isinstance(nodes, NodeNames) else NodeNames(nodes)
         field_name, name_path = self.nodes
         path = (name_path,) if isinstance(name_path, str) else tuple(name_path)
         entries = payload.get(field_name) if isinstance(payload, Mapping) else None
@@ -533,7 +521,7 @@ class RecordSpec:
         kept = [
             entry
             for entry in entries
-            if any(value in names for value in _NodeNames.values(entry, path))
+            if any(value in names for value in IterUtils.values_at(entry, path))
         ]
         if not kept:
             return None
