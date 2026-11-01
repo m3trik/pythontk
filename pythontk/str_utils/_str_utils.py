@@ -1533,7 +1533,7 @@ class StrUtils(
                 ``security_cam`` for a ``_CAM`` entry, the ``set`` out of
                 ``tile_set``, and the ``con`` out of ``con_rod``.
             numbered: When no affix matches, also try with a trailing number
-                peeled off (``_?\d+`` or Blender's ``.001``) and, when that
+                peeled off (``_?\\d+`` or Blender's ``.001``) and, when that
                 strips an affix, put the number back on the base. A duplicate's
                 uniquifier or an index after the affix (``crate_GEO1``,
                 ``wall_GEO_01``) then yields ``crate1`` / ``wall_01`` -- so a

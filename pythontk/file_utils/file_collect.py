@@ -19,7 +19,10 @@ two steps, each a plain-value call:
   files always differ somewhere in their full paths, so such a run exists.
   Files with identical contents share one copy, a file already under the
   destination stays where it is, and a tile set (``rock.<UDIM>.png``) is
-  planned, and moved, as one.
+  planned, and moved, as one. A FLAT plan (``plan(flat=True)``; a Set
+  Directory, :meth:`FileCollect.set_directory`) puts every file directly in
+  the destination and keeps nothing apart: a name a different file holds
+  there is blocked instead.
 
 :meth:`FileCollect.apply` does the plan's file work; repointing the readers is
 the host's. The preview and the commit derive every destination through the one
@@ -154,7 +157,8 @@ class FileCollect(LoggingMixin):
     #: No file found for the reader.
     MISSING: str = "missing"
     #: No folder under the destination is free for it (a different file at
-    #: every run of its parents); left where it is.
+    #: every run of its parents -- in a flat plan, at the destination itself);
+    #: left where it is.
     BLOCKED: str = "blocked"
     STATUSES: Tuple[str, ...] = (RELOCATE, REUSE, IN_PLACE, AMBIGUOUS, MISSING, BLOCKED)
     #: The statuses whose row has file work in :meth:`apply`.
@@ -246,12 +250,21 @@ class FileCollect(LoggingMixin):
         dest_dir: str,
         choices: Optional[Mapping[Hashable, str]] = None,
         keep: Iterable[str] = (),
+        flat: bool = False,
     ) -> List[Dict[str, Any]]:
         """The Collect step: where each entry's file lands in *dest_dir*.
 
         THE one call a preview and its commit derive destinations through.
         Every entry keeps its name; see the module docstring for where it goes.
         An ambiguous entry stays unplaced until *choices* names its file.
+
+        A *flat* plan is a repath to *dest_dir* itself (a Set Directory): every
+        file lands directly in it, a file in a folder below it included, and
+        the destination is spelled as *dest_dir* is -- for a file already
+        there under another spelling too (a junction, a mapped drive), which
+        stays :attr:`IN_PLACE`. Nothing is kept apart: a name a different file
+        holds there, or that two different files of the plan bring, is
+        :attr:`BLOCKED` -- never settled by order.
 
         What a move keeps is decided here, once, per FILE: every row reading a
         file in *keep* -- or one any entry marks ``keep_source`` -- is marked
@@ -269,6 +282,7 @@ class FileCollect(LoggingMixin):
                 one of its candidates, any existing file is taken.
             keep: Files readers outside the plan read
                 (:meth:`CollectHost.read_elsewhere`): a move copies them.
+            flat: Place every file directly in *dest_dir* (above).
 
         Returns:
             The rows, in entry order (see the class docstring).
@@ -286,19 +300,21 @@ class FileCollect(LoggingMixin):
             if not row["source"]:
                 row["status"] = cls.AMBIGUOUS if row["candidates"] else cls.MISSING
             rows.append(row)
-        _Destinations(FileDependencies._spelled(os.path.abspath(dest_dir))).place(
-            [row for row in rows if row["source"]]
-        )
-        kept = {f for path in keep for f in cls.source_files(path)}
+        _Destinations(
+            FileDependencies._spelled(os.path.abspath(dest_dir)), flat=flat
+        ).place([row for row in rows if row["source"]])
+        # By file, however spelled: an outside reader storing the share's UNC
+        # path keeps the file a batch node reads through a mapped drive.
+        kept = {cls._identity(f) for path in keep for f in cls.source_files(path)}
         kept.update(
-            f
+            cls._identity(f)
             for row in rows
             if row.get("keep_source") and row["source"]
             for f in cls.source_files(row["source"])
         )
         for row in rows:
             row["keep_source"] = bool(row["source"]) and not kept.isdisjoint(
-                cls.source_files(row["source"])
+                cls._identity(f) for f in cls.source_files(row["source"])
             )
         return rows
 
@@ -311,6 +327,7 @@ class FileCollect(LoggingMixin):
         choices: Optional[Mapping[Hashable, str]] = None,
         kind: str = "file",
         extra: Iterable[Mapping[str, Any]] = (),
+        flat: bool = False,
     ) -> List[Dict[str, Any]]:
         """Resolve *nodes* and plan them, with *extra* entries beside them.
 
@@ -326,6 +343,7 @@ class FileCollect(LoggingMixin):
             choices: The picks (:meth:`plan`).
             kind: The kind of *nodes*' rows (``"texture"``).
             extra: More entries -- a host's own records (lightmaps).
+            flat: Every file directly in *dest_dir* (:meth:`plan`).
 
         Returns:
             :meth:`plan`'s rows.
@@ -336,7 +354,11 @@ class FileCollect(LoggingMixin):
         ]
         entries.extend(extra)
         return self.plan(
-            entries, dest_dir, choices, keep=self.host.read_elsewhere(nodes) or ()
+            entries,
+            dest_dir,
+            choices,
+            keep=self.host.read_elsewhere(nodes) or (),
+            flat=flat,
         )
 
     @staticmethod
@@ -365,11 +387,15 @@ class FileCollect(LoggingMixin):
         file is at its destination (a tile set is never split between two
         folders), never for a source that IS its destination however spelled,
         and never for a file any row marks ``keep_source`` (one another reader
-        still needs). A row whose copy failed keeps its source and is left out
-        of the result; the host repoints only the rows returned (and the
-        :attr:`IN_PLACE` ones). In a move every file is compared whole with
+        still needs) or a row that did not land still reads -- by file, however
+        spelled. A row whose copy failed keeps its source and is left out of
+        the result, and what this call copied for it is taken back (a tile set
+        lands whole or not at all); the host repoints only the rows returned
+        (and the :attr:`IN_PLACE` ones). In a move every file is compared whole with
         its source before the source goes -- a file that appeared at the
-        destination after the copier looked is never taken for it. A cancel
+        destination after the copier looked is never taken for it -- and
+        every row is judged before any source goes, so each reader of one
+        file lands with it. A cancel
         (*progress* answering False) stops before anything is taken away or
         repointed: what was copied stays, and the error says how much.
 
@@ -413,7 +439,13 @@ class FileCollect(LoggingMixin):
         total = sum(len(batch) for batch in batches.values())
         done = 0
         for folder, sources in batches.items():
-            os.makedirs(folder, exist_ok=True)
+            try:
+                os.makedirs(folder, exist_ok=True)
+            except OSError as error:
+                # Its rows do not land (and say so); the other folders go on.
+                cls.logger.warning("Cannot create %s: %s", folder, error)
+                done += len(sources)
+                continue
             # ``progress=`` only when there is one: a host's three-argument
             # copier (``relocate``'s contract) keeps working.
             ticking = {}
@@ -430,8 +462,10 @@ class FileCollect(LoggingMixin):
                     "-- they stay at the destination; no source was taken away "
                     "and no reader repathed."
                 )
-        kept = cls.kept_files(rows)
 
+        # Every row is judged before any source goes: two readers of one file
+        # are two rows, and the first one's move took the source away before
+        # the second was compared with it -- the second reader was left out.
         out = []
         for row in rows:
             status = row["status"]
@@ -449,14 +483,65 @@ class FileCollect(LoggingMixin):
                     ok = all(cls._holds(s, d) for s, d in files)
             else:
                 ok = bool(files) and all(cls._holds(s, d) for s, d in files)
-            if not ok:
-                continue
-            if mode == "move":
-                cls._drop_sources(
-                    [(s, d) for s, d in files if os.path.normcase(os.path.abspath(s)) not in kept]
-                )
-            out.append(row)
+            if ok:
+                out.append(row)
+        arrived = {id(row) for row in out}
+        cls._take_back(
+            [pairs[id(r)] for r in rows if r["status"] == cls.RELOCATE and id(r) not in arrived],
+            [pairs[id(r)] for r in out if r["status"] in cls.TRANSFERS],
+            {pair for pair in landed if pair not in there},
+            key,
+        )
+        if mode == "move":
+            # A reader that keeps its path keeps its file: one marked to keep,
+            # and every row that did not land (a namesake blocked it, its copy
+            # failed) -- by file, however its readers spell it.
+            stay = {cls._identity(f) for f in cls.kept_files(rows)}
+            stay.update(
+                cls._identity(f)
+                for row in rows
+                if row.get("source") and id(row) not in arrived
+                for f in cls.source_files(row["source"])
+            )
+            cls._drop_sources(
+                [
+                    (s, d)
+                    for row in out
+                    if row["status"] in cls.TRANSFERS
+                    for s, d in pairs[id(row)]
+                    if cls._identity(s) not in stay
+                ]
+            )
         return out
+
+    @staticmethod
+    def _take_back(failed, landed_files, written, key) -> None:
+        """Remove what this apply wrote for the rows that did not land: a set
+        lands whole or not at all -- its tiles copied before one failed stayed
+        in the destination, foreign to a same-named set placed there later --
+        unless a landed row reads that file there."""
+        needed = {key(s, d)[1] for files in landed_files for s, d in files}
+        for files in failed:
+            for src, dst in files:
+                pair = key(src, dst)
+                if pair in written and pair[1] not in needed:
+                    try:
+                        if not FileUtils.is_same_file(src, dst):
+                            os.remove(dst)
+                    except OSError:
+                        pass
+
+    @staticmethod
+    def _identity(path: str) -> Tuple[Any, ...]:
+        """One file, however spelled: its volume and file index where it is on
+        disk (``os.path.samefile``'s test), else its normalized spelling."""
+        try:
+            stat = os.stat(path)
+            if stat.st_ino:
+                return ("file", stat.st_dev, stat.st_ino)
+        except (OSError, ValueError):
+            pass
+        return ("path", os.path.normcase(os.path.abspath(path)))
 
     @classmethod
     def kept_files(cls, rows: Iterable[Mapping[str, Any]]) -> Set[str]:
@@ -482,6 +567,88 @@ class FileCollect(LoggingMixin):
         if FileUtils.is_same_file(src, dst):
             return True
         return os.path.isfile(dst) and FileUtils.has_same_content(src, dst)
+
+    # ------------------------------------------------------------ set directory
+    #: Set Directory's modes: ``"rewrite"`` moves nothing; the others relocate.
+    SET_DIRECTORY_MODES: Tuple[str, ...] = ("rewrite", "copy", "move")
+
+    def set_directory(
+        self,
+        nodes: Iterable[Any],
+        target_dir: str,
+        mode: str = "rewrite",
+        allow_missing: bool = False,
+        copy: Optional[Callable[[List[str], str, str], List[Tuple[str, str]]]] = None,
+        kind: str = "file",
+    ) -> Dict[str, Any]:
+        """Set Directory's file work: point each reader at the file of its name
+        directly in *target_dir*, bringing the file along first or not.
+
+        ``"copy"`` / ``"move"`` are a FLAT Collect (:meth:`plan_nodes` with
+        ``flat=True``, then :meth:`apply`): each file keeps its name, a tile
+        set travels whole, identical bytes already there are reused, and a
+        move takes a source away only once its copy compares whole -- never
+        one that IS the destination however spelled, never one another reader
+        still reads. A name a different file holds there, or that two
+        different files of *nodes* bring, leaves those readers where they are.
+        ``"rewrite"`` moves nothing. A reader with nothing to bring -- every one
+        in ``"rewrite"``, and one whose file is on disk nowhere -- points at the
+        file of its name in *target_dir* only when that is there (tokens
+        resolved through the host), unless *allow_missing*: pointing it at
+        nothing would only spell the breakage differently.
+
+        Nothing is repathed here: the host points ``"repath"``'s rows at
+        their ``destination`` in its own undo step (as :meth:`CollectHost.repath`
+        does), and words ``"absent"`` its own way.
+
+        Parameters:
+            nodes: The readers, in order (one with no stored path is skipped).
+            target_dir: The folder their files live in afterwards.
+            mode: One of :attr:`SET_DIRECTORY_MODES`.
+            allow_missing: Point a reader there even when no file of its name is.
+            copy: The host's copier (:meth:`apply`).
+            kind: The rows' ``kind`` (``"texture"``), as the report names them.
+
+        Returns:
+            ``{"repath": [rows: "owner", "destination"], "absent": [readers
+            *target_dir* holds no file for], "rows": the Collect's plan rows
+            (``[]`` in rewrite), "report": [(level, message, items)] -- what the
+            Collect did, :meth:`problems` and :meth:`outcome`'s lines}``.
+
+        Raises:
+            ValueError: An unknown *mode*.
+        """
+        if mode not in self.SET_DIRECTORY_MODES:
+            raise ValueError(
+                f"Unknown mode {mode!r}; expected one of "
+                f"{sorted(self.SET_DIRECTORY_MODES)}."
+            )
+        readers = [n for n in dict.fromkeys(nodes) if self.host.stored_path(n)]
+        rows: List[Dict[str, Any]] = []
+        landed: List[Dict[str, Any]] = []
+        report: List[Tuple[str, str, List[str]]] = []
+        if readers and mode != "rewrite":
+            rows = self.plan_nodes(readers, target_dir, kind=kind, flat=True)
+            landed = self.apply(rows, mode=mode, copy=copy)
+            blocked = [r for r in rows if r["status"] == self.BLOCKED]
+            report = self.problems(blocked) + self.outcome(rows, landed, mode)
+        collected = {row["owner"] for row in rows if row["source"]}
+        repath = list(landed)
+        absent = []
+        for node in readers:
+            if node in collected:
+                continue
+            stored = self.host.stored_path(node)
+            absolute = self.host.resolve_path(stored, node)[1] or stored
+            name = posixpath.basename(absolute.replace("\\", "/"))
+            destination = FileDependencies._spelled(os.path.join(target_dir, name))
+            if self.host.stored_form(destination, node) == stored:
+                continue  # already there, in its final form
+            if allow_missing or self.host.resolve_path(destination, node)[0]:
+                repath.append({"owner": node, "destination": destination})
+            else:
+                absent.append(node)
+        return {"repath": repath, "absent": absent, "rows": rows, "report": report}
 
     # ------------------------------------------------------------------ run
     def run(
@@ -590,9 +757,9 @@ class FileCollect(LoggingMixin):
             out.append(
                 (
                     "warning",
-                    f"{len(blocked)} file(s) have no free folder under the "
-                    "destination — a different file of the name holds every one; "
-                    "left where they are",
+                    f"{len(blocked)} file(s) have nowhere free in the destination "
+                    "— a different file of the name holds, or is placed in, every "
+                    "place they could go; left where they are",
                     [f"{r['owner']}:  {r['source']}" for r in blocked],
                 )
             )
@@ -678,7 +845,9 @@ class FileCollect(LoggingMixin):
         landed: Sequence[Mapping[str, Any]],
         mode: str,
     ) -> List[Tuple[str, str, List[str]]]:
-        """``[(level, message, items)]`` -- what a commit did, per kind."""
+        """``[(level, message, items)]`` -- what a commit did, per kind; in a
+        move, the files copied instead (``keep_source``: another reader still
+        reads them)."""
         out = []
         verb = "moved" if mode == "move" else "copied"
         for kind, group in cls._by_kind(landed):
@@ -692,6 +861,22 @@ class FileCollect(LoggingMixin):
                     + (f"; {len(apart)} kept apart in their own folder(s)" if apart else "")
                     + ".",
                     [],
+                )
+            )
+        kept = sorted(
+            {
+                r["source"]
+                for r in landed
+                if r.get("keep_source") and r["status"] in cls.TRANSFERS
+            }
+        )
+        if kept and mode == "move":
+            out.append(
+                (
+                    "info",
+                    f"{len(kept)} original(s) left in place rather than moved — "
+                    "another reader still reads them",
+                    kept,
                 )
             )
         arrived = {id(r) for r in landed}
@@ -818,10 +1003,12 @@ class FileCollect(LoggingMixin):
 
 class _Destinations:
     """Where each distinct file of a plan lands: :meth:`FileCollect.plan`'s
-    placement, one instance per plan (the claims it has made so far)."""
+    placement, one instance per plan (the claims it has made so far).
+    *flat*: every file directly in *dest_dir*, nothing kept apart."""
 
-    def __init__(self, dest_dir: str):
+    def __init__(self, dest_dir: str, flat: bool = False):
         self.dest = dest_dir
+        self.flat = flat
         #: lower-case destination file -> the member that claimed it.
         self.claimed: Dict[str, "_Member"] = {}
 
@@ -832,10 +1019,12 @@ class _Destinations:
         for member in members:
             groups.setdefault(member.key, []).append(member)
         # The files already under the destination hold their place first: a
-        # newcomer is placed around them, never over them.
+        # newcomer is placed around them, never over them. A flat plan's are
+        # in the destination itself, named as the caller spells it.
         for member in members:
             if member.in_place:
-                self._claim(member, os.path.dirname(member.source), "")
+                folder = self.dest if self.flat else os.path.dirname(member.source)
+                self._claim(member, folder, "")
         for group in groups.values():
             newcomers = [m for m in group if not m.in_place]
             for member in newcomers:
@@ -850,7 +1039,7 @@ class _Destinations:
         stay where they are and the others reuse it."""
         members: List[_Member] = []
         by_file: Dict[str, _Member] = {}
-        inside = lambda row: _Member.under(row["source"], self.dest)  # noqa: E731
+        inside = lambda row: _Member.under(row["source"], self.dest, self.flat)  # noqa: E731
         for row in sorted(rows, key=lambda row: not inside(row)):
             spelled = os.path.normcase(os.path.abspath(row["source"]))
             member = by_file.get(spelled)
@@ -859,7 +1048,7 @@ class _Destinations:
                 # each stay where they are (merged, a move deleted one).
                 member = self._twin(row["source"], members)
             if member is None:
-                member = _Member(row["source"], self.dest)
+                member = _Member(row["source"], self.dest, self.flat)
                 members.append(member)
             by_file[spelled] = member
             member.rows.append(row)
@@ -882,8 +1071,8 @@ class _Destinations:
         newcomer of its name shares and whose folder is free. Flat (no run)
         when it is its name's one newcomer and the name is free there -- or
         whenever the flat file already holds its bytes; two newcomers of one
-        name never race for the flat place."""
-        for depth in range(0, len(member.parents) + 1):
+        name never race for the flat place. A flat plan tries no run."""
+        for depth in range(0, 1 if self.flat else len(member.parents) + 1):
             run = member.run(depth)
             if depth and any(
                 other is not member and other.run(depth) == run for other in newcomers
@@ -903,9 +1092,10 @@ class _Destinations:
         """How *member* lands in *folder*: :attr:`FileCollect.RELOCATE`, or
         :attr:`FileCollect.REUSE` when every file it writes is there already
         with identical bytes; None when another file holds the place -- on
-        disk, or claimed by another member of this plan. A tile set also needs
-        the folder to hold no OTHER tile of its pattern: the set read there
-        would not be the set copied."""
+        disk, or claimed by another member of this plan for a different file
+        (a set and one of its tiles, read by two readers, share the tile's
+        copy). A tile set also needs the folder to hold no OTHER tile of its
+        pattern: the set read there would not be the set copied."""
         target = os.path.join(folder, member.name)
         if member.is_set:
             there = {os.path.basename(t).lower() for t in TiledPath.tiles(target)}
@@ -915,7 +1105,11 @@ class _Destinations:
         for name in member.file_names:
             path = os.path.join(folder, name)
             owner = self.claimed.get(os.path.normcase(os.path.abspath(path)))
-            if owner is not None and owner is not member:
+            if (
+                owner is not None
+                and owner is not member
+                and not FileUtils.is_same_file(owner.file_for(name), member.file_for(name))
+            ):
                 return None
             if os.path.exists(path):
                 source = member.file_for(name)
@@ -945,7 +1139,7 @@ class _Destinations:
 class _Member:
     """One distinct file (or tile set) of a plan and the rows that read it."""
 
-    def __init__(self, source: str, dest_dir: str):
+    def __init__(self, source: str, dest_dir: str, flat: bool = False):
         self.source = source
         self.name = os.path.basename(source)
         self.key = self.name.lower()
@@ -956,7 +1150,7 @@ class _Member:
         self.tile_names = set(self._tiles)
         self.file_names = [os.path.basename(t) for t in tiles]
         folder = os.path.dirname(os.path.abspath(source))
-        self.in_place = self.under(source, dest_dir)
+        self.in_place = self.under(source, dest_dir, flat)
         #: Parent folder names, innermost first (a drive's colon dropped).
         self.parents = [
             part.replace(":", "")
@@ -968,14 +1162,14 @@ class _Member:
         self.status = FileCollect.MISSING
 
     @staticmethod
-    def under(source: str, dest_dir: str) -> bool:
-        """Whether *source* already lies in *dest_dir* or below it -- by the
-        spelling, or the filesystem's answer for the folder itself (a junction
-        or mapped drive naming the destination)."""
+    def under(source: str, dest_dir: str, flat: bool = False) -> bool:
+        """Whether *source* already lies in *dest_dir* -- or below it, unless
+        *flat* -- by the spelling, or the filesystem's answer for the folder
+        itself (a junction or mapped drive naming the destination)."""
         folder = os.path.dirname(os.path.abspath(source))
-        return FileUtils.is_under(folder, dest_dir) or FileUtils.is_same_file(
-            folder, dest_dir
-        )
+        if FileUtils.is_same_file(folder, dest_dir):
+            return True
+        return not flat and FileUtils.is_under(folder, dest_dir)
 
     def run(self, depth: int) -> Tuple[str, ...]:
         """The innermost *depth* parents, case-folded: what tells it apart."""

@@ -47,6 +47,19 @@ class _CollectCase(BaseTestCase):
             os.path.abspath(b)
         )
 
+    def _junction(self, link, target):
+        """A directory junction *link* naming *target* (no elevation needed);
+        removed -- never its target -- before the scratch folder is; skipped
+        where none can be made."""
+        try:
+            import _winapi
+
+            _winapi.CreateJunction(os.path.normpath(target), os.path.normpath(link))
+        except (ImportError, AttributeError, OSError) as error:
+            self.skipTest(f"no directory junction can be made here: {error}")
+        self.addCleanup(lambda: os.path.lexists(link) and os.rmdir(link))
+        return link
+
     @staticmethod
     def _read(path):
         with open(path, "rb") as fh:
@@ -294,6 +307,16 @@ class TestApply(_CollectCase):
         self.assertFalse(os.path.exists(b), "a redundant identical source goes too")
         self.assertEqual(self._read(self._at("d.png")), b"same")
 
+    def test_a_move_lands_every_reader_of_one_file(self):
+        """Two readers of one file are one copy: the first row's move took the
+        source away before the second row was compared with it, so the second
+        reader was left out -- on the deleted path."""
+        path = self._file("ext", "shared.png", data=b"shared")
+        rows, landed = self._apply({"a": path, "b": path}, mode="move")
+        self.assertEqual([r["owner"] for r in landed], ["a", "b"])
+        self.assertFalse(os.path.exists(path))
+        self.assertEqual(self._read(self._at("shared.png")), b"shared")
+
     def test_a_move_keeps_a_source_marked_to_keep(self):
         src = self._file("ext", "shared.exr")
         entries = [{"owner": "m", "source": src, "keep_source": True}]
@@ -461,3 +484,219 @@ class TestApply(_CollectCase):
             {r["status"] for r in again.values()}, {FileCollect.IN_PLACE}
         )
         self.assertEqual({k: r["destination"] for k, r in again.items()}, moved)
+
+
+class TestFlatPlan(_CollectCase):
+    """``plan(flat=True)``: a repath to the destination itself (a Set
+    Directory) -- every file directly in it, nothing kept apart."""
+
+    def _flat(self, readers):
+        collect = FileCollect(PureCollectHost(readers))
+        entries = collect.entries(list(readers))
+        return {r["owner"]: r for r in FileCollect.plan(entries, self.dest, flat=True)}
+
+    def test_a_different_file_of_the_name_there_blocks_rather_than_keeps_apart(self):
+        """Same size, other bytes: never a subfolder, never a rebind to theirs."""
+        self._file("dest", "wood.tga", data=b"THEIRS!!")
+        rows = self._flat({"a": self._file("ext", "wood.tga", data=b"OURS!!!!")})
+        self.assertEqual(rows["a"]["status"], FileCollect.BLOCKED)
+        self.assertIsNone(rows["a"]["destination"])
+
+    def test_two_different_files_of_one_name_are_both_blocked(self):
+        """Neither is the file of that name: the order they came in never decides."""
+        rows = self._flat(
+            {
+                "wood": self._file("tex", "wood", "d.png", data=b"wood"),
+                "metal": self._file("tex", "metal", "d.png", data=b"meta"),
+            }
+        )
+        self.assertEqual(
+            {r["status"] for r in rows.values()}, {FileCollect.BLOCKED}
+        )
+
+    def test_identical_files_of_a_name_still_share_one_copy(self):
+        rows = self._flat(
+            {
+                "a": self._file("one", "d.png", data=b"same"),
+                "b": self._file("two", "d.png", data=b"same"),
+            }
+        )
+        self.assertEqual(
+            [r["status"] for r in rows.values()],
+            [FileCollect.RELOCATE, FileCollect.REUSE],
+        )
+        self.assertTrue(self._same(rows["b"]["destination"], self._at("d.png")))
+
+    def test_a_file_below_the_destination_is_brought_up_to_it(self):
+        rows = self._flat({"a": self._file("dest", "sub", "d.png")})
+        self.assertEqual(rows["a"]["status"], FileCollect.RELOCATE)
+        self.assertTrue(self._same(rows["a"]["destination"], self._at("d.png")))
+
+    def test_a_file_already_there_stays_in_place(self):
+        there = self._file("dest", "d.png")
+        rows = self._flat({"a": there})
+        self.assertEqual(rows["a"]["status"], FileCollect.IN_PLACE)
+        self.assertTrue(self._same(rows["a"]["destination"], there))
+
+    def test_a_destination_aliasing_the_source_folder_is_in_place_as_spelled(self):
+        """BACKLOG 2026-10-23 (S1): a junction naming the source's own folder
+        held a same-sized "copy" that was the source itself, and a move removed
+        it -- the only copy. In place, it is never moved; the reader reads it
+        through the folder it was pointed at."""
+        real = os.path.join(self.tmp, "real")
+        src = self._file("real", "metal.png", data=b"ONLY COPY")
+        self.dest = self._junction(os.path.join(self.tmp, "alias"), real)
+        rows = self._flat({"a": src})
+        self.assertEqual(rows["a"]["status"], FileCollect.IN_PLACE)
+        self.assertTrue(self._same(rows["a"]["destination"], self._at("metal.png")))
+
+        FileCollect.apply(list(rows.values()), mode="move")
+        self.assertEqual(self._read(src), b"ONLY COPY")
+
+    def test_a_flat_move_of_a_blocked_file_takes_nothing(self):
+        theirs = self._file("dest", "wood.tga", data=b"THEIRS!!")
+        src = self._file("ext", "wood.tga", data=b"OURS!!!!")
+        rows = list(self._flat({"a": src}).values())
+        self.assertEqual(FileCollect.apply(rows, mode="move"), [])
+        self.assertEqual(self._read(src), b"OURS!!!!")
+        self.assertEqual(self._read(theirs), b"THEIRS!!")
+
+    def test_a_move_says_which_files_it_copied_for_another_reader(self):
+        """A move that quietly copied left an artist asking why the original
+        is still there."""
+        shared = self._file("tex", "wood.png")
+
+        class Host(PureCollectHost):
+            def read_elsewhere(self, nodes):
+                return [shared]
+
+        rows = FileCollect(Host({"inside": shared})).plan_nodes(["inside"], self.dest)
+        landed = FileCollect.apply(rows, mode="move")
+        said = [m for _level, m, _items in FileCollect.outcome(rows, landed, "move")]
+        self.assertTrue(any("left in place rather than moved" in m for m in said), said)
+        said = [m for _level, m, _items in FileCollect.outcome(rows, landed, "copy")]
+        self.assertFalse(any("left in place rather than moved" in m for m in said), said)
+
+    def test_a_set_and_one_of_its_tiles_both_land_flat(self):
+        """Two readers -- a tile set and one of its tiles -- carry different
+        names, so the set's claim on the tile blocked the tile's reader, and
+        the set's move then deleted the tile under it."""
+        self._file("ext", "rock.1001.png", data=b"1")
+        self._file("ext", "rock.1002.png", data=b"2")
+        tile = os.path.join(self.tmp, "ext", "rock.1001.png")
+        rows = self._flat(
+            {"set": os.path.join(self.tmp, "ext", "rock.<UDIM>.png"), "tile": tile}
+        )
+        landed = FileCollect.apply(list(rows.values()), mode="move")
+        self.assertEqual(sorted(r["owner"] for r in landed), ["set", "tile"])
+        self.assertTrue(self._same(rows["tile"]["destination"], self._at("rock.1001.png")))
+        self.assertEqual(sorted(os.listdir(self.dest)), ["rock.1001.png", "rock.1002.png"])
+
+
+class TestApplyGuards(_CollectCase):
+    """What a move never takes, and what a failed row leaves behind."""
+
+    def _rows(self, readers, **plan):
+        collect = FileCollect(PureCollectHost(readers))
+        return FileCollect.plan(collect.entries(list(readers)), self.dest, **plan)
+
+    def test_a_move_keeps_a_file_a_row_that_did_not_land_reads(self):
+        """A reader left on its path keeps its file, whatever another reader
+        of it did."""
+        path = self._file("ext", "shared.png")
+        rows = self._rows({"a": path, "b": path})
+        rows[1]["status"] = FileCollect.BLOCKED  # held back, as a namesake would
+        landed = FileCollect.apply(rows, mode="move")
+        self.assertEqual([r["owner"] for r in landed], ["a"])
+        self.assertTrue(os.path.exists(path), "the reader left behind was stranded")
+
+    def test_a_set_whose_copy_fails_part_way_leaves_no_tile_behind(self):
+        """A set lands whole or not at all: the tiles copied before one failed
+        stayed in the destination, foreign to a set of that name placed there
+        later."""
+        self._file("ext", "rock.1001.png", data=b"1")
+        self._file("ext", "rock.1002.png", data=b"2")
+        rows = self._rows({"a": os.path.join(self.tmp, "ext", "rock.<UDIM>.png")})
+
+        def flaky(sources, folder, mode, progress=None):
+            first = sorted(sources)[0]
+            target = os.path.join(folder, os.path.basename(first))
+            with open(first, "rb") as src, open(target, "wb") as dst:
+                dst.write(src.read())
+            return [(first, target)]  # the second tile failed
+
+        self.assertEqual(FileCollect.apply(rows, mode="move", copy=flaky), [])
+        self.assertEqual(os.listdir(self.dest), [])
+        self.assertEqual(len(os.listdir(os.path.join(self.tmp, "ext"))), 2)
+
+    def test_a_move_keeps_a_file_an_outside_reader_spells_another_way(self):
+        """The keep compared spellings: an outside reader storing the file
+        through another name for its folder (a junction, a mapped drive, the
+        share's UNC path) was stranded."""
+        real = os.path.join(self.tmp, "real")
+        src = self._file("real", "wood.png")
+        alias = self._junction(os.path.join(self.tmp, "alias"), real)
+        aliased = os.path.join(alias, "wood.png")
+
+        class Host(PureCollectHost):
+            def read_elsewhere(self, nodes):
+                return [aliased]
+
+        rows = FileCollect(Host({"inside": src})).plan_nodes(["inside"], self.dest)
+        self.assertEqual([r["keep_source"] for r in rows], [True])
+        FileCollect.apply(rows, mode="move")
+        self.assertTrue(os.path.exists(src), "the outside reader was stranded")
+
+    def test_a_folder_that_cannot_be_made_lands_nothing_and_raises_nothing(self):
+        blocker = self._file("blocker", data=b"a file, not a folder")
+        src = self._file("ext", "d.png")
+        rows = FileCollect.plan(
+            [{"owner": "a", "source": src}], os.path.join(blocker, "dest")
+        )
+        self.assertEqual(FileCollect.apply(rows, mode="move"), [])
+        self.assertTrue(os.path.exists(src))
+
+
+class TestSetDirectory(_CollectCase):
+    """``FileCollect.set_directory``: Set Directory's file work over a host."""
+
+    def _run(self, readers, mode, **kwargs):
+        host = PureCollectHost(readers)
+        done = FileCollect(host).set_directory(list(readers), self.dest, mode, **kwargs)
+        return host, done
+
+    def test_rewrite_points_only_at_a_file_that_is_there(self):
+        there = self._file("dest", "a.png")
+        host, done = self._run(
+            {"a": self._file("ext", "a.png"), "b": self._file("ext", "b.png")}, "rewrite"
+        )
+        self.assertEqual([r["owner"] for r in done["repath"]], ["a"])
+        self.assertTrue(self._same(done["repath"][0]["destination"], there))
+        self.assertEqual(done["absent"], ["b"])
+        self.assertEqual(done["rows"], [], "rewrite plans no Collect")
+
+    def test_allow_missing_points_at_nothing_on_purpose(self):
+        _host, done = self._run({"b": self._file("ext", "b.png")}, "rewrite", allow_missing=True)
+        self.assertEqual([r["owner"] for r in done["repath"]], ["b"])
+        self.assertEqual(done["absent"], [])
+
+    def test_a_move_brings_the_file_and_never_takes_a_namesakes_place(self):
+        self._file("dest", "wood.tga", data=b"THEIRS!!")
+        ours = self._file("ext", "wood.tga", data=b"OURS!!!!")
+        moss = self._file("ext", "moss.png", data=b"MOSS")
+        _host, done = self._run({"wood": ours, "moss": moss}, "move")
+        self.assertEqual([r["owner"] for r in done["repath"]], ["moss"])
+        self.assertEqual(self._read(ours), b"OURS!!!!")
+        self.assertFalse(os.path.exists(moss))
+        self.assertTrue(any(level == "warning" for level, _m, _i in done["report"]))
+
+    def test_a_reader_whose_file_is_nowhere_follows_the_rewrite_rule(self):
+        there = self._file("dest", "lost.png")
+        gone = os.path.join(self.tmp, "gone", "lost.png")
+        _host, done = self._run({"lost": gone}, "copy")
+        self.assertEqual([r["owner"] for r in done["repath"]], ["lost"])
+        self.assertTrue(self._same(done["repath"][0]["destination"], there))
+
+    def test_an_unknown_mode_raises(self):
+        with self.assertRaises(ValueError):
+            FileCollect().set_directory([], self.dest, "bogus")
