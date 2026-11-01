@@ -1878,6 +1878,13 @@
   {
     "kind": "function",
     "module": "pythontk.str_utils._str_utils",
+    "name": "to_identifier",
+    "qualname": "StrUtils.to_identifier",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.str_utils._str_utils",
     "name": "to_legal_filename",
     "qualname": "StrUtils.to_legal_filename",
     "tier": "bare"
