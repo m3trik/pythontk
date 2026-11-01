@@ -36,13 +36,13 @@ from typing import (
 
 try:
     from PIL import Image
-except ImportError as e:
-    print(f"# ImportError: {__file__}\n\t{e}")
+except ImportError:  # Pillow is optional: only the paths that read pixels need it
     Image = None  # type: ignore
 
 # From this package:
 from pythontk.core_utils.deprecation import Deprecation
 from pythontk.core_utils.help_mixin import HelpMixin
+from pythontk.core_utils.logging_mixin import LoggingMixin
 from pythontk.file_utils._file_utils import FileUtils
 
 if TYPE_CHECKING:  # the store is imported where it is used
@@ -161,7 +161,7 @@ class Op:
     params: Dict[str, Any] = field(default_factory=dict)
 
 
-class MapOptimizer(HelpMixin):
+class MapOptimizer(LoggingMixin, HelpMixin):
     """Plan, assess, and apply map (texture) optimizations.
 
     All decision logic lives in :meth:`plan` — :meth:`apply` is a thin
@@ -174,6 +174,9 @@ class MapOptimizer(HelpMixin):
     drift between predicted (``assess``) and actual (``optimize_map``)
     outputs. ``set_bit_depth`` remains available for direct callers.
     """
+
+    #: One step of a plan (:meth:`plan` returns them, :meth:`apply` runs them).
+    Op = Op
 
     @staticmethod
     def _fit_within(width: int, height: int, max_size: int) -> Tuple[int, int]:
@@ -1162,7 +1165,7 @@ class MapOptimizer(HelpMixin):
 
         if check_existing and os.path.exists(final_output_path):
             if os.path.getmtime(final_output_path) > os.path.getmtime(texture_path):
-                print(
+                cls.logger.result(
                     f"Skipping optimization (existing/newer): "
                     f"{os.path.basename(final_output_path)}"
                 )
@@ -1193,14 +1196,15 @@ class MapOptimizer(HelpMixin):
 
         if any(op.kind == "resize" for op in plan):
             # Match the original log line so existing tooling that scrapes
-            # logs continues to work.
-            print(
+            # logs continues to work -- at RESULT, which the class's default
+            # handler shows (INFO is a configured host's).
+            cls.logger.result(
                 f"Resizing {texture_path} from {image.size[0]}x{image.size[1]} "
                 f"to {max_size}x{max_size} .."
             )
 
         for message in cls._plan_warnings(plan):
-            print(f"# Warning: {os.path.basename(final_output_path)}: {message}")
+            cls.logger.warning(f"{os.path.basename(final_output_path)}: {message}")
 
         image = cls.apply(image, plan)
 
@@ -1231,8 +1235,8 @@ class MapOptimizer(HelpMixin):
         container_mode = ImgUtils.effective_mode(image.mode, out_ext)
         if container_mode != image.mode:
             lost = cls.channel_loss_warning(image, out_ext)
-            print(
-                f"# {os.path.basename(final_output_path)}: "
+            cls.logger.warning(
+                f"{os.path.basename(final_output_path)}: "
                 f"'{out_ext.lstrip('.')}' cannot store {image.mode}; "
                 f"written as {container_mode}."
                 + (f" *** DATA LOSS: {lost}. ***" if lost else "")
@@ -1250,7 +1254,7 @@ class MapOptimizer(HelpMixin):
             spec,
         )
         if quality_skipped:
-            print(f"# {os.path.basename(final_output_path)}: {quality_skipped}")
+            cls.logger.warning(f"{os.path.basename(final_output_path)}: {quality_skipped}")
 
         # GPU compression (DDS block format / ktx2 Basis codec) resolves against
         # the container actually being written, for the same reason quality
@@ -1260,12 +1264,14 @@ class MapOptimizer(HelpMixin):
             cls.resolve_compression(map_type_key, out_ext, spec)
         )
         if compression_note:
-            print(f"# {os.path.basename(final_output_path)}: {compression_note}")
+            cls.logger.warning(
+                f"{os.path.basename(final_output_path)}: {compression_note}"
+            )
         rdo, rdo_note = cls.resolve_uastc_rdo(
             uastc_rdo, map_type_key, out_ext, target_compression
         )
         if rdo_note:
-            print(f"# {os.path.basename(final_output_path)}: {rdo_note}")
+            cls.logger.warning(f"{os.path.basename(final_output_path)}: {rdo_note}")
 
         # Route through the capability-aware writer (single save SSoT) so the
         # correct backend handles each format (PIL for most, cv2 for EXR/HDR).
@@ -1322,13 +1328,13 @@ class MapOptimizer(HelpMixin):
             if written is not None and written > len(original_bytes):
                 with open(final_output_path, "wb") as handle:
                     handle.write(original_bytes)
-                print(
-                    f"# {os.path.basename(final_output_path)}: re-encode came out "
+                cls.logger.result(
+                    f"{os.path.basename(final_output_path)}: re-encode came out "
                     f"larger ({written} > {len(original_bytes)} bytes); kept the "
                     "original bytes."
                 )
 
-        print(
+        cls.logger.result(
             f"Saved optimized texture: {final_output_path} "
             f"({cls.format_result(final_output_path, size_before, dims_before, image)})"
         )
@@ -1354,8 +1360,8 @@ class MapOptimizer(HelpMixin):
                     grew = " -- that is what grew it, not the re-encode"
             except OSError:
                 pass
-            print(
-                f"# {os.path.basename(final_output_path)}: the SOURCE was a "
+            cls.logger.warning(
+                f"{os.path.basename(final_output_path)}: the SOURCE was a "
                 f"palettised (256-colour) image, upcast to {image.mode}{grew}. "
                 "The colour precision was already lost before this ran, which "
                 "is worth checking for a normal map. Pass allow_palette=True "
@@ -1370,8 +1376,8 @@ class MapOptimizer(HelpMixin):
         # it is the aspect ratio not being paid for - and saying so is the point.
         if budget:
             for message in budget.check(*image.size):
-                print(
-                    f"# Warning: {os.path.basename(final_output_path)} "
+                cls.logger.warning(
+                    f"{os.path.basename(final_output_path)} "
                     f"[{output_profile}]: {message}"
                 )
         return final_output_path
@@ -1452,10 +1458,10 @@ class MapOptimizer(HelpMixin):
         ImgUtils.assert_pathlike(directory, "directory")
 
         textures = ImgUtils.get_images(directory)
-        print(f"Optimizing maps in: {directory}")
+        cls.logger.result(f"Optimizing maps in: {directory}")
         for texture_path in textures.keys():
             cls.optimize_map(texture_path, **kwargs)
-        print(f"{len(textures)} maps optimized.")
+        cls.logger.result(f"{len(textures)} maps optimized.")
 
     #: Containers a plain re-encode can shrink without touching a pixel:
     #: lossless, with a compression level the writer chooses. :meth:`plan`

@@ -468,9 +468,9 @@ class TestPackOrmWarnsOnForeignPacking(unittest.TestCase):
 class TestForeignPackings(unittest.TestCase):
     """``foreign_packings`` — the single mismatch predicate.
 
-    Read by ``pack_orm_texture``'s per-map warning, ``set_glb_metallic_roughness``'s
-    highlighted summary, and both DCCs' ``check_material_compatibility`` gate, so
-    the definition of "wrong packing for this target" exists exactly once.
+    Read by ``pack_orm_texture``'s per-map warning and both DCCs'
+    ``check_material_compatibility`` gate, so the definition of "wrong packing
+    for this target" exists exactly once.
     """
 
     def test_reports_foreign_packings_with_their_map_type(self):

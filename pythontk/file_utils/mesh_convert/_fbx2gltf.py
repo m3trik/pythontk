@@ -7,17 +7,19 @@ Resolves (or installs) the pinned godotengine/FBX2glTF binary, sizes the
 conversion's timeout from the FBX, runs it, and drives every post-conversion
 pass on one edit session. The spec-validity repairs of what the converter
 itself writes -- curve-proxy nodes, unbound skins, skin skeleton roots,
-tangent handedness -- live here with it.
+tangent handedness, non-finite animation keys -- live here with it.
 
 One job of :class:`MeshConvert`, composed in ``_mesh_convert.py``; it reaches
-the other passes through ``cls``.
+the other passes through the facade it holds (``self._mc``).
 """
 
 import logging
+import math
 import os
 import platform as _platform
 import shlex
 import shutil
+import struct
 import subprocess
 from time import perf_counter
 from typing import (
@@ -30,6 +32,7 @@ from typing import (
     Optional,
     Sequence,
     Set,
+    Tuple,
     Union,
 )
 
@@ -64,7 +67,7 @@ FBX2GLTF_PLATFORMS = {
 }
 
 
-class _Fbx2GltfMixin:
+class _Fbx2Gltf:
     """FBX2glTF driver: install, timeouts, :meth:`fbx_to_glb`, output repairs.
 
     A private part of :class:`MeshConvert`; call it through the facade.
@@ -90,89 +93,46 @@ class _Fbx2GltfMixin:
     TIMEOUT_SECONDS_PER_MB = 10.0
     #: Seconds of budget per node-frame FBX2glTF bakes. Size is a WEAK proxy
     #: for its cost: the converter evaluates every node at every frame of
-    #: every take (``--anim-framerate bake24``) whether or not the node is
+    #: every take (:attr:`CONVERSION_BAKE_FPS`) whether or not the node is
     #: animated, so a scene's bake cost is nodes x frames. Measured on a
-    #: production assembly: 2485 nodes x 1591 frames (3.95M node-frames)
-    #: took ~250 s of a ~400 s conversion -- and a 12 MB TEXTURELESS export
-    #: of the same scene, budgeted 300 s by size alone, timed out and lost
-    #: the push. ~63 us per node-frame measured; this is that with the same
-    #: ~5x margin the per-MB term carries.
+    #: production assembly: 2485 nodes x 1591 frames (3.95M node-frames,
+    #: counted at 24 fps) took ~250 s of a ~400 s conversion -- and a 12 MB
+    #: TEXTURELESS export of the same scene, budgeted 300 s by size alone,
+    #: timed out and lost the push. ~63 us per node-frame measured; this is
+    #: that with the same ~5x margin the per-MB term carries (~6x at the real
+    #: 30 fps bake).
     TIMEOUT_SECONDS_PER_NODE_FRAME = 3e-4
-    #: The converter's default bake rate (``bake24``).
-    CONVERSION_BAKE_FPS = 24.0
+    #: The converter's default bake rate (``bake30``): measured 2026-10-31, a
+    #: 24 fps file and a 30 fps file both bake at 1/30 s.
+    CONVERSION_BAKE_FPS = 30.0
     #: ``timeout=AUTO_TIMEOUT`` (the default) derives the budget from the input.
     #: Negative because no real timeout can be, so it cannot collide with a
     #: caller's value -- and unlike ``None`` it is not already meaningful to
     #: ``subprocess.run``, where None means "wait forever".
     AUTO_TIMEOUT = -1.0
 
-    @classmethod
-    def conversion_timeout(cls, src: str, fbx: Optional["FbxFile"] = None) -> float:
-        """Seconds to allow FBX2glTF for *src* -- :attr:`DEFAULT_TIMEOUT` or more.
+    def __init__(self, mc: type) -> None:
+        self._mc = mc  # the facade class: every name it exposes is read through it
 
-        A flat budget cannot fit both a prop and a production assembly, and the
-        cost of getting it wrong is asymmetric: too generous only delays the
-        report of a genuinely hung process, while too tight discards a finished
-        export's whole deliverable ("produced no file") on a scene that was
-        converting normally. It also fails by wall-clock rather than by content,
-        so it passes on a quiet machine and fails mid-workday -- which is how it
-        reached production unnoticed.
-
-        Two terms, and the larger wins: the input's size (per MB) and the
-        bake it implies (per node-frame -- see
-        :attr:`TIMEOUT_SECONDS_PER_NODE_FRAME`; the census comes from
-        :class:`FbxFile`, seconds on a production assembly, so a caller that
-        already holds the parse passes it). The
-        second exists because the first is wrong on its own: a textureless
-        export of an animated assembly is small and slow, and a budget that
-        reads only its size discards its finished deliverable.
-
-        An unreadable size, or a file the census cannot parse, falls back to
-        what CAN be read -- and to the floor when nothing can: a budget must
-        never be the reason a conversion is not attempted.
-
-        Parameters:
-            src: The FBX to be converted.
-            fbx: *src* already parsed for its curves, as :meth:`bake_node_frames`
-                takes it; parsed here when not given.
-        """
+    def conversion_timeout(self, src: str, fbx: Optional["FbxFile"] = None) -> float:
         try:
             megabytes = os.path.getsize(src) / (1024 * 1024)
         except OSError:
             megabytes = 0.0
-        node_frames = cls.bake_node_frames(src, fbx=fbx)
+        node_frames = self._mc.bake_node_frames(src, fbx=fbx)
         return float(
             max(
-                cls.DEFAULT_TIMEOUT,
-                megabytes * cls.TIMEOUT_SECONDS_PER_MB,
-                node_frames * cls.TIMEOUT_SECONDS_PER_NODE_FRAME,
+                self._mc.DEFAULT_TIMEOUT,
+                megabytes * self._mc.TIMEOUT_SECONDS_PER_MB,
+                node_frames * self._mc.TIMEOUT_SECONDS_PER_NODE_FRAME,
             )
         )
 
-    @classmethod
-    def bake_node_frames(cls, src: str, fbx: Optional["FbxFile"] = None) -> int:
-        """Node-frames FBX2glTF will evaluate for *src*: nodes x baked frames.
-
-        ``Model`` records are the nodes. Each take contributes the span the
-        converter bakes, at :attr:`CONVERSION_BAKE_FPS`: the key extent of its
-        curves (``FbxFile.take_spans``), which is what FBX2glTF sizes a take
-        by -- a take declaring 1-120 baked 3-200 (2026-10-04) -- else, for a
-        take whose keys cannot be read, the ``LocalTime`` span the ``Takes``
-        section declares. ``0`` for a file with no takes -- and for one that
-        is not a readable binary FBX, so a budget derived from this degrades
-        rather than raises.
-
-        Parameters:
-            src: The FBX to be converted.
-            fbx: *src* already parsed for its curves (``FbxFile.load`` with
-                ``span_arrays=("KeyTime",)``), by a caller that reads them too
-                -- :meth:`fbx_to_glb` places every clip by the same parse.
-                Parsed here when not given.
-        """
+    def bake_node_frames(self, src: str, fbx: Optional["FbxFile"] = None) -> int:
         from pythontk.file_utils.mesh_convert.fbx_file import FbxFile
 
         if fbx is None:
-            fbx = cls._read_curves(src)
+            fbx = self._read_curves(src)
         nodes = fbx.objects_census().get("Model", 0)
         spans = {take: last - first for take, (first, last) in fbx.take_spans().items()}
         for take in (fbx.section("Takes") or {}).get("children", []):
@@ -192,7 +152,7 @@ class _Fbx2GltfMixin:
                     start, end = child["props"][:2]
                     if isinstance(start, int) and isinstance(end, int) and end > start:
                         spans[name] = (end - start) / FbxFile.TICKS_PER_SECOND
-        return int(nodes * sum(spans.values()) * cls.CONVERSION_BAKE_FPS)
+        return int(nodes * sum(spans.values()) * self._mc.CONVERSION_BAKE_FPS)
 
     @staticmethod
     def _read_curves(src: str) -> "FbxFile":
@@ -209,8 +169,7 @@ class _Fbx2GltfMixin:
             logger.debug("FBX curves not read: %s", error)
             return FbxFile(src, 0, [])
 
-    @classmethod
-    def _platform_exe_name(cls) -> str:
+    def _platform_exe_name(self) -> str:
         """Return the FBX2glTF binary name for the current platform."""
         plat = _platform.system().lower()
         info = FBX2GLTF_PLATFORMS.get(plat)
@@ -218,28 +177,13 @@ class _Fbx2GltfMixin:
             raise LookupError(f"FBX2glTF: unsupported platform '{plat}'")
         return info["executable"]
 
-    @classmethod
     def resolve_binary(
-        cls,
+        self,
         required: bool = True,
         auto_install: bool = False,
         prompt: Union[bool, Callable[[str], bool]] = True,
     ) -> Optional[str]:
-        """Resolve the FBX2glTF executable from PATH or managed installs.
-
-        Parameters:
-            required:      Raise FileNotFoundError when missing.
-            auto_install:  Download FBX2glTF if not found.
-            prompt:        Consent policy for the download -- ``True`` asks on
-                           the console (no console = refuse), ``False`` needs
-                           none, a callable ``(question) -> bool`` is asked
-                           instead (a GUI's dialog). See
-                           :meth:`AppInstaller.consent`.
-
-        Returns:
-            Absolute path to FBX2glTF executable, or None.
-        """
-        platform_exe = cls._platform_exe_name()
+        platform_exe = self._mc._platform_exe_name()
         # Try platform-specific binary name first (matches release zip),
         # then plain "FBX2glTF" for users who renamed it.
         for candidate in (platform_exe, "FBX2glTF"):
@@ -250,7 +194,7 @@ class _Fbx2GltfMixin:
         from pythontk.core_utils.app_installer import AppInstaller
 
         managed = AppInstaller.get_path(
-            cls.TOOL_NAME, executable=platform_exe, add_to_path=True
+            self._mc.TOOL_NAME, executable=platform_exe, add_to_path=True
         )
         if managed:
             return managed
@@ -285,7 +229,7 @@ class _Fbx2GltfMixin:
 
         try:
             return AppInstaller.ensure(
-                cls.TOOL_NAME,
+                self._mc.TOOL_NAME,
                 platforms=FBX2GLTF_PLATFORMS,
                 executable=platform_exe,
                 version=FBX2GLTF_VERSION,
@@ -296,8 +240,7 @@ class _Fbx2GltfMixin:
             logger.warning("FBX2glTF install failed: %s", exc)
             return None
 
-    @classmethod
-    def _expand_grayscale_embeds(cls, src: str, store: Any) -> str:
+    def _expand_grayscale_embeds(self, src: str, store: Any) -> str:
         """The FBX that FBX2glTF reads: *src*, or its copy in *store* with every
         grayscale embed expanded (:meth:`FbxMedia.expand_grayscale`).
 
@@ -330,9 +273,8 @@ class _Fbx2GltfMixin:
         )
         return copy
 
-    @classmethod
     def fbx_to_glb(
-        cls,
+        self,
         src: str,
         dst: Optional[str] = None,
         *,
@@ -351,119 +293,10 @@ class _Fbx2GltfMixin:
         report: Optional[Dict[str, Any]] = None,
         hdr_codec: Any = None,
     ) -> str:
-        """Convert an FBX file to a binary glTF 2.0 (GLB) file.
-
-        FBX2glTF reads a copy whose grayscale embedded textures carry every
-        colour channel (:meth:`FbxMedia.expand_grayscale`): it packs roughness
-        and metallic from their maps' green and blue, so a grayscale map read
-        as it is ships as 1.0. A file with no grayscale embed is read as is.
-
-        Parameters:
-            src:           Input FBX path.
-            dst:           Output GLB path. Defaults to src with .glb extension.
-                           ``.glb`` is appended if absent.
-            overwrite:     Replace existing destination -- once FBX2glTF has
-                           succeeded; a failed conversion leaves it in place.
-            auto_install:  Download FBX2glTF if missing.
-            prompt:        Consent policy for that download (see
-                           :meth:`resolve_binary`).
-            timeout:       Subprocess timeout in seconds. The default derives
-                it from the input's size (:meth:`conversion_timeout`), because
-                a flat budget that suits a prop discards a production
-                assembly's finished deliverable. An explicit number is used
-                as given; ``None`` disables the limit.
-            extra_args:    Extra CLI flags forwarded to FBX2glTF
-                           (e.g. ``["--draco"]``, ``["-v"]``). The SDK's
-                           embedded-media extraction goes to a temp store
-                           removed when the call returns, unless these name
-                           ``--fbx-temp-dir`` themselves.
-            sidecar:       A handoff block (``HandoffRecord.block("glb", ...)``) to embed in
-                           place of the one the FBX's own ``handoff`` record
-                           implies; ``None`` -- every export -- reads it off
-                           the file, so the GLB says what its FBX says, and a
-                           file with no record gets none. An envelope a host
-                           built before the materials record
-                           (:meth:`build_scene_sidecar`) is still taken: its
-                           sections repair a file that carries no record, until
-                           they retire.
-            rendering:     The export's choices over the lighting recipe
-                           (:meth:`rendering_policy`), laid over what the FBX's
-                           handoff states -- a preview's own GLB rows.
-            data_export:   ``{channel key: value or None}`` overlaid on the
-                           file's in-band channels (:meth:`overlay_data_export`)
-                           BEFORE any pass reads them, so every pass builds from
-                           the overlay as if the FBX had carried it. How a
-                           preview shows an effect the scene does not carry
-                           (:meth:`effect_preview_channels`); ``None`` builds
-                           from the FBX alone.
-            lightmaps:     Wire the host scene's committed lightmaps into the
-                           GLB (:meth:`apply_glb_lightmaps`). Default on and
-                           self-feeding -- the manifest travels inside the FBX,
-                           so a scene with no committed bake is a clean no-op
-                           and callers pass nothing.
-            lightmap_dirs: Extra directories to resolve the manifest's EXR
-                           basenames against, forwarded as that method's
-                           ``search_dirs``. The manifest carries its own
-                           authoring-directory hint, but that is recorded when
-                           the bake is COMMITTED and goes stale the moment the
-                           project is reorganised or handed to another machine
-                           -- at which point the bind silently finds nothing.
-                           A host that knows where its textures live now (a
-                           DCC's workspace, the scene's own folder) passes them
-                           here rather than relying on a historical hint.
-            hdr_codec:     What encodes the lightmaps and the reflection probe,
-                           forwarded to :meth:`apply_glb_lightmaps` -- a host
-                           with no cv2 (Blender) hands its own image writer.
-            shadow_dirs:   Directories to resolve the shadow rigs' loose maps
-                           against (:meth:`apply_glb_shadows`): the horizon
-                           data maps, and a silhouette the FBX did not embed.
-                           Always searched after these: the FBX's own
-                           directory, a ``sourceimages`` folder inside or
-                           beside it (the Maya project layout), and every
-                           *lightmap_dirs* entry -- the host's live texture
-                           folders, which is where a rig's maps are written.
-            clip_mode:     Which animation clips the GLB ships, from
-                           :attr:`ANIMATION_CLIP_MODES` -- ``both`` (the
-                           declared shots AND the whole-timeline stack they
-                           were cut from), ``shots``, or ``full``. The two
-                           halves hold the SAME performance, so a consumer that
-                           plays one never reads the other; on a production
-                           assembly the stack alone was 66.5 MB. Validated
-                           HERE, before the conversion: the rebuild itself runs
-                           under a warn-and-continue guard, so a typo caught
-                           only there would downgrade to shipping Maya's lossy
-                           split takes with nothing but a log line.
-            report:        A dict this fills with what the chain did, for a
-                           caller that reports rather than logs:
-                           ``"materials"`` (what :meth:`apply_glb_materials`
-                           wrote), ``"sidecar"`` (an old envelope's
-                           per-section outcome, ``{}`` otherwise) and
-                           ``"lightmaps"`` (:meth:`lightmap_report`
-                           -- what the manifest wanted of THIS file against
-                           what bound) and ``"data_export"`` (the channel keys
-                           the overlay replaced; set when one was given), and
-                           ``"timings"`` -- seconds spent in ``"fbx2gltf"``
-                           (staging the input, the converter, placing its
-                           GLB) and in ``"passes"`` (the edit session every
-                           repair above runs in).
-                           The return value stays the path, so
-                           every existing caller is unchanged.
-
-        Returns:
-            Absolute path to the written GLB file.
-
-        Raises:
-            FileNotFoundError: *src* does not exist.
-            ValueError: *src* is not an ``.fbx``, or *clip_mode* is unknown.
-            FileExistsError: *dst* exists and *overwrite* is False.
-            PermissionError: *dst* is held open by another process (asked
-                before converting).
-            RuntimeError: FBX2glTF failed, timed out, or wrote no GLB.
-        """
-        if clip_mode not in cls.ANIMATION_CLIP_MODES:
+        if clip_mode not in self._mc.ANIMATION_CLIP_MODES:
             raise ValueError(
                 f"Unknown animation clip mode {clip_mode!r}; expected one of "
-                f"{', '.join(cls.ANIMATION_CLIP_MODES)}."
+                f"{', '.join(self._mc.ANIMATION_CLIP_MODES)}."
             )
         src_abs = os.path.abspath(src)
         if not os.path.isfile(src_abs):
@@ -494,7 +327,7 @@ class _Fbx2GltfMixin:
 
         os.makedirs(os.path.dirname(dst_abs) or ".", exist_ok=True)
 
-        binary = cls.resolve_binary(
+        binary = self._mc.resolve_binary(
             required=True, auto_install=auto_install, prompt=prompt
         )
 
@@ -508,18 +341,18 @@ class _Fbx2GltfMixin:
         # over its own extent), so the measurement is not stamped over it.
         stamp = SceneRecords.VISIBILITY.key not in (data_export or {})
         auto = timeout is not None and timeout < 0
-        fbx = cls._read_curves(src_abs) if stamp or auto else None
+        fbx = self._read_curves(src_abs) if stamp or auto else None
         measured = fbx.take_spans() if stamp else {}
         if auto:
             # The default. An explicit number wins outright (a caller that says
             # 60 means 60) and ``None`` still means no limit.
-            timeout = cls.conversion_timeout(src_abs, fbx=fbx)
+            timeout = self._mc.conversion_timeout(src_abs, fbx=fbx)
         # The file's own materials, off the same parse: the materials pass
         # below needs a few hundred bytes of it, never the parse itself.
         own_materials = None
         if fbx is not None and fbx.roots:
             try:
-                own_materials = cls.read_fbx_materials(fbx)
+                own_materials = self._mc.read_fbx_materials(fbx)
             except Exception as exc:  # noqa: BLE001 -- the pass parses it then
                 logger.debug("FBX materials not read with the curves: %s", exc)
         del fbx
@@ -575,7 +408,7 @@ class _Fbx2GltfMixin:
         # DCC side -- the take, the node count -- while the passes are ours.
         started = perf_counter()
         try:
-            cmd[cmd.index("-i") + 1] = cls._expand_grayscale_embeds(src_abs, staged)
+            cmd[cmd.index("-i") + 1] = self._expand_grayscale_embeds(src_abs, staged)
             logger.debug("FBX2glTF: %s", shlex.join(cmd))
             try:
                 result = subprocess.run(
@@ -627,18 +460,39 @@ class _Fbx2GltfMixin:
         # The alpha repair keeps its own guard so its failure never costs the
         # sidecar, and neither ever costs the successful conversion.
         try:
-            with cls.open_glb(dst_abs) as edit:
+            with self._mc.open_glb(dst_abs) as edit:
                 # FIRST, on the converter's own output: FBX2glTF merges
                 # identical vertices across meshes and hands a later skinned
                 # mesh an earlier one's weights, which only the FBX it read
                 # still holds right. Self-gating: the FBX is read only when a
                 # skinned mesh shares a vertex position with another mesh.
                 try:
-                    cls.restore_glb_skin_weights(edit, src_abs)
+                    self._mc.restore_glb_skin_weights(edit, src_abs)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("GLB skin weight restore skipped: %s", exc)
+                # On the converter's own output too, and before the key repair:
+                # a node scaled flat on an axis has no rotation to decompose,
+                # and the converter DROPS it -- the rest rotation and each
+                # channel -- so only the FBX still holds it. It reads the
+                # converter's key times (finite: frame indices) and needs the
+                # animation the converter wrote for each take, which the repair
+                # prunes once it drops that animation's last channel.
+                # Self-gating: the FBX is read only when a node is flat.
                 try:
-                    fixes = cls.fix_glb_phantom_opaque_alpha(edit)
+                    self._mc.restore_glb_rotations(
+                        edit, src_abs, fps=self._bake_fps(cmd)
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("GLB rotation restore skipped: %s", exc)
+                # Ahead of every pass that reads a key: the converter bakes
+                # each node's local matrix and decomposes it, and a degenerate
+                # one (a zero scale) comes out a NaN rotation glTF forbids.
+                try:
+                    self._mc.fix_glb_nonfinite_keys(edit)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("GLB non-finite key repair skipped: %s", exc)
+                try:
+                    fixes = self._mc.fix_glb_phantom_opaque_alpha(edit)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("fix_glb_phantom_opaque_alpha skipped: %s", exc)
                     fixes = []
@@ -657,7 +511,7 @@ class _Fbx2GltfMixin:
                 # point at which to remove work -- an image collapsed here is
                 # one the texture pass never decodes.
                 try:
-                    cls.dedupe_glb_images(edit)
+                    self._mc.dedupe_glb_images(edit)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("dedupe_glb_images skipped: %s", exc)
                 # Ahead of EVERY pass that reads an in-band channel (sidecar,
@@ -667,7 +521,7 @@ class _Fbx2GltfMixin:
                 # the overlay.
                 if data_export:
                     try:
-                        overlaid = cls.overlay_data_export(edit.gltf, data_export)
+                        overlaid = self._mc.overlay_data_export(edit.gltf, data_export)
                     except Exception as exc:  # noqa: BLE001
                         logger.warning("data_export overlay skipped: %s", exc)
                     else:
@@ -692,7 +546,7 @@ class _Fbx2GltfMixin:
                 # the caller overlaid.
                 if stamp:
                     try:
-                        if cls._stamp_clip_spans(edit.gltf, measured):
+                        if self._mc._stamp_clip_spans(edit.gltf, measured):
                             edit.dirty = True
                     except Exception as exc:  # noqa: BLE001
                         logger.warning("Measured clip spans skipped: %s", exc)
@@ -709,10 +563,9 @@ class _Fbx2GltfMixin:
                 from pythontk.file_utils.mesh_convert.fbx_file import FbxFile
 
                 written = None
-                carried = cls.data_export_channel(edit.gltf, cls.MATERIALS_KEY)
                 if FbxFile.is_fbx(src_abs):
                     try:
-                        _stated, written = cls._apply_fbx_materials(
+                        _stated, written = self._mc._fbx_materials._apply_fbx_materials(
                             edit, src_abs, lightmap_dirs, read=own_materials
                         )
                     except Exception as exc:  # noqa: BLE001
@@ -724,47 +577,27 @@ class _Fbx2GltfMixin:
                 # implies -- its source and lighting, in this file's
                 # addresses. It names the blocks the file carries once every
                 # pass has run (the tail of this session).
-                applied: Dict[str, str] = {}
-                if not (sidecar and sidecar.get("sections") and carried is None):
-                    try:
-                        cls._warn_destructive_orms(
-                            edit,
-                            described=[
-                                r["material"] for r in written or () if r.get("orm")
-                            ],
-                        )
-                    except Exception as exc:  # noqa: BLE001
-                        logger.warning("ORM check skipped: %s", exc)
                 try:
-                    if sidecar and sidecar.get("sections") and carried is None:
-                        # Sections are what a host that predates the materials
-                        # record still sends, for a file that carries none:
-                        # they repair the reading, as they did, until they
-                        # retire.
-                        from pythontk.core_utils.deprecation import Deprecation
-
-                        Deprecation.warn(
-                            "a scene sidecar's material sections",
-                            "the FBX's materials record, which "
-                            "mayatk 0.28 / blendertk 0.20 publish",
-                            remove_in="0.18.0",
-                            since="2026-10-24",
-                        )
-                        applied = cls._apply_scene_sidecar(edit, sidecar, finish=False)
-                    else:
-                        handoff = (
-                            cls._handoff_of(sidecar)
-                            if sidecar
-                            else cls._fbx_handoff(edit.gltf, rendering)
-                        )
-                        if handoff:
-                            # Named last, once every pass has added its
-                            # block (_finish_glb_handoff, below).
-                            cls._write_glb_handoff(edit, handoff)
+                    self._mc._sidecar._warn_destructive_orms(
+                        edit,
+                        described=[
+                            r["material"] for r in written or () if r.get("orm")
+                        ],
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("ORM check skipped: %s", exc)
+                try:
+                    handoff = (
+                        self._mc._sidecar._handoff_of(sidecar)
+                        if sidecar
+                        else self._mc._sidecar._fbx_handoff(edit.gltf, rendering)
+                    )
+                    if handoff:
+                        # Named last, once every pass has added its block
+                        # (_finish_glb_handoff, below).
+                        self._mc._write_glb_handoff(edit, handoff)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("GLB handoff skipped: %s", exc)
-                if report is not None:
-                    report["sidecar"] = applied
                 # Sweep images no material samples, BEFORE anything pays to
                 # re-encode them. An embedded-media export carries every wired
                 # file texture, which for a StingrayPBS scene includes
@@ -775,7 +608,7 @@ class _Fbx2GltfMixin:
                 # own maps, and before the lightmap and shadow passes, which
                 # add images of their own.
                 try:
-                    cls.prune_glb_unreferenced_textures(edit)
+                    self._mc.prune_glb_unreferenced_textures(edit)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("GLB texture prune skipped: %s", exc)
                 if lightmaps:
@@ -785,13 +618,13 @@ class _Fbx2GltfMixin:
                     coverage = None
                     if report is not None:
                         try:
-                            coverage = cls.lightmap_manifest_coverage(edit)
+                            coverage = self._mc.lightmap_manifest_coverage(edit)
                         except Exception as exc:  # noqa: BLE001
                             logger.warning("GLB lightmap coverage skipped: %s", exc)
                     # Guarded like the alpha repair: a lightmap failure must
                     # never cost the sidecar or the conversion.
                     try:
-                        bound = cls.apply_glb_lightmaps(
+                        bound = self._mc.apply_glb_lightmaps(
                             edit, search_dirs=lightmap_dirs, hdr_codec=hdr_codec
                         )
                     except Exception as exc:  # noqa: BLE001
@@ -804,12 +637,12 @@ class _Fbx2GltfMixin:
                                 len(bound),
                             )
                     if coverage is not None:
-                        report["lightmaps"] = cls.lightmap_report(coverage, bound)
+                        report["lightmaps"] = self._mc.lightmap_report(coverage, bound)
                 # Unconditional and self-feeding: whichever pass or publisher left
                 # the lightmap manifest, a shipped light would land on top of its
                 # own bake.
                 try:
-                    cls.strip_glb_baked_lights(edit)
+                    self._mc.strip_glb_baked_lights(edit)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("GLB baked-light strip skipped: %s", exc)
                 # After the lightmaps, whose image plumbing it shares, and
@@ -822,10 +655,12 @@ class _Fbx2GltfMixin:
                 try:
                     shadow_search = [
                         *shadow_dirs,
-                        *cls.fbx_media_dirs(src_abs),
+                        *self._mc.fbx_media_dirs(src_abs),
                         *lightmap_dirs,
                     ]
-                    shadows = cls.apply_glb_shadows(edit, search_dirs=shadow_search)
+                    shadows = self._mc.apply_glb_shadows(
+                        edit, search_dirs=shadow_search
+                    )
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("GLB shadow rigs skipped: %s", exc)
                 else:
@@ -839,7 +674,7 @@ class _Fbx2GltfMixin:
                 # the image and animation passes; self-feeding like the shadow
                 # pass: no channel, no-op.
                 try:
-                    articulated = cls.apply_glb_articulation(edit)
+                    articulated = self._mc.apply_glb_articulation(edit)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("GLB articulated rigs skipped: %s", exc)
                 else:
@@ -853,14 +688,14 @@ class _Fbx2GltfMixin:
                 # transport node whose scale channel would otherwise count as
                 # clip content and ship as a stray animated child.
                 try:
-                    cls.strip_glb_curve_proxies(edit)
+                    self._mc.strip_glb_curve_proxies(edit)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("GLB curve-proxy strip skipped: %s", exc)
                 # FIRST of the three animation passes: it REPLACES the declared
                 # clips, so a gate or a manifest entry written before it would
                 # describe clips that no longer exist.
                 try:
-                    cls.apply_glb_clips(edit, mode=clip_mode)
+                    self._mc.apply_glb_clips(edit, mode=clip_mode)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("GLB clip rebuild skipped: %s", exc)
                 # BEFORE the animation manifest, which reports what each clip
@@ -868,14 +703,14 @@ class _Fbx2GltfMixin:
                 # this has run, and would be reported empty and passed over as
                 # the file's default clip.
                 try:
-                    cls.apply_glb_visibility(edit)
+                    self._mc.apply_glb_visibility(edit)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("GLB visibility skipped: %s", exc)
                 # After the gate (which makes a fading node present) and before
                 # the manifest (which reports a clip carrying only a fade as
                 # having content rather than as an empty shot).
                 try:
-                    faded = cls.apply_glb_fades(edit)
+                    faded = self._mc.apply_glb_fades(edit)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("GLB fades skipped: %s", exc)
                 else:
@@ -891,14 +726,14 @@ class _Fbx2GltfMixin:
                         # (``glb.fades._uncover_emissive``); when that material
                         # was the map's only user the image is dead payload now.
                         try:
-                            cls.prune_glb_unreferenced_textures(edit)
+                            self._mc.prune_glb_unreferenced_textures(edit)
                         except Exception as exc:  # noqa: BLE001
                             logger.warning("GLB texture sweep skipped: %s", exc)
                 # LAST of the writers and BEFORE the manifest: every pass above
                 # can only ADD channels (clips, visibility, fades), so what is
                 # still hollow here is hollow for good -- and glTF forbids it.
                 try:
-                    cls.prune_glb_animations(edit)
+                    self._mc.prune_glb_animations(edit)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("GLB animation prune skipped: %s", exc)
                 # After the prune, for the same reason the prune is where it is:
@@ -914,7 +749,7 @@ class _Fbx2GltfMixin:
                 # own end times so no duration moves, and refuses a layout it
                 # cannot prove), so there is no flag for a caller to forget.
                 try:
-                    cls.compact_glb_animations(edit)
+                    self._mc.compact_glb_animations(edit)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("GLB animation compaction skipped: %s", exc)
                 # Skinning data no node binds, then the skeleton roots of the
@@ -923,11 +758,11 @@ class _Fbx2GltfMixin:
                 # prune's repack copies the smallest BIN this session holds,
                 # after the animation passes have released what they drop.
                 try:
-                    cls.prune_glb_unused_skins(edit)
+                    self._mc.prune_glb_unused_skins(edit)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("GLB skin prune skipped: %s", exc)
                 try:
-                    cls.fix_glb_skin_skeletons(edit)
+                    self._mc.fix_glb_skin_skeletons(edit)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("GLB skin skeleton repair skipped: %s", exc)
                 # Every shipped tangent, against its UVs: FBX2glTF writes w = +1
@@ -937,14 +772,14 @@ class _Fbx2GltfMixin:
                 # reason -- its in-place rewrite copies the smallest BIN this
                 # session holds.
                 try:
-                    cls.fix_glb_tangents(edit)
+                    self._mc.fix_glb_tangents(edit)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("GLB tangent repair skipped: %s", exc)
                 # Unconditional and self-feeding, like the lightmap pass: it
                 # reads the take list out of the file and no-ops on a GLB with
                 # no animation, so there is no flag for a caller to forget.
                 try:
-                    animation = cls.apply_glb_animations(edit)
+                    animation = self._mc.apply_glb_animations(edit)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("GLB animation manifest skipped: %s", exc)
                 else:
@@ -969,9 +804,11 @@ class _Fbx2GltfMixin:
                     if report is not None:
                         # What the scene's own record of this export keeps:
                         # the manifest corrected to what the file ships.
-                        report["lightmap_manifest"] = cls._lightmap_manifest(edit.gltf)
-                    cls._finish_glb_handoff(edit)
-                    stripped = cls.strip_fbx_records(edit.gltf)
+                        report["lightmap_manifest"] = self._mc._lightmap_manifest(
+                            edit.gltf
+                        )
+                    self._mc._finish_glb_handoff(edit)
+                    stripped = self._mc.strip_fbx_records(edit.gltf)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("GLB record strip skipped: %s", exc)
                 else:
@@ -1019,37 +856,18 @@ class _Fbx2GltfMixin:
             walk(block, path)
         return block
 
-    @classmethod
-    def strip_glb_curve_proxies(cls, glb: GlbTarget) -> List[str]:
-        """Remove every curve-proxy node (and its channels) from a GLB.
-
-        The proxy is an FBX-side transport artifact: Unity flattens animated
-        custom properties onto the root Animator with empty paths, so the DCC
-        stages a child transform per keyed channel whose ``scale.x`` carries
-        the curve, and the Unity importer rebinds and deletes it. FBX2glTF
-        carries that child through as a node with a ``scale`` channel --
-        measured: ``hlCube__highlight`` arrived with its 0->1 scale intact --
-        which in the GLB is a stray animated node under the object. The GLB
-        route gets the ramp from ``render_effects`` instead, so the node is
-        removed here, BEFORE the clip rebuild counts its channel as content.
-
-        Nodes are identified by the :attr:`CURVE_PROXY_MARKER` user property,
-        never by name, so an artist's own ``foo__bar`` transform is safe.
-
-        Returns:
-            The removed node names, in file order.
-        """
-        with cls.open_glb(glb) as edit:
+    def strip_glb_curve_proxies(self, glb: GlbTarget) -> List[str]:
+        with self._mc.open_glb(glb) as edit:
             gltf = edit.gltf
             nodes = gltf.get("nodes") or []
             doomed = {
                 index
                 for index, node in enumerate(nodes)
-                if cls._node_user_property(node, cls.CURVE_PROXY_MARKER)
+                if self._node_user_property(node, self._mc.CURVE_PROXY_MARKER)
             }
             if not doomed:
                 return []
-            removed = cls._remove_glb_nodes(gltf, doomed)
+            removed = self._mc._remove_glb_nodes(gltf, doomed)
             edit.dirty = True
             logger.info(
                 "Curve proxies: %d transport node(s) stripped from the GLB (%s).",
@@ -1058,8 +876,7 @@ class _Fbx2GltfMixin:
             )
             return removed
 
-    @classmethod
-    def _remove_glb_nodes(cls, gltf: Dict[str, Any], doomed: Set[int]) -> List[str]:
+    def _remove_glb_nodes(self, gltf: Dict[str, Any], doomed: Set[int]) -> List[str]:
         """Remove the nodes at the indices *doomed* names from *gltf*, and every
         channel that animates one; renumber every reference to the rest --
         children, scenes, skins, channel targets, and the manifests earlier
@@ -1111,7 +928,7 @@ class _Fbx2GltfMixin:
         extras = gltf.get("extras")
         for spec in SceneRecords.glb_records():
             if spec.glb.node_fields and isinstance(extras, dict) and spec.key in extras:
-                extras[spec.key] = cls._renumber_block_nodes(
+                extras[spec.key] = self._mc._renumber_block_nodes(
                     extras[spec.key], spec.glb.node_fields, remap
                 )
         gltf["nodes"] = kept
@@ -1140,32 +957,9 @@ class _Fbx2GltfMixin:
     #: :attr:`_ACCESSOR_REFERRING_EXTENSIONS`.
     _ATTRIBUTE_REFERRING_EXTENSIONS = frozenset({"KHR_draco_mesh_compression"})
 
-    @classmethod
-    def prune_glb_unused_skins(cls, glb: GlbTarget) -> Dict[str, int]:
-        """Drop the skinning data no node binds.
-
-        glTF gives a skin meaning only through a node's ``skin``, and
-        ``JOINTS_n``/``WEIGHTS_n`` only on a mesh a skinned node instantiates;
-        FBX2glTF writes both regardless. Measured on a production assembly
-        (2026-09-14): 255 of its 262 skins bound by no node, and JOINTS_0/
-        WEIGHTS_0 on 836 meshes no skinned node instantiates -- 0.49 MB of
-        vertex data, and a Khronos validator warning per node
-        (NODE_SKINNED_MESH_WITHOUT_SKIN x1493).
-
-        Removes every skin no node references (renumbering ``node.skin``) and
-        those attributes from each primitive of a mesh no skinned node
-        instantiates -- a mesh a skinned node shares keeps them, and so does a
-        primitive whose extension names its attributes again
-        (:attr:`_ATTRIBUTE_REFERRING_EXTENSIONS`) -- then deletes the accessors
-        that leaves unread and repacks the BIN.
-
-        Returns:
-            ``{"skins": removed, "attributes": stripped, "bytes": reclaimed}``.
-            ``bytes`` stays 0 when the file uses an extension that may hold
-            accessor indices of its own (:meth:`_drop_orphaned_accessors`).
-        """
+    def prune_glb_unused_skins(self, glb: GlbTarget) -> Dict[str, int]:
         counts = {"skins": 0, "attributes": 0, "bytes": 0}
-        with cls.open_glb(glb) as edit:
+        with self._mc.open_glb(glb) as edit:
             gltf = edit.gltf
             nodes = gltf.get("nodes") or []
             skins = gltf.get("skins") or []
@@ -1193,7 +987,7 @@ class _Fbx2GltfMixin:
                 if index in skinned:
                     continue
                 for primitive in (mesh or {}).get("primitives") or []:
-                    if cls._ATTRIBUTE_REFERRING_EXTENSIONS & set(
+                    if self._ATTRIBUTE_REFERRING_EXTENSIONS & set(
                         primitive.get("extensions") or ()
                     ):
                         continue
@@ -1206,8 +1000,8 @@ class _Fbx2GltfMixin:
             if not (counts["skins"] or counts["attributes"]):
                 return counts
             edit.dirty = True
-            if cls._drop_orphaned_accessors(edit, released):
-                counts["bytes"] = cls._compact_bin(edit)
+            if self._mc._drop_orphaned_accessors(edit, released):
+                counts["bytes"] = self._mc._compact_bin(edit)
             logger.info(
                 "Skins: dropped %d skin(s) no node binds and %d JOINTS/WEIGHTS "
                 "attribute(s) from meshes no skinned node instantiates (%.2f MB).",
@@ -1217,31 +1011,11 @@ class _Fbx2GltfMixin:
             )
         return counts
 
-    @classmethod
-    def fix_glb_skin_skeletons(cls, glb: GlbTarget) -> List[str]:
-        """Point every ``skin.skeleton`` at a common root of the skin's joints.
-
-        glTF requires the skeleton node to be the joints' closest common root
-        or an ancestor of it. FBX2glTF names a skin's first joint, which holds
-        only while the other joints hang below it; an export that re-parents a
-        chain's joints side by side under their group (a sheared-chain flatten
-        does) breaks it. Measured on a production assembly (2026-09-14): all 7
-        skins invalid, rejected by the Khronos validator
-        (SKIN_SKELETON_INVALID x7) -- three.js never reads the field, so no
-        viewer showed it.
-
-        A valid skeleton is left alone; an invalid one becomes the joints'
-        closest common root, or is removed -- the field is optional -- when the
-        joints share no root.
-
-        Returns:
-            The repaired skins' names (``skin <index>`` when unnamed), in file
-            order.
-        """
-        with cls.open_glb(glb) as edit:
+    def fix_glb_skin_skeletons(self, glb: GlbTarget) -> List[str]:
+        with self._mc.open_glb(glb) as edit:
             gltf = edit.gltf
             nodes = gltf.get("nodes") or []
-            parents = cls._node_parents(gltf)
+            parents = self._mc._lightmaps._node_parents(gltf)
             repaired: List[str] = []
             outcomes: List[str] = []
             for index, skin in enumerate(gltf.get("skins") or []):
@@ -1250,7 +1024,10 @@ class _Fbx2GltfMixin:
                 ):
                     continue
                 joints = [j for j in skin.get("joints") or [] if isinstance(j, int)]
-                chains = [cls._node_lineage(parents, joint) for joint in joints]
+                chains = [
+                    self._mc._lightmaps._node_lineage(parents, joint)
+                    for joint in joints
+                ]
                 if not chains or all(skin["skeleton"] in chain for chain in chains):
                     continue
                 shared = set(chains[0]).intersection(*chains[1:])
@@ -1273,21 +1050,329 @@ class _Fbx2GltfMixin:
                 )
             return repaired
 
+    def fix_glb_nonfinite_keys(self, glb: GlbTarget) -> Dict[str, int]:
+        with self._mc.open_glb(glb) as edit:
+            gltf = edit.gltf
+            accessors = gltf.get("accessors") or []
+            readers, times_of, cubic = self._key_readers(gltf)
+            blob: Optional[bytearray] = None
+            keys = 0
+            repaired: Set[Tuple[str, str]] = set()
+            hollow: Dict[int, str] = {}  # output -> why it has no key to keep
+            placed: Dict[int, List[float]] = {}  # time input -> its times, placed
+
+            # Key times first: every value is placed by them.
+            for source in sorted(set(times_of.values())):
+                rows = self._floats(edit, source)
+                if rows is None:
+                    continue
+                times = [row[0] for row in rows]
+                bad = [k for k, t in enumerate(times) if not math.isfinite(t)]
+                if bad:
+                    reading = [o for o, s in times_of.items() if s == source]
+                    if not self._place_times(times, bad):
+                        for output in reading:
+                            hollow[output] = "fewer than two finite key times"
+                        continue
+                    blob = self._splice(
+                        edit, blob, source, [(t,) for t in times], bad, 1
+                    )
+                    accessors[source]["min"] = [min(times)]
+                    accessors[source]["max"] = [max(times)]
+                    keys += len(bad)
+                    who = [r for output in reading for r in readers[output]]
+                    repaired.update((clip, label) for clip, label, _ in who)
+                    head, labels = self._said(who)
+                    logger.warning(
+                        "%s: the key times of %s held %d non-finite time(s) of %d, "
+                        "which glTF does not allow; each took its place in the "
+                        "keys' spacing.",
+                        head,
+                        labels,
+                        len(bad),
+                        len(times),
+                    )
+                placed[source] = times
+
+            for output, who in readers.items():
+                if output in hollow:
+                    continue
+                times = placed.get(times_of[output])
+                rows = self._floats(edit, output)
+                if rows is None or not times:
+                    continue
+                count = len(times)
+                if len(rows) % count:
+                    continue
+                group = len(rows) // count  # elements per key (3 per value: a spline)
+                values = [list(row) for row in rows]
+                finite = [
+                    all(
+                        math.isfinite(v)
+                        for row in values[k * group : (k + 1) * group]
+                        for v in row
+                    )
+                    for k in range(count)
+                ]
+                if all(finite):
+                    continue
+                if not any(finite):
+                    hollow[output] = "no finite key"
+                    continue
+                good = [k for k, ok in enumerate(finite) if ok]
+                bad = [k for k, ok in enumerate(finite) if not ok]
+                rotation = any(path == "rotation" for _, _, path in who)
+                self._interpolate(
+                    values, times, good, bad, group, output in cubic, rotation
+                )
+                blob = self._splice(edit, blob, output, values, bad, group)
+                accessor = accessors[output]
+                if "min" in accessor or "max" in accessor:
+                    width = len(values[0])
+                    accessor["min"] = [
+                        min(row[c] for row in values) for c in range(width)
+                    ]
+                    accessor["max"] = [
+                        max(row[c] for row in values) for c in range(width)
+                    ]
+                keys += len(bad)
+                repaired.update((clip, label) for clip, label, _ in who)
+                head, labels = self._said(who)
+                logger.warning(
+                    "%s: %s held %d non-finite key(s) of %d, which glTF does not "
+                    "allow%s; each was interpolated from its finite neighbours by "
+                    "time, and held from the nearest at an end.",
+                    head,
+                    labels,
+                    len(bad),
+                    count,
+                    " (a converter decomposing a degenerate transform, such as a "
+                    "zero scale, has no rotation to recover)"
+                    if rotation
+                    else "",
+                )
+            if blob is not None:
+                edit.replace_rest(blob)
+
+            dropped = 0
+            if hollow:
+                dropped = self._drop_channels(edit, set(hollow))
+                for output, why in hollow.items():
+                    head, labels = self._said(readers[output])
+                    logger.warning(
+                        "%s: %s held %s, which glTF does not allow; the channel is "
+                        "dropped (there is no value to give it).",
+                        head,
+                        labels,
+                        why,
+                    )
+            return {"keys": keys, "channels": len(repaired), "dropped": dropped}
+
+    @classmethod
+    def _key_readers(
+        cls, gltf: Dict[str, Any]
+    ) -> Tuple[Dict[int, List[Tuple[str, str, Any]]], Dict[int, int], Set[int]]:
+        """``({output: [(clip, channel label, path)]}, {output: its time input},
+        the cubic-spline outputs)``: who reads each animation output, once each."""
+        nodes = gltf.get("nodes") or []
+        readers: Dict[int, List[Tuple[str, str, Any]]] = {}
+        times_of: Dict[int, int] = {}
+        cubic: Set[int] = set()
+        for position, animation in enumerate(gltf.get("animations") or []):
+            clip = str(animation.get("name") or f"animations[{position}]")
+            samplers = animation.get("samplers") or []
+            for channel in animation.get("channels") or []:
+                index = channel.get("sampler")
+                if not isinstance(index, int) or not 0 <= index < len(samplers):
+                    continue
+                sampler = samplers[index] or {}
+                output, source = sampler.get("output"), sampler.get("input")
+                if not isinstance(output, int) or not isinstance(source, int):
+                    continue
+                target = channel.get("target") or {}
+                reader = (clip, cls._channel_label(nodes, target), target.get("path"))
+                if reader not in readers.setdefault(output, []):
+                    readers[output].append(reader)
+                times_of[output] = source
+                if sampler.get("interpolation") == "CUBICSPLINE":
+                    cubic.add(output)
+        return readers, times_of, cubic
+
+    @staticmethod
+    def _channel_label(nodes: List[Dict[str, Any]], target: Dict[str, Any]) -> str:
+        """``the <path> channel of node '<name>'`` for a channel *target* (a
+        KHR_animation_pointer one by its pointer), as a report names it."""
+        pointer = (
+            (target.get("extensions") or {}).get("KHR_animation_pointer") or {}
+        ).get("pointer")
+        node = target.get("node")
+        if pointer and node is None:
+            return f"the channel animating {pointer!r}"
+        named = (
+            nodes[node].get("name")
+            if isinstance(node, int) and 0 <= node < len(nodes)
+            else None
+        )
+        label = named if named else f"#{node}"
+        return f"the {target.get('path')} channel of node {label!r}"
+
+    @staticmethod
+    def _said(readers: List[Tuple[str, str, Any]]) -> Tuple[str, str]:
+        """``("Animation 'Take'", "the rotation channel of node 'x' and ...")``:
+        the clips and the channels *readers* name, each once."""
+        clips = list(dict.fromkeys(clip for clip, _, _ in readers))
+        labels = list(dict.fromkeys(label for _, label, _ in readers))
+        head = ("Animation " if len(clips) == 1 else "Animations ") + ", ".join(
+            repr(clip) for clip in clips
+        )
+        return head, " and ".join(labels)
+
+    def _floats(self, edit: "GlbEdit", index: int) -> Optional[List[Tuple[float, ...]]]:
+        """A tightly packed float accessor's elements; ``None`` for any other
+        (only a float holds a NaN, and a sparse or interleaved layout is left
+        as it is)."""
+        accessors = edit.gltf.get("accessors") or []
+        if not 0 <= index < len(accessors):
+            return None
+        if (accessors[index] or {}).get("componentType") != 5126:
+            return None
+        elements = self._mc._accessor_elements(edit, index)
+        if not elements:
+            return None
+        width = len(elements[0]) // 4
+        return [struct.unpack(f"<{width}f", element) for element in elements]
+
+    @staticmethod
+    def _place_times(times: List[float], bad: List[int]) -> bool:
+        """Give each *bad* key time its place in the finite ones' spacing, in
+        place: between two by index, past an end by the end pair's spacing.
+        ``False`` (nothing changed) with fewer than two finite times to space
+        by. A finite time out of order is not this repair's: it has no one
+        right place, and the converter refuses it by name."""
+        skip = set(bad)
+        good = [k for k in range(len(times)) if k not in skip]
+        if len(good) < 2:
+            return False
+        for k in bad:
+            lo = max((j for j in good if j < k), default=None)
+            hi = min((j for j in good if j > k), default=None)
+            if lo is None:
+                lo, hi = hi, min(j for j in good if j > hi)
+            elif hi is None:
+                lo, hi = max(j for j in good if j < lo), lo
+            times[k] = times[lo] + (times[hi] - times[lo]) * (k - lo) / (hi - lo)
+        return True
+
+    @staticmethod
+    def _interpolate(
+        values: List[List[float]],
+        times: List[float],
+        good: List[int],
+        bad: List[int],
+        group: int,
+        cubic: bool,
+        rotation: bool,
+    ) -> None:
+        """Each non-finite element of the *bad* keys, in place, from the finite
+        keys either side by time -- a slerp for a rotation, a lerp otherwise --
+        or held from the nearest at an end. A spline's repaired key keeps its
+        value's place between its tangents and takes flat ones."""
+        from pythontk.math_utils._math_utils import MathUtils
+        from pythontk.math_utils.quaternion import Quaternion
+
+        part = group // 3 if cubic else group
+        offset = part if cubic else 0
+        for k in bad:
+            lo = max((j for j in good if j < k), default=None)
+            hi = min((j for j in good if j > k), default=None)
+            span = times[hi] - times[lo] if lo is not None and hi is not None else 0.0
+            u = (times[k] - times[lo]) / span if span > 0.0 else 0.0
+            for i in range(offset, offset + part):
+                if all(math.isfinite(v) for v in values[k * group + i]):
+                    continue
+                a = values[lo * group + i] if lo is not None else None
+                b = values[hi * group + i] if hi is not None else None
+                if a is None or b is None:
+                    values[k * group + i] = list(a if b is None else b)
+                elif rotation and len(a) == 4:
+                    values[k * group + i] = list(Quaternion.slerp(a, b, u))
+                else:
+                    values[k * group + i] = list(MathUtils.lerp(tuple(a), tuple(b), u))
+            if cubic:
+                for i in list(range(part)) + list(range(2 * part, group)):
+                    values[k * group + i] = [0.0] * len(values[k * group + i])
+
+    @staticmethod
+    def _splice(
+        edit: "GlbEdit",
+        blob: Optional[bytearray],
+        index: int,
+        values: List[Sequence[float]],
+        keys: List[int],
+        group: int,
+    ) -> bytearray:
+        """*keys*' elements of accessor *index* written into a copy of the BIN
+        (made on the first write and handed back for the next)."""
+        accessor = edit.gltf["accessors"][index]
+        view = GlbEdit.bin_view(edit.gltf, accessor) or {}
+        start = int(view.get("byteOffset") or 0) + int(accessor.get("byteOffset") or 0)
+        if blob is None:
+            blob = bytearray(edit.bin_data)
+        width = len(values[0])
+        for k in keys:
+            for i in range(k * group, (k + 1) * group):
+                at = start + i * width * 4
+                blob[at : at + width * 4] = struct.pack(f"<{width}f", *values[i])
+        return blob
+
+    def _drop_channels(self, edit: "GlbEdit", outputs: Set[int]) -> int:
+        """Drop every channel reading one of *outputs*, the samplers left
+        unread (the rest renumbered), the accessors left orphaned and a clip
+        left empty; how many channels went."""
+        dropped = 0
+        released: Set[Any] = set()
+        for animation in edit.gltf.get("animations") or []:
+            samplers = animation.get("samplers") or []
+            wired = animation.get("channels") or []
+
+            def reads(channel: Dict[str, Any]) -> bool:
+                index = channel.get("sampler")
+                return (
+                    isinstance(index, int)
+                    and 0 <= index < len(samplers)
+                    and (samplers[index] or {}).get("output") in outputs
+                )
+
+            kept = [channel for channel in wired if not reads(channel)]
+            if len(kept) == len(wired):
+                continue
+            dropped += len(wired) - len(kept)
+            used = sorted(
+                {
+                    c["sampler"]
+                    for c in kept
+                    if isinstance(c.get("sampler"), int)
+                    and 0 <= c["sampler"] < len(samplers)
+                }
+            )
+            for index, sampler in enumerate(samplers):
+                if index not in used:
+                    released.update((sampler.get("input"), sampler.get("output")))
+            remap = {old: new for new, old in enumerate(used)}
+            for channel in kept:
+                channel["sampler"] = remap.get(
+                    channel.get("sampler"), channel.get("sampler")
+                )
+            animation["channels"] = kept
+            animation["samplers"] = [samplers[i] for i in used]
+        edit.dirty = True
+        self._mc._drop_orphaned_accessors(edit, released)
+        self._mc._compact_bin(edit)
+        self._mc.prune_glb_animations(edit)
+        return dropped
+
     @staticmethod
     def fbx_media_dirs(fbx_path: str) -> List[str]:
-        """Where a file an FBX names loosely is looked for beside it.
-
-        The FBX's own directory, a ``sourceimages`` folder inside it, and one
-        beside it (the Maya project layout). A host that converts a STAGED
-        copy passes the deliverable's own set as ``shadow_dirs``, so the
-        search still reaches the folder the file ships to.
-
-        Parameters:
-            fbx_path: The FBX (or the path it will be delivered to).
-
-        Returns:
-            The three directories, nearest first.
-        """
         folder = os.path.dirname(os.path.abspath(fbx_path))
         return [
             folder,
@@ -1295,48 +1380,43 @@ class _Fbx2GltfMixin:
             os.path.join(os.path.dirname(folder), "sourceimages"),
         ]
 
-    @classmethod
-    def fix_glb_tangents(cls, glb: GlbTarget) -> Dict[str, int]:
-        """Point every shipped TANGENT the way its UVs run, and give a
-        zero-length one a direction.
-
-        FBX2glTF ships ``w = +1`` on every vertex, and three.js takes a shipped
-        TANGENT over its own frame, so every mirrored UV shell rendered its
-        normal map with green inverted; a DCC writes a zero tangent where it
-        cannot orient one, which glTF forbids and three.js turns into NaN --
-        see :class:`~pythontk.file_utils.mesh_convert.glb.tangents.GlbTangents`.
-
-        Parameters:
-            glb: Path to a ``.glb``, modified in place, or an open session.
-
-        Returns:
-            ``{"primitives": n, "signs": n, "directions": n}`` -- primitives
-            reading a rewritten TANGENT, vertices whose ``w`` was set, and
-            vertices whose direction was rebuilt.
-        """
+    def fix_glb_tangents(self, glb: GlbTarget) -> Dict[str, int]:
         from pythontk.file_utils.mesh_convert.glb.tangents import GlbTangents
 
         return GlbTangents.repair(glb)
 
-    @classmethod
-    def restore_glb_skin_weights(cls, glb: GlbTarget, fbx: str) -> Dict[str, int]:
-        """Give every skinned mesh the weights its FBX clusters hold.
-
-        FBX2glTF merges identical vertices across the whole file and compares
-        everything but the skin weights, so a duplicated rigged mesh whose
-        chain runs another way ships the first mesh's weights read against its
-        own joints -- see
-        :class:`~pythontk.file_utils.mesh_convert.glb.skin_weights.GlbSkinWeights`.
-
-        Parameters:
-            glb: Path to a ``.glb``, modified in place, or an open session.
-            fbx: The FBX the GLB was converted from.
-
-        Returns:
-            ``{"meshes": n, "vertices": n, "ambiguous": n}`` -- meshes and
-            vertices rewritten, and vertices left as shipped because their
-            control point could not be told apart.
-        """
+    def restore_glb_skin_weights(self, glb: GlbTarget, fbx: str) -> Dict[str, int]:
         from pythontk.file_utils.mesh_convert.glb.skin_weights import GlbSkinWeights
 
         return GlbSkinWeights.restore(glb, fbx)
+
+    def restore_glb_rotations(
+        self, glb: GlbTarget, fbx: str, fps: Optional[float] = None
+    ) -> Dict[str, int]:
+        from pythontk.file_utils.mesh_convert.glb.rotations import GlbRotations
+
+        with self._mc.open_glb(glb) as edit:
+            # Curve proxies are FBX-only transport (stripped before the
+            # animation passes): a ramp at 0 reads as a flat node.
+            proxies = {
+                index
+                for index, node in enumerate(edit.gltf.get("nodes") or [])
+                if self._node_user_property(node, self._mc.CURVE_PROXY_MARKER)
+            }
+            return GlbRotations.restore(
+                edit, fbx, fps or self._mc.CONVERSION_BAKE_FPS, skip=proxies
+            )
+
+    def _bake_fps(self, args: Sequence[str]) -> float:
+        """The rate FBX2glTF bakes at, run with *args*: their
+        ``--anim-framerate`` (``bake24`` / ``bake30`` / ``bake60``), else
+        :attr:`CONVERSION_BAKE_FPS`."""
+        for position, arg in enumerate(args):
+            name, _, value = arg.partition("=")
+            if name != "--anim-framerate":
+                continue
+            if not value and position + 1 < len(args):
+                value = args[position + 1]
+            if value.startswith("bake") and value[4:].isdigit():
+                return float(value[4:])
+        return float(self._mc.CONVERSION_BAKE_FPS)

@@ -8,11 +8,10 @@ pipelines that don't want to manage the connection lifecycle themselves.
 
 Example::
 
-    from pythontk.net_utils.rpc.client import RpcClient
-    from pythontk.net_utils.rpc.job import Call, RpcJob
+    from pythontk import RpcClient, RpcJob
 
     results = RpcJob.run_batch(
-        [Call("system.version"), Call("scene.list_materials")],
+        [RpcJob.Call("system.version"), RpcJob.Call("scene.list_materials")],
         client=RpcClient(port=8765, app_label="Marmoset"),
     )
     for r in results:
@@ -29,6 +28,34 @@ from .client import RpcClient
 __all__ = ["RpcJob", "Call", "Result"]
 
 
+@dataclass(frozen=True)
+class Call:
+    """One queued op invocation.
+
+    *op* is the registry name; *kwargs* are forwarded verbatim to the
+    registered function. *timeout* applies per-call.
+    """
+
+    op: str
+    kwargs: Dict[str, Any] = field(default_factory=dict)
+    timeout: float = 60.0
+
+
+@dataclass(frozen=True)
+class Result:
+    """Outcome of a single :class:`Call`.
+
+    ``ok`` is True on success; ``value`` holds the op's return on
+    success, ``error`` holds the exception message on failure. ``op``
+    echoes :class:`Call.op` for correlation when iterating.
+    """
+
+    op: str
+    ok: bool
+    value: Any = None
+    error: Optional[str] = None
+
+
 class RpcJob:
     """Run a batch of :class:`Call`\\ s over one :class:`RpcClient` session.
 
@@ -36,6 +63,12 @@ class RpcJob:
     hand it to :meth:`run_batch`, get a :class:`Result` per call back in
     order.
     """
+
+    #: The value types a batch takes and returns, on the class that runs it
+    #: (``RpcJob.Call("system.version")``): their bare names are too generic
+    #: for the package root.
+    Call = Call
+    Result = Result
 
     @staticmethod
     def run_batch(
@@ -72,31 +105,3 @@ class RpcJob:
                 if stop_on_error:
                     break
         return results
-
-
-@dataclass(frozen=True)
-class Call:
-    """One queued op invocation.
-
-    *op* is the registry name; *kwargs* are forwarded verbatim to the
-    registered function. *timeout* applies per-call.
-    """
-
-    op: str
-    kwargs: Dict[str, Any] = field(default_factory=dict)
-    timeout: float = 60.0
-
-
-@dataclass(frozen=True)
-class Result:
-    """Outcome of a single :class:`Call`.
-
-    ``ok`` is True on success; ``value`` holds the op's return on
-    success, ``error`` holds the exception message on failure. ``op``
-    echoes :class:`Call.op` for correlation when iterating.
-    """
-
-    op: str
-    ok: bool
-    value: Any = None
-    error: Optional[str] = None

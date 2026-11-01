@@ -15,11 +15,11 @@ world positions to under 2 mm across a 2,480-node assembly, and caught a
 7.5 cm export defect the DCC's own log never mentioned.
 """
 
-import math
 import struct
 from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple, Union
 
 from pythontk.file_utils.mesh_convert.glb.edit import GlbEdit
+from pythontk.math_utils.quaternion import Quaternion
 
 
 class _GlbReaderInternal:
@@ -124,14 +124,8 @@ class _GlbReaderInternal:
         t: Sequence[float], r: Sequence[float], s: Sequence[float]
     ) -> List[List[float]]:
         """Compose translation / rotation-quaternion / scale into row form."""
-        x, y, z, w = r
-        length = math.sqrt(x * x + y * y + z * z + w * w) or 1.0
-        x, y, z, w = x / length, y / length, z / length, w / length
-        rot = [
-            [1 - 2 * (y * y + z * z), 2 * (x * y + z * w), 2 * (x * z - y * w)],
-            [2 * (x * y - z * w), 1 - 2 * (x * x + z * z), 2 * (y * z + x * w)],
-            [2 * (x * z + y * w), 2 * (y * z - x * w), 1 - 2 * (x * x + y * y)],
-        ]
+        # Row form: the column-vector matrix, transposed.
+        rot = [list(col) for col in zip(*Quaternion.to_matrix(Quaternion.normalize(r)))]
         m = _GlbReaderInternal._identity()
         for r_ in range(3):
             for c in range(3):

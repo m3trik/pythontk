@@ -28,6 +28,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Mapping, Optional
 
+from pythontk.core_utils.presets.store import Codec, PresetStore
 from pythontk.core_utils.schema_spec import SchemaSpec
 from pythontk.core_utils.user_config import UserConfig
 
@@ -95,6 +96,10 @@ class LookSession(SchemaSpec):
     VERSION = 1
     #: A path starting with this lives in the session's cache folder (:meth:`cache_dir`).
     CACHE = "cache:"
+    #: A saved mix's file, as :meth:`mixes` reads and writes it: the
+    #: ``LightMix.to_dict`` document in the JSON ``LightMix.save`` writes, so a
+    #: session's ``mix`` names any of them and ``LightMix.load`` reads each.
+    MIX_CODEC = Codec(".json", json.loads, lambda data: json.dumps(data, indent=1))
 
     version: int = _field(help="The file's version (LookSession.VERSION).", required=True)
     id: Optional[str] = _field(
@@ -167,3 +172,29 @@ class LookSession(SchemaSpec):
         else:
             base = os.path.dirname(os.path.abspath(path))
         return os.path.normpath(os.path.join(base, value))
+
+    @classmethod
+    def mix_dir(cls, path: str, data: Mapping[str, Any]) -> str:
+        """The folder the session at *path* (read as *data*) keeps its saved
+        mixes in: the one its ``mix`` file is in, else ``mixes`` beside the
+        session file. Authored data, so it travels with the project."""
+        mix = cls.resolve(path, data, data.get("mix"))
+        if mix:
+            return os.path.dirname(mix)
+        return os.path.join(os.path.dirname(os.path.abspath(path)), "mixes")
+
+    @classmethod
+    def mixes(cls, path: str, data: Mapping[str, Any]) -> PresetStore:
+        """The session's saved mixes, as a store over :meth:`mix_dir`: one
+        ``<name>.json`` per mix (:attr:`MIX_CODEC`), named by the store's rules;
+        ``delete(name, trash=True)`` sends one to the platform's trash. No
+        built-in tier, no library marker and no per-mix sidecar: the folder is
+        the project's, not a preset collection, and holds the mixes alone.
+        Built fresh per call, as the folder follows the session's ``mix``."""
+        return PresetStore(
+            "mixes",
+            user_dir=cls.mix_dir(path, data),
+            codec=cls.MIX_CODEC,
+            mark=False,
+            info=False,
+        )

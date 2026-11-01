@@ -23,7 +23,6 @@ from pythontk.core_utils.handoff.app_handoff import (
     HandoffRequest,
     Payload,
 )
-from pythontk.core_utils.handoff.handoff_scope import HandoffScope
 from pythontk.core_utils.deprecation import Deprecation
 from pythontk.net_utils.preview.deliverer import PreviewDeliverer
 from pythontk.net_utils.preview.server import PreviewServer
@@ -174,34 +173,6 @@ class PreviewBridge(HandoffBridge):
         """The preview URL, or ``None`` before the first push."""
         server = getattr(self.deliverer, "server", None)
         return server.url if server is not None else None
-
-    def scope_objects(self, scope: str = HandoffScope.SELECTED) -> List[Any]:
-        """The objects *scope* resolves to, through the host hooks.
-
-        The scope vocabulary is the ecosystem's, not this bridge's:
-        :class:`~pythontk.core_utils.handoff.handoff_scope.HandoffScope`'s
-        ``"selected"`` / ``"all"`` / ``"visible"``, resolved by its one
-        precedence rule like every other hand-off. Public rather than private
-        because a *caller* needs the answer too -- a panel that pushes blind
-        cannot tell "nothing selected" from "the scene is empty" from "the export
-        failed", and those three want three different messages.
-
-        ``"selected"`` is the default AND the fallback for any unknown value:
-        an unrecognised scope must never silently WIDEN a push to the whole
-        scene. A host that cannot answer a widening hook (either returns
-        ``None``) falls back to the selection for the same reason.
-        """
-        # ``None`` is the skeleton's "the selection" (``_resolve_objects``), so it
-        # is what the selection lookup answers -- and a widening hook that cannot
-        # enumerate its host (``None``) narrows to it, NOT to an empty scene,
-        # which would report a populated scene as nothing to push.
-        objects = HandoffScope.resolve(
-            scope,
-            selected=lambda: None,
-            all=self._scene_objects,
-            visible=self._visible_objects,
-        )
-        return self._resolve_objects(objects)
 
     #: Keywords :meth:`push` no longer takes, each mapped to what to pass
     #: instead. ``**params`` would otherwise sweep a stale caller's spelling
@@ -493,10 +464,8 @@ class PreviewBridge(HandoffBridge):
             return PreviewBridge.materials_summary(result)
         applied = result.get("sidecar") or {}
         if not applied:
-            # Section-agnostic on purpose: the sections are a registry
-            # (MeshConvert.SIDECAR_APPLIERS), so naming one here would go
-            # stale with every addition -- it already had, when base colour
-            # joined emissive and this line still said "no emissive found".
+            # Section-agnostic on purpose: a build applies no section any
+            # more (the FBX's materials record states every material).
             return (
                 "Scene sidecar: nothing to carry (the scene has nothing the FBX drops)."
             )

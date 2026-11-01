@@ -9,19 +9,25 @@ mayatk's ``AudioClips.export_record`` from its keyed tracks, blendertk's
 ``AudioEventImporter`` injects into the imported clips as animation events.
 Both producers scope their events to the takes the ``animation`` record
 declares by the one rule they share, :meth:`AudioUtils.scope_events
-<pythontk.AudioUtils.scope_events>`, which is why the shape lives here,
-beside it.
+<pythontk.AudioUtils.scope_events>`; the FBX dependency pass that embeds the
+track files (``FbxMedia.embed_dependencies``) digests what it embedded by
+another, :meth:`AudioUtils.media_digests <pythontk.AudioUtils.media_digests>`
+-- which is why the shape lives here, beside them.
 
 A typed :class:`~pythontk.SchemaSpec`: this one definition validates a payload
 (``AudioRecord.validate(payload)``), publishes its JSON Schema, and is what
 ``m3trik/scripts/sync_scene_records.py`` generates unitytk's C# record types
 from -- a field renamed here fails their checks until they are regenerated.
-Change a field together with ``AudioUtils.scope_events`` and the producers,
-and bump ``SceneRecords.AUDIO.version``.
+Change a field together with ``AudioUtils.scope_events`` /
+``AudioUtils.media_digests``, the producers and that pass, and bump
+``SceneRecords.AUDIO.version`` -- unless the field is optional and a reader
+that lacks it reads the record as before: ``media`` (2026-10-31) needed no
+new version, so a file written before it is still read (a reader reads one
+version alone).
 """
 
 from dataclasses import dataclass
-from typing import List
+from typing import Dict, List
 
 from pythontk.core_utils.schema_spec import SchemaSpec
 
@@ -92,4 +98,20 @@ class AudioRecord(SchemaSpec):
         ),
         required=True,
         example=30.0,
+    )
+    media: Dict[str, str] = _field(
+        help=(
+            "The content digest of each audio file the deliverable embeds, by "
+            "the event name that is its stem: the SHA-256 of the bytes inside, "
+            "in lowercase hex, written by the pass that embedded them. A "
+            "same-named clip found elsewhere stands in for the track only when "
+            "its bytes hash alike; else the deliverable's own is taken. A "
+            "track it carries no file for is left out, and a file written "
+            "without that pass (a raw export) or before 2026-10-31 carries no "
+            "'media' at all."
+        ),
+        example={
+            "Footstep": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+        },
+        default_factory=dict,
     )

@@ -305,7 +305,7 @@ class TestRest(unittest.TestCase):
         for joint, (p, q) in zip(spec["joints"], model.world(model.rest_state())):
             frame = frames[joint["link"]]
             _close(self, p, frame[12:15], 1e-9, joint["id"])
-            rotation = ArticulationModel._qmatrix(q)  # column vectors
+            rotation = ptk.Quaternion.to_matrix(q)  # column vectors
             for axis in range(3):
                 _close(
                     self,
@@ -318,9 +318,7 @@ class TestRest(unittest.TestCase):
     def test_the_joint_orient_is_the_rest_rotation(self):
         spec, _placed, _planned = _magnifier()
         for pose in ArticulationPlan.rest(spec):
-            q = ArticulationModel._euler_quat(
-                "xyz", {"rx": pose["jo"][0], "ry": pose["jo"][1], "rz": pose["jo"][2]}
-            )
+            q = ptk.Quaternion.from_euler("xyz", pose["jo"])
             self.assertTrue(_same_turn(q, pose["q"]), (pose["jo"], pose["q"]))
 
     def test_a_slides_axes_are_its_rest_frame_in_its_parents_space(self):
@@ -398,8 +396,8 @@ class TestRest(unittest.TestCase):
             _close(self, got_q, q, 1e-9)
         # gimbal lock: (30, 90, -15) reads (45, 90, 0); (30, -90, -15) reads (15, -90, 0)
         for y, x in ((90.0, 45.0), (-90.0, 15.0)):
-            q = ArticulationModel._euler_quat("xyz", {"rx": 30.0, "ry": y, "rz": -15.0})
-            c = ArticulationModel._qmatrix(q)
+            q = ptk.Quaternion.from_euler("xyz", (30.0, y, -15.0))
+            c = ptk.Quaternion.to_matrix(q)
             m = [c[0][0], c[1][0], c[2][0], 0.0, c[0][1], c[1][1], c[2][1], 0.0]
             m += [c[0][2], c[1][2], c[2][2], 0.0, 0.0, 0.0, 0.0, 1.0]
             _t, got_jo, _q = ArticulationPlan._decompose(m)

@@ -1,7 +1,7 @@
 # !/usr/bin/python
 # coding=utf-8
 import re
-from typing import Union, List, Optional, Dict, Tuple, Callable, Iterable
+from typing import Union, List, Optional, Dict, Tuple, Callable, Iterable, Hashable
 
 # from this package:
 from pythontk.core_utils._core_utils import CoreUtils
@@ -50,7 +50,19 @@ class StrUtils(
     #: :attr:`LEGAL_NAME_PATTERN` in words, for tooltips and refusals.
     LEGAL_NAME_RULE = "letters, digits and '_'"
     #: The cases :meth:`set_case` applies -- what a case picker offers.
-    CASES = ("upper", "lower", "capitalize", "swapcase", "title", "pascal", "camel")
+    #: ``upper_first`` / ``upper_initials`` are the name-safe ``capitalize`` /
+    #: ``title``: they raise first letters and never lower one.
+    CASES = (
+        "upper",
+        "lower",
+        "capitalize",
+        "swapcase",
+        "title",
+        "pascal",
+        "camel",
+        "upper_first",
+        "upper_initials",
+    )
     #: The legal-name rules :meth:`apply_name_rule` applies, by name: ``legal``
     #: (:meth:`to_legal_name`), ``sanitized`` (:meth:`sanitize`, case kept)
     #: and ``filename`` (:meth:`to_legal_filename`).
@@ -169,7 +181,7 @@ class StrUtils(
         This one is positional -- one character in, one out -- because the
         result is an IDENTITY two sides derive independently and must agree
         on: the widget uitk's switchboard builds from a definition
-        (``SwitchboardNameMixin.convert_to_legal_name``) and the key a
+        (``Switchboard.convert_to_legal_name``) and the key a
         headless reader looks that widget up by (``ExportProfile.widget_key``).
         Collapsing would make ``"a  b"`` and ``"a b"`` the same objectName.
 
@@ -188,6 +200,23 @@ class StrUtils(
             to_legal_name("Convert Textures (2K)") --> 'Convert_Textures__2K_'
         """
         return _ILLEGAL_NAME_CHAR_RE.sub("_", name)
+
+    @staticmethod
+    def to_identifier(name: str, replacement: str = "_") -> str:
+        """*name* as an identifier: letters, digits and ``_``, not starting with a digit.
+
+        The rule a scene node name follows (Maya's, and every engine an export
+        reaches): each other character becomes *replacement*, one for one as in
+        :meth:`to_legal_name`, and a leading digit gets a ``_`` in front -- kept,
+        not dropped, as Maya's own rename does (``1box`` -> ``box``). An empty
+        name stays empty: whether that is an error is the caller's call.
+
+        Example:
+            to_identifier("my box-1") --> 'my_box_1'
+            to_identifier("1box") --> '_1box'
+        """
+        legal = _ILLEGAL_NAME_CHAR_RE.sub(replacement, name or "")
+        return f"_{legal}" if legal[:1].isdigit() else legal
 
     #: Characters no file name may carry on Windows, and the ones a POSIX tool
     #: is happiest without. Path separators are NOT here: a caller that joins a
@@ -646,15 +675,31 @@ class StrUtils(
         Parameters:
             string (str/list): The string(s) to format.
             case (str): The desired return case. Accepts all python case operators.
-                    valid: :attr:`CASES` ('upper', 'lower', 'capitalize', 'swapcase', 'title' (default), 'pascal', 'camel'), or None.
+                    valid: :attr:`CASES` ('upper', 'lower', 'capitalize', 'swapcase', 'title' (default), 'pascal', 'camel',
+                    'upper_first', 'upper_initials'), or None.
+                    'capitalize' and 'title' are Python's, and LOWER every other letter
+                    ('myBigBox' -> 'Mybigbox', 'arm_L_ctrl' -> 'Arm_l_ctrl'); for a name, use
+                    'upper_first' (the first letter raised, the rest kept: 'MyBigBox') or
+                    'upper_initials' (each word's first letter raised, the rest kept:
+                    'Arm_L_Ctrl'). A word starts at any letter that follows a non-letter,
+                    as in Python's 'title'.
         Returns:
             (str/list) List if 'string' given as list.
         """
         if (not string) or (not isinstance(string, str)):
             return ""
 
-        if case == "pascal":
+        if case in ("pascal", "upper_first"):
             return string[:1].capitalize() + string[1:]  # capitalize the first letter.
+
+        elif case == "upper_initials":
+            chars, after_letter = [], False
+            for char in string:
+                raised = char.upper() if not after_letter else char
+                # A letter whose upper case is two ('ß' -> 'SS') stays as it is.
+                chars.append(raised if len(raised) == 1 else char)
+                after_letter = char.isalpha()
+            return "".join(chars)
 
         elif case == "camel":
             return string[0].lower() + string[1:]  # lowercase the first letter.
@@ -1451,6 +1496,7 @@ class StrUtils(
         exclude=(),
         one: bool = True,
         case_sensitive: bool = True,
+        numbered: bool = False,
     ) -> str:
         """Strip whichever affix in *known* the string carries, from either end.
 
@@ -1486,6 +1532,16 @@ class StrUtils(
                 is made of are not: folding case strips the ``cam`` out of
                 ``security_cam`` for a ``_CAM`` entry, the ``set`` out of
                 ``tile_set``, and the ``con`` out of ``con_rod``.
+            numbered: When no affix matches, also try with a trailing number
+                peeled off (``_?\\d+`` or Blender's ``.001``) and, when that
+                strips an affix, put the number back on the base. A duplicate's
+                uniquifier or an index after the affix (``crate_GEO1``,
+                ``wall_GEO_01``) then yields ``crate1`` / ``wall_01`` -- so a
+                type pass re-affixes ``crate1_GEO`` instead of decorating
+                ``crate_GEO1_GEO``. A base that already ends in a digit keeps
+                the two numbers apart with ``_`` (``wall_01_GEO1`` ->
+                ``wall_01_1``). Off by default: a number after an affix is
+                otherwise name content (``body_GEO_02`` stays whole).
 
         Returns:
             The name with the matched affix (and its adjacent separator)
@@ -1498,7 +1554,12 @@ class StrUtils(
             strip_any_affix("security_cam", ["_CAM"])                # 'security_cam'
         """
         return _StrAffixInternal.strip_any_affix(
-            string, known, exclude=exclude, one=one, case_sensitive=case_sensitive
+            string,
+            known,
+            exclude=exclude,
+            one=one,
+            case_sensitive=case_sensitive,
+            numbered=numbered,
         )
 
     @staticmethod
@@ -1795,14 +1856,65 @@ class StrUtils(
             >>> StrUtils.sequential_suffixes(3, lowercase=True)
             ['a', 'b', 'c']
         """
-        if count <= 0:
-            return []
-        cap = min(switch_at, 26)
-        if count <= cap:
-            base = ord("a") if lowercase else ord("A")
-            return [chr(base + i) for i in range(count)]
-        pad = max(2, len(str(count)))
-        return [str(i + 1).zfill(pad) for i in range(count)]
+        return _StrAffixInternal.sequential_suffixes(count, switch_at, lowercase)
+
+    @staticmethod
+    def sequence_names(
+        names: Union[Dict[Hashable, str], Iterable[str]],
+        order: Optional[Callable[[List[Hashable]], List[Hashable]]] = None,
+        alphabetical: bool = False,
+        strip_trailing_ints: bool = False,
+        strip_defined_suffixes: bool = False,
+        valid_suffixes: Optional[Iterable[str]] = None,
+        independent_groups: bool = False,
+        number_separators: str = "_",
+    ) -> Dict[Hashable, str]:
+        """Suffix each name with its place in a sequence: ``tile_01``,
+        ``tile_02`` (or ``tile_A``, ``tile_B``) -- the host-free plan behind
+        both DCCs' Suffix By Location, which supply the order.
+
+        Each name first loses what a previous run (or the host) left on it, so
+        a re-run is stable: a trailing number (``tile12``, ``tile_3``; also
+        after any of *number_separators*, Blender's ``tile.001``), a letter this
+        tool wrote (the batch's letters run ``A, B, C, ...`` with no gap; a
+        lone ``_L`` / ``_R`` side marker is content), and with
+        *strip_defined_suffixes* a suffix of *valid_suffixes* -- stacked
+        (``Name_GRP_01_A``) ones one per pass.
+
+        Parameters:
+            names: ``{key: name}`` (a host's object key -> its leaf name), or
+                plain names, each its own key (duplicates collapse).
+            order: Ranks a list of keys (a host orders by location); the
+                given order when omitted. Called once per group.
+            alphabetical: Letters (``_A``) for a group of 26 or fewer, else
+                zero-padded numbers (:meth:`sequential_suffixes`).
+            strip_trailing_ints: Strip a trailing number first.
+            strip_defined_suffixes: Drop a suffix of *valid_suffixes*: from
+                the base, or with *independent_groups* from the result.
+            valid_suffixes: The type suffixes (``_GRP``) this tool knows.
+            independent_groups: Number each base on its own; a kept type
+                suffix moves after the number (``Container_01_GRP``).
+            number_separators: The characters that go with a trailing number
+                when it is stripped (Blender: ``"._"``).
+
+        Returns:
+            ``{key: new_name}``, in sequence order (grouped with
+            *independent_groups*).
+
+        Example:
+            sequence_names({"a": "tile12", "b": "tile_3"}, strip_trailing_ints=True)
+            #returns: {'a': 'tile_01', 'b': 'tile_02'}
+        """
+        return _StrAffixInternal.sequence_names(
+            names,
+            order=order,
+            alphabetical=alphabetical,
+            strip_trailing_ints=strip_trailing_ints,
+            strip_defined_suffixes=strip_defined_suffixes,
+            valid_suffixes=valid_suffixes,
+            independent_groups=independent_groups,
+            number_separators=number_separators,
+        )
 
     @staticmethod
     def resolve_name_collisions(

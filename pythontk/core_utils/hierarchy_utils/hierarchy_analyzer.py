@@ -475,7 +475,7 @@ class HierarchyAnalyzer:
     def generate_diff_report(
         differences: List[HierarchyDifference],
         include_details: bool = True,
-        max_items_per_category: int = 10,
+        max_items_per_category: Optional[int] = 10,
     ) -> str:
         """
         Generate a human-readable report of differences.
@@ -483,7 +483,8 @@ class HierarchyAnalyzer:
         Args:
             differences: List of differences to report
             include_details: Whether to include detailed information
-            max_items_per_category: Maximum items to show per category
+            max_items_per_category: Maximum items to show per category;
+                ``None`` lists every item (the full report a file carries)
 
         Returns:
             Formatted difference report string
@@ -517,7 +518,10 @@ class HierarchyAnalyzer:
                     for key, value in diff.details.items():
                         report_lines.append(f"    {key}: {value}")
 
-                if len(type_diffs) > max_items_per_category:
+                if (
+                    max_items_per_category is not None
+                    and len(type_diffs) > max_items_per_category
+                ):
                     remaining = len(type_diffs) - max_items_per_category
                     report_lines.append(f"  ... and {remaining} more items")
 

@@ -78,6 +78,20 @@ class StrTest(BaseTestCase):
             self.assertNotEqual(StrUtils.set_case("aB c", case), "", case)
         self.assertEqual(StrUtils.set_case("aB c", "title"), "Ab C")
 
+    def test_upper_first_and_upper_initials_keep_the_rest(self):
+        """The name-safe forms of 'capitalize' / 'title': they raise first
+        letters and never lower one, so camelCase and side markers survive
+        (Python's own turned 'myBigBox' into 'Mybigbox', 'arm_L_ctrl' into
+        'Arm_l_ctrl')."""
+        self.assertEqual(StrUtils.set_case("myBigBox", "upper_first"), "MyBigBox")
+        self.assertEqual(StrUtils.set_case("arm_L_ctrl", "upper_first"), "Arm_L_ctrl")
+        self.assertEqual(StrUtils.set_case("arm_L_ctrl", "upper_initials"), "Arm_L_Ctrl")
+        self.assertEqual(StrUtils.set_case("myBigBox", "upper_initials"), "MyBigBox")
+        self.assertEqual(StrUtils.set_case("lod0_geo pCube1", "upper_initials"), "Lod0_Geo PCube1")
+        self.assertEqual(StrUtils.set_case("_x", "upper_first"), "_x")
+        self.assertIn("upper_first", StrUtils.CASES)
+        self.assertIn("upper_initials", StrUtils.CASES)
+
     def test_apply_name_rule_dispatches_to_each_legalizer(self):
         text = "Red Door  Lock."
         self.assertEqual(StrUtils.apply_name_rule(text, "legal"), "Red_Door__Lock_")
@@ -88,6 +102,15 @@ class StrTest(BaseTestCase):
         self.assertEqual(set(StrUtils.NAME_RULES), {"legal", "sanitized", "filename"})
         with self.assertRaises(ValueError):
             StrUtils.apply_name_rule(text, "shout")
+
+    def test_to_identifier(self):
+        """A scene-node identifier: every other character becomes '_', and a
+        leading digit gets a '_' in front rather than being lost."""
+        self.assertEqual(StrUtils.to_identifier("my box-1"), "my_box_1")
+        self.assertEqual(StrUtils.to_identifier("1box"), "_1box")
+        self.assertEqual(StrUtils.to_identifier("crate_#"), "crate__")
+        self.assertEqual(StrUtils.to_identifier(""), "")
+        self.assertEqual(StrUtils.to_identifier("_ok9"), "_ok9")
 
     def test_set_case_whitespace(self):
         """Test set_case with whitespace strings."""
@@ -1395,6 +1418,82 @@ class StrTest(BaseTestCase):
         )
 
     # -------------------------------------------------------------------------
+    # sequence_names Tests (the suffix-by-location plan both DCCs share)
+    # -------------------------------------------------------------------------
+
+    def test_sequence_names_numbers_in_the_given_order(self):
+        """Old numbers are stripped and each name gets its place."""
+        out = StrUtils.sequence_names(
+            {"a": "tile12", "b": "tile_3"},
+            order=lambda keys: sorted(keys, reverse=True),
+            strip_trailing_ints=True,
+        )
+        self.assertEqual(list(out.items()), [("b", "tile_01"), ("a", "tile_02")])
+
+    def test_sequence_names_takes_plain_names(self):
+        self.assertEqual(
+            StrUtils.sequence_names(["rock"], alphabetical=True),
+            {"rock": "rock_A"},
+        )
+
+    def test_sequence_names_number_separators(self):
+        """Blender numbers a duplicate ``tile.001``: the dot goes with it."""
+        names = {"x": "tile.001", "y": "tile.002"}
+        kept = StrUtils.sequence_names(names, strip_trailing_ints=True)
+        self.assertEqual(kept, {"x": "tile._01", "y": "tile._02"})
+        dotted = StrUtils.sequence_names(
+            names, strip_trailing_ints=True, number_separators="._"
+        )
+        self.assertEqual(dotted, {"x": "tile_01", "y": "tile_02"})
+
+    def test_sequence_names_rerun_strips_only_its_own_letters(self):
+        """A batch's run of letters from A is this tool's; a lone side marker
+        (``_L``) is content and stays."""
+        rerun = StrUtils.sequence_names(
+            {"1": "tile_A", "2": "tile_B", "3": "tile_C"}, alphabetical=True
+        )
+        self.assertEqual(list(rerun.values()), ["tile_A", "tile_B", "tile_C"])
+        side = StrUtils.sequence_names({"1": "arm_L", "2": "arm_R"}, alphabetical=True)
+        self.assertEqual(list(side.values()), ["arm_L_A", "arm_R_B"])
+
+    def test_sequence_names_independent_groups_keep_a_type_suffix(self):
+        """Each base numbers on its own; a kept type suffix moves to the end
+        (and is dropped with ``strip_defined_suffixes``)."""
+        names = {
+            "c1": "Container_01_GRP",
+            "c2": "Container_02_GRP",
+            "p1": "pipe7",
+        }
+        kept = StrUtils.sequence_names(
+            names,
+            strip_trailing_ints=True,
+            valid_suffixes=["_GRP"],
+            independent_groups=True,
+        )
+        self.assertEqual(
+            kept,
+            {"c1": "Container_01_GRP", "c2": "Container_02_GRP", "p1": "pipe_01"},
+        )
+        dropped = StrUtils.sequence_names(
+            names,
+            strip_trailing_ints=True,
+            strip_defined_suffixes=True,
+            valid_suffixes=["_GRP"],
+            independent_groups=True,
+        )
+        self.assertEqual(dropped["c2"], "Container_02")
+        ungrouped = StrUtils.sequence_names(
+            names,
+            strip_trailing_ints=True,
+            strip_defined_suffixes=True,
+            valid_suffixes=["_GRP"],
+        )
+        self.assertEqual(
+            ungrouped,
+            {"c1": "Container_01", "c2": "Container_02", "p1": "pipe_03"},
+        )
+
+    # -------------------------------------------------------------------------
     # resolve_name_collisions Tests
     # -------------------------------------------------------------------------
 
@@ -2000,7 +2099,7 @@ class StrTest(BaseTestCase):
     def test_export_profile_reads_the_rule_from_here(self):
         """`ExportProfile.legal_name` is a pass-through, not a second copy.
 
-        uitk's `SwitchboardNameMixin.convert_to_legal_name` calls this too, so
+        uitk's `Switchboard.convert_to_legal_name` calls this too, so
         the widget the switchboard builds and the key the reader derives agree
         by construction rather than by two implementations staying in step.
         """

@@ -9,7 +9,11 @@ contract -- a reorganised project, a scene migrated to another module, a
 teammate's machine with the project on another drive -- so every tool that reads
 such a record ends up needing the same four answers:
 
-* which file each name means NOW (:meth:`FileDependencies.resolve`);
+* which file each name means NOW (:meth:`FileDependencies.resolve`): its own
+  recorded folder, else the one file of that name the search folders and the
+  walk hold (:meth:`FileDependencies.candidates`). Several different files of
+  one name are AMBIGUOUS and come back with their candidates
+  (:meth:`FileDependencies.choose`), never a silent first or newest pick;
 * where a consumer that can only join a name against a list of folders should
   look first (:meth:`FileDependencies.search_dirs`);
 * which names a new batch of outputs must not take, because something else
@@ -18,7 +22,8 @@ such a record ends up needing the same four answers:
 * which files a batch's owners stopped reading, now that nothing reads them
   -- set aside, never deleted (:meth:`FileDependencies.remove_superseded`,
   :meth:`FileDependencies.set_aside`);
-* how to gather the files into one folder (:meth:`FileDependencies.relocate`);
+* how to gather the files into one folder (:meth:`FileDependencies.relocate`,
+  over :class:`~pythontk.file_utils.file_collect.FileCollect`'s plan);
 * which names the files under a folder still reference, read from their bytes
   without the app that wrote them (:meth:`FileDependencies.scan_references`,
   :meth:`FileDependencies.reference_bytes`) -- what a purge of derived files
@@ -31,7 +36,9 @@ records and hands the rules the data.
 """
 
 import errno
+import fnmatch
 import os
+import posixpath
 import re
 import shutil
 from typing import (
@@ -40,9 +47,11 @@ from typing import (
     Callable,
     Dict,
     FrozenSet,
+    Hashable,
     Iterable,
     Iterator,
     List,
+    Mapping,
     Optional,
     Pattern,
     Sequence,
@@ -53,6 +62,7 @@ from typing import (
 
 from pythontk.core_utils.logging_mixin import LoggingMixin
 from pythontk.file_utils._file_utils import FileUtils
+from pythontk.file_utils.tiled_path import TiledPath
 
 
 class FileDependencies(LoggingMixin):
@@ -62,7 +72,8 @@ class FileDependencies(LoggingMixin):
 
         {"name": file name, "dir": recorded folder, "owners": [owner, ...],
          "path": absolute path or None, "found_by": "hint" | "search" | None,
-         "note": "" | why an unresolved file stayed unresolved}
+         "note": "" | why an unresolved file stayed unresolved,
+         "candidates": [] | the different same-named files that made it ambiguous}
     """
 
     #: How a dependency was located. ``"hint"``: its own recorded folder still
@@ -110,8 +121,18 @@ class FileDependencies(LoggingMixin):
     )
 
     @staticmethod
-    def _spelled(path: str) -> str:
-        """*path* with forward slashes -- except a UNC path's leading ``\\\\``.
+    def file_name(path: Any) -> str:
+        """The file name *path* ends in, whichever system spelled it: a record
+        written on Windows names ``C:\\tex\\wood.png``, whose POSIX
+        ``os.path.basename`` is the whole string -- a name no file carries.
+        ``""`` for none."""
+        return posixpath.basename(str(path or "").replace("\\", "/"))
+
+    @staticmethod
+    def spelled(path: str) -> str:
+        """*path* with forward slashes -- except a UNC path's leading ``\\\\``:
+        the spelling every path this class and :class:`FileCollect` hand back
+        takes.
 
         ``//server/share`` is a valid spelling to Windows, but Blender reads a
         leading ``//`` as RELATIVE TO THE .blend, so a UNC folder spelled that
@@ -139,10 +160,51 @@ class FileDependencies(LoggingMixin):
         """
         readers: Dict[str, set] = {}
         for owner, name, *_rest in refs:
-            key = os.path.basename(str(name or "")).lower()
+            key = FileDependencies.file_name(name).lower()
             if key:
                 readers.setdefault(key, set()).add(owner)
         return {key: frozenset(owners) for key, owners in readers.items()}
+
+    @staticmethod
+    def strangers(
+        folder: str,
+        stem: str,
+        ext: str,
+        claims: Mapping[str, Any],
+        wrote: Callable[[str], bool],
+    ) -> Set[str]:
+        """The files in *folder* a write naming ``<stem>`` must not replace:
+        ``<stem><ext>`` / ``<stem>_<k><ext>`` on disk (any case) that nothing
+        the host knows reads -- no key of *claims* (:meth:`claims`) -- and the
+        host did not write itself (*wrote*, handed the lower-case name).
+
+        :meth:`claims` holds only one scene's readers: two scenes in one
+        project whose names agree write the same files, and the second's write
+        would replace the first's. A file the host wrote and no longer reads
+        (a revert) stays its own to replace.
+
+        Parameters:
+            folder: The folder the write lands in.
+            stem: The name the write takes, without its ``_<k>`` or extension.
+            ext: The extension, with its dot.
+            claims: ``{lower-case file name: readers}``.
+            wrote: Whether the host wrote a file, by its lower-case name.
+
+        Returns:
+            Absolute paths; empty when *folder* cannot be listed.
+        """
+        try:
+            names = os.listdir(folder)
+        except OSError:
+            return set()
+        pattern = re.compile(rf"{re.escape(stem)}(_\d+)?{re.escape(ext)}", re.IGNORECASE)
+        return {
+            os.path.abspath(os.path.join(folder, name))
+            for name in names
+            if pattern.fullmatch(name)
+            and name.lower() not in claims
+            and not wrote(name.lower())
+        }
 
     @classmethod
     def remove_superseded(
@@ -225,7 +287,7 @@ class FileDependencies(LoggingMixin):
             if FileUtils.is_rooted_path(path):
                 read.setdefault(key(path), path)
             else:
-                lost.add(os.path.basename(str(name or path)).lower())
+                lost.add(cls.file_name(name or path).lower())
         identities: Optional[set] = None
         out: List[str] = []
         seen: set = set()
@@ -320,7 +382,7 @@ class FileDependencies(LoggingMixin):
             os.path.basename(path),
             folder,
         )
-        return cls._spelled(target)
+        return cls.spelled(target)
 
     @staticmethod
     def _cross_device(error: OSError) -> bool:
@@ -424,12 +486,15 @@ class FileDependencies(LoggingMixin):
     def find_files(names: Iterable[str], root: str) -> List[str]:
         """Every file under *root*, recursively, whose name is one of *names*.
 
-        Names compare without case. The default search :meth:`resolve` and
-        :meth:`relocate` walk with; a host with a texture walk of its own (tile
-        tokens) passes that instead, walking with :meth:`walk` too. Links are
-        not followed, and no :attr:`WALK_SKIP_DIRS` folder is entered: a file
-        set aside in ``_superseded`` keeps its name, and a walk that found it
-        would bind it again.
+        Names compare without case. A name carrying a tile / frame token
+        (``rock.<UDIM>.png``, :class:`TiledPath`) matches each file of its
+        set, as strictly as :meth:`TiledPath.tiles` globs one. The default
+        search :meth:`resolve`, :meth:`candidates` and :meth:`relocate` walk
+        with; a host with a texture walk of its own passes that instead,
+        walking with :meth:`walk` too. Links are not followed, and no
+        :attr:`WALK_SKIP_DIRS` folder is entered: a file set aside in
+        ``_superseded`` keeps its name, and a walk that found it would bind
+        it again.
 
         Parameters:
             names: File names (a path's base name is used).
@@ -438,10 +503,20 @@ class FileDependencies(LoggingMixin):
         Returns:
             The matching paths, in walk order.
         """
-        wanted = {os.path.basename(str(n)).lower() for n in names}
+        wanted: Set[str] = set()
+        patterns: List[str] = []
+        for name in names:
+            base = FileDependencies.file_name(name).lower()
+            if TiledPath.has_token(base):
+                patterns.append(TiledPath.wildcard(base, None).lower())
+            elif base:
+                wanted.add(base)
         hits: List[str] = []
         for folder, _dirs, files in FileDependencies.walk(root):
-            hits.extend(os.path.join(folder, n) for n in files if n.lower() in wanted)
+            for name in files:
+                low = name.lower()
+                if low in wanted or any(fnmatch.fnmatchcase(low, p) for p in patterns):
+                    hits.append(os.path.join(folder, name))
         return hits
 
     @classmethod
@@ -469,6 +544,141 @@ class FileDependencies(LoggingMixin):
         name = str(name).lower()
         return name in cls.WALK_SKIP_DIRS or name.startswith(".trash-")
 
+    @staticmethod
+    def on_disk(path: str) -> bool:
+        """Whether a file is behind *path* -- a tile / frame pattern when any
+        file of its set is (:meth:`TiledPath.tiles`)."""
+        return bool(path) and bool(TiledPath.tiles(path))
+
+    @classmethod
+    def same_content(cls, path_a: str, path_b: str) -> bool:
+        """Whether two existing files -- or two tile sets -- hold the same bytes.
+
+        A set is the same as another when both hold the same tiles (by name,
+        any case) and each tile pair is byte-identical
+        (:meth:`FileUtils.has_same_content`). A set is never the same as a
+        single file.
+        """
+        token_a, token_b = TiledPath.has_token(path_a), TiledPath.has_token(path_b)
+        if token_a != token_b:
+            return False
+        if not token_a:
+            return FileUtils.has_same_content(path_a, path_b)
+        tiles_a = {os.path.basename(t).lower(): t for t in TiledPath.tiles(path_a)}
+        tiles_b = {os.path.basename(t).lower(): t for t in TiledPath.tiles(path_b)}
+        return (
+            bool(tiles_a)
+            and tiles_a.keys() == tiles_b.keys()
+            and all(FileUtils.has_same_content(tiles_a[k], tiles_b[k]) for k in tiles_a)
+        )
+
+    @classmethod
+    def choose(cls, paths: Iterable[str]) -> Tuple[Optional[str], List[str]]:
+        """The one file *paths* mean, or the different files that make them ambiguous.
+
+        THE rule every lookup by file name here and in the hosts shares
+        (:meth:`resolve`, a texture tool's Resolve Missing, a Collect's
+        search): one file reached through several spellings is one
+        candidate, and so are files whose contents are identical
+        (:meth:`same_content`; the first spelling is kept) -- either answer
+        reads the same bytes. Several different files are never settled by
+        their order or their age: the caller gets them back to show.
+
+        Parameters:
+            paths: Candidate files (or tile patterns), in priority order.
+
+        Returns:
+            ``(path, [])`` when they come down to one, ``(None, candidates)``
+            when they do not -- the different files, in order -- and
+            ``(None, [])`` for none.
+        """
+        distinct: List[str] = []
+        spelled: Set[str] = set()
+        for path in paths:
+            path = str(path or "")
+            key = os.path.normcase(os.path.abspath(path)) if path else ""
+            if not key or key in spelled:
+                continue
+            spelled.add(key)
+            if any(
+                FileUtils.is_same_file(path, kept) or cls.same_content(path, kept)
+                for kept in distinct
+            ):
+                continue
+            distinct.append(cls.spelled(os.path.abspath(path)))
+        if len(distinct) == 1:
+            return distinct[0], []
+        return None, distinct
+
+    @classmethod
+    def candidates(
+        cls,
+        names: Iterable[str],
+        search_dirs: Iterable[str] = (),
+        walk_root: str = "",
+        find_files: Optional[Callable[[List[str], str], List[str]]] = None,
+    ) -> Dict[str, List[str]]:
+        """Every file of each name in *search_dirs* and under *walk_root*.
+
+        The search behind every lookup by name: each search folder is a plain
+        join, in order (a consumer that joins names would use that order), then
+        ONE walk of *walk_root* for all the names (*find_files*). A tile /
+        frame name is a set: each folder holding a tile of it is one
+        candidate, spelled as the pattern in that folder. Nothing is chosen
+        here -- :meth:`choose` is the rule that does.
+
+        Parameters:
+            names: File names (a path's base name is used).
+            search_dirs: Folders to join each name against.
+            walk_root: The folder walked for them; ``""`` for no walk.
+            find_files: ``(names, root) -> paths``; default :meth:`find_files`.
+
+        Returns:
+            ``{lower-case name: [candidate path, ...]}`` -- every name asked
+            for, in search-folder then walk order (one spelling may repeat; a
+            caller hands the list to :meth:`choose`).
+        """
+        asked: Dict[str, str] = {}
+        for name in names:
+            base = cls.file_name(name)
+            if base:
+                asked.setdefault(base.lower(), base)
+        found: Dict[str, List[str]] = {key: [] for key in asked}
+        for folder in search_dirs:
+            if not folder:
+                continue
+            for key, base in asked.items():
+                path = os.path.join(folder, base)
+                if cls.on_disk(path):
+                    found[key].append(cls.spelled(os.path.abspath(path)))
+        if asked and walk_root and os.path.isdir(walk_root):
+            sets = {
+                key: TiledPath.wildcard(key, None).lower()
+                for key in asked
+                if TiledPath.has_token(key)
+            }
+            for hit in (find_files or cls.find_files)(list(asked.values()), walk_root):
+                low = os.path.basename(hit).lower()
+                if low in found and low not in sets:
+                    found[low].append(cls.spelled(os.path.abspath(hit)))
+                    continue
+                for key, pattern in sets.items():
+                    if fnmatch.fnmatchcase(low, pattern):
+                        spelled = os.path.join(os.path.dirname(hit), asked[key])
+                        spelled = cls.spelled(os.path.abspath(spelled))
+                        if spelled not in found[key]:
+                            found[key].append(spelled)
+        return found
+
+    @staticmethod
+    def _ambiguous_note(candidates: Sequence[str]) -> str:
+        """The ``note`` of a record :meth:`choose` would not settle."""
+        folders = ", ".join(os.path.dirname(c) for c in candidates)
+        return (
+            f"ambiguous: {len(candidates)} same-named files ({folders}) -- "
+            "not guessing; pick one"
+        )
+
     @classmethod
     def resolve(
         cls,
@@ -477,19 +687,23 @@ class FileDependencies(LoggingMixin):
         walk_root: str = "",
         find_files: Optional[Callable[[List[str], str], List[str]]] = None,
         resolve_hint: Optional[Callable[[str, str], str]] = None,
+        key: Optional[Callable[[Any, str], Hashable]] = None,
     ) -> List[Dict[str, Any]]:
         """Every file *refs* name, resolved on disk NOW; one record per unique name.
 
         Each name is looked for in its recorded folders first (the hint -- every
         distinct folder its owners recorded, in first-seen order: after a
         partial repath the owners of one file can disagree, and the stale one
-        must not hide the one that holds it), then in *search_dirs* in order -- each a plain join, the order a
-        consumer that joins names would use, so the two cannot disagree about
-        a file. A name still missing is then looked for under *walk_root*
-        (recursively, with *find_files*): a UNIQUE hit resolves it
-        (``found_by`` = ``"search"``); several same-named files leave it
-        unresolved with the count in ``note``, rather than guessed at -- the
-        rule a texture tool uses for rebinding a file by name.
+        must not hide the one that holds it). A name no recorded folder holds
+        is SEARCHED: every same-named file in *search_dirs* (each a plain join)
+        and under *walk_root* (recursively, with *find_files*) is a candidate
+        (:meth:`candidates`), and :meth:`choose` decides -- one file (or
+        identical copies) resolves it, ``found_by`` = ``"search"``; several
+        different files leave it unresolved, its ``candidates`` listed and the
+        reason in ``note``. A stale same-named file in a search folder is
+        never taken over a newer one elsewhere because the folder was searched
+        first. A tile / frame name (``rock.<UDIM>.png``) is a set, present
+        when any of its tiles is.
 
         Parameters:
             refs: ``(owner, file name, recorded folder)`` references. A name may
@@ -503,71 +717,68 @@ class FileDependencies(LoggingMixin):
                 project); default: the recorded folder as it is. Handed the
                 folder exactly as recorded -- a respelling here is what turned a
                 UNC share into a Blender-relative ``//`` path.
+            key: ``(owner, file name) -> key``: which references share a
+                record. Default: the lower-case name -- a record names its file
+                by name. A reader that names its file by PATH (a texture node)
+                passes the owner, so two same-named files keep a record each.
 
         Returns:
             The dependency records (see the class docstring), in first-seen order.
         """
-        deps: Dict[str, Dict[str, Any]] = {}
-        recorded: Dict[str, List[str]] = {}  # name key -> distinct folders
+        key_of = key or (lambda _owner, name: name.lower())
+        deps: Dict[Hashable, Dict[str, Any]] = {}
+        recorded: Dict[Hashable, List[str]] = {}  # record key -> distinct folders
         for owner, name, folder, *_rest in refs:
-            name = os.path.basename(str(name or ""))
+            name = cls.file_name(name)
             if not name:
                 continue
-            key = name.lower()
-            dep = deps.get(key)
+            rec = key_of(owner, name)
+            dep = deps.get(rec)
             if dep is None:
-                dep = deps[key] = {
+                dep = deps[rec] = {
                     "name": name,
                     "dir": str(folder or ""),
                     "owners": [],
                     "path": None,
                     "found_by": None,
                     "note": "",
+                    "candidates": [],
                 }
-                recorded[key] = []
+                recorded[rec] = []
             dep["owners"].append(owner)
             folder = str(folder or "")
             if folder and all(
-                os.path.normcase(folder) != os.path.normcase(f) for f in recorded[key]
+                os.path.normcase(folder) != os.path.normcase(f) for f in recorded[rec]
             ):
-                recorded[key].append(folder)
+                recorded[rec].append(folder)
 
-        search_dirs = list(search_dirs)
-        for key, dep in deps.items():
-            attempts = [
-                (
-                    cls.FOUND_BY_HINT,
-                    resolve_hint(folder, dep["name"]) if resolve_hint else folder,
-                    folder,
-                )
-                for folder in recorded[key]
-            ]
-            attempts.extend((cls.FOUND_BY_SEARCH, d, None) for d in search_dirs)
-            for found_by, folder, spelling in attempts:
-                candidate = os.path.join(folder, dep["name"]) if folder else ""
-                if candidate and os.path.isfile(candidate):
-                    dep["path"] = cls._spelled(os.path.abspath(candidate))
-                    dep["found_by"] = found_by
-                    if spelling is not None:
-                        dep["dir"] = spelling  # the recorded folder that held it
+        for rec, dep in deps.items():
+            for folder in recorded[rec]:
+                where = resolve_hint(folder, dep["name"]) if resolve_hint else folder
+                candidate = os.path.join(where, dep["name"]) if where else ""
+                if candidate and cls.on_disk(candidate):
+                    dep["path"] = cls.spelled(os.path.abspath(candidate))
+                    dep["found_by"] = cls.FOUND_BY_HINT
+                    dep["dir"] = folder  # the recorded folder that held it
                     break
 
         pending = [d for d in deps.values() if d["path"] is None]
-        if pending and walk_root and os.path.isdir(walk_root):
-            find = find_files or cls.find_files
-            by_name: Dict[str, List[str]] = {}
-            for hit in find([d["name"] for d in pending], walk_root):
-                by_name.setdefault(os.path.basename(hit).lower(), []).append(hit)
-            for dep in pending:
-                candidates = by_name.get(dep["name"].lower()) or []
-                if len(candidates) == 1:
-                    dep["path"] = cls._spelled(os.path.abspath(candidates[0]))
-                    dep["found_by"] = cls.FOUND_BY_SEARCH
-                elif candidates:
-                    dep["note"] = (
-                        f"ambiguous: {len(candidates)} same-named files under "
-                        f"{walk_root} -- not guessing"
-                    )
+        if not pending:
+            return list(deps.values())
+        found = cls.candidates(
+            [d["name"] for d in pending],
+            search_dirs=search_dirs,
+            walk_root=walk_root,
+            find_files=find_files,
+        )
+        for dep in pending:
+            path, several = cls.choose(found.get(dep["name"].lower()) or [])
+            if path:
+                dep["path"] = path
+                dep["found_by"] = cls.FOUND_BY_SEARCH
+            elif several:
+                dep["candidates"] = several
+                dep["note"] = cls._ambiguous_note(several)
         return list(deps.values())
 
     @classmethod
@@ -682,9 +893,37 @@ class FileDependencies(LoggingMixin):
             )
         return placed
 
+    @staticmethod
+    def keep_read_elsewhere(
+        deps: Iterable[Dict[str, Any]], claims: Mapping[str, Any], reader: Any
+    ) -> List[str]:
+        """Mark each record *reader* also reads ``keep_source`` -- a move copies it
+        instead (:meth:`relocate`) -- and return their names.
+
+        A host's records hold only its own scene's readers; one that reads a
+        file another scene does too (*reader*, in the host's :meth:`claims`)
+        must not take the file away from it.
+
+        Parameters:
+            deps: Dependency records (``name``, or a host's ``map``).
+            claims: ``{lower-case file name: readers}`` (:meth:`claims`).
+            reader: The reader that marks a file read elsewhere.
+        """
+        kept = []
+        for dep in deps:
+            name = FileDependencies.file_name(dep.get("name") or dep.get("map"))
+            if reader in claims.get(name.lower(), ()):
+                dep["keep_source"] = True
+                kept.append(name)
+        return kept
+
     @classmethod
     def copy_files(
-        cls, sources: Iterable[str], dest_dir: str, mode: str = "copy"
+        cls,
+        sources: Iterable[str],
+        dest_dir: str,
+        mode: str = "copy",
+        progress: Optional[Callable[[int, int], Any]] = None,
     ) -> List[Tuple[str, str]]:
         """Copy (or, ``mode="move"``, move) *sources* into *dest_dir*, without clobbering.
 
@@ -703,12 +942,17 @@ class FileDependencies(LoggingMixin):
             sources: The files to copy or move.
             dest_dir: The folder they go into.
             mode: ``"copy"`` or ``"move"``.
+            progress: ``progress(done, total)`` after each file; ``False``
+                back stops it (the files so far are returned).
 
         Returns:
             ``[(source, destination)]`` for each file now at the destination.
         """
         landed: List[Tuple[str, str]] = []
-        for src in sources:
+        sources = list(sources)
+        for done, src in enumerate(sources, 1):
+            if progress is not None and done > 1 and progress(done - 1, len(sources)) is False:
+                break
             dst = os.path.join(dest_dir, os.path.basename(src))
             try:
                 if FileUtils.is_same_file(src, dst):
@@ -749,15 +993,23 @@ class FileDependencies(LoggingMixin):
         find_files: Optional[Callable[[List[str], str], List[str]]] = None,
         copy: Optional[Callable[[List[str], str, str], List[Tuple[str, str]]]] = None,
     ) -> Dict[str, Any]:
-        """Gather *deps*' files into *dest_dir*.
+        """Gather *deps*' files into *dest_dir* -- a Collect over records by name.
 
-        A resolved dependency is its own source; an unresolved one is searched
-        for under *source_dir* (recursively; the NEWEST same-named file wins --
-        the one most likely to be the current version). A source already in
-        *dest_dir* needs no file operation. The caller repoints its records at
-        the files that ended up there: every ``copied`` destination and every
-        ``in_place`` source. With *dry_run* nothing is created or copied -- the
-        plan comes back as it would run.
+        A resolved dependency is its own source. An unresolved one is searched
+        for under *source_dir* (:meth:`candidates`), with its own candidates
+        when it has some; :meth:`choose` decides, so several different
+        same-named files leave it in ``ambiguous`` rather than guessed at. Where
+        each file lands is :meth:`FileCollect.plan`'s: its name kept, flat in
+        *dest_dir* unless a different file of that name already is (or is
+        gathered with it) -- then under the shortest run of its own parent
+        folders that tells them apart -- and a source already under
+        *dest_dir* stays where it is. The caller repoints each record at the
+        folder its file ended up in: every ``copied`` destination's and every
+        ``in_place`` source's. With *dry_run* nothing is created or copied --
+        the plan comes back as it would run.
+
+        A dependency carrying ``"keep_source": True`` is copied in a move (a
+        file another reader still needs).
 
         Parameters:
             deps: Dependency records (:meth:`resolve`).
@@ -767,56 +1019,74 @@ class FileDependencies(LoggingMixin):
             dry_run: Plan only.
             find_files: ``(names, root) -> paths``; default :meth:`find_files`.
             copy: ``(sources, dest_dir, mode) -> [(src, dst)]``, the host's own
-                collision policy; default :meth:`copy_files`.
+                copier (:meth:`FileCollect.apply`); default :meth:`copy_files`.
 
         Returns:
             ``{"relocate": [(src, dst)], "in_place": [src], "missing": [deps],
-            "copied": [(src, dst)]}``.
+            "ambiguous": [deps, each with its "candidates"], "blocked": [deps
+            no folder under the destination is free for], "copied": [(src,
+            dst)], "plan": [rows]}`` (rows: :meth:`FileCollect.plan`).
         """
+        # Deferred: the Collect sits above this module -- it resolves through it.
+        from pythontk.file_utils.file_collect import FileCollect
+
         result: Dict[str, Any] = {
             "relocate": [],
             "in_place": [],
             "missing": [],
+            "ambiguous": [],
+            "blocked": [],
             "copied": [],
+            "plan": [],
         }
         if not deps:
             return result
-        dest_dir = cls._spelled(dest_dir)
+        dest_dir = cls.spelled(dest_dir)
 
-        sources = {d["name"].lower(): d["path"] for d in deps if d.get("path")}
-        pending = [d["name"] for d in deps if d["name"].lower() not in sources]
-        if pending and source_dir and os.path.isdir(source_dir):
-            newest: Dict[str, Tuple[float, str]] = {}
-            for hit in (find_files or cls.find_files)(pending, source_dir):
-                key = os.path.basename(hit).lower()
-                try:
-                    mtime = os.path.getmtime(hit)
-                except OSError:
-                    mtime = 0.0
-                if key not in newest or mtime > newest[key][0]:
-                    newest[key] = (mtime, hit)
-            for key, (_mtime, hit) in newest.items():
-                sources[key] = cls._spelled(os.path.abspath(hit))
-        result["missing"] = [d for d in deps if d["name"].lower() not in sources]
-
-        for src in sources.values():
-            # The filesystem's answer, not the spellings': a dest_dir reached
-            # through a junction or a mapped drive IS the source folder, and
-            # planning a move there deleted the only copy.
-            if FileUtils.is_same_file(os.path.dirname(os.path.abspath(src)), dest_dir):
-                result["in_place"].append(src)
+        pending = [d["name"] for d in deps if not d.get("path")]
+        found = (
+            cls.candidates(pending, walk_root=source_dir, find_files=find_files)
+            if pending and source_dir
+            else {}
+        )
+        entries = []
+        for dep in deps:
+            source, several = (dep["path"], []) if dep.get("path") else cls.choose(
+                list(dep.get("candidates") or [])
+                + found.get(dep["name"].lower(), [])
+            )
+            entries.append(
+                {
+                    "owner": dep["name"],
+                    "source": source,
+                    "candidates": several,
+                    "keep_source": bool(dep.get("keep_source")),
+                    "note": dep.get("note") or "",
+                    "dep": dep,
+                }
+            )
+        rows = FileCollect.plan(entries, dest_dir)
+        result["plan"] = rows
+        for row in rows:
+            status, dep = row["status"], row["dep"]
+            if status == FileCollect.IN_PLACE:
+                result["in_place"].append(row["source"])
+            elif status in FileCollect.TRANSFERS:
+                result["relocate"].append((row["source"], row["destination"]))
+            elif status == FileCollect.AMBIGUOUS:
+                result["ambiguous"].append(dict(dep, candidates=row["candidates"]))
+            elif status == FileCollect.BLOCKED:
+                result["blocked"].append(dep)
             else:
-                dst = cls._spelled(os.path.join(dest_dir, os.path.basename(src)))
-                result["relocate"].append((src, dst))
+                result["missing"].append(dep)
         if dry_run or not result["relocate"]:
             return result
 
-        os.makedirs(dest_dir, exist_ok=True)
+        landed = FileCollect.apply(rows, mode=mode, copy=copy)
         result["copied"] = [
-            (cls._spelled(s), cls._spelled(d))
-            for s, d in (copy or cls.copy_files)(
-                [src for src, _dst in result["relocate"]], dest_dir, mode
-            )
+            (row["source"], row["destination"])
+            for row in landed
+            if row["status"] in FileCollect.TRANSFERS
         ]
         return result
 

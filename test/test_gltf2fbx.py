@@ -26,6 +26,7 @@ from pythontk.file_utils.mesh_convert import _gltf2fbx
 from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
 from pythontk.file_utils.mesh_convert.fbx_file import FbxFile
 from pythontk.file_utils.temp_artifacts import TempArtifacts
+from pythontk.math_utils.quaternion import Quaternion
 
 TICKS = 46186158000
 
@@ -551,6 +552,121 @@ class Gltf2FbxTestCase(unittest.TestCase):
         self.assertIsNone(manifest.get(HandoffManifest.SCENE))
         self.assertEqual(self._objects(fbx, "AnimationStack"), [])
 
+    def _rotation_keys(self, eulers):
+        """The FBX Euler keys of "Marker" keyed one frame apart through the
+        rotations *eulers* (XYZ degrees), each its glTF quaternion as stored
+        (float32) beside it."""
+        builder = scene_builder()
+        quats = [Quaternion.from_euler("xyz", e) for e in eulers]
+        stored = [struct.unpack("<4f", struct.pack("<4f", *q)) for q in quats]
+        anim = builder.gltf["animations"][0]
+        anim["samplers"].append(
+            {
+                "input": builder.accessor([i / 30.0 for i in range(len(quats))], "SCALAR"),
+                "output": builder.accessor(stored, "VEC4"),
+            }
+        )
+        anim["channels"].append(
+            {"sampler": len(anim["samplers"]) - 1, "target": {"node": 4, "path": "rotation"}}
+        )
+        _, fbx, _, _ = self._convert(builder)
+        marker = self._models(fbx)["Marker"]["props"][0]
+        links = self._links(fbx)
+        (node,) = [
+            link[1]
+            for link in links
+            if link[0] == b"OP" and link[2] == marker and link[3] == b"Lcl Rotation"
+        ]
+        curves = {c["props"][0]: c for c in self._objects(fbx, "AnimationCurve")}
+        axes = {
+            link[3]: list(self._child(curves[link[1]], "KeyValueFloat")["props"][0])
+            for link in links
+            if link[0] == b"OP" and link[2] == node
+        }
+        keys = list(zip(axes[b"d|X"], axes[b"d|Y"], axes[b"d|Z"]))
+        return keys, stored
+
+    @staticmethod
+    def _turn_between(q, euler):
+        """Degrees between quaternion *q* and the XYZ Euler rotation *euler*."""
+        dot = abs(sum(a * b for a, b in zip(Quaternion.normalize(q), Quaternion.from_euler("xyz", euler))))
+        return math.degrees(2.0 * math.acos(min(1.0, dot)))
+
+    def test_a_near_gimbal_key_lands_as_the_turn_it_states(self):
+        """A key a hair off gimbal lock (Y 89.99 degrees) keeps its X and Z
+        apart: its FBX Euler composes back to the glTF quaternion. The first
+        reader folded every key within 4.5e-4 rad of the lock into X -- this
+        one 3.5e-3 degrees off (measured 2026-11-01). Added: 2026-11-01"""
+        keys, stored = self._rotation_keys([(30.0, 89.99, 20.0), (30.0, 89.99, 20.0)])
+        for key, q in zip(keys, stored):
+            self.assertLess(self._turn_between(q, key), 1e-3, key)
+
+    def test_a_curve_sweeping_through_gimbal_lock_stays_continuous(self):
+        """At the lock only X - Z is fixed, and a key takes the split the key
+        before it carried: a turn swept through Y 90 on X stays on X, one on
+        Z on Z. A fixed split (all on Z, or all on X) spiked whichever curve
+        the sweep did not ride by the whole turn for one frame, composing
+        right only AT the frame. Added: 2026-11-01"""
+        for turn, lock in (
+            ((30.0, 0.0), 90.0),
+            ((0.0, 30.0), 90.0),
+            ((-20.0, 50.0), 90.0),
+            ((-20.0, 50.0), -90.0),
+        ):
+            with self.subTest(turn=turn, lock=lock):
+                ys = [lock + d for d in (-6.0, -3.0, 0.0, 3.0, 6.0)]
+                eulers = [(turn[0], y, turn[1]) for y in ys]
+                keys, stored = self._rotation_keys(eulers)
+                for key, q, want in zip(keys, stored, eulers):
+                    self.assertLess(self._turn_between(q, key), 1e-3, key)
+                    self.assertAlmostEqual(key[0], want[0], delta=1e-3, msg=key)
+                    self.assertAlmostEqual(key[1], want[1], delta=1e-3, msg=key)
+                    self.assertAlmostEqual(key[2], want[2], delta=1e-3, msg=key)
+
+    def test_a_non_finite_key_is_refused_by_name(self):
+        """glTF allows no NaN or infinity in an animation's values: such a file
+        is refused with the node and channel named, and the repair said, never
+        an arithmetic error from deep inside a key conversion."""
+        builder = scene_builder()
+        nan, half = float("nan"), math.sqrt(0.5)
+        builder.gltf["animations"][0]["samplers"][1]["output"] = builder.accessor(
+            [(nan, nan, nan, nan), (0, half, 0, half)], "VEC4"
+        )
+        with self.assertRaisesRegex(ValueError, r"'Turned'.*rotation") as caught:
+            self._convert(builder)
+        self.assertIn("fix_glb_nonfinite_keys", str(caught.exception))
+        self.assertFalse(os.path.exists(os.path.join(self.dir, "out.fbx")))
+
+    def test_a_non_finite_key_time_is_refused_by_name(self):
+        builder = scene_builder()
+        builder.gltf["animations"][0]["samplers"][1]["input"] = builder.accessor(
+            [0.0, float("nan")], "SCALAR"
+        )
+        with self.assertRaisesRegex(ValueError, r"'Turned'.*rotation.*key time"):
+            self._convert(builder)
+        self.assertFalse(os.path.exists(os.path.join(self.dir, "out.fbx")))
+
+    def test_key_times_that_do_not_increase_are_refused_by_name(self):
+        builder = scene_builder()
+        builder.gltf["animations"][0]["samplers"][1]["input"] = builder.accessor(
+            [0.5, 0.25], "SCALAR"
+        )
+        with self.assertRaisesRegex(ValueError, r"'Turned'.*rotation.*increase"):
+            self._convert(builder)
+        self.assertFalse(os.path.exists(os.path.join(self.dir, "out.fbx")))
+
+    def test_a_gltf_refusal_names_no_repair_it_cannot_open(self):
+        """``fix_glb_nonfinite_keys`` opens a .glb only: a .gltf refused for a
+        non-finite key is not sent to it."""
+        builder = scene_builder()
+        nan, half = float("nan"), math.sqrt(0.5)
+        builder.gltf["animations"][0]["samplers"][1]["output"] = builder.accessor(
+            [(nan, nan, nan, nan), (0, half, 0, half)], "VEC4"
+        )
+        with self.assertRaisesRegex(ValueError, r"'Turned'.*rotation") as caught:
+            self._convert(builder, gltf=True)
+        self.assertNotIn("fix_glb_nonfinite_keys", str(caught.exception))
+
     # ------------------------------------------------------------ materials
     def test_images_are_named_for_the_map_they_feed(self):
         """The consumer classifies a manifest file by FILENAME, so an image the
@@ -663,16 +779,6 @@ class Gltf2FbxTestCase(unittest.TestCase):
             MeshConvert.gltf_to_fbx(src, dst)
 
     # ------------------------------------------------------------ math
-    def test_euler_takes_the_spelling_nearest_the_last_key(self):
-        self.assertEqual(
-            _gltf2fbx._euler_near((180.0, 90.0, 180.0), (0.0, 0.0, 0.0)),
-            (0.0, 90.0, 0.0),
-        )
-        self.assertEqual(
-            _gltf2fbx._euler_near((-170.0, 0.0, 0.0), (175.0, 0.0, 0.0)),
-            (190.0, 0.0, 0.0),
-        )
-
     def test_map_suffix_matches_the_blender_pull_rules(self):
         suffix = _gltf2fbx._map_suffix
         self.assertEqual(suffix({"Base Color", "Alpha"}), "Base_Color")

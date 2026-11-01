@@ -13,6 +13,8 @@ package loads none of its modules.
   what texel density, before anything packs.
 - :mod:`~pythontk.geo_utils.uv.transfer` -- :class:`UvTransfer`: texel remap
   between two UV layouts of the same triangles.
+- :mod:`~pythontk.geo_utils.uv.transfer_run` -- :class:`TransferRun`: a
+  Transfer run (UVs OR textures, source -> targets) over a host adapter.
 - :mod:`~pythontk.geo_utils.uv.cylinder_seams` -- :class:`CylinderSeams`: where
   to cut a cylinder / tube / turned mesh (and its developed seed layout).
 

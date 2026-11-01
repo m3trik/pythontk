@@ -64,11 +64,13 @@ from typing import (
     Tuple,
 )
 
+from pythontk.core_utils.engines.scene_export.material_record import MaterialFamilies
 from pythontk.core_utils.engines.scene_export.scene_records import Scope, SceneRecords
 from pythontk.core_utils.engines.scene_export.scene_store import SceneStoreBase
 from pythontk.file_utils._file_utils import FileUtils
 from pythontk.file_utils.file_dependencies import FileDependencies
 from pythontk.file_utils.mesh_convert.fbx_file import FBX_MAGIC, FbxFile
+from pythontk.iter_utils._iter_utils import IterUtils
 
 logger = logging.getLogger(__name__)
 
@@ -280,7 +282,7 @@ class _FbxMediaInternal:
         for child in video.children:
             if child.name == b"Filename" and len(child.props) > 5:
                 filename = bytes(child.props[5:]).decode("utf-8", "replace")
-        return os.path.basename(filename.replace("\\", "/"))
+        return FileDependencies.file_name(filename)
 
     @classmethod
     def _wired_ids(cls, roots: Iterable[_Record]) -> set:
@@ -370,7 +372,7 @@ class _FbxMediaInternal:
         if isinstance(entry, (tuple, list)) and len(entry) == 2:
             return str(entry[0]), str(entry[1])
         path = str(entry)
-        return os.path.basename(path.replace("\\", "/")), path
+        return FileDependencies.file_name(path), path
 
     @staticmethod
     def _media_id(name: str, taken: set) -> int:
@@ -625,16 +627,24 @@ class _FbxMediaInternal:
             for record in root.children:
                 if record.name == b"Model":
                     head = cls._scalars(record)
-                    name = FbxFile._display_name(head[1]) if len(head) > 1 else None
+                    name = FbxFile.display_name(head[1]) if len(head) > 1 else None
                     yield name, record
 
     @classmethod
     def _carrier_props(
         cls, roots: Iterable[_Record], keys: Iterable[str]
     ) -> Iterator[Tuple[Optional[str], str, Any, _Record]]:
-        """:meth:`_carrier_channels`, each with the ``P`` record it was read from."""
+        """:meth:`_carrier_channels`, each with the ``P`` record it was read from.
+
+        A carrier is a Model :meth:`SceneStoreBase.is_carrier` names one: a
+        property of a record's name on another node is an artist's (Maya's FBX
+        exporter writes every custom string attribute), read by no reader --
+        the materials reader (``MeshConvert._carried_record``) and unitytk's
+        ``CarrierFile`` take carriers alone."""
         wanted = {key.encode("utf-8"): key for key in keys}
         for name, record in cls._models(roots):
+            if not SceneStoreBase.is_carrier(name):
+                continue
             for child in record.children:
                 if child.name != b"Properties70":
                     continue
@@ -688,23 +698,6 @@ class _FbxMediaInternal:
             elif key != SceneRecords.HANDOFF.key:
                 first.setdefault(key, (prop, payload))
         return {**first, **own}
-
-
-    @staticmethod
-    def _field_values(payload: Any, path: Sequence[str]) -> Iterator[Any]:
-        """The values at *path* in *payload*; ``"*"`` walks a list."""
-        if not path:
-            yield payload
-            return
-        step, rest = path[0], path[1:]
-        if step == "*":
-            items = payload if isinstance(payload, list) else []
-        elif isinstance(payload, dict) and step in payload:
-            items = [payload[step]]
-        else:
-            items = []
-        for item in items:
-            yield from _FbxMediaInternal._field_values(item, rest)
 
     @staticmethod
     def _scalars(record: _Record) -> List[Any]:
@@ -905,7 +898,7 @@ class _FbxMediaInternal:
                 continue
             head = cls._scalars(record)
             if len(head) > 1 and isinstance(head[0], int):
-                stacks[head[0]] = FbxFile._display_name(head[1]) or ""
+                stacks[head[0]] = FbxFile.display_name(head[1]) or ""
         return stacks
 
     @classmethod
@@ -1026,7 +1019,7 @@ class _FbxMediaInternal:
                     for child in record.children
                     if child.name in wanted and child.prop_count
                 }
-            display = FbxFile._display_name(head[1]) if len(head) > 1 else None
+            display = FbxFile.display_name(head[1]) if len(head) > 1 else None
             rows.append(
                 (record.name.decode("ascii", "replace"), head[0], display or "", arrays)
             )
@@ -1203,7 +1196,7 @@ class _FbxMediaInternal:
         head = cls._scalars(record)
         if new == old or len(head) < 3 or record.prop_count != 3:
             return
-        if FbxFile._display_name(head[1]) != old:
+        if FbxFile.display_name(head[1]) != old:
             return
         label = new.encode("utf-8") + b"\x00\x01" + kind
         record.replaced = (
@@ -1464,9 +1457,13 @@ class FbxMedia(_FbxMediaInternal):
         )
 
     #: Where each scene record names a file by FILE NAME -- what a deliverable
-    #: depends on beyond the textures its materials reference: ``{record key:
-    #: (field path, ...)}``, ``"*"`` walking a list. A record that starts
-    #: naming a file adds its paths here and :meth:`embed_dependencies` ships it.
+    #: depends on: ``{record key: (field path, ...)}``, ``"*"`` walking a list.
+    #: A record that starts naming a file adds its paths here and
+    #: :meth:`embed_dependencies` ships it. The ``materials`` record's maps
+    #: are among them: the FBX exporter embeds only what a material's slots
+    #: carry, and an openPBRSurface reaches the file as a placeholder with
+    #: none, so the map its entry names reached neither Unity nor a GLB built
+    #: from the file (2026-10-31); one the exporter embedded is left as it is.
     DEPENDENCY_FIELDS: Dict[str, Tuple[Tuple[str, ...], ...]] = {
         SceneRecords.LIGHTMAPS.key: (
             ("objects", "*", "map"),
@@ -1478,14 +1475,9 @@ class FbxMedia(_FbxMediaInternal):
             ("planes", "*", "atlas", "texture"),
             ("planes", "*", "horizon", "texture"),
         ),
-    }
-
-    #: Where each record of :attr:`DEPENDENCY_FIELDS` lists the scene nodes it
-    #: describes, one entry per node: ``{record key: (list field, name
-    #: field)}`` -- what :meth:`reader_records` narrows a module's copy by.
-    NODE_ENTRIES: Dict[str, Tuple[str, str]] = {
-        SceneRecords.LIGHTMAPS.key: ("objects", "name"),
-        SceneRecords.SHADOWS.key: ("planes", "name"),
+        SceneRecords.MATERIALS.key: tuple(
+            ("materials", "*", field) for field in MaterialFamilies.TEXTURE_FIELDS
+        ),
     }
 
     @classmethod
@@ -1512,10 +1504,11 @@ class FbxMedia(_FbxMediaInternal):
         export set. A reader takes each record from the scene's own carrier,
         and a module's only where the scene's carries none, the first in file
         order (unitytk ``CarrierImport.Collect``,
-        ``MeshConvert._data_export_carrier``), so a module's copy beside the
+        ``_Sidecar._data_export_carrier``), so a module's copy beside the
         scene's is never applied. A module's copy read alone keeps only the
-        entries whose node the file carries (:attr:`NODE_ENTRIES`; the name
-        exactly, else its namespace-stripped leaf -- the appliers' match), and
+        entries whose node the file carries (``RecordSpec.narrowed``, by the
+        record's ``nodes``: the name exactly, else its namespace-stripped leaf
+        -- the appliers' match), and
         a copy with none of them left names nothing: no reader binds it, so
         neither its maps nor its probe belong to the file. The scene's own
         copy is taken as written: its producer scopes it to the export set.
@@ -1541,46 +1534,16 @@ class FbxMedia(_FbxMediaInternal):
             held = read.get(key)
             if held is None or (own and not held[0]):
                 read[key] = (own, payload)
-        names = leaves = None
-        if nodes is not None:
-            names = {name for name in nodes if name}
-            leaves = {name.rsplit(":", 1)[-1] for name in names}
+        nodes = None if nodes is None else [name for name in nodes if name]
         records: Dict[str, Any] = {}
         for key, (own, payload) in read.items():
-            if not own and names is not None:
-                payload = cls._carried_entries(key, payload, names, leaves)
+            spec = SceneRecords.by_key(key, Scope.DELIVERABLE)
+            if not own and nodes is not None and spec is not None:
+                payload = spec.narrowed(payload, nodes)
                 if payload is None:
                     continue
             records[key] = payload
         return records
-
-    @classmethod
-    def _carried_entries(
-        cls, key: str, payload: Any, names: set, leaves: set
-    ) -> Optional[Any]:
-        """*payload* with only the :attr:`NODE_ENTRIES` entries whose node is
-        among *names* (exactly, else by namespace-stripped leaf in *leaves*);
-        ``None`` when none is. A record that lists no nodes is returned as it
-        is."""
-        spec = cls.NODE_ENTRIES.get(key)
-        if spec is None:
-            return payload
-        field_name, node_field = spec
-        entries = payload.get(field_name) if isinstance(payload, Mapping) else None
-        if not isinstance(entries, list):
-            return None
-        kept = []
-        for entry in entries:
-            node = entry.get(node_field) if isinstance(entry, Mapping) else None
-            if not isinstance(node, str) or not node:
-                continue
-            if node in names or node.rsplit(":", 1)[-1] in leaves:
-                kept.append(entry)
-        if not kept:
-            return None
-        if len(kept) == len(entries):
-            return payload
-        return {**payload, field_name: kept}
 
     @classmethod
     def named_files(cls, payloads: Mapping[str, Iterable[Any]]) -> List[str]:
@@ -1606,10 +1569,10 @@ class FbxMedia(_FbxMediaInternal):
         for key, paths in cls.DEPENDENCY_FIELDS.items():
             for payload in payloads.get(key) or ():
                 for path in paths:
-                    for value in cls._field_values(payload, path):
+                    for value in IterUtils.values_at(payload, path):
                         if not isinstance(value, str):
                             continue
-                        name = os.path.basename(value.strip().replace("\\", "/"))
+                        name = FileDependencies.file_name(value.strip())
                         if name and name.casefold() not in seen:
                             seen.add(name.casefold())
                             names.append(name)
@@ -1623,7 +1586,8 @@ class FbxMedia(_FbxMediaInternal):
         (:meth:`reader_records`: the scene's own record wins, a referenced
         module's names only the nodes the file carries): the lightmaps and
         the reflection probe ``lightmaps`` names, the silhouette,
-        atlas and horizon maps ``shadows`` names. In record order,
+        atlas and horizon maps ``shadows`` names, and every map ``materials``
+        names. In record order,
         each name once (compared without case); a name a manifest wrote with
         a folder (one published before 0.11.0) is its file name.
 
@@ -1927,7 +1891,7 @@ class FbxMedia(_FbxMediaInternal):
                 if gid in driven:
                     head = cls._scalars(source)
                     label = head[1] if len(head) > 1 and isinstance(head[1], bytes) else b""
-                    report["deformed"].append(FbxFile._display_name(label) or str(gid))
+                    report["deformed"].append(FbxFile.display_name(label) or str(gid))
                     continue
                 raw = bytes(source.payload)
                 start, end = cls._prop_span(raw, 0)
@@ -1968,6 +1932,160 @@ class FbxMedia(_FbxMediaInternal):
             part = cls._write_part(target, version, roots, footer_id, magic)
         cls._promote(part, target)
         return report
+
+    #: The legacy ``Properties70`` rows :meth:`state_materials` writes, each
+    #: with the type, label and flags Maya's FBX writer declares it under.
+    LEGACY_MATERIAL_ROWS: Dict[str, Tuple[str, str, str]] = {
+        "DiffuseColor": ("Color", "", "A"),
+        "DiffuseFactor": ("Number", "", "A"),
+        "EmissiveColor": ("Color", "", "A"),
+        "EmissiveFactor": ("Number", "", "A"),
+        "TransparentColor": ("Color", "", "A"),
+        "TransparencyFactor": ("Number", "", "A"),
+        "Opacity": ("double", "Number", ""),
+        # The writer's computed products: set where it wrote them, never added.
+        "Diffuse": ("Vector3D", "Vector", ""),
+        "Emissive": ("Vector3D", "Vector", ""),
+    }
+    _COMPUTED_MATERIAL_ROWS = frozenset({"Diffuse", "Emissive"})
+
+    @staticmethod
+    def legacy_material_values(entry: Mapping[str, Any]) -> Dict[str, Tuple[float, ...]]:
+        """A ``materials`` record entry in FBX's legacy terms -- what a stock
+        reader of the file's own material reads: the base colour as
+        ``DiffuseColor`` x ``DiffuseFactor`` (white times the factor's mean
+        over a colour map, which the reader multiplies in), the emission
+        likewise, and the alpha as Maya writes a transparent Lambert
+        (``TransparentColor`` one minus it, ``TransparencyFactor`` 1,
+        ``Opacity`` it). Read back through ``MaterialFamilies``' ``legacy``
+        family: the same colour, emission and alpha."""
+        base = MaterialFamilies.as_floats(entry.get("baseColorFactor"), 4, 1.0)
+        glow = MaterialFamilies.as_floats(entry.get("emissiveFactor"), 3, 0.0)
+
+        def colour(rgb, mapped):
+            if mapped:
+                return (1.0, 1.0, 1.0), sum(rgb) / 3.0
+            return tuple(rgb), 1.0
+
+        diffuse, diffuse_factor = colour(base[:3], entry.get("baseColorTexture"))
+        emissive, emissive_factor = colour(glow, entry.get("emissiveTexture"))
+        alpha = min(1.0, max(0.0, base[3]))
+        return {
+            "DiffuseColor": diffuse,
+            "DiffuseFactor": (diffuse_factor,),
+            "Diffuse": tuple(c * diffuse_factor for c in diffuse),
+            "EmissiveColor": emissive,
+            "EmissiveFactor": (emissive_factor,),
+            "Emissive": tuple(c * emissive_factor for c in emissive),
+            "TransparentColor": (1.0 - alpha,) * 3,
+            "TransparencyFactor": (1.0,),
+            "Opacity": (alpha,),
+        }
+
+    @classmethod
+    def state_materials(cls, src: str, dst: Optional[str] = None) -> Dict[str, Any]:
+        """Write each ``materials`` record entry onto its FBX material's legacy
+        properties (:meth:`legacy_material_values`), so a reader that knows
+        only the file's own materials -- an engine's stock FBX import -- sees
+        the colour, emission and opacity the record states.
+
+        Maya's FBX writer has no mapping for some surfaces: an openPBRSurface
+        reaches the file as a grey Lambert placeholder, which a stock reader
+        shows grey whatever the material was (measured 2026-10-05, Maya 2025
+        -> Unity). The record (the file's own carrier's, else a referenced
+        module's, as every reader takes it) names each material as the file
+        does, namespace included; a material named only by its leaf joins by
+        that. A post-write pass: the scene is not touched.
+
+        Parameters:
+            src: The FBX to read.
+            dst: Where to write; ``None`` rewrites *src* in place.
+
+        Returns:
+            ``{"materials": [name, ...]}`` -- the materials stated. When the
+            file carries no record, or names none of its materials, it is not
+            written at all.
+
+        Raises:
+            ValueError: *src* is not a binary FBX this writer can re-emit.
+        """
+        key = SceneRecords.MATERIALS.key
+        stated: List[str] = []
+        with (
+            open(src, "rb") as fh,
+            mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ) as buf,
+        ):
+            version, roots, footer_id, magic = cls._load(buf)
+            record = cls.reader_records(cls._carrier_channels(roots, (key,))).get(key)
+            entries: Dict[str, Mapping[str, Any]] = {}
+            for entry in (record or {}).get("materials") or ():
+                if isinstance(entry, Mapping) and isinstance(entry.get("name"), str):
+                    entries.setdefault(entry["name"], entry)
+            if not entries:
+                return {"materials": stated}
+            leaves: Dict[str, Mapping[str, Any]] = {}
+            for name, entry in entries.items():
+                leaves.setdefault(name.rsplit(":", 1)[-1], entry)
+            hlen = cls._header_fmt(version >= 7500)[1]
+            for root in roots:
+                if root.name != b"Objects":
+                    continue
+                for material in root.children:
+                    if material.name != b"Material":
+                        continue
+                    head = cls._scalars(material)
+                    name = FbxFile.display_name(head[1]) if len(head) > 1 else None
+                    if not name:
+                        continue
+                    entry = entries.get(name) or leaves.get(name.rsplit(":", 1)[-1])
+                    if entry is None:
+                        continue
+                    cls._set_material_rows(
+                        material, cls.legacy_material_values(entry), hlen
+                    )
+                    stated.append(name)
+            if not stated:
+                return {"materials": stated}
+            target = dst or src
+            part = cls._write_part(target, version, roots, footer_id, magic)
+        cls._promote(part, target)
+        return {"materials": stated}
+
+    @classmethod
+    def _set_material_rows(
+        cls, material: _Record, values: Mapping[str, Tuple[float, ...]], hlen: int
+    ) -> None:
+        """Set *values* on *material*'s ``Properties70`` rows, as their
+        declared type (:attr:`LEGACY_MATERIAL_ROWS`), adding the rows it lacks
+        but the writer's computed products."""
+        block = cls._properties(material, hlen)
+        s = cls._pack_string
+        pending = {name.encode("utf-8"): tuple(v) for name, v in values.items()}
+
+        def doubles(numbers):
+            return [b"D" + struct.pack("<d", float(n)) for n in numbers]
+
+        for prop in block.children:
+            head = cls._scalars(prop)
+            if len(head) < 4 or head[0] not in pending:
+                continue
+            numbers = pending.pop(head[0])
+            prop.replaced = b"".join(s(h) for h in head[:4]) + b"".join(doubles(numbers))
+            prop.prop_count = 4 + len(numbers)
+        for name, numbers in pending.items():
+            label = name.decode("utf-8")
+            if label in cls._COMPUTED_MATERIAL_ROWS:
+                continue
+            kind, sub, flags = cls.LEGACY_MATERIAL_ROWS[label]
+            block.children.append(
+                cls._new_record(
+                    b"P",
+                    [s(name), s(kind.encode()), s(sub.encode()), s(flags.encode())]
+                    + doubles(numbers),
+                    (),
+                    hlen,
+                )
+            )
 
     @classmethod
     def drop_redundant_properties(
@@ -2032,6 +2150,126 @@ class FbxMedia(_FbxMediaInternal):
             part = cls._write_part(target, version, roots, footer_id, magic)
         cls._promote(part, target)
         return report
+
+    #: The per-corner vector layers a mesh carries, by the array holding them.
+    _VECTOR_LAYERS = {
+        b"LayerElementNormal": b"Normals",
+        b"LayerElementBinormal": b"Binormals",
+        b"LayerElementTangent": b"Tangents",
+    }
+
+    @classmethod
+    def repair_null_normals(cls, src: str, dst: Optional[str] = None) -> Dict[str, int]:
+        """Fill the zero-length normals, binormals and tangents a written FBX carries.
+
+        Maya writes a ``(0, 0, 0)`` normal for each corner of a zero-area face
+        (a hard-edged extrude that never moved), and Substance Painter's FBX
+        reader (Assimp) then throws that mesh's WHOLE normal layer away and
+        recomputes smooth normals, losing every hard edge (measured 2026-10-31;
+        Painter's USD reader keeps them). Each null vector takes the vector of
+        another corner on the same vertex that has one, else a unit vector: a
+        zero-area face draws nothing, so the value only has to be valid.
+        Nothing else in the file changes.
+
+        Parameters:
+            src: The FBX to read.
+            dst: Where to write; ``None`` rewrites *src* in place.
+
+        Returns:
+            ``{mesh name: vectors filled}`` -- the name of the model the
+            geometry is wired to, where there is one. When nothing is null the
+            file is not written at all.
+
+        Raises:
+            ValueError: *src* is not a binary FBX this writer can re-emit.
+        """
+        report: Dict[str, int] = {}
+        with (
+            open(src, "rb") as fh,
+            mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ) as buf,
+        ):
+            version, roots, footer_id, magic = cls._load(buf)
+            sections = {record.name: record for record in roots}
+            objects = sections.get(b"Objects")
+            if objects is None:
+                return report
+            graph = cls._model_graph(objects, sections.get(b"Connections"))
+            model_of: Dict[int, str] = {}
+            for child, parent in graph["links"]:
+                if parent in graph["names"]:
+                    model_of.setdefault(child, graph["names"][parent])
+            for record in objects.children:
+                if record.name != b"Geometry":
+                    continue
+                filled = cls._fill_null_vectors(record)
+                if filled:
+                    gid = graph["id_of"].get(id(record))
+                    head = cls._scalars(record)
+                    name = (
+                        model_of.get(gid)
+                        or (FbxFile.display_name(head[1]) if len(head) > 1 else "")
+                        or f"Geometry {gid}"
+                    )
+                    report[name] = report.get(name, 0) + filled
+            if not report:
+                return report
+            target = dst or src
+            part = cls._write_part(target, version, roots, footer_id, magic)
+        cls._promote(part, target)
+        return report
+
+    @classmethod
+    def _fill_null_vectors(cls, geometry: _Record) -> int:
+        """:meth:`repair_null_normals` for one ``Geometry``; how many it filled."""
+
+        def text(record):
+            value = cls._decoded(record)[0] if record is not None else b""
+            return value.encode() if isinstance(value, str) else bytes(value or b"")
+
+        parts = {child.name: child for child in geometry.children}
+        index = parts.get(b"PolygonVertexIndex")
+        corners = (
+            [i if i >= 0 else ~i for i in cls._decoded(index)[0]]
+            if index is not None
+            else []
+        )
+        filled = 0
+        for layer in geometry.children:
+            array_name = cls._VECTOR_LAYERS.get(layer.name)
+            if array_name is None:
+                continue
+            fields = {child.name: child for child in layer.children}
+            array = fields.get(array_name)
+            if array is None:
+                continue
+            values = list(cls._decoded(array)[0])
+            vectors = [values[i : i + 3] for i in range(0, len(values) - len(values) % 3, 3)]
+            nulls = [k for k, vector in enumerate(vectors) if not any(vector)]
+            if not nulls:
+                continue
+            # The vertex each vector belongs to, where the layer says: another
+            # corner on that vertex lends its vector.
+            owner = None
+            mapping = text(fields.get(b"MappingInformationType"))
+            if (
+                mapping == b"ByPolygonVertex"
+                and text(fields.get(b"ReferenceInformationType")) == b"Direct"
+                and len(vectors) == len(corners)
+            ):
+                owner = corners
+            donors: Dict[int, List[float]] = {}
+            if owner is not None:
+                for k, vector in enumerate(vectors):
+                    if any(vector):
+                        donors.setdefault(owner[k], vector)
+            for k in nulls:
+                vectors[k] = donors.get(owner[k]) if owner is not None else None
+                vectors[k] = vectors[k] or [0.0, 0.0, 1.0]
+            flat = [c for vector in vectors for c in vector] + values[len(vectors) * 3 :]
+            code = bytes(array.payload)[:1].decode("ascii")
+            cls._replace_prop(array, 0, cls._pack_array(code, flat))
+            filled += len(nulls)
+        return filled
 
     @classmethod
     def drop_host_lighting_media(
@@ -2142,10 +2380,21 @@ class FbxMedia(_FbxMediaInternal):
         The post-write step both Scene Exporters and the Unity hand-off run on
         an FBX deliverable. The records name their files by FILE NAME --
         ``lightmaps`` its maps and its reflection probe,
-        ``shadows`` its silhouette, atlas and horizon maps
-        (:meth:`dependencies`) -- and a lighting-only bake leaves its maps on
-        no material, so the FBX used to carry none of them: the consumer
-        copied them in by hand, or imported unlit with a silhouette shadow.
+        ``shadows`` its silhouette, atlas and horizon maps, ``materials``
+        each material's maps (:meth:`dependencies`) -- and a lighting-only
+        bake leaves its maps on no material, so the FBX used to carry none of
+        them: the consumer copied them in by hand, or imported unlit with a
+        silhouette shadow. A material's own map is usually inside already
+        (left as it is); one its slots cannot carry -- an openPBRSurface's --
+        goes in here.
+        The ``audio`` record then states what went in: its ``media`` is the
+        SHA-256 of each audio file the FBX now carries, by the event name that
+        is its stem (:meth:`AudioUtils.media_digests
+        <pythontk.AudioUtils.media_digests>`), the bytes Unity compares a
+        same-named clip against before it reuses one; a digest of a file no
+        longer inside is dropped. Only this pass knows what was embedded, so a
+        write without it carries no digest -- a raw export reads as one from
+        before them, and Unity binds its clips as it did.
         Each name is resolved the way the GLB appliers resolve it: the first
         of *search_dirs* holding that file (the host's own answer to where
         its maps live), then the FBX's own folder, then -- for what those miss
@@ -2237,10 +2486,11 @@ class FbxMedia(_FbxMediaInternal):
             report["present"] += [
                 n for n in added["present"] if n not in report["present"]
             ]
-            if report["embedded"]:
+            digested = cls._digest_audio(roots)
+            if report["embedded"] or digested:
                 target = dst or src
                 part = cls._write_part(target, version, roots, footer_id, magic)
-        if report["embedded"]:
+        if report["embedded"] or digested:
             cls._promote(part, target)
             log.info(
                 "FBX dependencies: embedded %d file(s), %.1f MB: %s.",
@@ -2269,6 +2519,33 @@ class FbxMedia(_FbxMediaInternal):
                 ", ".join(names),
             )
         return report
+
+    @classmethod
+    def _digest_audio(cls, roots: List[_Record]) -> bool:
+        """Set the applied ``audio`` record's ``media`` to the digests of the
+        audio files *roots* embed (:meth:`AudioUtils.media_digests
+        <pythontk.AudioUtils.media_digests>`), in memory; ``True`` when that
+        changed the record. One with no digest to state carries no ``media``."""
+        from pythontk.audio_utils._audio_utils import AudioUtils
+
+        found = cls._applied_channel(roots, SceneRecords.AUDIO.key)
+        if found is None or not isinstance(found[1], dict):
+            return False
+        prop, payload = found
+        events = payload.get("events")
+        files = {
+            name: cls._raw(record)
+            for name, record in cls._video_records(roots)
+            if os.path.splitext(name)[1].lower() in AudioUtils.SOURCE_EXTENSIONS
+        }
+        media = AudioUtils.media_digests(events if isinstance(events, list) else [], files)
+        updated = {k: v for k, v in payload.items() if k != "media"}
+        if media:
+            updated["media"] = media
+        if updated == payload:
+            return False
+        cls._replace_prop(prop, 4, cls._pack_string(json.dumps(updated).encode("utf-8")))
+        return True
 
     @classmethod
     def extract_dependencies(cls, src: str, dst_dir: str) -> Dict[str, str]:
@@ -2896,7 +3173,7 @@ class FbxMedia(_FbxMediaInternal):
                 classes[oid] = head[2]
             if record.name == b"Model":
                 label = head[1] if len(head) > 1 and isinstance(head[1], bytes) else b""
-                names[oid] = FbxFile._display_name(label) or ""
+                names[oid] = FbxFile.display_name(label) or ""
                 records[oid] = record
         rows = [
             (record, cls._scalars(record))

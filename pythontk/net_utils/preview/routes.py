@@ -9,9 +9,10 @@ the static tree with caching off, the live ``/manifest.json``, the page's
 write routes -- behind the gates the loopback bind relies on (the Host check
 against DNS rebinding, the cross-origin check on writes, a body ceiling per
 route measured before a byte is read); ``_PreviewHTTPServer`` is the listener
-it runs on. Both serve a :class:`~pythontk.PreviewServer` (``owner``), which
-holds every piece of state; a listener's role -- the owner's, or a share's
-read-only guest -- is fixed when it is built, never read from a request.
+it runs on. Both serve a :class:`~pythontk.PreviewServer` (``owner``), whose
+collaborators hold every piece of state -- the handler asks the facade; a
+listener's role -- the owner's, or a share's read-only guest -- is fixed when
+it is built, never read from a request.
 """
 
 from __future__ import annotations

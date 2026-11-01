@@ -71,7 +71,7 @@ class TestModelForward(unittest.TestCase):
             _chain(_joint("a", None, (0, 0, 0), rx=(None, None), ry=(None, None)))
         )
         q = model.world([90.0, 90.0])[0][1]
-        v = ArticulationModel._qrot(q, (0.0, 1.0, 0.0))
+        v = ptk.Quaternion.rotate(q, (0.0, 1.0, 0.0))
         for got, want in zip(v, (1.0, 0.0, 0.0)):
             self.assertAlmostEqual(got, want, places=9)
 
@@ -92,14 +92,12 @@ class TestModelForward(unittest.TestCase):
         rng = random.Random(4)
         for order in ("xyz", "yzx", "zxy", "xzy", "yxz", "zyx"):
             for _ in range(200):
-                angles = {c: rng.uniform(-179, 179) for c in ("rx", "ry", "rz")}
-                angles["r" + order[1]] = rng.uniform(-89, 89)
-                q = ArticulationModel._euler_quat(order, angles)
-                back = ArticulationModel._matrix_euler(
-                    order, ArticulationModel._qmatrix(q)
-                )
+                angles = [rng.uniform(-179, 179) for _ in range(3)]
+                angles["xyz".index(order[1])] = rng.uniform(-89, 89)
+                q = ptk.Quaternion.from_euler(order, angles)
+                back = ptk.Quaternion.matrix_euler(order, ptk.Quaternion.to_matrix(q))
                 self.assertLess(
-                    _qdist(q, ArticulationModel._euler_quat(order, back)), 1e-12, order
+                    _qdist(q, ptk.Quaternion.from_euler(order, back)), 1e-12, order
                 )
 
     def test_validation_refuses_what_the_runtimes_cannot_pose(self):

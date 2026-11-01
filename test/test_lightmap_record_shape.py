@@ -107,7 +107,7 @@ FBX_HIGHLIGHT = {
     "map": "room_Probe_Highlight1.hdr",
     "objects": [{"name": "TABLE", "hierarchy": ["ROOM", "TABLE"]}],
 }
-#: The probe entry ``MeshConvert._embed_lightmap_probe`` writes, with one copy
+#: The probe entry ``_Lightmaps._embed_lightmap_probe`` writes, with one copy
 #: as ``_embed_highlight_probes`` lists it.
 GLB_PROBE = {
     "bufferView": 3,

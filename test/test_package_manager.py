@@ -67,6 +67,28 @@ class PackageManagerTest(BaseTestCase):
         self.assertIn("install", result)
         self.assertIn("numpy", result)
 
+    def test_parse_command_keeps_a_specifier_set_whole(self):
+        """A comma joins the specifiers of ONE requirement (PEP 440): split on
+        it, ``install extapps>=0.8.0,<0.9`` reached pip as two arguments, and
+        ``<0.9`` is no requirement."""
+        self.assertEqual(
+            self.pkg_mgr._parse_command("install --upgrade extapps>=0.8.0,<0.9"),
+            ["install", "--upgrade", "extapps>=0.8.0,<0.9"],
+        )
+
+    def test_install_and_update_hand_pip_a_range_as_one_requirement(self):
+        from unittest.mock import MagicMock
+
+        done = MagicMock(stdout="", stderr="")
+        for call, expected in (
+            ("install", ["install", "extapps>=0.8.0,<0.9"]),
+            ("update", ["install", "--upgrade", "extapps>=0.8.0,<0.9"]),
+        ):
+            with self.subTest(call=call):
+                self.pkg_mgr._run_pip = MagicMock(return_value=done)
+                getattr(self.pkg_mgr, call)("extapps>=0.8.0,<0.9")
+                self.assertEqual(self.pkg_mgr._run_pip.call_args.args[0], expected)
+
     def test_parse_command_list(self):
         """Test parsing command from list (passthrough)."""
         command = ["install", "numpy"]
@@ -888,6 +910,35 @@ class EntryPointsTests(BaseTestCase):
             [(e.name, e.value) for e in found],
             [("maya.producer.x", "fake.mod:Thing.make")],
         )
+
+
+class MetadataVersionTests(BaseTestCase):
+    """The running interpreter's installed version of a distribution, read from
+    its metadata: the cheap answer a version range is checked against, with no
+    ``pip show`` subprocess."""
+
+    def test_an_installed_distribution_reads_its_version(self):
+        with tempfile.TemporaryDirectory() as root:
+            info = os.path.join(root, "fake_versioned-2.3.1.dist-info")
+            os.makedirs(info)
+            with open(os.path.join(info, "METADATA"), "w", encoding="utf-8") as f:
+                f.write("Metadata-Version: 2.1\nName: fake-versioned\nVersion: 2.3.1\n")
+            sys.path.insert(0, root)
+            try:
+                found = PackageManager.metadata_version("fake_versioned")
+            finally:
+                sys.path.remove(root)
+        self.assertEqual(found, "2.3.1")
+
+    def test_an_absent_distribution_is_none(self):
+        self.assertIsNone(PackageManager.metadata_version("no-such-dist-xyz"))
+
+    def test_no_subprocess_runs(self):
+        from unittest import mock
+
+        with mock.patch("subprocess.run") as run:
+            PackageManager.metadata_version("no-such-dist-xyz")
+        run.assert_not_called()
 
 
 if __name__ == "__main__":

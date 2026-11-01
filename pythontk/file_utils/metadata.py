@@ -3,10 +3,11 @@
 import os
 import json
 from typing import Dict, Optional, Any, List
+from pythontk.core_utils.logging_mixin import LoggingMixin
 from pythontk.core_utils.namedtuple_container import NamedTupleContainer
 
 
-class MetadataInternal:
+class MetadataInternal(LoggingMixin):
     """Internal utilities for handling file metadata on Windows and Linux."""
 
     enable_sidecar = False
@@ -31,7 +32,12 @@ class MetadataInternal:
 
     @staticmethod
     def _save_sidecar(file_path: str, metadata: Dict[str, Any]) -> None:
-        """Save metadata to the sidecar file."""
+        """Save metadata to the sidecar file.
+
+        Raises:
+            OSError: The sidecar could not be written (a permission error
+                included): the metadata did not land anywhere.
+        """
         sidecar_path = MetadataInternal._get_sidecar_path(file_path)
         # Load existing to update
         current_data = MetadataInternal._load_sidecar(file_path)
@@ -42,32 +48,27 @@ class MetadataInternal:
 
         from pythontk.file_utils._file_utils import FileUtils
 
-        try:
-            # Atomic. The sidecar is written beside a file in a user
-            # project folder -- the exact case atomic_write_text's docstring
-            # names -- and this truncated it before serialising, so an
-            # interrupted save left a stub that _load_sidecar then read as
-            # "no metadata". (The missing encoding= on the old open() was
-            # harmless: json.dump defaults to ensure_ascii=True, so the bytes
-            # were pure ASCII escapes either way. utf-8 is explicit now
-            # regardless, since that default is not a thing to rely on.)
-            FileUtils.write_json(sidecar_path, current_data, indent=4)
+        # Atomic. The sidecar is written beside a file in a user
+        # project folder -- the exact case atomic_write_text's docstring
+        # names -- and this truncated it before serialising, so an
+        # interrupted save left a stub that _load_sidecar then read as
+        # "no metadata". (The missing encoding= on the old open() was
+        # harmless: json.dump defaults to ensure_ascii=True, so the bytes
+        # were pure ASCII escapes either way. utf-8 is explicit now
+        # regardless, since that default is not a thing to rely on.)
+        FileUtils.write_json(sidecar_path, current_data, indent=4)
 
-            # Hide the file on Windows
-            if os.name == "nt":
-                try:
-                    import ctypes
+        # Hide the file on Windows
+        if os.name == "nt":
+            try:
+                import ctypes
 
-                    FILE_ATTRIBUTE_HIDDEN = 0x02
-                    ctypes.windll.kernel32.SetFileAttributesW(
-                        sidecar_path, FILE_ATTRIBUTE_HIDDEN
-                    )
-                except ImportError:
-                    pass
-        except PermissionError:
-            raise  # Let callers handle permission issues
-        except OSError as e:
-            print(f"Error saving sidecar metadata: {e}")
+                FILE_ATTRIBUTE_HIDDEN = 0x02
+                ctypes.windll.kernel32.SetFileAttributesW(
+                    sidecar_path, FILE_ATTRIBUTE_HIDDEN
+                )
+            except ImportError:
+                pass
 
     @classmethod
     def _sync_sidecar(
@@ -200,6 +201,12 @@ class MetadataInternal:
 
         Raises:
             FileNotFoundError: If the specified file does not exist.
+            ImportError: On Windows, pywin32 (``win32com.propsys``) is not
+                installed: nothing is written.
+            RuntimeError: The file's own store (the Windows property store, or
+                extended attributes) refused the write and the sidecar is off
+                (:attr:`enable_sidecar`).
+            OSError: The sidecar the write went to could not be written.
 
         Example:
             _set(
@@ -222,9 +229,11 @@ class MetadataInternal:
                 from win32com.propsys import propsys
                 from win32com.shell import shellcon
                 import pythoncom
-            except ImportError:
-                print("Error: win32com.propsys is required to set metadata.")
-                return
+            except ImportError as e:
+                raise ImportError(
+                    "Setting file metadata on Windows needs pywin32 "
+                    "(win32com.propsys): pip install pywin32."
+                ) from e
 
             try:
                 # Normalize path for Windows API
@@ -234,8 +243,9 @@ class MetadataInternal:
                 )
             except Exception as e:
                 if cls.enable_sidecar:
-                    print(
-                        f"Error opening property store for {file_path}: {e}. Falling back to sidecar."
+                    cls.logger.warning(
+                        f"Could not open the property store for {file_path} ({e}); "
+                        "the metadata goes to its sidecar."
                     )
                     cls._save_sidecar(file_path, metadata)
                     return
@@ -266,7 +276,7 @@ class MetadataInternal:
                 try:
                     pkey = propsys.PSGetPropertyKeyFromName(canonical_name)
                 except Exception:
-                    print(f"Warning: Could not resolve property key for '{key}'")
+                    cls.logger.warning(f"No property key for '{key}'; it is not set.")
                     continue
 
                 # Handle list/tuple values for string properties (join with semicolon)
@@ -282,13 +292,16 @@ class MetadataInternal:
                         store.SetValue(pkey, value)
                     written.append(key)
                 except Exception as e:
-                    print(f"Error setting value for '{key}': {e}")
+                    cls.logger.warning(f"'{key}' was not set: {e}")
 
             try:
                 store.Commit()
             except Exception as e:
                 if cls.enable_sidecar:
-                    print(f"Error committing metadata changes: {e}")
+                    cls.logger.warning(
+                        f"The property store refused the commit ({e}); the "
+                        "metadata goes to its sidecar."
+                    )
                     # Fallback to sidecar if commit fails
                     cls._save_sidecar(file_path, metadata)
                 else:
@@ -509,10 +522,18 @@ class Metadata(MetadataInternal):
         """
         Unified set method for metadata and tags.
 
-        Args:
+        Parameters:
             file_path: Single path (str) or list of paths.
             mode: 'metadata' (default) or 'tag'.
             **kwargs: Key-value pairs to set.
+
+        Raises:
+            FileNotFoundError: A file does not exist.
+            ImportError: On Windows, pywin32 (``win32com.propsys``) is not
+                installed: nothing is written.
+            RuntimeError: A file's own store refused the write and the sidecar
+                is off (:attr:`enable_sidecar`).
+            OSError: A sidecar the write went to could not be written.
         """
         # Handle batch operation
         if isinstance(file_path, (list, tuple)):

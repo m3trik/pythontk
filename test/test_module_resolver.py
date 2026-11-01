@@ -736,7 +736,7 @@ class LazyExportsTests(_TempPackageCase):
     def test_a_reload_serves_the_reloaded_class_not_the_one_it_cached(self) -> None:
         """``importlib.reload`` re-runs the ``__init__`` in the SAME globals, so a
         name an earlier run cached there shadowed the reloaded submodule's class:
-        ``ptk.reload_package("pythontk")`` kept serving the old ``LoggingMixin``.
+        ``ptk.ModuleReloader().reload("pythontk")`` kept serving the old ``LoggingMixin``.
         """
         from pythontk.core_utils.module_reloader import ModuleReloader
 

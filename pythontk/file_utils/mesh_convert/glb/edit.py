@@ -466,8 +466,8 @@ class GlbEdit:
         wrapping the same three in one ``open`` costs one::
 
             with GlbEdit.open(path) as glb:
-                MeshConvert.set_glb_base_color(glb, base_color)
-                MeshConvert.set_glb_emissive(glb, emissive)
+                MeshConvert.apply_glb_materials(glb, record, textures)
+                MeshConvert.set_glb_normal_scale(glb, scale)
 
         Nothing is written when the body raises -- a half-applied edit must not
         reach disk -- nor when no editor set :attr:`GlbEdit.dirty`.
@@ -899,7 +899,7 @@ class GlbEdit:
     #: an animation's payload renumbers nothing, but it does decide which
     #: accessors are unreferenced, and one of these could still be reading a
     #: buffer this pass is about to release. Same "bail whole rather than
-    #: guess" contract as :attr:`MeshConvert._IMAGE_REFERRING_EXTENSIONS`.
+    #: guess" contract as :attr:`_Images._IMAGE_REFERRING_EXTENSIONS`.
     _ACCESSOR_REFERRING_EXTENSIONS = frozenset(
         {
             "EXT_mesh_gpu_instancing",

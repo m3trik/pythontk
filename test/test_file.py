@@ -2641,5 +2641,211 @@ class TestMoveToTrash(unittest.TestCase):
             )
 
 
+class TestImportFiles(unittest.TestCase):
+    """``FileUtils.import_files`` -- bring files into a project folder (the HDR
+    Manager's Add: copy / move into sourceimages, or link in place)."""
+
+    def setUp(self):
+        self.src = tempfile.mkdtemp(prefix="ptk_import_src_")
+        self.folder = tempfile.mkdtemp(prefix="ptk_import_dst_")
+        self.addCleanup(shutil.rmtree, self.src, True)
+        self.addCleanup(shutil.rmtree, self.folder, True)
+
+    @staticmethod
+    def _write(path, data=b"good"):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as f:
+            f.write(data)
+        return path
+
+    @staticmethod
+    def _read(path):
+        with open(path, "rb") as f:
+            return f.read()
+
+    @staticmethod
+    def _validate(path):
+        """A file holding ``bad`` is incomplete; a missing one is not found."""
+        try:
+            with open(path, "rb") as f:
+                data = f.read()
+        except OSError:
+            return False, "file not found"
+        return (False, "truncated") if data == b"bad" else (True, "")
+
+    def _in_folder(self, name):
+        return os.path.normpath(os.path.join(self.folder, name))
+
+    def test_link_takes_each_usable_file_where_it_is(self):
+        good = self._write(os.path.join(self.src, "good.hdr"))
+        bad = self._write(os.path.join(self.src, "bad.hdr"), b"bad")
+        result = FileUtils.import_files(
+            [good, bad], None, mode="link", validate=self._validate
+        )
+        self.assertEqual(result["added"], [good])
+        self.assertEqual(result["skipped"], [(bad, "truncated")])
+        self.assertFalse(result["io"])
+        self.assertIsNone(result["failed"])
+        self.assertFalse(result["cancelled"])
+
+    def test_each_file_left_out_is_logged(self):
+        """Bug: a script caller learnt of a skipped file only by reading the
+        result's ``skipped`` -- nothing said it. Fixed: 2026-10-31"""
+        bad = self._write(os.path.join(self.src, "bad.hdr"), b"bad")
+        good = self._write(os.path.join(self.src, "good.hdr"))
+        with self.assertLogs(
+            "pythontk.file_utils._file_utils", level="WARNING"
+        ) as logged:
+            result = FileUtils.import_files(
+                [bad, good], self.folder, validate=self._validate
+            )
+        self.assertEqual(result["added"], [self._in_folder("good.hdr")])
+        self.assertEqual(len(logged.output), 1)
+        self.assertIn(bad, logged.output[0])
+        self.assertIn("truncated", logged.output[0])
+
+    def test_copy_brings_each_file_into_the_folder(self):
+        good = self._write(os.path.join(self.src, "good.hdr"))
+        result = FileUtils.import_files([good], self.folder, mode="copy")
+        self.assertEqual(result["added"], [self._in_folder("good.hdr")])
+        self.assertTrue(result["io"])
+        self.assertTrue(os.path.isfile(good))  # a copy keeps the original
+        self.assertEqual(self._read(self._in_folder("good.hdr")), b"good")
+
+    def test_move_relocates_the_file(self):
+        good = self._write(os.path.join(self.src, "good.hdr"))
+        result = FileUtils.import_files([good], self.folder, mode="move")
+        self.assertEqual(result["added"], [self._in_folder("good.hdr")])
+        self.assertFalse(os.path.exists(good))
+        self.assertTrue(os.path.isfile(self._in_folder("good.hdr")))
+
+    def test_a_file_already_under_the_folder_is_used_in_place(self):
+        """Regression (2026-06-16): Copy duplicated sourceimages/hdr/x.hdr into
+        the sourceimages root instead of using it where it lives."""
+        inside = self._write(os.path.join(self.folder, "hdr", "env.hdr"))
+        result = FileUtils.import_files([inside], self.folder, mode="copy")
+        self.assertEqual(result["added"], [os.path.normpath(inside)])
+        self.assertFalse(result["io"])
+        self.assertFalse(os.path.exists(self._in_folder("env.hdr")))
+
+    def test_a_refused_source_is_left_out_in_every_mode(self):
+        bad = self._write(os.path.join(self.src, "bad.hdr"), b"bad")
+        for mode in ("copy", "move", "link"):
+            with self.subTest(mode=mode):
+                result = FileUtils.import_files(
+                    [bad], self.folder, mode=mode, validate=self._validate
+                )
+                self.assertEqual(result["added"], [])
+                self.assertEqual(result["skipped"], [(bad, "truncated")])
+                self.assertTrue(os.path.isfile(bad))
+                self.assertFalse(os.path.exists(self._in_folder("bad.hdr")))
+
+    def test_reuse_takes_a_usable_existing_file_and_never_clobbers(self):
+        new = self._write(os.path.join(self.src, "x.hdr"), b"new")
+        existing = self._write(self._in_folder("x.hdr"), b"old")
+        result = FileUtils.import_files(
+            [new], self.folder, validate=self._validate, on_conflict="reuse"
+        )
+        self.assertEqual(result["added"], [existing])
+        self.assertFalse(result["io"])
+        self.assertEqual(self._read(existing), b"old")
+
+    def test_reuse_leaves_out_a_source_whose_existing_file_is_unusable(self):
+        new = self._write(os.path.join(self.src, "x.hdr"), b"new")
+        existing = self._write(self._in_folder("x.hdr"), b"bad")
+        result = FileUtils.import_files([new], self.folder, validate=self._validate)
+        self.assertEqual(result["added"], [])
+        self.assertEqual([s for s, _ in result["skipped"]], [new])
+        self.assertIn("truncated", result["skipped"][0][1])
+        self.assertEqual(self._read(existing), b"bad")  # left as it was
+
+    def test_overwrite_replaces_the_existing_file(self):
+        new = self._write(os.path.join(self.src, "x.hdr"), b"new")
+        existing = self._write(self._in_folder("x.hdr"), b"old")
+        result = FileUtils.import_files([new], self.folder, on_conflict="overwrite")
+        self.assertEqual(result["added"], [existing])
+        self.assertTrue(result["io"])
+        self.assertEqual(self._read(existing), b"new")
+
+    def test_a_conflict_callable_asks_and_a_no_cancels_the_rest(self):
+        first = self._write(os.path.join(self.src, "x.hdr"), b"new")
+        second = self._write(os.path.join(self.src, "y.hdr"))
+        existing = self._write(self._in_folder("x.hdr"), b"old")
+        asked = []
+
+        def decline(path):
+            asked.append(path)
+            return False
+
+        result = FileUtils.import_files(
+            [first, second], self.folder, on_conflict=decline
+        )
+        self.assertEqual(asked, [existing])
+        self.assertTrue(result["cancelled"])
+        self.assertEqual(result["added"], [])
+        self.assertEqual(self._read(existing), b"old")
+        self.assertFalse(os.path.exists(self._in_folder("y.hdr")))
+
+        result = FileUtils.import_files(
+            [first], self.folder, on_conflict=lambda path: True
+        )
+        self.assertEqual(result["added"], [existing])
+        self.assertFalse(result["cancelled"])
+        self.assertEqual(self._read(existing), b"new")
+
+    def test_strict_stops_at_the_first_refused_source(self):
+        bad = self._write(os.path.join(self.src, "bad.hdr"), b"bad")
+        good = self._write(os.path.join(self.src, "good.hdr"))
+        result = FileUtils.import_files(
+            [bad, good], self.folder, validate=self._validate, strict=True
+        )
+        self.assertEqual(
+            result["failed"], {"path": bad, "reason": "truncated", "destination": None}
+        )
+        self.assertEqual(result["added"], [])
+        self.assertEqual(result["skipped"], [])
+        self.assertFalse(os.path.exists(self._in_folder("good.hdr")))
+
+    def test_a_failed_transfer_is_left_out_or_under_strict_stops(self):
+        from unittest import mock
+
+        a = self._write(os.path.join(self.src, "a.hdr"))
+        b = self._write(os.path.join(self.src, "b.hdr"))
+        real_copy = FileUtils.copy_file
+
+        def copy(path, *args, **kwargs):
+            if path == a:
+                raise OSError("disk full")
+            return real_copy(path, *args, **kwargs)
+
+        with mock.patch.object(FileUtils, "copy_file", side_effect=copy):
+            result = FileUtils.import_files([a, b], self.folder)
+            self.assertEqual(result["skipped"], [(a, "disk full")])
+            self.assertEqual(result["added"], [self._in_folder("b.hdr")])
+            os.remove(self._in_folder("b.hdr"))
+            result = FileUtils.import_files([a, b], self.folder, strict=True)
+        self.assertEqual(
+            result["failed"],
+            {"path": a, "reason": "disk full", "destination": self._in_folder("a.hdr")},
+        )
+        self.assertEqual(result["added"], [])
+
+    def test_copy_or_move_needs_an_existing_folder(self):
+        """Said for the user: a caller shows the message as it is."""
+        good = self._write(os.path.join(self.src, "good.hdr"))
+        missing = os.path.join(self.folder, "missing")
+        for folder, says in (
+            (None, "set a project first"),
+            ("", "set a project first"),
+            (missing, f"{missing} does not exist"),
+        ):
+            with self.subTest(folder=folder):
+                with self.assertRaises(ValueError) as caught:
+                    FileUtils.import_files([good], folder, mode="copy")
+                self.assertIn(says, str(caught.exception))
+        with self.assertRaises(ValueError):
+            FileUtils.import_files([good], self.folder, mode="symlink")
+
+
 if __name__ == "__main__":
     unittest.main(exit=False)

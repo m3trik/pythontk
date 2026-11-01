@@ -291,5 +291,24 @@ class TestMetadataSidecarWindows(unittest.TestCase):
         self.assertEqual(Metadata.get(self.path, "PtkNote"), {"PtkNote": "new"})
 
 
+
+class TestSidecarWriteFailure(unittest.TestCase):
+    """A sidecar that cannot be written is an error the caller hears, never a
+    line on stdout: the metadata landed nowhere (CODE_STANDARD section 8)."""
+
+    def test_a_failed_sidecar_write_raises(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        path = os.path.join(folder.name, "scene.ma")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("")
+        with patch(
+            "pythontk.file_utils._file_utils.FileUtils.write_json",
+            side_effect=OSError("disk full"),
+        ):
+            with self.assertRaisesRegex(OSError, "disk full"):
+                Metadata._save_sidecar(path, {"Comments": "lost"})
+
+
 if __name__ == "__main__":
     unittest.main()

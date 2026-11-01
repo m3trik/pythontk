@@ -17,7 +17,8 @@ here, over plain values, so both DCC bakers run the same one:
 - :meth:`BakeBaseline.neighbours` is the reach rule -- what a change shades.
 - :meth:`BakeBaseline.assess` reads the scene against the record and returns
   a :class:`StaleReport` (the dry run); :meth:`BakeBaseline.advance` rolls the
-  record forward when a bake commits.
+  record forward when a bake commits, and :meth:`BakeBaseline.keep_baked` gives
+  what a commit only re-packed back how it was baked.
 - :meth:`BakeBaseline.lighting_state` / :meth:`~BakeBaseline.lighting_digest`
   / :meth:`~BakeBaseline.light_changes` fingerprint the lighting a bake saw,
   with the rule that chose its lights; :meth:`~BakeBaseline.lighting_rules`
@@ -753,6 +754,42 @@ class BakeBaseline:
             }
         )
 
+    #: What :meth:`keep_baked` gives a re-packed object back from before.
+    KEPT_ON_REPACK: Tuple[str, ...] = ("baked_at", "lighting", "stale", "untracked")
+
+    @classmethod
+    def keep_baked(cls, record: Any, before: Any, objects: Iterable[str]) -> Dict[str, Any]:
+        """The record after a commit that only RE-PACKED *objects* (a Combine:
+        their maps moved into one atlas, nothing rendered), each given back how
+        it was baked: :attr:`KEPT_ON_REPACK` from *before*, and the lighting
+        state its ``lighting`` names. One *before* never saw is untracked: a
+        re-pack vouches for no map. An id *record* lacks is ignored; the cell
+        each was re-packed to stays.
+
+        Parameters:
+            record: The stored record after that commit (any :meth:`decode`
+                input).
+            before: The record read before it (any :meth:`decode` input).
+            objects: The re-packed ids.
+
+        Returns:
+            The record, as :meth:`encode` returns it.
+        """
+        record, before = cls.decode(record), cls.decode(before)
+        for obj in objects:
+            entry = record["objects"].get(obj)
+            if entry is None:
+                continue
+            was = before["objects"].get(obj)
+            if was is None:
+                entry.update(baked_at=None, lighting=None, untracked=True)
+                continue
+            entry.update({key: was[key] for key in cls.KEPT_ON_REPACK})
+            state = before["lightings"].get(was["lighting"] or "")
+            if state is not None:
+                record["lightings"][was["lighting"]] = state
+        return cls.encode(record)
+
     @classmethod
     def _prune(cls, objects: Dict[str, Dict]) -> None:
         """Drop each removed entry no live map within its reach predates."""
@@ -1061,6 +1098,123 @@ class BakeBaseline:
             r > 0 and abs(c / r - 1.0) <= tolerance + 1e-9
             for r, c in zip(recorded, current)
         )
+
+    # ---------------------------------------------------------------- atlases
+    @dataclass
+    class AtlasFiles:
+        """The atlases a scene's objects read, each owned by an atlas group --
+        what a baker reads once for its in-place plan and its split check
+        (:meth:`BakeBaseline.atlas_files`).
+
+        Attributes:
+            markers: ``{reader: its marker record}``.
+            entries: ``{object: baseline entry}`` of every object still recorded.
+            by_file: ``{normcased path: [readers]}``, readers sorted.
+            spelled: ``{normcased path: the path as read}``.
+            lone: The one-reader maps an atlas bake wrote (a group of one), and
+                those no record speaks for beside an atlas their group owns.
+            group: ``{object: atlas group}`` for every reader and every object
+                asked about.
+            owned: ``{atlas group: {normcased paths}}`` -- each atlas belongs to
+                the group most of its readers are in.
+        """
+
+        markers: Dict[str, Dict[str, Any]]
+        entries: Dict[str, Dict[str, Any]]
+        by_file: Dict[str, List[str]]
+        spelled: Dict[str, str]
+        lone: set
+        group: Dict[str, str]
+        owned: Dict[str, set]
+
+        def splits(self) -> Dict[str, Tuple[List[str], List[str]]]:
+            """``{atlas group: (map paths, objects)}`` -- each group that reads
+            more than one map (one material in two shading groups, or a
+            duplicate, baked apart before the groups were drawn as they are
+            now): its maps, most-read first, and the group's objects reading
+            them. What a Combine packs into one atlas."""
+            out: Dict[str, Tuple[List[str], List[str]]] = {}
+            for key, files in self.owned.items():
+                if len(files) < 2:
+                    continue
+                files = sorted(files, key=lambda f: (-len(self.by_file[f]), f))
+                readers = sorted(
+                    r for f in files for r in self.by_file[f] if self.group[r] == key
+                )
+                out[key] = ([self.spelled[f] for f in files], readers)
+            return out
+
+    @classmethod
+    def atlas_files(
+        cls,
+        markers: Mapping[str, Mapping[str, Any]],
+        path_of: Mapping[str, str],
+        record: Mapping[str, Any],
+        group_of: Callable[[List[str]], Mapping[str, str]],
+        objects: Sequence[str] = (),
+    ) -> Optional["BakeBaseline.AtlasFiles"]:
+        """The atlases a scene's objects read and the atlas group owning each
+        (:class:`AtlasFiles`), with *objects*' groups read beside theirs;
+        ``None`` when every map is its object's own (nothing to write into,
+        nothing split).
+
+        Each atlas is the group's most of its readers belong to: a reader whose
+        material changed since (a merge, a reassigned object) is new to its NEW
+        group's atlas, never the owner of its old. A group that reads two maps
+        owns both -- a split.
+
+        Parameters:
+            markers: ``{reader: marker record}``, every object carrying one.
+            path_of: ``{reader: the map's path on disk}``; a reader whose map
+                is nowhere is absent.
+            record: The bake baseline, decoded (:meth:`decode`).
+            group_of: ``(objects) -> {object: atlas group}`` -- the host's rule.
+            objects: More objects to group beside the readers.
+        """
+        by_file: Dict[str, List[str]] = {}
+        spelled: Dict[str, str] = {}
+        for reader in sorted(markers):
+            path = path_of.get(reader)
+            if path:
+                key = os.path.normcase(os.path.abspath(path))
+                by_file.setdefault(key, []).append(reader)
+                spelled.setdefault(key, path)
+        atlases = {f for f, readers in by_file.items() if len(readers) > 1}
+        entries = {k: e for k, e in record["objects"].items() if e["removed_at"] is None}
+        # An atlas bake gives a group of one its own map. Alone it is no atlas
+        # to write into, but a group reading it beside another map is split
+        # all the same: one material in two shading groups, or a duplicate.
+        lone = {
+            f
+            for f, readers in by_file.items()
+            if len(readers) == 1
+            and (entries.get(readers[0]) or {}).get("packing") == "atlas"
+        }
+        if not atlases and len(lone) < 2:
+            return None
+        # A one-reader map whose packing no record speaks for (baked before
+        # change tracking, then tracked as it stood) is a split-off only
+        # beside an atlas its group owns: a group that owns none was baked per
+        # object, and stays so.
+        unknown = {
+            f
+            for f, readers in by_file.items()
+            if len(readers) == 1 and not (entries.get(readers[0]) or {}).get("packing")
+        }
+        readers = [r for f in sorted(atlases | lone | unknown) for r in by_file[f]]
+        group = group_of(list(dict.fromkeys(readers + list(objects))))
+        owned: Dict[str, set] = {}
+        for f in atlases:
+            votes: Dict[str, int] = {}
+            for reader in by_file[f]:
+                votes[group[reader]] = votes.get(group[reader], 0) + 1
+            owned.setdefault(min(votes, key=lambda g: (-votes[g], g)), set()).add(f)
+        for f in sorted(unknown):
+            if group[by_file[f][0]] in owned:
+                lone.add(f)
+        for f in lone:
+            owned.setdefault(group[by_file[f][0]], set()).add(f)
+        return cls.AtlasFiles(dict(markers), entries, by_file, spelled, lone, group, owned)
 
     # ----------------------------------------------------------------- record
     @classmethod

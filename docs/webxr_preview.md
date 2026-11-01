@@ -8,7 +8,7 @@ scene, push, look up*.
 This is the shared preview pipeline: how the deliverable is built, what survives the trip, and
 which parts are load-bearing when it looks wrong.
 
-**Nav**: [← pythontk docs](README.md) · Related: [mayatk scene data nodes](https://github.com/m3trik/mayatk/blob/main/docs/data_nodes.md)
+**Nav**: [← pythontk docs](README.md) · Related: [mayatk scene data nodes](https://github.com/m3trik/mayatk/blob/main/docs/data_nodes.md) · panel: [extapps `webxr_preview`](https://github.com/m3trik/extapps/tree/main/extapps/webxr_preview)
 
 ---
 
@@ -91,8 +91,9 @@ Ownership, because it decides where a fix goes:
 | `net_utils/preview/viewer.html` + `kernel/*.js` | the page (markup) and the viewer it imports: rebinding the carrier slot to a real `lightMap`, framing, headset locomotion, and **spending** the rendering policy it reads out of the file |
 | `net_utils/preview/features/` | optional behaviour the page gains by activation, never by being edited |
 | `mayatk` / `blendertk` | reading the host's selection, exporting the FBX inside the export bracket, reading scene state |
+| extapps `webxr_preview` | the WebXR Preview panel and its Slots class: standalone it drives a `FilePreviewBridge`; a DCC that opens it injects its `WebXrPreview` as the engine, adding that host's scopes |
 
-Both DCC bridges are under 80 lines, most of that docstring. Everything else is shared, because
+Both DCC bridges are about a hundred lines each, most of that docstring and comments. Everything else is shared, because
 mayatk and blendertk cannot import each other and anything written twice drifts twice.
 
 ## Using it

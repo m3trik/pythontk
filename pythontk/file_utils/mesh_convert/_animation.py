@@ -7,7 +7,7 @@ Rebuilds the declared shot clips from the whole timeline, publishes
 ``extras.animation``, and compacts, reduces and prunes the samplers.
 
 One job of :class:`MeshConvert`, composed in ``_mesh_convert.py``; it reaches
-the other passes through ``cls``.
+the other passes through the facade it holds (``self._mc``).
 """
 
 import bisect
@@ -25,7 +25,7 @@ from pythontk.file_utils.mesh_convert.glb.edit import GlbEdit, GlbTarget
 logger = logging.getLogger(__name__)
 
 
-class _AnimationMixin:
+class _Animation:
     """Animation: shot clips, the ``animation`` manifest, key compaction.
 
     A private part of :class:`MeshConvert`; call it through the facade.
@@ -37,6 +37,9 @@ class _AnimationMixin:
     #: mode, so only this says whether the file was meant to carry them as
     #: clips; one stack alone is also what a split that silently failed leaves.
     SHOT_CLIP_MODE_KEY = "clip_mode"
+
+    def __init__(self, mc: type) -> None:
+        self._mc = mc  # the facade class: every name it exposes is read through it
 
     @staticmethod
     def _animation_span(gltf: dict, animation: dict) -> Optional[Tuple[float, float]]:
@@ -100,72 +103,25 @@ class _AnimationMixin:
     #: the whole-timeline stack alone was 66.52 MB of a 158.69 MB file.
     ANIMATION_CLIP_MODES = tuple(ExportProfile.ANIMATION_CLIPS_OPTIONS.values())
 
-    @classmethod
     def apply_glb_clips(
-        cls, glb: GlbTarget, *, mode: str = "both"
+        self, glb: GlbTarget, *, mode: str = "both"
     ) -> Optional[Dict[str, Any]]:
-        """Rebuild the declared shot clips as exact slices of the whole timeline.
-
-        Maya's take split is lossy in a way that does not announce itself: it
-        restricts each curve to the take's window and bakes what is left, so a
-        curve with no key inside a shot contributes NO channel to it and the
-        node plays its rest pose for the shot's whole duration. Measured on a
-        12-shot production assembly (358 keys over 2635 frames), Shot_1 through
-        Shot_11 were wrong on EVERY frame -- by up to 3.73 m -- while the
-        whole-timeline stack the same export retains was right on all 2629.
-
-        So the shots are cut here, from that stack, on the deliverable: no scene
-        to reach into, nothing mutated, and the exporter and the preview push
-        get identical clips because they run the same pass.
-        :mod:`~pythontk.file_utils.mesh_convert.glb.clips` does the cutting;
-        this half reads the file (which takes, which rate, which origin).
-
-        Runs FIRST, before :meth:`apply_glb_visibility` writes the presence
-        gates -- the gates belong to the rebuilt clips, and a gate written into
-        a clip this pass then replaces would be discarded with it.
-
-        Needs to know the authoring frame the source stack places at its own
-        ``t=0``, because the converter rebases every stack onto its first key.
-        Three ways, in order: the stack's own ``extras`` (there after this pass
-        has run once, which is what makes a second run exact rather than
-        merely harmless); the file's ``clip_span`` for the whole timeline --
-        measured from the FBX by the conversion (:meth:`_stamp_clip_spans`),
-        else as the producer published it; and otherwise nothing -- a guessed
-        origin would slide every
-        shot by the same wrong amount, which is worse than the split this
-        replaces, so the clips are left as exported.
-
-        Parameters:
-            glb: Path to a ``.glb``, modified in place, or an open session.
-            mode: Which clips the deliverable ships, from
-                :attr:`ANIMATION_CLIP_MODES`. ``both`` cuts the shots and keeps
-                the stack they came from. ``shots`` cuts them and drops it,
-                releasing its payload. ``full`` cuts nothing and ships only the
-                stack -- still renamed and stamped, so the file describes its
-                own origin either way. The two halves hold the same
-                performance, so a consumer that plays one never reads the
-                other; which one is dead weight is the caller's to say.
-
-        Returns:
-            ``{"clips", "channels", "source", "bytes"}``, or ``None`` when
-            there was nothing to rebuild.
-        """
         from pythontk.file_utils.mesh_convert.glb.clips import GlbClips
 
-        if mode not in cls.ANIMATION_CLIP_MODES:
+        if mode not in self._mc.ANIMATION_CLIP_MODES:
             raise ValueError(
                 f"Unknown animation clip mode {mode!r}; expected one of "
-                f"{', '.join(cls.ANIMATION_CLIP_MODES)}."
+                f"{', '.join(self._mc.ANIMATION_CLIP_MODES)}."
             )
 
-        with cls.open_glb(glb) as edit:
+        with self._mc.open_glb(glb) as edit:
             gltf = edit.gltf
-            takes = cls._declared_takes(gltf)
+            takes = self._declared_takes(gltf)
             if not takes:
                 return None
-            metadata = cls.data_export_channel(gltf, SceneRecords.SHOTS.key)
-            channel = cls.data_export_channel(gltf, SceneRecords.VISIBILITY.key)
-            fps = cls._resolve_clip_fps(
+            metadata = self._mc.data_export_channel(gltf, SceneRecords.SHOTS.key)
+            channel = self._mc.data_export_channel(gltf, SceneRecords.VISIBILITY.key)
+            fps = self._resolve_clip_fps(
                 metadata if isinstance(metadata, dict) else {}, [], channel
             )
             if not fps:
@@ -176,7 +132,7 @@ class _AnimationMixin:
                 )
                 return None
 
-            windows = cls._take_windows(gltf)
+            windows = self._mc._take_windows(gltf)
             animations = gltf.get("animations") or []
             if not animations:
                 # Loud, because the combination is wrong in BOTH deliverables at
@@ -200,8 +156,8 @@ class _AnimationMixin:
 
             zero = GlbEdit.extras_of(source).get(GlbClips.ZERO_FRAME_KEY)
             if not isinstance(zero, (int, float)):
-                span = cls._published_origin(
-                    lambda key: cls.data_export_channel(gltf, key)
+                span = self._mc._published_origin(
+                    lambda key: self._mc.data_export_channel(gltf, key)
                 )
                 if span is None:
                     logger.warning(
@@ -210,7 +166,7 @@ class _AnimationMixin:
                         "every stack onto its first key -- clips left as "
                         "exported.",
                         source.get("name"),
-                        cls.DEFAULT_CLIP_SPAN,
+                        self._mc.DEFAULT_CLIP_SPAN,
                     )
                     return None
                 zero = span[0]
@@ -229,9 +185,8 @@ class _AnimationMixin:
     #: cannot collide with one.
     DEFAULT_CLIP_SPAN = "*"
 
-    @classmethod
     def _published_origin(
-        cls, read: Callable[[str], Any]
+        self, read: Callable[[str], Any]
     ) -> Optional[Tuple[float, float]]:
         """The first and last frame the whole-timeline stack carries, as the
         producer published them (the ``render_effects`` record's
@@ -248,8 +203,10 @@ class _AnimationMixin:
         """
         channel = read(SceneRecords.VISIBILITY.key)
         spans = channel.get("clip_span") if isinstance(channel, dict) else None
-        span = spans.get(cls.DEFAULT_CLIP_SPAN) if isinstance(spans, dict) else None
-        pair = cls._numeric_pairs([span])
+        span = (
+            spans.get(self._mc.DEFAULT_CLIP_SPAN) if isinstance(spans, dict) else None
+        )
+        pair = self._numeric_pairs([span])
         return (float(pair[0][0]), float(pair[0][1])) if pair else None
 
     #: Frames a published clip span may sit from the file's own before
@@ -258,9 +215,8 @@ class _AnimationMixin:
     #: frame by a hundredth.
     CLIP_SPAN_DRIFT_FRAMES = 0.5
 
-    @classmethod
     def _stamp_clip_spans(
-        cls, gltf: Dict[str, Any], measured: Dict[str, Tuple[float, float]]
+        self, gltf: Dict[str, Any], measured: Dict[str, Tuple[float, float]]
     ) -> Dict[str, List[float]]:
         """Write each clip's MEASURED span onto the file's ``clip_span``.
 
@@ -287,24 +243,24 @@ class _AnimationMixin:
             The entries stamped; empty when nothing was measured or no rate
             places the frames in time (the published spans then stand).
         """
-        metadata = cls.data_export_channel(gltf, SceneRecords.SHOTS.key)
-        channel = cls.data_export_channel(gltf, SceneRecords.VISIBILITY.key)
-        fps = cls._resolve_clip_fps(
+        metadata = self._mc.data_export_channel(gltf, SceneRecords.SHOTS.key)
+        channel = self._mc.data_export_channel(gltf, SceneRecords.VISIBILITY.key)
+        fps = self._resolve_clip_fps(
             metadata if isinstance(metadata, dict) else {}, [], channel
         )
         if not fps or not measured:
             return {}
-        windows = cls._take_windows(gltf)
+        windows = self._mc._take_windows(gltf)
         keys = {take: take for take in measured if take in windows}
         loose = [take for take in measured if take not in windows]
         if len(loose) == 1:
-            keys[loose[0]] = cls.DEFAULT_CLIP_SPAN
-        stamped = cls._rounded(
+            keys[loose[0]] = self._mc.DEFAULT_CLIP_SPAN
+        stamped = self._mc._visibility._rounded(
             {
                 key: [measured[take][0] * fps, measured[take][1] * fps]
                 for take, key in keys.items()
             },
-            cls.VISIBILITY_TRACK_DIGITS,
+            self._mc.VISIBILITY_TRACK_DIGITS,
         )
         if not stamped:
             return {}
@@ -316,8 +272,11 @@ class _AnimationMixin:
         published = payload.get("clip_span")
         published = published if isinstance(published, dict) else {}
         for key, (first, _last) in stamped.items():
-            pair = cls._numeric_pairs([published.get(key)])
-            if pair and abs(float(pair[0][0]) - first) > cls.CLIP_SPAN_DRIFT_FRAMES:
+            pair = self._numeric_pairs([published.get(key)])
+            if (
+                pair
+                and abs(float(pair[0][0]) - first) > self._mc.CLIP_SPAN_DRIFT_FRAMES
+            ):
                 logger.warning(
                     "Clips: %r was published as opening at frame %g, but its "
                     "take in the FBX opens at %g -- placed by the file.",
@@ -330,11 +289,15 @@ class _AnimationMixin:
         # carrier -- right for a caller's statement about this build, but this
         # read one carrier, and on every conversion a module's tracks left the
         # GLB with the others.
-        found = cls._data_export_carrier(gltf, SceneRecords.VISIBILITY.key)
+        found = self._mc._sidecar._data_export_carrier(
+            gltf, SceneRecords.VISIBILITY.key
+        )
         if found is None:
-            cls.overlay_data_export(gltf, {SceneRecords.VISIBILITY.key: payload})
+            self._mc.overlay_data_export(gltf, {SceneRecords.VISIBILITY.key: payload})
         else:
-            cls._write_data_export(found[0], SceneRecords.VISIBILITY.key, payload)
+            self._mc._sidecar._write_data_export(
+                found[0], SceneRecords.VISIBILITY.key, payload
+            )
         return stamped
 
     #: What Maya (and so FBX2glTF) names the whole-timeline AnimStack. The
@@ -343,9 +306,8 @@ class _AnimationMixin:
     #: exporter armed animation.
     DEFAULT_CLIP_NAME = "Take 001"
 
-    @classmethod
     def _synthesize_clips(
-        cls,
+        self,
         gltf: Dict[str, Any],
         windows: Dict[str, Tuple[float, float]],
         union: Optional[Tuple[float, float]],
@@ -368,7 +330,7 @@ class _AnimationMixin:
         if windows:
             spans = list(windows.items())
         elif union is not None:
-            spans = [(cls.DEFAULT_CLIP_NAME, union)]
+            spans = [(self._mc.DEFAULT_CLIP_NAME, union)]
         else:
             return []
         clips = [{"name": name, "samplers": [], "channels": []} for name, _ in spans]
@@ -380,9 +342,8 @@ class _AnimationMixin:
         )
         return clips
 
-    @classmethod
     def clip_spans(
-        cls,
+        self,
         frames: Iterable[float],
         takes: Iterable[Any],
         stack_range: Optional[Sequence[float]] = None,
@@ -393,47 +354,6 @@ class _AnimationMixin:
             ]
         ] = None,
     ) -> Dict[str, List[float]]:
-        """Per take, the first and last authored frame inside its window.
-
-        The producer half of what :meth:`_clip_zero` reads back, kept here
-        rather than in each DCC package so the two cannot write the schema
-        differently -- the same reason :meth:`build_scene_sidecar` owns the
-        sidecar envelope. Each toolkit keeps only the part that needs a scene:
-        collecting *frames* (every animated channel's key times, transforms and
-        visibility alike, because the converter sizes a take from all of them).
-
-        The :attr:`DEFAULT_CLIP_SPAN` entry is the whole timeline, for the
-        full-range stack a take split does not name.
-
-        Parameters:
-            frames: Every authored key time in the scene, in frames.
-            takes: The declared takes, each ``{"name", "start", "end"}``.
-            stack_range: ``(first, last)`` frame the SOURCE STACK will
-                actually carry -- the exported/baked range. Pass it whenever
-                the caller knows it. The converter rebases every stack onto
-                its first key, so the whole-timeline zero must be the first
-                frame the FILE holds, not the first frame the SCENE holds: a
-                key authored before the exported range never reaches the FBX,
-                and letting it set the zero slides every clip cut from that
-                stack by the difference. Measured on a production assembly as
-                a 33-frame slide (first take at 33, scene's first key at 0),
-                which reads as up to 90 cm of apparent distortion while the
-                geometry is exact. Also why a bake matters: it writes a key on
-                every frame of the range, so the stack's first key IS the
-                range start even when the pre-bake scene had none there.
-
-            key_spans: The same question asked per window instead of by listing
-                keys -- *frames* is then ignored. Called once with
-                ``[(start, end), ...]`` (inclusive frames, ``None`` =
-                unbounded: the whole timeline first, then one window per valid
-                take) and returns each window's ``(first, last)`` key, or
-                ``None`` where no key falls. A DCC that can seek its curves
-                passes this: a production bake is millions of keys, and
-                listing them cost 10 s a pass.
-
-        Returns:
-            ``{take name: [first, last]}``, empty when nothing is animated.
-        """
         named: List[Tuple[str, float, float]] = []
         for take in takes or ():
             if not isinstance(take, dict):
@@ -466,26 +386,24 @@ class _AnimationMixin:
                 bounds = None
         whole = found[0] if found else None
         if whole is None:
-            return {cls.DEFAULT_CLIP_SPAN: bounds} if bounds else {}
+            return {self._mc.DEFAULT_CLIP_SPAN: bounds} if bounds else {}
         spans: Dict[str, List[float]] = {
-            cls.DEFAULT_CLIP_SPAN: bounds or [float(whole[0]), float(whole[1])]
+            self._mc.DEFAULT_CLIP_SPAN: bounds or [float(whole[0]), float(whole[1])]
         }
         for (name, _start, _end), hit in zip(named, found[1:]):
             if hit is not None:
                 spans[name] = [float(hit[0]), float(hit[1])]
         return spans
 
-    @classmethod
-    def _declared_takes(cls, gltf: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _declared_takes(self, gltf: Dict[str, Any]) -> List[Dict[str, Any]]:
         """The take list *gltf*'s carrier declares
         (:meth:`SceneRecords.declared_takes` over its records): every GLB
         reader of the takes goes through here."""
         return SceneRecords.declared_takes(
-            lambda key: cls.data_export_channel(gltf, key)
+            lambda key: self._mc.data_export_channel(gltf, key)
         )
 
-    @classmethod
-    def _take_windows(cls, gltf: Dict[str, Any]) -> Dict[str, Tuple[float, float]]:
+    def _take_windows(self, gltf: Dict[str, Any]) -> Dict[str, Tuple[float, float]]:
         """``{take name: (start frame, end frame)}`` from the declared takes.
 
         Shared by the visibility gate and the clip manifest so a take whose
@@ -494,7 +412,7 @@ class _AnimationMixin:
         against.
         """
         windows: Dict[str, Tuple[float, float]] = {}
-        for take in cls._declared_takes(gltf):
+        for take in self._declared_takes(gltf):
             if take.get("name") is None:
                 continue
             try:
@@ -506,9 +424,8 @@ class _AnimationMixin:
                 continue
         return windows
 
-    @classmethod
     def _clip_span_for(
-        cls,
+        self,
         name: str,
         spans: Dict[str, Any],
         windows: Dict[str, Any],
@@ -527,12 +444,11 @@ class _AnimationMixin:
         """
         span = spans.get(name)
         if span is None and name not in windows:
-            span = spans.get(cls.DEFAULT_CLIP_SPAN)
+            span = spans.get(self._mc.DEFAULT_CLIP_SPAN)
         return span
 
-    @classmethod
     def _clip_zero(
-        cls,
+        self,
         gltf: Dict[str, Any],
         animation: Dict[str, Any],
         window: Tuple[float, float],
@@ -574,13 +490,13 @@ class _AnimationMixin:
         if isinstance(declared, (int, float)):
             return float(declared)
 
-        pair = cls._numeric_pairs([span])
+        pair = self._numeric_pairs([span])
         if not pair:
             return window[0]
         first, last = float(pair[0][0]), float(pair[0][1])
         if not verify:
             return first
-        measured = cls._animation_span(gltf, animation)
+        measured = self._animation_span(gltf, animation)
         if measured is None:
             return first  # empty clip: this pass alone defines its zero
         # One frame of tolerance: the span arrives as authored frames and comes
@@ -600,37 +516,8 @@ class _AnimationMixin:
             )
         return first
 
-    @classmethod
-    def prune_glb_animations(cls, glb: GlbTarget) -> List[str]:
-        """Drop every animation that carries no channels or no samplers.
-
-        glTF requires both arrays on an animation to hold at least one entry,
-        so a hollow animation is not a quiet clip -- it is a file a strict
-        reader rejects outright. Two writers produce one (both measured on
-        Maya 2025 -> FBX2glTF 0.13.1):
-
-        * Maya writes its whole-timeline ``Take 001`` AnimStack whenever
-          animation export is armed, keyed scene or not. On a static scene
-          that is a stack and a layer with no curves, and the converter
-          transcribes it as an animation with neither channels nor samplers
-          (two production modules, 2026-09-02).
-        * A take split emits an AnimStack per declared range and bakes no
-          curve for a range in which nothing exported moves.
-
-        Runs after every pass that can ADD channels (clips, visibility, fades)
-        and before the manifest, which reports what the file carries. A
-        DECLARED take that is still hollow here is dropped like any other --
-        there is no valid way to ship an empty clip -- and the manifest then
-        reports it as a take the file lacks.
-
-        Parameters:
-            glb: Path to a GLB, or an open :class:`GlbEdit`.
-
-        Returns:
-            The names of the animations dropped, in file order; empty when
-            the file was left alone.
-        """
-        with cls.open_glb(glb) as edit:
+    def prune_glb_animations(self, glb: GlbTarget) -> List[str]:
+        with self._mc.open_glb(glb) as edit:
             gltf = edit.gltf
             animations = gltf.get("animations")
             if not animations:
@@ -652,7 +539,7 @@ class _AnimationMixin:
                 del gltf["animations"]
             edit.dirty = True
 
-            declared = cls._take_windows(gltf)
+            declared = self._mc._take_windows(gltf)
             shots = [name for name in dropped if name in declared]
             if shots:
                 # Warned: the scene declared these and the file will not list
@@ -674,42 +561,8 @@ class _AnimationMixin:
                 )
             return dropped
 
-    @classmethod
-    def compact_glb_animations(cls, glb: GlbTarget) -> Dict[str, int]:
-        """Collapse every animation channel that never moves to two keys.
-
-        A baked export writes a key on every frame for every node in every
-        clip, because a clip must PIN the pose of everything it does not
-        animate: a viewer playing clip B after clip A leaves any node B omits
-        wherever A left it. That pinning is the reason the channels exist, and
-        it needs exactly two keys -- one at each end of the clip -- not one per
-        frame. Measured on the PROPS assembly: 13,187 of 22,654 channels (58%)
-        carry a value that never changes, costing 16.6 MB of a 215 MB
-        deliverable to say a node stood still.
-
-        Byte-exact, so the file plays identically: a channel is collapsed only
-        when every one of its elements has the same bit pattern, and the two
-        keys it keeps span the clip's own first and last time, so no clip
-        changes duration. Channels that move are not touched, and neither is a
-        sampler whose output is shared with one that moves.
-
-        Wired into :meth:`fbx_to_glb`'s session after every pass that ADDS
-        channels (clips, visibility, fades) and after
-        :meth:`prune_glb_animations` -- it can only shrink what is already
-        there. The time inputs the collapsed channels stop reading are deleted
-        (:meth:`_drop_orphaned_accessors`), and the orphaned payload is
-        reclaimed by :meth:`_compact_bin`.
-        Also safe to run standalone on any finished GLB.
-
-        Parameters:
-            glb: Path to a ``.glb``, modified in place, or an open session.
-
-        Returns:
-            ``{"channels": n, "accessors": n, "bytes": n}`` -- channels
-            collapsed, accessors rewritten, and BIN payload reclaimed. A file
-            with nothing to collapse is not rewritten.
-        """
-        with cls.open_glb(glb) as edit:
+    def compact_glb_animations(self, glb: GlbTarget) -> Dict[str, int]:
+        with self._mc.open_glb(glb) as edit:
             gltf = edit.gltf
             animations = gltf.get("animations") or []
             accessors = gltf.get("accessors") or []
@@ -745,7 +598,7 @@ class _AnimationMixin:
                     if output in refused:
                         continue
                     if output not in constant:
-                        elements = cls._accessor_elements(edit, output)
+                        elements = self._mc._accessor_elements(edit, output)
                         if not elements or len(elements) < 3:
                             # Nothing to win on a channel already at two keys,
                             # and an unreadable layout is left alone.
@@ -781,7 +634,7 @@ class _AnimationMixin:
                 # collector and the next run mints another.
                 if not any(out in collapsible for _s, out in per_animation[position]):
                     continue
-                lo, hi = cls._animation_time_span(edit, animation)
+                lo, hi = self._mc._animation_time_span(edit, animation)
                 if lo is None:
                     continue
                 input_slot[position] = len(payloads)
@@ -791,7 +644,7 @@ class _AnimationMixin:
                 output_slot[output] = len(payloads)
                 payloads.append(element + element)
 
-            added_views = cls._append_bin_views(edit, payloads)
+            added_views = self._mc._append_bin_views(edit, payloads)
             if not added_views:  # external buffer: nothing this pass can do
                 return {"channels": 0, "accessors": 0, "bytes": 0}
 
@@ -852,8 +705,8 @@ class _AnimationMixin:
             # A converter shares one time input across a clip, which its moving
             # channels keep alive; a clip rebuild writes one PER CHANNEL, and
             # each collapsed channel's would stay behind as a dead accessor.
-            cls._drop_orphaned_accessors(edit, replaced_inputs)
-            reclaimed = cls._compact_bin(edit)
+            self._mc._drop_orphaned_accessors(edit, replaced_inputs)
+            reclaimed = self._mc._compact_bin(edit)
             logger.info(
                 "Animation: collapsed %d constant channel(s) across %d clip(s) "
                 "to two keys, reclaiming %.2f MB -- a clip PINS the pose of "
@@ -869,41 +722,19 @@ class _AnimationMixin:
                 "bytes": reclaimed,
             }
 
-    @classmethod
     def reduce_glb_animations(
-        cls,
+        self,
         glb: GlbTarget,
         tolerance: float,
         rotation_tolerance: Optional[float] = None,
     ) -> Dict[str, int]:
-        """Drop the keys a GLB's samplers do not need to reproduce their motion.
-
-        :mod:`~pythontk.file_utils.mesh_convert.glb.key_reduction` does the
-        work -- why, and what "need" means, are its docstring; this is the
-        session-aware entry the pipeline and a caller with an open edit use.
-        Runs after the clips are rebuilt and the constant channels collapsed:
-        it can only shrink what is already there.
-
-        Parameters:
-            glb: Path to a ``.glb``, modified in place, or an open session.
-            tolerance: The deviation any original sample may show under the
-                viewer's interpolation, in the sampler's own units (meters for
-                translation / scale, quaternion components for rotation; 1e-4
-                is 0.1 mm / 0.006 degrees).
-            rotation_tolerance: A separate bound for rotations; None takes
-                *tolerance*.
-
-        Returns:
-            ``{"samplers": n, "keys_before": n, "keys_after": n, "bytes": n}``.
-        """
         from pythontk.file_utils.mesh_convert.glb.key_reduction import (
             GlbKeyReduction,
         )
 
         return GlbKeyReduction.reduce(glb, tolerance, rotation_tolerance)
 
-    @classmethod
-    def _animation_time_span(cls, edit: "GlbEdit", animation: Dict[str, Any]) -> tuple:
+    def _animation_time_span(self, edit: "GlbEdit", animation: Dict[str, Any]) -> tuple:
         """``(first, last)`` input time over every sampler, or ``(None, None)``.
 
         Read from each input accessor's ``min``/``max``, which the spec
@@ -921,7 +752,7 @@ class _AnimationMixin:
             if isinstance(low, list) and low and isinstance(high, list) and high:
                 start, end = float(low[0]), float(high[0])
             else:
-                elements = cls._accessor_elements(edit, index)
+                elements = self._mc._accessor_elements(edit, index)
                 if not elements:
                     continue
                 start = struct.unpack("<f", elements[0])[0]
@@ -930,67 +761,11 @@ class _AnimationMixin:
             hi = end if hi is None else max(hi, end)
         return lo, hi
 
-    @classmethod
-    def apply_glb_animations(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]:
-        """Publish ``extras.animation``: the FBX's shots, inherited whole, and
-        the GLB's clips.
-
-        The GLB consumer half of the shots contract. The FBX's ``animation``
-        record is the statement of the shots, and this block carries it into
-        the GLB as it stands -- every shot, whatever clips the conversion
-        produced -- adding only what the GLB alone can say (all measured on
-        Maya 2025 -> FBX2glTF 0.13.1):
-
-        * **Which clip plays a shot.** Maya's exporter keeps its whole-timeline
-          ``Take 001`` AnimStack alongside the takes it was asked to split out,
-          and it converts to ``animations[0]`` -- so the naive
-          ``clipAction(animations[0])`` plays the entire timeline rather than
-          the first shot. A shot plays the clip its ``clip`` names; a shot the
-          file holds no clip for (a ``full`` file cuts none, a take the
-          rebuild could not cut) plays its window of the whole-timeline clip,
-          the one no shot names. ``default_clip`` names the one to open on.
-        * **Where a clip sits on the timeline.** The converter rebases every
-          clip to t=0, which is right for playback and loses the sequence: a
-          shot authored at frames 20-30 and one at 1-10 both start at zero.
-          ``zero_frame`` is the authored frame a clip's t=0 sits on, which is
-          what maps clip time back to the frame numbers the shots are quoted
-          in. It is measured, not assumed to be the shot's ``start``: a take
-          the converter rebased itself starts at its first authored KEY, so a
-          clip whose motion starts late carries a lead-in (measured at 43
-          frames on a production assembly).
-        * **What the frames MEAN.** Frame numbers need the rate they were
-          authored at; ``fps`` carries it.
-
-        Inherited rather than derived from the clips (block v2, 2026-10-21):
-        v1 listed one entry per glTF animation, so a shot without a clip of
-        its own was silently gone from the GLB while its FBX still named it.
-
-        Reads its inputs out of the deliverable itself (the shots record,
-        ``animation``, on the ``data_export`` carrier) rather than
-        from the host, so it is self-feeding: it runs unconditionally after
-        every conversion, and is a clean no-op on a GLB with neither shots nor
-        animation. A GLB with animation but no declared shots still gets the
-        block -- names, spans and rate are what a player needs whether or not
-        shots exist -- and one with shots but no animation states the shots.
-
-        Also the one place the double encoding is undone. The channels arrive
-        as JSON *strings* nested under ``extras.fromFBX.userProperties`` (a
-        consumer has to parse the JSON it just parsed); this block is the
-        decoded reading, derived from them in the same pass, and they leave the
-        file at its end with every other record (:meth:`strip_fbx_records`), so
-        it states each thing once.
-
-        Parameters:
-            glb: ``.glb`` path (modified in place) or an open :class:`GlbEdit`.
-
-        Returns:
-            The published block, or ``None`` when the file has neither shots
-            nor animation.
-        """
-        with cls.open_glb(glb) as edit:
+    def apply_glb_animations(self, glb: GlbTarget) -> Optional[Dict[str, Any]]:
+        with self._mc.open_glb(glb) as edit:
             gltf = edit.gltf
             animations = gltf.get("animations") or []
-            metadata = cls.data_export_channel(gltf, SceneRecords.SHOTS.key) or {}
+            metadata = self._mc.data_export_channel(gltf, SceneRecords.SHOTS.key) or {}
             if not isinstance(metadata, dict):
                 metadata = {}
             # The record's own entries, as it states them: the block's shape
@@ -1014,7 +789,7 @@ class _AnimationMixin:
             for index, animation in enumerate(animations):
                 name = animation.get("name") or f"animation_{index}"
                 clips.append({"name": name, "animation": index})
-                span = cls._animation_span(gltf, animation)
+                span = self._animation_span(gltf, animation)
                 if span:
                     durations[name] = round(span[1] - span[0], 6)
                 if not (animation.get("channels") or []):
@@ -1033,7 +808,7 @@ class _AnimationMixin:
             # clip spans but never read the visibility channel, so a file whose
             # only stated rate lives there fell through to derivation while the
             # other passes used the stated number.
-            channel = cls.data_export_channel(gltf, SceneRecords.VISIBILITY.key)
+            channel = self._mc.data_export_channel(gltf, SceneRecords.VISIBILITY.key)
             measured = [
                 {
                     "start_frame": by_clip[c["name"]].get("start"),
@@ -1043,9 +818,9 @@ class _AnimationMixin:
                 for c in clips
                 if c["name"] in by_clip and c["name"] in durations
             ]
-            fps = cls._resolve_clip_fps(metadata, measured, channel)
+            fps = self._resolve_clip_fps(metadata, measured, channel)
             if fps and clips:
-                windows = cls._take_windows(gltf)
+                windows = self._mc._take_windows(gltf)
                 union = (
                     (
                         min(s for s, _ in windows.values()),
@@ -1059,7 +834,7 @@ class _AnimationMixin:
                     spans = {}
                 for index, clip in enumerate(clips):
                     window = windows.get(clip["name"]) or union
-                    span = cls._clip_span_for(clip["name"], spans, windows)
+                    span = self._clip_span_for(clip["name"], spans, windows)
                     if window is None and span is None:
                         # Neither a declared window nor a published span: there
                         # is nothing to place this clip against, and a guessed
@@ -1080,7 +855,7 @@ class _AnimationMixin:
                     # no spans -- the best available answer, and the one a
                     # consumer would have assumed anyway.
                     clip["zero_frame"] = round(
-                        cls._clip_zero(
+                        self._clip_zero(
                             gltf,
                             animations[index],
                             # ``_clip_zero`` reads the window ONLY when there is

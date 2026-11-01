@@ -2,10 +2,10 @@
 # coding=utf-8
 """Tests for pythontk.core_utils.engines.instancing.instancing_strategy.
 
-The decision tree both DCC ``AutoInstancer`` bindings (mayatk / blendertk
-``core_utils/auto_instancer/instancing_strategy.py``) inherit: the cases pin
-the behavior it had while each DCC carried its own copy. The one scene read,
-the prototype's triangle count, is a hook the bindings override.
+The decision tree both DCCs' ``AutoInstancer`` (mayatk / blendertk) run: the
+cases pin the behavior it had while each DCC carried its own copy. The one
+scene read, the prototype's triangle count, is the adapter each host injects
+(``count_triangles=``); here a fake stands in for it.
 """
 
 import unittest
@@ -14,11 +14,9 @@ import pythontk as ptk
 from pythontk import InstancingStrategy, StrategyConfig, StrategyType
 
 
-class _CountingStrategy(InstancingStrategy):
-    """A host binding in miniature: the 'mesh' is its own triangle count."""
-
-    def _get_triangle_count(self, mesh_node):
-        return int(mesh_node)
+def _counting(config=None):
+    """A strategy over a fake host whose 'mesh' is its own triangle count."""
+    return InstancingStrategy(config or StrategyConfig(), count_triangles=int)
 
 
 class TestStrategyType(unittest.TestCase):
@@ -132,9 +130,9 @@ class TestInstancingStrategyDecisions(unittest.TestCase):
         self.assertEqual(InstancingStrategy.MICRO_TRI_THRESHOLD, 300)
 
 
-class TestTriangleCountHook(unittest.TestCase):
-    def test_hook_supplies_the_count_from_mesh_node(self):
-        s = _CountingStrategy(StrategyConfig())
+class TestTriangleCountAdapter(unittest.TestCase):
+    def test_adapter_supplies_the_count_from_mesh_node(self):
+        s = _counting()
         self.assertIs(
             s.evaluate(group_size=10, mesh_node=800), StrategyType.GPU_INSTANCE
         )
@@ -143,21 +141,47 @@ class TestTriangleCountHook(unittest.TestCase):
         )
 
     def test_explicit_triangle_count_wins_over_mesh_node(self):
-        s = _CountingStrategy(StrategyConfig())
+        s = _counting()
         self.assertIs(
             s.evaluate(group_size=10, mesh_node=10, triangle_count=5000),
             StrategyType.GPU_INSTANCE,
         )
 
     def test_no_mesh_node_counts_zero_triangles(self):
-        s = _CountingStrategy(StrategyConfig())
+        s = _counting()
         # 0 tris is micro: a repeated group combines, a lone one stays.
         self.assertIs(s.evaluate(group_size=5), StrategyType.COMBINE)
         self.assertIs(s.evaluate(group_size=1), StrategyType.KEEP_SEPARATE)
 
-    def test_base_reads_no_scene(self):
+    def test_no_adapter_reads_no_scene(self):
         s = InstancingStrategy(StrategyConfig())
+        self.assertIsNone(s.count_triangles)
         self.assertEqual(s._get_triangle_count(object()), 0)
+
+    def test_a_failing_read_counts_zero(self):
+        # A node with no mesh must not abort the pass: the host's read raising
+        # reads as no triangles.
+        def no_mesh(node):
+            raise RuntimeError("no mesh on " + str(node))
+
+        s = InstancingStrategy(StrategyConfig(), count_triangles=no_mesh)
+        self.assertEqual(s._get_triangle_count("locator1"), 0)
+        self.assertIs(
+            s.evaluate(group_size=1, mesh_node="locator1"), StrategyType.KEEP_SEPARATE
+        )
+
+    def test_adapter_is_asked_with_the_prototype(self):
+        asked = []
+        s = InstancingStrategy(
+            StrategyConfig(), count_triangles=lambda n: asked.append(n) or 900
+        )
+        self.assertIs(
+            s.evaluate(group_size=10, mesh_node="proto"), StrategyType.GPU_INSTANCE
+        )
+        self.assertEqual(asked, ["proto"])
+        # An explicit count never reaches the scene.
+        s.evaluate(group_size=10, mesh_node="proto", triangle_count=10)
+        self.assertEqual(asked, ["proto"])
 
     def test_root_registration(self):
         self.assertIs(ptk.InstancingStrategy, InstancingStrategy)

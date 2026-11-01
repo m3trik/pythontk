@@ -592,8 +592,8 @@ class _MapConverterInternal:
             if gloss.getextrema() != (0, 0):  # Ensure non-empty
                 return gloss.convert("L")
 
-        print(
-            f"// Warning: No gloss found in '{channel}' channel; using normalized grayscale..."
+        cls.logger.warning(
+            f"No gloss found in '{channel}' channel; using normalized grayscale..."
         )
         spec_gray = spec.convert("L")
         spec_gray = ImageEnhance.Brightness(spec_gray).enhance(1.2)
@@ -677,7 +677,7 @@ class _MapConverterInternal:
         ImgUtils.save_image(metallic, metallic_file)
         ImgUtils.save_image(roughness, roughness_file)
 
-        print(
+        cls.logger.result(
             f"PBR Conversion complete. Files saved:\n- {base_color_file}\n- {metallic_file}\n- {roughness_file}"
         )
         return base_color_file, metallic_file, roughness_file
@@ -745,14 +745,14 @@ class _MapConverterInternal:
                 np.array(ImgUtils.ensure_image(glossiness_map, "L"), dtype=np.float32)
                 / 255.0
             )
-            print("// Using gloss map to refine metallic computation.")
+            cls.logger.debug("Using gloss map to refine metallic computation.")
         else:
             gloss_img = cls.extract_gloss_from_spec(specular_map)
             gloss = np.array(gloss_img, dtype=np.float32) / 255.0 if gloss_img else None
             if gloss is not None:
-                print("// Extracted gloss from specular map.")
+                cls.logger.debug("Extracted gloss from specular map.")
             else:
-                print("// No valid gloss map found; using spec only.")
+                cls.logger.info("No valid gloss map found; using spec only.")
 
         # Step 2: Base metallic estimate
         metallic = np.clip((spec_lum - (threshold / 255.0)) / softness, 0.0, 1.0)
@@ -779,8 +779,8 @@ class _MapConverterInternal:
             else cls.extract_gloss_from_spec(specular_map)
         )
         if not gloss:
-            print(
-                "// No valid gloss map found; estimating roughness directly from spec."
+            cls.logger.info(
+                "No valid gloss map found; estimating roughness directly from spec."
             )
             spec_gray = spec.convert("L")
             gloss = ImageOps.autocontrast(spec_gray)

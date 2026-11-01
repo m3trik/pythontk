@@ -51,6 +51,7 @@ from typing import (
 
 from pythontk.geo_utils.articulation.analysis import ArticulationAnalysis
 from pythontk.geo_utils.articulation.model import _ArticulationModelInternal
+from pythontk.math_utils.quaternion import Quaternion
 
 Vec = Tuple[float, float, float]
 Quat = Tuple[float, float, float, float]
@@ -132,7 +133,7 @@ class _ArticulationPlanInternal(_ArticulationModelInternal):
         0 and x takes the whole turn -- unless the triple half a turn round
         each axis from it, ``(x + 180, 180 - y, z + 180)`` unwrapped, sums
         smaller in magnitude. Its quaternion is the first triple's,
-        composed (:meth:`_euler_quat`), whichever triple it reports.
+        composed (:meth:`Quaternion.from_euler`), whichever triple it reports.
         """
         cos_y = math.hypot(m[0], m[1])
         y = math.atan2(-m[2], cos_y)
@@ -141,7 +142,7 @@ class _ArticulationPlanInternal(_ArticulationModelInternal):
         else:
             x, z = math.atan2(m[6], m[10]), math.atan2(m[1], m[0])
         first = [math.degrees(x), math.degrees(y), math.degrees(z)]
-        q = cls._euler_quat("xyz", {"rx": first[0], "ry": first[1], "rz": first[2]})
+        q = Quaternion.from_euler("xyz", first)
         flipped = [first[0] + 180.0, 180.0 - first[1], first[2] + 180.0]
         if sum(abs(v) for v in flipped) < sum(abs(v) for v in first):
             first = flipped

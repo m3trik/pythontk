@@ -53,6 +53,7 @@ from pythontk.file_utils.mesh_convert._fbx_writer import (
     FbxWriter,
 )
 from pythontk.file_utils.mesh_convert.glb.edit import GlbEdit
+from pythontk.math_utils.quaternion import Quaternion
 
 logger = logging.getLogger(__name__)
 
@@ -215,40 +216,14 @@ def _identity() -> List[float]:
     return [1.0 if i % 5 == 0 else 0.0 for i in range(16)]
 
 
-def _quat_matrix3(q: Sequence[float]) -> List[List[float]]:
-    """Rotation rows of quaternion ``(x, y, z, w)`` (column-vector convention)."""
-    x, y, z, w = q
-    n = math.sqrt(x * x + y * y + z * z + w * w) or 1.0
-    x, y, z, w = x / n, y / n, z / n, w / n
-    return [
-        [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
-        [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
-        [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
-    ]
-
-
 def _trs_matrix(t, q, s) -> List[float]:
-    rot = _quat_matrix3(q)
+    rot = Quaternion.to_matrix(Quaternion.normalize(q))
     m = _identity()
     for c in range(3):
         for r in range(3):
             m[c * 4 + r] = rot[r][c] * s[c]
     m[12], m[13], m[14] = t
     return m
-
-
-def _euler_xyz(rot: List[List[float]]) -> Tuple[float, float, float]:
-    """Degrees ``(x, y, z)`` for rotation rows *rot* in FBX's XYZ order
-    (``R = Rz * Ry * Rx``: X applied first)."""
-    sy = max(-1.0, min(1.0, -rot[2][0]))
-    y = math.asin(sy)
-    if abs(sy) < 0.9999999:
-        x = math.atan2(rot[2][1], rot[2][2])
-        z = math.atan2(rot[1][0], rot[0][0])
-    else:  # gimbal: fold Z into X
-        x = math.atan2(-rot[1][2], rot[1][1])
-        z = 0.0
-    return (math.degrees(x), math.degrees(y), math.degrees(z))
 
 
 def _decompose(m: Sequence[float]):
@@ -264,37 +239,6 @@ def _decompose(m: Sequence[float]):
         scale[0] = -scale[0]
     rot = [[cols[c][r] / scale[c] for c in range(3)] for r in range(3)]
     return list(m[12:15]), rot, scale
-
-
-def _euler_near(euler: Sequence[float], prev: Sequence[float]) -> Tuple[float, ...]:
-    """The spelling of *euler* closest to *prev* -- keyed rotation must not flip.
-
-    Each XYZ rotation has a second Euler solution, and every angle is good to
-    a multiple of 360; the key nearest the previous one keeps the curve
-    continuous where independent extraction would jump 360 degrees.
-    """
-    x, y, z = euler
-    best, best_cost = None, None
-    for cand in ((x, y, z), (x + 180.0, 180.0 - y, z + 180.0)):
-        wrapped = tuple(v + 360.0 * round((p - v) / 360.0) for v, p in zip(cand, prev))
-        cost = sum(abs(v - p) for v, p in zip(wrapped, prev))
-        if best_cost is None or cost < best_cost:
-            best, best_cost = wrapped, cost
-    return best
-
-
-def _slerp(a, b, t):
-    dot = sum(x * y for x, y in zip(a, b))
-    if dot < 0.0:
-        b, dot = [-v for v in b], -dot
-    if dot > 0.9995:
-        out = [x + (y - x) * t for x, y in zip(a, b)]
-    else:
-        theta = math.acos(dot)
-        sa, sb = math.sin((1 - t) * theta), math.sin(t * theta)
-        out = [(x * sa + y * sb) / math.sin(theta) for x, y in zip(a, b)]
-    n = math.sqrt(sum(v * v for v in out)) or 1.0
-    return [v / n for v in out]
 
 
 class _GltfDocument(object):
@@ -465,6 +409,8 @@ class _GltfToFbx(object):
         self._check_extensions()
         nodes = self.gltf.get("nodes") or []
         self.order, self.parent = self._scene_order()
+        if self.include_animation:
+            self._check_animation_values()
         self.joints = {
             j for skin in self.gltf.get("skins") or [] for j in skin.get("joints") or []
         }
@@ -523,6 +469,65 @@ class _GltfToFbx(object):
             )
         for ext in sorted(required - _UNDERSTOOD_EXTENSIONS):
             self._skip("required extensions (ignored)", ext)
+
+    def _check_animation_values(self) -> None:
+        """Refuse a channel this converts whose key times or values hold a NaN
+        or an infinity, or whose key times do not increase -- glTF allows
+        none of it -- naming its node, before anything is written."""
+        animations = self.gltf.get("animations") or []
+        if not animations:
+            return
+        nodes = self.gltf.get("nodes") or []
+        scene = set(self.order)
+        # The repair opens a .glb only; a .gltf is fixed where it was written.
+        fix = (
+            "repair the file (MeshConvert.fix_glb_nonfinite_keys) and convert it again"
+            if self.doc.path.lower().endswith(".glb")
+            else "fix it where it was written and convert it again"
+        )
+        samplers = animations[0].get("samplers") or []
+        for channel in animations[0].get("channels") or []:
+            target = channel.get("target") or {}
+            node, path = target.get("node"), target.get("path")
+            index = channel.get("sampler")
+            if (
+                node not in scene
+                or path not in ("translation", "rotation", "scale")
+                or not isinstance(index, int)
+                or not 0 <= index < len(samplers)
+            ):
+                continue
+            sampler = samplers[index] or {}
+            if not isinstance(sampler.get("input"), int) or not isinstance(
+                sampler.get("output"), int
+            ):
+                continue
+            name = nodes[node].get("name") or f"node{node}"
+            where = f"{os.path.basename(self.doc.path)}: node {name!r}'s {path} channel"
+            times = [t[0] for t in self.doc.accessor(sampler.get("input"))]
+            bad = [k for k, t in enumerate(times) if not math.isfinite(t)]
+            if bad:
+                raise ValueError(
+                    f"{where} holds {len(bad)} non-finite key time(s), the first "
+                    f"at key {bad[0]}, which glTF does not allow; {fix}."
+                )
+            back = next(
+                (k for k in range(1, len(times)) if times[k] <= times[k - 1]), None
+            )
+            if back is not None:
+                raise ValueError(
+                    f"{where}'s key times do not increase (key {back} at "
+                    f"{times[back]:g} s after {times[back - 1]:g} s), which glTF "
+                    "requires; fix them where the file was written and convert "
+                    "it again."
+                )
+            values = self.doc.accessor(sampler.get("output"))
+            bad = [k for k, v in enumerate(values) if not all(map(math.isfinite, v))]
+            if bad:
+                raise ValueError(
+                    f"{where} holds {len(bad)} non-finite value(s), the first at "
+                    f"element {bad[0]}, which glTF does not allow; {fix}."
+                )
 
     def _scene_order(self) -> Tuple[List[int], Dict[int, int]]:
         """Nodes of the default scene, parents first, and each one's parent."""
@@ -1075,10 +1080,14 @@ class _GltfToFbx(object):
             t, rot, s = _decompose(node["matrix"])
         else:
             t = list(node.get("translation") or (0.0, 0.0, 0.0))
-            rot = _quat_matrix3(node.get("rotation") or (0.0, 0.0, 0.0, 1.0))
+            rot = Quaternion.to_matrix(
+                Quaternion.normalize(node.get("rotation") or Quaternion.IDENTITY)
+            )
             s = list(node.get("scale") or (1.0, 1.0, 1.0))
         # The spelling nearest zero: (360, 90, 360) is (0, 90, 0).
-        euler = _euler_near(_euler_xyz(rot), (0.0, 0.0, 0.0))
+        euler = Quaternion.euler_near(
+            "xyz", Quaternion.matrix_euler("xyz", rot), (0.0, 0.0, 0.0)
+        )
         return [v * _UNIT for v in t], euler, s
 
     def _model(self, name: str, kind: str, parent_id: int, t, euler, s) -> int:
@@ -1298,11 +1307,10 @@ class _GltfToFbx(object):
                 for p0, m0, p1, m1 in zip(v0, b0, v1, a1)
             ]
             if path == "rotation":
-                length = math.sqrt(sum(x * x for x in out)) or 1.0
-                out = [x / length for x in out]
+                out = list(Quaternion.normalize(out))
             return out
         if path == "rotation":
-            return _slerp(value(k), value(k + 1), u)
+            return list(Quaternion.slerp(value(k), value(k + 1), u))
         return [x + (y - x) * u for x, y in zip(value(k), value(k + 1))]
 
     def _keys(self, path, times, values, interp, fps):
@@ -1330,8 +1338,12 @@ class _GltfToFbx(object):
         elif path == "rotation":
             out, prev = [], None
             for q in samples:
-                e = _euler_xyz(_quat_matrix3(q))
-                e = _euler_near(e, prev if prev is not None else (0.0, 0.0, 0.0))
+                e = Quaternion.matrix_euler(
+                    "xyz", Quaternion.to_matrix(Quaternion.normalize(q))
+                )
+                e = Quaternion.euler_near(
+                    "xyz", e, prev if prev is not None else (0.0, 0.0, 0.0)
+                )
                 out.append(e)
                 prev = e
         else:
@@ -1614,13 +1626,6 @@ class _GltfToFbx(object):
             sections[HandoffManifest.INSTANCES] = instances
         return HandoffManifest.build(**sections)
 
-
-class _Gltf2FbxMixin:
-    """glTF -> FBX with no DCC. A private part of :class:`MeshConvert`."""
-
-    GLTF_EXTENSIONS = GLTF_EXTENSIONS
-    GLTF_UNDECODABLE_EXTENSIONS = GLTF_UNDECODABLE_EXTENSIONS
-
     @classmethod
     def gltf_to_fbx(
         cls,
@@ -1634,41 +1639,6 @@ class _Gltf2FbxMixin:
         overwrite: bool = False,
         report: Optional[Dict[str, Any]] = None,
     ) -> str:
-        """Convert a ``.glb`` / ``.gltf`` to a binary FBX -- no DCC involved.
-
-        Writes the payload a host imports a glTF through when it has no glTF
-        importer (see the module docstring for what crosses and what does not):
-        the FBX, the material images as files in *texture_dir*, and -- with
-        *manifest* -- the ``.manifest.json`` sidecar beside the FBX.
-
-        Parameters:
-            src: The glTF container.
-            dst: Output FBX path; defaults to *src* with ``.fbx``.
-            texture_dir: Where the images are written, each named for the map
-                type it feeds; defaults to ``<dst stem>_textures`` beside *dst*.
-                KTX2 images are decoded to PNG through KTX-Software's ``ktx``
-                (:meth:`Ktx2Encoder.decode`); without it they are skipped and
-                reported, and the geometry still converts.
-            include_animation: Convert the first animation's translation /
-                rotation / scale channels.
-            fps: The rate keys are resampled at where they must be (cubic
-                splines; slerped rotation between sparse keys), and the clock the
-                manifest records. ``None`` reads it off the key spacing, else 24.
-            manifest: Write the :class:`HandoffManifest` sidecar.
-            overwrite: Replace an existing *dst*.
-            report: Filled with counts: nodes, meshes, materials, textures,
-                textures_missing, skins, animation, fps, keys, skipped.
-
-        Returns:
-            The FBX path.
-
-        Raises:
-            FileNotFoundError: *src* does not exist.
-            FileExistsError: *dst* exists and *overwrite* is False.
-            ValueError: *src* is not a glTF container, or requires an
-                extension whose geometry cannot be decoded here
-                (:data:`GLTF_UNDECODABLE_EXTENSIONS`).
-        """
         src = os.path.abspath(os.path.expanduser(os.path.expandvars(str(src))))
         if not os.path.isfile(src):
             raise FileNotFoundError(f"glTF not found: {src}")
@@ -1685,7 +1655,7 @@ class _Gltf2FbxMixin:
             texture_dir or os.path.splitext(dst)[0] + "_textures"
         )
 
-        build = _GltfToFbx(
+        build = cls(
             _GltfDocument(src),
             texture_dir=texture_dir,
             include_animation=include_animation,

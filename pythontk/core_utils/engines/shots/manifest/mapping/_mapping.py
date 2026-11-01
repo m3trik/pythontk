@@ -368,19 +368,6 @@ class Mapping(_MappingInternal):
             return []
         return sorted(p.stem for p in d.glob("*.json") if not p.stem.startswith("_"))
 
-    #: Retired built-in templates -> ``(replacement, option values)``: what a
-    #: saved ``.active`` pointer to one resolves to while its notice runs.
-    _RETIRED: Dict[str, Tuple[str, Dict[str, Any]]] = {
-        "speedrun": ("default", {"audio": "derive"}),
-    }
-
-    @staticmethod
-    def retired(name: str) -> Optional[Tuple[str, Dict[str, Any]]]:
-        """``(replacement, option values)`` for a retired template, else ``None``."""
-        if name in Mapping.templates().names():
-            return None  # a user template of that name wins
-        return Mapping._RETIRED.get(name)
-
     @staticmethod
     def load_mapping(
         name: str,
@@ -406,24 +393,6 @@ class Mapping(_MappingInternal):
             FileNotFoundError: If no matching mapping exists.
             pythontk.SchemaError: If the mapping is structurally invalid.
         """
-        retired = Mapping.retired(name) if directory is None else None
-        if retired is not None:
-            from pythontk.core_utils.deprecation import Deprecation
-
-            replacement, values = retired
-            Deprecation.warn(
-                f"shot-manifest mapping {name!r}",
-                f"{replacement!r} with options {values!r}",
-                remove_in="0.14.0",
-                since="2026-10-01",
-                kind="value",
-            )
-            data = Mapping.load_mapping(replacement)
-            options = data.get("options") or {}
-            for key, value in values.items():
-                if key in options:
-                    options[key] = dict(options[key], default=value)
-            return data
         if name.endswith(".json"):
             path = Path(name)
             if not path.is_file():

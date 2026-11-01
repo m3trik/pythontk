@@ -2,8 +2,8 @@
 # coding=utf-8
 """Tests for pythontk.geo_utils.rail_surface (RailSurface) — the general
 rail-driven parametric-surface primitive. Covers grid shape/ordering, the
-displacement seam, and rail framing. The curtain generator that composes it is
-pinned separately in test_curtain.py.
+displacement seam, and rail framing. The curtain drape that composes it is
+pinned separately in test_curtain_drape.py.
 """
 
 import unittest

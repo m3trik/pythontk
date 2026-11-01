@@ -218,7 +218,7 @@ class _GlbSkinWeightsInternal:
             record = objects.get(oid)
             if record is None or record["name"] != "Model" or len(record["props"]) < 2:
                 return None
-            return FbxFile._display_name(record["props"][1])
+            return FbxFile.display_name(record["props"][1])
 
         out: Dict[str, List[dict]] = {}
         for oid, record in objects.items():

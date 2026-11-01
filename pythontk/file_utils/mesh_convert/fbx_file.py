@@ -28,8 +28,10 @@ import struct
 import zlib
 from bisect import bisect_left, bisect_right
 from collections import Counter
+from functools import partial
 from typing import (
     Any,
+    Callable,
     Collection,
     Dict,
     Iterator,
@@ -224,13 +226,6 @@ class _FbxFileInternal:
             children.append(child)
         f.seek(end)
         return {"name": name, "props": props, "children": children}
-
-    @staticmethod
-    def _display_name(raw: Any) -> Optional[str]:
-        """The human half of an FBX object-name property, or ``None``."""
-        if not isinstance(raw, (bytes, bytearray)):
-            return None
-        return bytes(raw).split(_NAME_CLASS_SEPARATOR, 1)[0].decode("utf-8", "replace")
 
     @staticmethod
     def _merged_span(a: Tuple[Any, ...], b: Tuple[Any, ...]) -> Tuple[Any, ...]:
@@ -1136,11 +1131,19 @@ class FbxFile(_FbxFileInternal):
                 names.append(name)
         return names
 
+    @staticmethod
+    def display_name(raw: Any) -> Optional[str]:
+        """The human half of an FBX object-name property -- ``Shot_1`` of
+        ``b"Shot_1\\x00\\x01AnimStack"`` -- or ``None`` for anything but bytes."""
+        if not isinstance(raw, (bytes, bytearray)):
+            return None
+        return bytes(raw).split(_NAME_CLASS_SEPARATOR, 1)[0].decode("utf-8", "replace")
+
     def object_name(self, record: Dict[str, Any]) -> Optional[str]:
         """An Objects child's display name (a record :meth:`iter_objects` yields):
         the first of its props that is one."""
         return next(
-            (n for n in map(self._display_name, record["props"]) if n is not None),
+            (n for n in map(self.display_name, record["props"]) if n is not None),
             None,
         )
 
@@ -1338,7 +1341,7 @@ class FbxFile(_FbxFileInternal):
                 continue
             kind[props[0]] = record["name"]
             name[props[0]] = (
-                self._display_name(props[1]) if len(props) > 1 else None
+                self.display_name(props[1]) if len(props) > 1 else None
             ) or ""
             if record["name"] != "AnimationCurve":
                 continue
@@ -1471,6 +1474,62 @@ class FbxFile(_FbxFileInternal):
         Raises:
             ValueError: A curve whose key times and values differ in count.
         """
+        return {
+            take: {
+                key: [
+                    [
+                        time,
+                        value,
+                        self.KEY_INTERPOLATIONS.get(
+                            self._key_attr(curve, i)[0] & self._INTERPOLATION,
+                            "linear",
+                        ),
+                    ]
+                    for i, (time, value) in enumerate(zip(curve.times, curve.values))
+                ]
+                for key, curve in channels.items()
+            }
+            for take, channels in self._take_key_curves(properties, user, kind).items()
+        }
+
+    def take_samplers(
+        self,
+        properties: Collection[str] = (),
+        user: bool = False,
+        kind: str = "Model",
+    ) -> Dict[str, Dict[Tuple[str, str, str], Callable[[int], float]]]:
+        """:meth:`take_keys`' channels as functions of time: each curve read
+        between its keys as Maya's importer evaluates it (tangents, weights,
+        step holds; its end values held outside its keys).
+
+        Parameters:
+            properties: As :meth:`take_keys`.
+            user: As :meth:`take_keys`.
+            kind: As :meth:`take_keys`.
+
+        Returns:
+            ``{take: {(target, property, component): sample}}`` -- the same
+            takes and labels as :meth:`take_keys`; ``sample(ticks)`` is the
+            curve's value at *ticks* (:attr:`TICKS_PER_SECOND`).
+        """
+        return {
+            take: {
+                key: partial(self._evaluate_curve, curve)
+                for key, curve in channels.items()
+            }
+            for take, channels in self._take_key_curves(properties, user, kind).items()
+        }
+
+    def _take_key_curves(
+        self,
+        properties: Collection[str] = (),
+        user: bool = False,
+        kind: str = "Model",
+    ) -> Dict[str, Dict[Tuple[str, str, str], _FbxCurve]]:
+        """:meth:`take_keys`' channels as the curves they are -- tangents and
+        all, each with its property's clamp step -- for
+        :meth:`_evaluate_curve` to read between keys (:meth:`take_samplers`):
+        the same takes, labels and base layer."""
         wanted = set(properties)
         source = self
         if not self._curves_decoded():
@@ -1488,7 +1547,7 @@ class FbxFile(_FbxFileInternal):
                 continue
             uid, what = props[0], record["name"]
             kinds[uid] = what
-            names[uid] = (self._display_name(props[1]) if len(props) > 1 else "") or ""
+            names[uid] = (self.display_name(props[1]) if len(props) > 1 else "") or ""
             if what == "AnimationStack":
                 stacks.append(uid)
             elif what == "AnimationCurve":
@@ -1527,7 +1586,7 @@ class FbxFile(_FbxFileInternal):
                 if prop in wanted or prop in users.get(parent, ()):
                     driven.setdefault(child, []).append((parent, prop))
 
-        takes: Dict[str, Dict[Tuple[str, str, str], List[List[Any]]]] = {}
+        takes: Dict[str, Dict[Tuple[str, str, str], _FbxCurve]] = {}
         for stack in stacks:
             channels = takes.setdefault(names[stack], {})
             layer = next(
@@ -1546,20 +1605,9 @@ class FbxFile(_FbxFileInternal):
                         key = (label(target), prop, component)
                         if key in channels:
                             continue  # FBX plays the first curve on a channel
-                        parsed = self._key_curve(arrays[curve])
-                        channels[key] = [
-                            [
-                                time,
-                                value,
-                                self.KEY_INTERPOLATIONS.get(
-                                    self._key_attr(parsed, i)[0] & self._INTERPOLATION,
-                                    "linear",
-                                ),
-                            ]
-                            for i, (time, value) in enumerate(
-                                zip(parsed.times, parsed.values)
-                            )
-                        ]
+                        channels[key] = self._key_curve(
+                            arrays[curve], self._clamp_threshold(prop)
+                        )
         return takes
 
     def take_layout(self, tolerance: float = 1e-4) -> Dict[str, Any]:
@@ -1655,7 +1703,7 @@ class FbxFile(_FbxFileInternal):
                     for child in record["children"]
                     if child["name"] in self.CURVE_ARRAYS and child["props"]
                 }
-            display = self._display_name(props[1]) if len(props) > 1 else None
+            display = self.display_name(props[1]) if len(props) > 1 else None
             rows.append((record["name"], props[0], display or "", arrays))
         return self._build_take_model(rows, source.connections())
 

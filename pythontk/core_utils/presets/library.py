@@ -307,29 +307,6 @@ class _PresetLibraryInternal(object):
         return slug or "collection"
 
     @staticmethod
-    def _version_tuple(version: str) -> Tuple[int, ...]:
-        parts = []
-        for chunk in str(version).split("."):
-            m = re.match(r"\d+", chunk)
-            if not m:
-                break
-            parts.append(int(m.group()))
-        return tuple(parts)
-
-    @staticmethod
-    def _installed_version(package: str) -> Optional[str]:
-        try:
-            from importlib.metadata import PackageNotFoundError, version
-        except ImportError:  # pragma: no cover - py<3.8
-            return None
-        try:
-            return version(package)
-        except PackageNotFoundError:
-            return None
-        except Exception:
-            return None
-
-    @staticmethod
     def _safe_parts(parts: Iterable[str]) -> bool:
         """True when bundle path *parts* can only name a file under the root.
 
@@ -912,9 +889,11 @@ class PresetLibrary(_PresetLibraryInternal):
 
     def _package_versions(self, keys: Iterable[str]) -> Dict[str, str]:
         """Installed versions of the packages owning *keys*, plus pythontk."""
+        from pythontk.core_utils.package_manager import PackageManager
+
         out: Dict[str, str] = {}
         for package in {"pythontk", *(k.split("/", 1)[0] for k in keys)}:
-            version = self._installed_version(package)
+            version = PackageManager.metadata_version(package)
             if version:
                 out[package] = version
         return out
@@ -1159,10 +1138,13 @@ class PresetLibrary(_PresetLibraryInternal):
         return ImportItem(key, name, "conflict", "skip", reason, member, info)
 
     def _import_warnings(self, header: Dict[str, Any]) -> List[str]:
+        from pythontk.core_utils.package_manager import PackageManager
+        from pythontk.core_utils.package_requirement import PackageRequirement
+
         warnings = []
         for package, theirs in sorted((header.get("packages") or {}).items()):
-            mine = self._installed_version(package)
-            if mine and self._version_tuple(mine) < self._version_tuple(theirs):
+            mine = PackageManager.metadata_version(package)
+            if mine and PackageRequirement.release(mine) < PackageRequirement.release(theirs):
                 warnings.append(
                     f"Made with {package} {theirs}; you have {mine}. Settings "
                     "added since may not apply until you update."

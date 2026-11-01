@@ -8,7 +8,9 @@ mayatk's ``AudioClips.export_record`` and blendertk's
 ``(frame, track)`` events scoped by ``ptk.AudioUtils.scope_events`` to the
 takes the ``animation`` record declares (``SceneRecords.declared_takes``;
 none in a ``full`` export), made with ``SceneRecords.AUDIO.make({"events",
-"fps"})``. That composition, less the scene reads, runs here in a real
+"fps"})`` -- ``media`` is the FBX dependency pass's to write
+(``FbxMedia.embed_dependencies``, from the bytes it embeds). That
+composition, less the scene reads, runs here in a real
 ``ExportSnapshot`` assembly after the real shots producer, once with each
 host's origin for an unscoped event. Exact both ways: every payload validates
 with no unknown-key warning, and every declared key is one the producers
@@ -218,9 +220,14 @@ class TestTheRecordIsWhatTheProducersWrite(unittest.TestCase):
                 _assert_exact(self, payload)
                 self.assertEqual({e["clip"] for e in payload["events"]}, {""})
 
-    def test_every_declared_key_is_one_the_producers_write(self):
+    def test_every_declared_key_is_one_the_producers_or_the_dependency_pass_write(self):
+        """``media`` is the FBX dependency pass's (``FbxMedia.embed_dependencies``):
+        it digests the bytes it embedded, so a write without it -- a raw File >
+        Export -- reads as one from before the digests (2026-10-31: a producer
+        that digested the source named audio no file carried, and Unity bound
+        nothing where a library clip had bound)."""
         payloads = list(self._payloads().values())
-        self.assertEqual(set().union(*payloads), _declared(AudioRecord))
+        self.assertEqual(set().union(*payloads), _declared(AudioRecord) - {"media"})
         events = [event for payload in payloads for event in payload["events"]]
         self.assertEqual(set().union(*events), _declared(AudioCue))
 
@@ -242,8 +249,15 @@ class TestWhatNoProducerWritesIsRefused(unittest.TestCase):
         "fps": 30.0,
     }
 
+    def test_a_record_written_before_the_digests_still_reads(self):
+        """A file exported before 2026-10-31 carries no ``media``: still the
+        current record, read whole; a reader extracts its clips from it."""
+        self.assertNotIn("media", self.RECORD)
+        _assert_exact(self, self.RECORD)
+        self.assertTrue(SceneRecords.AUDIO.is_current(self.RECORD))
+
     def test_the_record_refuses_what_no_producer_writes(self):
-        r = self.RECORD
+        r = dict(self.RECORD, media={"footstep": "ab" * 32})
         self.assertEqual(AudioRecord.validate(r).errors, [])
         cases = {
             "missing required key 'fps'": _edited(r, ["fps"], drop=True),
@@ -266,6 +280,10 @@ class TestWhatNoProducerWritesIsRefused(unittest.TestCase):
             "events: expected a list": _edited(r, ["events"], {}),
             "events[0].expected a mapping": _edited(r, ["events"], ["footstep"]),
             "version: expected integer, got string": _edited(r, ["version"], "2"),
+            "media.footstep: expected string, got integer": _edited(
+                r, ["media", "footstep"], 7
+            ),
+            "media: expected object, got array": _edited(r, ["media"], ["ab"]),
         }
         for expected, payload in cases.items():
             with self.subTest(expected):
@@ -292,6 +310,12 @@ class TestThePublishedForms(unittest.TestCase):
         self.assertEqual(doc["title"], "AudioRecord")
         self.assertEqual(sorted(doc["$defs"]), ["AudioCue"])
         self.assertEqual(doc["required"], ["version", "events", "fps"])
+        # Optional, so a file written before it is still the current record.
+        media = doc["properties"]["media"]
+        self.assertEqual(
+            (media["type"], media["additionalProperties"]),
+            ("object", {"type": "string"}),
+        )
         self.assertEqual(doc["$defs"]["AudioCue"]["required"], ["clip", "frame", "name"])
         self.assertEqual(_required(AudioCue), ["clip", "frame", "name"])
 

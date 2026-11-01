@@ -2072,7 +2072,7 @@ class TestPreviewViewerLive(unittest.TestCase):
         or None}``, in metres (``unit_scale`` 1); *probe_intensity* publishes
         the level it plays at (``environment.probeIntensity``). *highlights*
         gives that probe highlight copies as the export embeds them
-        (``probe.highlights``, ``MeshConvert._embed_highlight_probes``):
+        (``probe.highlights``, ``_Highlights._embed_highlight_probes``):
         ``[{"image": float (h, w, 3) RGB layer, "materials": [names]}]``.
         """
         import cv2
@@ -2185,7 +2185,7 @@ class TestPreviewViewerLive(unittest.TestCase):
                         {"bufferView": view, "materials": list(layer["materials"])}
                     )
                 # The list the lightmap pass publishes: a copy's size is its
-                # Radiance header's (MeshConvert._embed_highlight_probes).
+                # Radiance header's (_Highlights._embed_highlight_probes).
                 web = edit.gltf["extras"][ptk.SceneRecords.LIGHTMAPS.key]
                 web["probe"]["highlights"] = copies
                 edit.dirty = True
@@ -3896,7 +3896,7 @@ class TestPreviewViewerLive(unittest.TestCase):
 
     def test_a_highlight_copy_is_the_probe_its_materials_reflect(self):
         """The bake's lights reach a deliverable as highlights drawn into copies
-        of its probe (``MeshConvert._embed_highlight_probes``): a copy is the
+        of its probe (``_Highlights._embed_highlight_probes``): a copy is the
         probe plus its layer, and the materials it names reflect it as their
         own envMap while the probe is up -- one lookup, as every other
         material reads the probe. Here the room is grey and the copy's layer

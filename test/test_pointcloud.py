@@ -488,5 +488,90 @@ class TestPcaEigenvalueSignature(unittest.TestCase):
         )
 
 
+class TestOrderPoints(unittest.TestCase):
+    """``order_points``: keyed positions in a deterministic order -- what a
+    numbering tool (Suffix By Location) numbers by, in every host."""
+
+    ROW = [  # a row along X, both sides of the origin, given out of order
+        ("east", (3.0, 0.0, 0.0)),
+        ("far_west", (-6.0, 0.0, 0.0)),
+        ("center", (0.0, 0.0, 0.0)),
+        ("west", (-3.0, 0.0, 0.0)),
+    ]
+
+    def test_an_axis_orders_by_signed_position(self):
+        """+X and -X never tie: a row reads from one end to the other."""
+        self.assertEqual(
+            PointCloud.order_points(self.ROW, "x"),
+            ["far_west", "west", "center", "east"],
+        )
+
+    def test_distance_orders_from_the_reference(self):
+        order = PointCloud.order_points(self.ROW, "distance")
+        self.assertEqual(order[0], "center")
+        self.assertEqual(order[-1], "far_west")
+        self.assertEqual(
+            PointCloud.order_points(self.ROW, "distance", reference=(-6, 0, 0))[0],
+            "far_west",
+        )
+
+    def test_a_distance_tie_breaks_by_position_not_input_order(self):
+        """east and west are equally far: the tie goes to the lower X, whatever
+        order the points arrived in."""
+        for points in (self.ROW, self.ROW[::-1]):
+            order = PointCloud.order_points(points, "distance")
+            self.assertLess(order.index("west"), order.index("east"))
+
+    def test_axis_ties_break_by_the_other_axes_then_the_name(self):
+        grid = [
+            ("b", (0.0, 0.0, 1.0)),
+            ("a", (0.0, 0.0, 1.0)),
+            ("c", (0.0, 1.0, 0.0)),
+            ("d", (0.0, 0.0, 0.0)),
+        ]
+        self.assertEqual(PointCloud.order_points(grid, "x"), ["d", "a", "b", "c"])
+
+    def test_the_name_tiebreak_is_natural(self):
+        same = [("post10", (0, 0, 0)), ("post2", (0, 0, 0)), ("post1", (0, 0, 0))]
+        self.assertEqual(
+            PointCloud.order_points(same, "x"), ["post1", "post2", "post10"]
+        )
+
+    def test_float_noise_cannot_flip_a_tie(self):
+        """Symmetric copies measured 3.975473492743022 vs 3.9754734927430215:
+        within the tolerance they tie, so the next key decides."""
+        noisy = [
+            ("p_b", (3.9754734927430215, 1.0, 0.0)),
+            ("p_a", (3.975473492743022, 2.0, 0.0)),
+        ]
+        self.assertEqual(PointCloud.order_points(noisy, "x"), ["p_b", "p_a"])
+        exact = PointCloud.order_points(noisy, "x", tolerance=0)
+        self.assertEqual(exact, ["p_b", "p_a"])  # 0 disables quantization
+
+    def test_auto_follows_the_longest_extent(self):
+        column = [("top", (0.1, 9.0, 0.0)), ("bottom", (0.0, -9.0, 0.0))]
+        self.assertEqual(PointCloud.spread_axis([p for _k, p in column]), "y")
+        self.assertEqual(PointCloud.order_points(column, "auto"), ["bottom", "top"])
+        self.assertEqual(PointCloud.order_points(self.ROW), PointCloud.order_points(self.ROW, "x"))
+
+    def test_a_spread_tie_prefers_x_then_y(self):
+        square = [(0, 0, 0), (1, 1, 0)]
+        self.assertEqual(PointCloud.spread_axis(square), "x")
+        self.assertEqual(PointCloud.spread_axis([(0, 0, 0), (0, 1, 1)]), "y")
+        self.assertEqual(PointCloud.spread_axis([]), "x")
+
+    def test_reverse_reverses_the_whole_order(self):
+        self.assertEqual(
+            PointCloud.order_points(self.ROW, "x", reverse=True),
+            ["east", "center", "west", "far_west"],
+        )
+
+    def test_an_unknown_order_is_refused(self):
+        with self.assertRaises(ValueError):
+            PointCloud.order_points(self.ROW, "diagonal")
+        self.assertEqual(PointCloud.order_points([], "x"), [])
+        self.assertIn("auto", PointCloud.ORDERS)
+
+
 if __name__ == "__main__":
     unittest.main()

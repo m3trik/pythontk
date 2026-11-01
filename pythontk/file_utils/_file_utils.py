@@ -1718,6 +1718,140 @@ class FileUtils(HelpMixin):
                 log.error("move_file: could not restore %s; it is at %s", src, staged)
             raise
 
+    @classmethod
+    def import_files(
+        cls,
+        paths: Iterable[str],
+        folder: Optional[str],
+        mode: str = "copy",
+        on_conflict: Union[str, Callable[[str], bool]] = "reuse",
+        validate: Optional[Callable[[str], Tuple[bool, str]]] = None,
+        strict: bool = False,
+    ) -> dict:
+        """Bring *paths* into a project *folder*, or take them where they are.
+
+        One import policy a panel and a script share (the HDR Manager's Add of
+        an HDR into ``sourceimages``, through ``HdrManager.import_hdrs``). Each
+        file, in order:
+
+        1. *validate* refuses a source it fails, in every mode
+           (``ImgUtils.validate_image_integrity``: a partly synced cloud file is
+           never imported).
+        2. ``mode="link"`` takes the source where it is.
+        3. A source already anywhere under *folder* is taken in place.
+        4. ``"copy"`` / ``"move"`` bring it to ``<folder>/<name>``: copied
+           atomically (:meth:`copy_file`), moved without ever truncating the
+           destination (:meth:`move_file`). A same-named file already there is
+           *on_conflict*'s: ``"reuse"`` takes it when *validate* passes it and
+           refuses the source when not, so an existing file is never clobbered
+           by default; ``"overwrite"`` replaces it; a callable decides (the
+           panel's prompt) -- True replaces it, False cancels the import there.
+
+        A refused source, or a copy or move that fails, is left out (logged, with
+        why) and the rest go on; under *strict* the first refusal stops the
+        import instead, so the one file a user picked by hand can be explained
+        rather than counted.
+
+        Parameters:
+            paths: The files to import.
+            folder: The project folder. "copy" / "move" need it to exist; "link"
+                does not read it.
+            mode: ``"copy"``, ``"move"`` or ``"link"``.
+            on_conflict: ``"reuse"``, ``"overwrite"``, or ``(existing) -> bool``.
+            validate: ``(path) -> (ok, reason)``; None takes every file.
+            strict: Stop at the first refusal (``failed``) instead of leaving
+                it out.
+
+        Returns:
+            dict: ``added`` -- each file now usable, in order (its place in
+            *folder*, or the source where it is); ``skipped`` -- ``[(source,
+            reason)]``, each left out; ``io`` -- whether a file was copied or
+            moved; ``failed`` -- under *strict*, the refusal that stopped the
+            import, ``{"path", "reason", "destination"}`` (``destination`` None
+            when *validate* refused the source itself), else None;
+            ``cancelled`` -- whether *on_conflict* declined.
+
+        Raises:
+            ValueError: An unknown *mode* or *on_conflict*, or "copy" / "move"
+                without an existing *folder* (worded for the user: a panel
+                shows it as it is).
+        """
+        import logging
+
+        log = logging.getLogger(__name__)
+        if mode not in ("copy", "move", "link"):
+            raise ValueError(f"Unknown import mode {mode!r}: copy, move or link.")
+        if not callable(on_conflict) and on_conflict not in ("reuse", "overwrite"):
+            raise ValueError(
+                f"Unknown on_conflict {on_conflict!r}: reuse, overwrite or a callable."
+            )
+        if mode != "link" and not (folder and os.path.isdir(folder)):
+            raise ValueError(
+                f"No folder to {mode} into: {folder} does not exist."
+                if folder
+                else f"No folder to {mode} into: set a project first."
+            )
+        result = {
+            "added": [],
+            "skipped": [],
+            "io": False,
+            "failed": None,
+            "cancelled": False,
+        }
+
+        def refuse(path: str, reason: str, destination: Optional[str] = None) -> bool:
+            """Leave *path* out; True when that stops the import (*strict*)."""
+            log.warning("Not imported: %s (%s)", path, reason)
+            if strict:
+                result["failed"] = {
+                    "path": path,
+                    "reason": reason,
+                    "destination": destination,
+                }
+                return True
+            result["skipped"].append((path, reason))
+            return False
+
+        for path in paths:
+            if validate is not None:
+                ok, reason = validate(path)
+                if not ok:
+                    if refuse(path, reason):
+                        break
+                    continue
+            if mode == "link":
+                result["added"].append(path)
+                continue
+            if cls.is_under(path, folder):
+                result["added"].append(os.path.normpath(path))
+                continue
+            final = os.path.normpath(os.path.join(folder, os.path.basename(path)))
+            if os.path.exists(final):
+                if callable(on_conflict):
+                    if not on_conflict(final):
+                        result["cancelled"] = True
+                        break
+                elif on_conflict == "reuse":
+                    ok, reason = validate(final) if validate else (True, "")
+                    if ok:
+                        result["added"].append(final)
+                        continue
+                    if refuse(path, f"{final} exists and is unusable ({reason})", final):
+                        break
+                    continue
+            try:
+                if mode == "copy":
+                    cls.copy_file(path, folder)
+                else:
+                    cls.move_file(path, folder)
+            except OSError as error:
+                if refuse(path, str(error), final):
+                    break
+                continue
+            result["added"].append(final)
+            result["io"] = True
+        return result
+
     @staticmethod
     def move_to_trash(path: str) -> Optional[str]:
         """Move the file *path* to the platform's trash, where it can be restored.

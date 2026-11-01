@@ -34,8 +34,10 @@ step when an export is renamed, re-scoped or re-pointed:
 :class:`HierarchyBaselineStore` is the storage half both DCCs share: read,
 compare, roll forward and adopt the record through a host's scene store
 (``STORE``, a :class:`~pythontk.core_utils.engines.scene_export.scene_store.SceneStoreBase`) and
-its deliverable sidecar (``SIDECAR``).  A DCC subclass supplies those two and,
-where its exporter ships more than the selected paths, the ``_close`` hook.
+its deliverable sidecar (``SIDECAR``).  A DCC subclass supplies those two, its
+configuration: what a recorded set means on the way out is the sidecar's rule
+(``SIDECAR._close``: closed under ancestors where its host ships the parent
+chain).
 """
 
 import hashlib
@@ -365,13 +367,15 @@ class HierarchyBaselineStore:
 
     @classmethod
     def _close(cls, paths: Set[str]) -> Set[str]:
-        """What a recorded path set means on the way out: *paths* by default.
-
-        A host whose exporter ships more than the selected paths overrides this
-        (Maya's ``exportSelected`` ships a node's parent chain, so mayatk closes
-        the set under ancestors); a host that ships exactly the set keeps it.
+        """What a recorded path set means on the way out: what the host's
+        export ships, exactly as its sidecar compares it (``SIDECAR._close``,
+        the one rule): closed under ancestors where the export writes every
+        node's parent chain (Maya's ``exportSelected``, so a leaves-only record
+        -- every v1 sidecar, and anything adopted from one -- describes the
+        same hierarchy as a group-selected one); *paths* where it ships exactly
+        the set (Blender's ``use_selection``), or with no sidecar.
         """
-        return paths
+        return cls.SIDECAR._close(paths) if cls.SIDECAR else paths
 
     @classmethod
     def read(cls) -> Set[str]:

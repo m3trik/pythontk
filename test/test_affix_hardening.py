@@ -441,6 +441,25 @@ class StripAnyAffixTest(unittest.TestCase):
             StrUtils.strip_any_affix("body_GEO_02", self.KNOWN), "body_GEO_02"
         )
 
+    def test_numbered_strips_an_affix_a_number_trails(self):
+        """A duplicate's uniquifier (Maya 'crate_GEO1', Blender
+        'crate_GEO.001') or an index after the affix: the number is peeled,
+        the affix stripped, and the number kept on the base -- so a type pass
+        re-affixes 'crate1_GEO' instead of decorating 'crate_GEO1_GEO'."""
+        strip = StrUtils.strip_any_affix
+        self.assertEqual(strip("crate_GEO1", self.KNOWN, numbered=True), "crate1")
+        self.assertEqual(strip("wall_GEO_01", self.KNOWN, numbered=True), "wall_01")
+        self.assertEqual(strip("crate_GEO.001", self.KNOWN, numbered=True), "crate.001")
+        # a base already ending in a digit keeps the two numbers apart
+        self.assertEqual(strip("wall_01_GEO1", self.KNOWN, numbered=True), "wall_01_1")
+        # nothing to strip: the name is untouched, number and all
+        self.assertEqual(strip("wall_01", self.KNOWN, numbered=True), "wall_01")
+        self.assertEqual(strip("body_LOD1", self.KNOWN, numbered=True), "body_LOD1")
+        # a plain match still wins first
+        self.assertEqual(strip("GEO_body1", self.KNOWN, numbered=True), "body1")
+        # off by default: the anchored rule above stands
+        self.assertEqual(strip("crate_GEO1", self.KNOWN), "crate_GEO1")
+
     def test_one_stops_after_the_first_match(self):
         """One type marker per name — stripping further eats real content."""
         self.assertEqual(

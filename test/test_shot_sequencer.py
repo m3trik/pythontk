@@ -431,9 +431,9 @@ class TestPureQueries(_SequencerTest):
 
     def test_source_shot_by_range(self):
         self.assertEqual(
-            self.seq._source_shot_id_for({"start": 16, "end": 20}), self.sid("B")
+            self.seq.source_shot_id({"start": 16, "end": 20}), self.sid("B")
         )
-        self.assertIsNone(self.seq._source_shot_id_for({"start": 11, "end": 12}))
+        self.assertIsNone(self.seq.source_shot_id({"start": 11, "end": 12}))
 
     def test_point_segment_is_a_marker(self):
         seg = ShotSequencer._point_segment("x", 4.0)
@@ -1145,6 +1145,17 @@ class TestAClosingSeamStaysOneFrameApartWhereItsPosesDiffer(_SequencerTest):
         self.seq.set_shot_edge(self.sid("C"), new_start=30, push=True)
         self.assertBounds(("A", 1, 15), ("B", 15, 30), ("C", 30, 50))
 
+    @unittest.expectedFailure  # BACKLOG 2026-11-01: the retime asks no pose
+    def test_a_shift_edge_stops_a_frame_short_where_the_poses_differ(self):
+        """A Shift edge (the retime) closing a gap onto another pose lands
+        flush: Maya then holds the retimed opening key 1.7e-7 of a frame after
+        the closing one (``mayatk/test/temp_tests/shift_edge_stacks_key.py``,
+        measured 2026-11-01)."""
+        self.seq.clashing = {("A", "B"), ("B", "C")}
+        self.seq.set_shot_edge(self.sid("A"), new_end=15, scale=True)
+        self.seq.set_shot_edge(self.sid("C"), new_start=30, scale=True)
+        self.assertBounds(("A", 1, 14), ("B", 15, 30), ("C", 31, 50))
+
     def test_a_ctrl_edge_pushed_past_the_neighbour_is_no_closing(self):
         """The frames a push takes are the neighbour's content, one pose
         each: the neighbour's facing bound gives way to the edge, as before."""
@@ -1607,6 +1618,13 @@ class TestShotEdgeMembers(_SequencerTest):
 
     def objects(self, name):
         return sorted(self.seq.shot_by_name(name).objects)
+
+    def test_keyed_transforms_reads_the_hosts_hook(self):
+        """The public reader a panel lists a range's movers with is the
+        adapter's ``_find_keyed_transforms``, keywords and all."""
+        self.seq.movers = {"b": (21, 30), "a": (1, 5)}
+        self.assertEqual(self.seq.keyed_transforms(20, 40), ["b"])
+        self.assertEqual(self.seq.keyed_transforms(0, 40, evaluated=True), ["a", "b"])
 
     def test_a_push_adopts_what_moves_in_the_frames_taken(self):
         self.seq.movers = {"b": (21, 30), "b_head": (16, 19)}

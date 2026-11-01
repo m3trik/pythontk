@@ -25,7 +25,8 @@ adapters). Three composable primitives:
   :meth:`Workspace.for_scene` -- the one scene-to-project rule both DCCs
   share), and the permanent-file tree both DCCs write into
   (:meth:`Workspace.cache_dir`, ``movie_dir``, ``images_dir``,
-  ``export_dir``, ``backup_dir``, ``relative`` / ``absolute``).
+  ``export_dir`` / ``export_path``, ``backup_dir``, ``relative`` /
+  ``absolute``).
 - :class:`WorkspaceTemplates` — named rule sets: the persistent answer to
   "how is a *new* project built?", shared by every DCC adapter.
 
@@ -362,6 +363,32 @@ class Workspace(_WorkspaceInternal):
         ``FBX``, else ``data/``)."""
         return self._ensure(
             self.resolve_dir(("FBX export", "FBX"), default="data"), create
+        )
+
+    @staticmethod
+    def export_name(scene_path: Optional[str], extension: str) -> str:
+        """The file name an export of the scene *scene_path* takes: the
+        scene's own name (only the extension comes off: ``hero.rig.ma`` gives
+        ``hero.rig``), ``untitled`` while unsaved, with *extension*."""
+        stem = os.path.splitext(os.path.basename(scene_path or ""))[0]
+        return (stem or "untitled") + extension
+
+    def export_path(
+        self, scene_path: Optional[str], extension: str, create: bool = False
+    ) -> str:
+        """Where an export of the scene *scene_path* goes by default: the
+        export folder (:meth:`export_dir`) under :meth:`export_name`.
+
+        Parameters:
+            scene_path: The scene file; empty or None while unsaved.
+            extension: The export's extension, with its dot (``".fbx"``).
+            create: Create the folder.
+
+        Returns:
+            The file path (absolute).
+        """
+        return os.path.join(
+            self.export_dir(create=create), self.export_name(scene_path, extension)
         )
 
     @staticmethod
@@ -702,9 +729,11 @@ class WorkspaceTemplates(object):
     #: Preset-collection name under the ecosystem user-config root.
     STORE_NAME = "workspace_templates"
 
-    #: Pre-2026-08 per-package locations, migrated into the shared store on first
-    #: access (the concept was Blender-only before Maya grew the twin API).
-    _LEGACY_PACKAGES = ("blendertk",)
+    #: Folders under the user-config root that releases before 2026-08 kept
+    #: this store in (the concept was Blender-only before Maya grew the twin
+    #: API), migrated into the shared store on first access. Saved locations,
+    #: spelled as they were saved -- not packages this one knows.
+    _LEGACY_FOLDERS = ("blendertk",)
 
     @classmethod
     def store(cls) -> Any:
@@ -724,7 +753,7 @@ class WorkspaceTemplates(object):
     def _migrate_legacy(cls, store):
         """One-time copy of per-package template dirs into the shared store."""
         store.adopt(
-            *(store.user_dir.parent / p / cls.STORE_NAME for p in cls._LEGACY_PACKAGES)
+            *(store.user_dir.parent / p / cls.STORE_NAME for p in cls._LEGACY_FOLDERS)
         )
 
     @classmethod

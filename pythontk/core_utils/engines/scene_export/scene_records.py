@@ -71,8 +71,34 @@ from typing import (
 
 from pythontk.core_utils.class_property import ClassProperty
 from pythontk.core_utils.deprecation import Deprecation
+from pythontk.iter_utils._iter_utils import IterUtils
 
 logger = logging.getLogger(__name__)
+
+
+class NodeNames:
+    """The names of the nodes an export ships, matched as a reader of the file
+    binds a record entry to its node: a name exactly, else its leaf -- what
+    follows a DAG path's last ``|`` and a namespace's last ``:`` -- against
+    theirs (the GLB and Unity appliers' join). Built once for many records
+    (:meth:`RecordSpec.narrowed`, ``ExportContext.ships``): ``name in
+    names``."""
+
+    __slots__ = ("names", "leaves")
+
+    def __init__(self, names: Iterable[str]) -> None:
+        self.names = frozenset(n.rsplit("|", 1)[-1] for n in names if n)
+        self.leaves = frozenset(self.leaf(n) for n in self.names)
+
+    @staticmethod
+    def leaf(name: str) -> str:
+        return name.rsplit("|", 1)[-1].rsplit(":", 1)[-1]
+
+    def __contains__(self, name: Any) -> bool:
+        if not isinstance(name, str) or not name:
+            return False
+        name = name.rsplit("|", 1)[-1]
+        return name in self.names or self.leaf(name) in self.leaves
 
 
 class Scope(str, Enum):
@@ -408,12 +434,22 @@ class RecordSpec:
             payload is described only in prose.
         glb: The record's :class:`GlbBlock` -- the block a GLB carries it
             as; ``None`` when a GLB carries none.
-        export_scoped: Whether the record's producer narrows it to the export
-            set (:attr:`ExportContext.scope`): its entries are scene nodes and
-            the files they name ride the deliverable, so an entry for a node
-            the write leaves out ships that node's files with nothing to bind
-            them to. The scene's own copy stays whole: a scoped assembly keeps
-            it (:attr:`ExportSnapshot.scene_wide`) for the exporter to put back.
+        export_scoped: Whether the record is narrowed to the export set
+            (:attr:`ExportContext.scope`): its entries describe scene nodes,
+            and an entry for a node the write leaves out ships that node's
+            data (and the files it names) with nothing to bind it to. Its
+            producer narrows it, and the snapshot narrows what the producer
+            returns and a copy shipped as stored by :attr:`nodes`. The
+            scene's own copy stays whole: a scoped assembly keeps it
+            (:attr:`ExportSnapshot.scene_wide`) for the exporter to put back.
+            A timeline-level record (the shots, the audio) is not: every
+            write ships it whole.
+        nodes: Where an export-scoped record lists the nodes it describes:
+            ``(list field, name field)``, one entry per node -- the name field
+            a key, or a path into the entry (``"*"`` walking a list), an entry
+            kept when any node it names ships (:meth:`narrowed`). ``None``
+            when the payload names no node a reader could narrow it by (the
+            emissive groups name faces through their host's stores).
         assembly: What the record makes of the approved scene, field by field
             -- the handoff block's ``assembly`` row for it, so a reader holding
             nothing but the deliverable rebuilds what the record describes
@@ -460,6 +496,38 @@ class RecordSpec:
     transient: bool = False
     renamed_from: Tuple[str, ...] = ()
     clauses: Tuple[Clause, ...] = ()
+    nodes: Optional[Tuple[str, Union[str, Tuple[str, ...]]]] = None
+
+    def narrowed(self, payload: Any, nodes: Iterable[str]) -> Any:
+        """*payload* with only the entries (:attr:`nodes`) describing a node
+        among *nodes*, matched as a reader binds them (a name exactly, else its
+        namespace-stripped leaf); ``None`` when none is, or when the payload
+        holds no entry list. A record that declares no node entries is
+        returned as it is, and so is a payload every entry of which ships.
+        *nodes* may be a :class:`NodeNames` built once for many records.
+
+        The one narrowing every reader of the rule applies: a scoped export's
+        snapshot (:class:`ExportSnapshot`), and the post-write embed reading a
+        referenced module's copy (``FbxMedia.reader_records``).
+        """
+        if self.nodes is None:
+            return payload
+        names = nodes if isinstance(nodes, NodeNames) else NodeNames(nodes)
+        field_name, name_path = self.nodes
+        path = (name_path,) if isinstance(name_path, str) else tuple(name_path)
+        entries = payload.get(field_name) if isinstance(payload, Mapping) else None
+        if not isinstance(entries, list):
+            return None
+        kept = [
+            entry
+            for entry in entries
+            if any(value in names for value in IterUtils.values_at(entry, path))
+        ]
+        if not kept:
+            return None
+        if len(kept) == len(entries):
+            return payload
+        return {**payload, field_name: kept}
 
     def assembly_for(self, payload: Any = None) -> str:
         """The assembly a record *payload* needs (:meth:`Clause.join`): every
@@ -752,6 +820,12 @@ class SceneRecords:
     Unity importer gate are generated from the same rows.
     """
 
+    #: The vocabularies a :class:`RecordSpec` declares a record with, on the
+    #: registry that holds every record -- ``SceneRecords.Kind.DERIVED`` --
+    #: since their bare names are too generic for the package root.
+    Kind = Kind
+    Merge = Merge
+
     # -- deliverable ---------------------------------------------------------
     #: Produced from the scene as staged for each write (the hosts'
     #: ``MaterialRecords.export_record``, through ``MaterialFamilies``) and
@@ -886,7 +960,9 @@ class SceneRecords:
             "every clip, its frame counted from the first frame the file's "
             "animation holds. The track's file rides the file as media of its "
             "own, joined to the event's 'name' by file stem without regard "
-            "to case."
+            "to case; 'media', where the file states it, gives the SHA-256 of "
+            "the bytes it carries by that name, and a same-named file found "
+            "elsewhere stands in for it only when its bytes hash alike."
         ),
     )
     #: The payload's model is ``LightmapRecord``: one ``unit_scale`` for every
@@ -932,6 +1008,7 @@ class SceneRecords:
             clauses=(_LIGHTMAP_PROBE,),
         ),
         export_scoped=True,
+        nodes=("objects", "name"),
         assembly=(
             "Each 'objects' entry lights one object with a baked lightmap: "
             "the image 'map' names, wired to no material, read through UV set "
@@ -1017,6 +1094,7 @@ class SceneRecords:
             ),
         ),
         export_scoped=True,
+        nodes=("planes", "name"),
         assembly=(
             "A plane, its source and its contact are the nodes named 'name', "
             "'source' and 'contact'. " + _SHADOW_PLANE
@@ -1061,6 +1139,10 @@ class SceneRecords:
                 "translations."
             ),
         ),
+        # A rig ships when any of its joints does: an export of one prop of a
+        # scene of rigs states that prop's rig alone.
+        export_scoped=True,
+        nodes=("rigs", ("joints", "*", "name")),
         assembly=(
             "Each rig poses its joints as rotation = rest (x) Euler(channels) "
             "and translation = rest + rest.(tx, ty, tz), every channel within "
@@ -1081,6 +1163,14 @@ class SceneRecords:
         owner="Emissive Groups",
         description="named emissive material groups and their weights",
         # The payload is a RegionMaskManifest document (its VERSION is this).
+        # DERIVED, as the shots are: its registry is its one authority and the
+        # producer reads it pure, so every write refreshes it, a hand-off
+        # included -- the one way it is narrowed to what the write ships, since
+        # a group names its faces through the host's stores, not in the
+        # payload (no ``nodes``). Authored, a Unity push of one prop shipped
+        # every group in the scene (measured 2026-10-31).
+        kind=Kind.DERIVED,
+        export_scoped=True,
         consumers=("unity",),
         shape=(
             "pythontk.core_utils.engines.textures.region_masks",
@@ -1117,6 +1207,10 @@ class SceneRecords:
         kind=Kind.DERIVED,
         after=("animation",),
         consumers=("glb", "verifier"),
+        # Narrowed by its producer alone (no ``nodes``): with its tracks, the
+        # take spans it states are the shipped curves', and a record with no
+        # track still carries the measured clip origin.
+        export_scoped=True,
         assembly=(
             "Render effects over time, per 'tracks' entry and the subtree "
             "under its 'node', each a list of [frame, value] keys: "
@@ -1595,6 +1689,147 @@ class SceneRecords:
             finish = parts.get("finish")
             rows[name] = (module, owner, parts["prepare"][2], finish[2] if finish else None)
         return rows
+
+    @staticmethod
+    def resolve_row(
+        label: str,
+        module: str,
+        owner: str,
+        *methods: Optional[str],
+        log: Optional[logging.Logger] = None,
+    ) -> Optional[Tuple[Optional[Callable], ...]]:
+        """The callables a producer, stager or hook row names: *owner*'s
+        *methods*, imported from *module* on first use.
+
+        ``None`` when the module or the class cannot be imported -- an
+        uninstalled subsystem is fine, and only debug-logged. A method the
+        class does not have resolves to ``None`` with a WARNING: that is a
+        misspelt row, and skipping it quietly would stop a record shipping (or
+        a stager finishing) with no sign of why. A method the row leaves
+        ``None`` resolves to ``None`` quietly: a declared one-way stage.
+
+        Parameters:
+            label: What the log calls the row (``"Producer for 'materials'"``).
+            module: The module the class lives in.
+            owner: The class.
+            methods: The method names, in the row's order.
+            log: The logger the row's library reports through; default this
+                module's.
+        """
+        import importlib
+
+        log = log or logger
+        try:
+            found = getattr(importlib.import_module(module), owner)
+        except Exception:  # an uninstalled subsystem is fine
+            log.debug("%s unavailable; skipped.", label, exc_info=True)
+            return None
+        resolved = []
+        for method in methods:
+            if not method:  # a column the row leaves empty: a one-way stage
+                resolved.append(None)
+                continue
+            fn = getattr(found, method, None)
+            if fn is None:
+                log.warning(
+                    "%s names %s.%s.%s, which does not exist; skipped.",
+                    label,
+                    module,
+                    owner,
+                    method,
+                )
+            resolved.append(fn)
+        return tuple(resolved)
+
+    @classmethod
+    def resolved_producers(
+        cls,
+        table: Mapping[Any, Tuple[str, str, str]],
+        host: str,
+        only: Optional[Iterable[Any]] = None,
+        log: Optional[logging.Logger] = None,
+    ) -> Dict[RecordSpec, Callable]:
+        """A host's producer *table* with the registered ones
+        (:meth:`producer_rows`), each resolved to its callable
+        (:meth:`resolve_row`); a row that does not resolve is skipped.
+
+        Parameters:
+            table: The library's own rows (``FbxUtils.PRODUCERS``).
+            host: The DCC (``"maya"``, ``"blender"``).
+            only: Specs or keys narrowing the table; ``None``: all.
+            log: As :meth:`resolve_row`'s.
+        """
+        wanted = None if only is None else {cls.resolve(k).key for k in only}
+        out: Dict[RecordSpec, Callable] = {}
+        for spec, row in cls.producer_rows(table, host).items():
+            if wanted is not None and spec.key not in wanted:
+                continue
+            resolved = cls.resolve_row(f"Producer for {spec.key!r}", *row, log=log)
+            if resolved and resolved[0] is not None:
+                out[spec] = resolved[0]
+        return out
+
+    @classmethod
+    def resolved_stagers(
+        cls,
+        table: Mapping[str, Tuple[str, str, str, Optional[str]]],
+        host: str,
+        names: Optional[Iterable[str]] = None,
+        log: Optional[logging.Logger] = None,
+    ) -> Dict[str, Tuple[Optional[Callable], ...]]:
+        """A host's stager *table* with the registered ones
+        (:meth:`stager_rows`), each resolved to its ``(prepare, finish)``
+        callables (:meth:`resolve_row`); a row whose class does not import is
+        skipped.
+
+        Parameters:
+            table: The library's own rows (``FbxUtils.STAGERS``).
+            host: The DCC (``"maya"``, ``"blender"``).
+            names: The stagers wanted; ``None``: all.
+            log: As :meth:`resolve_row`'s.
+        """
+        out: Dict[str, Tuple[Optional[Callable], ...]] = {}
+        for name, row in cls.stager_rows(table, host).items():
+            if names is not None and name not in names:
+                continue
+            resolved = cls.resolve_row(f"Stager {name!r}", *row, log=log)
+            if resolved is not None:
+                out[name] = resolved
+        return out
+
+    # -- stack-shaped records ------------------------------------------------
+    # A record holding a list of ``{"id": ...}`` entries, oldest first, that a
+    # host pushes onto and takes back off (``SMART_BAKE_SESSIONS``): the latest
+    # entry, or the latest with an id, read the same in every host.
+    @staticmethod
+    def peek_entry(
+        entries: Optional[List[dict]], entry_id: Optional[str] = None
+    ) -> Optional[dict]:
+        """The latest of *entries* (oldest first), or the latest whose ``id``
+        is *entry_id*; ``None`` when there is none."""
+        if not entries:
+            return None
+        if entry_id is None:
+            return entries[-1]
+        for entry in reversed(entries):
+            if entry.get("id") == entry_id:
+                return entry
+        return None
+
+    @staticmethod
+    def pop_entry(
+        entries: Optional[List[dict]], entry_id: Optional[str] = None
+    ) -> Optional[dict]:
+        """Remove and return what :meth:`peek_entry` would, from *entries* in
+        place; ``None`` (and *entries* untouched) when there is none."""
+        if not entries:
+            return None
+        if entry_id is None:
+            return entries.pop()
+        for i in range(len(entries) - 1, -1, -1):
+            if entries[i].get("id") == entry_id:
+                return entries.pop(i)
+        return None
 
     @staticmethod
     def resolve_class(module: str, name: str) -> Any:

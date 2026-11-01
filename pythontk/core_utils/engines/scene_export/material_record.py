@@ -151,9 +151,10 @@ class MaterialFamilies:
     - ``pbr`` -- a metallic-roughness surface in logical terms (Standard
       Surface, aiStandardSurface, openPBR, Blender's Principled):
       ``base_color``, ``base_weight``, ``metallic``, ``roughness``,
-      ``emission_color``, ``emission_weight``, ``opacity`` (its scalar part),
-      ``opacity_driven``, and optionally ``alpha_mode`` / ``alpha_cutoff`` and
-      ``normal_scale``;
+      ``emission_color``, ``emission_weight``, ``opacity`` (its scalar part,
+      or the opacity colour: :meth:`opacity_scalar`), ``opacity_driven``,
+      ``transmission`` (its weight: the record states none, and says so), and
+      optionally ``alpha_mode`` / ``alpha_cutoff`` and ``normal_scale``;
     - ``stingray_pbs`` -- a StingrayPBS by its own attribute names
       (``use_color_map``, ``base_color``, ``emissive_intensity``, the opacity
       graph's ``opacity`` or ``mask_threshold``, ...);
@@ -198,6 +199,7 @@ class MaterialFamilies:
             "emission_weight",
             "opacity",
             "opacity_driven",
+            "transmission",
             "alpha_mode",
             "alpha_cutoff",
             "normal_scale",
@@ -242,6 +244,13 @@ class MaterialFamilies:
     #: (and a record version), never a drift.
     LEGACY_POLICY = "fbx2gltf"
     LEGACY_SPECULAR_MODELS = frozenset({"phong", "blinn"})
+
+    #: What a transmissive (glass) surface's entry says: the record carries no
+    #: transmission, so every reader shows it as its opacity alone.
+    TRANSMISSION_NOTE = (
+        "its transmission is not stated (the record has no transmission); it "
+        "reads as its opacity alone."
+    )
 
     #: The entry fields that name a map, in the order a reader binds them.
     TEXTURE_FIELDS: Tuple[str, ...] = (
@@ -381,7 +390,8 @@ class MaterialFamilies:
         alone over a map), the opacity's scalar part as the alpha -- its map
         is the colour map's alpha, which glTF reads -- blending wherever the
         opacity is driven or below 1, unless the host states the mode. An
-        opacity map apart from the colour map is said: glTF cannot carry it."""
+        opacity map apart from the colour map is said: glTF cannot carry it,
+        and so is a transmission (:attr:`TRANSMISSION_NOTE`)."""
         weight = cls.as_float(props.get("base_weight"), 1.0)
         color = maps.get("baseColor")
         notes: List[str] = []
@@ -391,9 +401,11 @@ class MaterialFamilies:
                 f"its opacity map {opacity_map} is not its colour map ({color}); "
                 "glTF takes opacity from the colour map's alpha alone."
             )
+        if cls.as_float(props.get("transmission"), 0.0) > 0.0:
+            notes.append(cls.TRANSMISSION_NOTE)
         strength = cls.as_float(props.get("emission_weight"), 1.0)
         glow = maps.get("emission")
-        opacity = cls._unit(cls.as_float(props.get("opacity"), 1.0))
+        opacity = cls._unit(cls.opacity_scalar(props.get("opacity")))
         driven = bool(maps.get("opacity") or props.get("opacity_driven"))
         mode = str(props.get("alpha_mode") or "").upper()
         if mode not in ALPHA_MODES:
@@ -520,8 +532,7 @@ class MaterialFamilies:
             transparent = cls.as_floats(props.get("TransparentColor"), 3, 0.0)
             alpha = cls._unit(
                 1.0
-                - sum(transparent)
-                / 3.0
+                - cls.opacity_scalar(transparent)
                 * cls.as_float(props.get("TransparencyFactor"), 1.0)
             )
         glow = maps.get("emission")
@@ -556,7 +567,7 @@ class MaterialFamilies:
         """A host's unlit model: its colour (or colour map) and opacity, shown
         as they are, blending wherever the opacity is driven or below 1."""
         color = maps.get("baseColor")
-        opacity = cls._unit(cls.as_float(props.get("opacity"), 1.0))
+        opacity = cls._unit(cls.opacity_scalar(props.get("opacity")))
         driven = bool(maps.get("opacity") or props.get("opacity_driven"))
         return {
             "baseColorFactor": (
@@ -578,6 +589,18 @@ class MaterialFamilies:
     def _unit(value: float) -> float:
         """*value* clamped to [0, 1]."""
         return min(1.0, max(0.0, float(value)))
+
+    @classmethod
+    def opacity_scalar(cls, value: Any, default: float = 1.0) -> float:
+        """An opacity as the record states it, one number: a colour's (or a
+        transparency colour's) channels' mean, a scalar as it is, *default*
+        when it is neither. The one rule every reader of a host's opacity
+        colour applies (the hosts' producers, the record-less FBX read, the
+        Unity importer's fallback)."""
+        if isinstance(value, (list, tuple)) and value:
+            channels = cls.as_floats(value, len(value), default)
+            return sum(channels) / len(channels)
+        return cls.as_float(value, default)
 
     @staticmethod
     def as_float(value: Any, default: float) -> float:

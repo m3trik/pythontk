@@ -843,7 +843,7 @@ class ExportVerifier(_ExportVerifierInternal):
         ``clip_span["*"]`` is the authoring window the exporter publishes as
         the frame the whole-timeline stack puts at ``t=0``; every clip is cut
         from that stack by offsetting against it
-        (``MeshConvert._clip_zero``). The exporter cannot see the written file,
+        (``_Animation._clip_zero``). The exporter cannot see the written file,
         so it publishes a MEASUREMENT of the curves it is about to serialize --
         and when that measurement is taken from the wrong thing (a bake range
         bounds what the plugin re-bakes, not what an authored curve carries)
@@ -963,7 +963,7 @@ class ExportVerifier(_ExportVerifierInternal):
         """Every file the FBX's records name by file name is inside it.
 
         ``lightmaps``' maps and reflection probe, ``shadows``' silhouette,
-        atlas and horizon maps: the exporters embed each one
+        atlas and horizon maps, ``materials``' maps: the exporters embed each one
         (``FbxMedia.embed_dependencies``) and ship nothing beside the file, so
         a consumer resolves them from the FBX alone. One the file lacks is a
         Unity import without its lightmap, and a GLB built from the file

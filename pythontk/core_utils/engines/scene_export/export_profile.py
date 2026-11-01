@@ -4,12 +4,13 @@
 
 Both DCC Scene Exporters (mayatk / blendertk) describe their tasks and checks
 as declarative *definitions* -- ``{name: {"widget_type", "object_name",
-"setChecked", ...}}`` -- from which each panel builds its widgets, and the
-export button reads those widgets back into the ``tasks`` dict
-``perform_export`` takes. That read, and the coupled entries it derives (a
-texture template arms its compatibility check, an optimize choice sets the
-size cap and its check), is the same rule in both panels; this module is the
-one copy of it (:class:`ExportProfile`).
+"setChecked", ...}}`` -- from which the panel builds its widgets, and the
+export button turns what those widgets hold, ``{objectName: value}``, into the
+``tasks`` dict ``perform_export`` takes. The panel reads its widgets (tentacle's
+Slots, through uitk: no Qt here); turning the values into the run, and the
+coupled entries it derives (a texture template arms its compatibility check,
+an optimize choice sets the size cap and its check), is the same rule in both
+hosts, and this module is the one copy of it (:class:`ExportProfile`).
 
 The same goes for what the two pipelines run and in what order -- the task
 order, which tasks each check reads, the combo tables the panels offer
@@ -33,8 +34,6 @@ from pythontk.str_utils._str_utils import StrUtils
 class ExportProfile:
     """Pure helpers over Scene Exporter task / check definitions."""
 
-    CHECKBOX = "QCheckBox"
-
     # ------------------------------------------------------------------ naming
     @staticmethod
     def legal_name(name: str) -> str:
@@ -53,15 +52,6 @@ class ExportProfile:
         """The objectName the panel gives *name*'s widget (and the preset stores)."""
         return spec.get("object_name") or cls.legal_name(name)
 
-    @classmethod
-    def value_method(cls, spec: Mapping[str, Any]) -> str:
-        """The read the export button performs on the widget (``b000``'s rule)."""
-        method = spec.get("value_method")
-        if method:
-            return method
-        widget_type = spec.get("widget_type", cls.CHECKBOX)
-        return "isChecked" if widget_type == cls.CHECKBOX else "currentData"
-
     # ------------------------------------------------------------- run config
     @classmethod
     def run_config(
@@ -75,8 +65,9 @@ class ExportProfile:
     ) -> Dict[str, Any]:
         """The export button's contract: widget values -> ``perform_export`` inputs.
 
-        Exactly what both panels' ``b000`` did inline: read each task / check by
-        its widget key, derive the coupled entries (an optimize choice sets the
+        Exactly what both panels' ``b000`` did inline: take each task / check by
+        its widget key from *values* -- ``{objectName: value}``, as the panel
+        read its rows -- derive the coupled entries (an optimize choice sets the
         size cap; each task in :attr:`VERIFYING_CHECKS` arms the check that
         verifies it), drop what is off, add :attr:`ALWAYS_CHECKS` -- which
         Override Checks keeps -- wrap ``ignore_groups`` with its match mode,
@@ -160,31 +151,7 @@ class ExportProfile:
         return tasks
 
     @classmethod
-    def read_values(
-        cls,
-        widgets: Mapping[str, Any],
-        *tables: Mapping[str, Mapping[str, Any]],
-    ) -> Dict[str, Any]:
-        """Read the panel's live widgets into ``{objectName: value}``.
-
-        *widgets* maps objectName to widget (the panel's ``ui``); each
-        definition's widget is read with :meth:`value_method`, the button's
-        own rule, so :meth:`run_config` reads what the screen shows.
-        """
-        values: Dict[str, Any] = {}
-        for table in tables:
-            for name, spec in table.items():
-                key = cls.widget_key(name, spec)
-                widget = widgets.get(key) if isinstance(widgets, Mapping) else None
-                if widget is None:
-                    widget = getattr(widgets, key, None)
-                method = cls.value_method(spec)
-                if widget is not None and hasattr(widget, method):
-                    values[key] = getattr(widget, method)()
-        return values
-
-    @classmethod
-    def _retired_row_notes(
+    def retired_row_notes(
         cls,
         stored: Mapping[str, Any],
         task_definitions: Mapping[str, Mapping[str, Any]],
@@ -204,7 +171,7 @@ class ExportProfile:
         Parameters:
             stored: The preset's ``{objectName: value}`` -- or the panel's own
                 saved state, read the same way (``SceneExporterBase.
-                _note_retired_panel_state``).
+                note_retired_panel_state``).
             task_definitions: The panel's task rows.
             check_definitions: The panel's check rows.
 
@@ -280,13 +247,13 @@ class ExportProfile:
         return notes
 
     @classmethod
-    def _retired_row_keys(
+    def retired_row_keys(
         cls,
         task_definitions: Mapping[str, Mapping[str, Any]],
         check_definitions: Mapping[str, Mapping[str, Any]],
     ) -> Tuple[str, ...]:
         """The objectNames of the rows retired 2026-10-19 that this panel no
-        longer builds -- the keys :meth:`_retired_row_notes` reads beside the
+        longer builds -- the keys :meth:`retired_row_notes` reads beside the
         live fix rows', and the ones a panel's saved state can drop once said.
 
         Parameters:
@@ -415,45 +382,36 @@ class ExportProfile:
     def fold_legacy_naming(
         cls,
         pattern: Optional[str],
-        version_format: str = "",
-        timestamp: bool = False,
+        *,
         name_regex: Optional[str] = None,
     ) -> Optional[str]:
-        """Fold the retired Version pattern and Timestamp flag into a name pattern.
+        """Fold the retired RegEx field into a name pattern.
 
-        The one fold for the retired naming inputs. An exporter folds a saved
-        ``tasks["version"]`` through it ONCE, at its entry point (that input
-        warns and goes in pythontk 0.19.0), and each panel migrates a saved
-        RegEx field through it.
-        *name_regex* is the retired
-        free-standing RegEx field, which shaped the name token wherever the
+        Each panel migrates a saved RegEx field through it, once
+        (:meth:`SceneExporterBase.migrate_legacy_regex`). *name_regex* is the
+        retired free-standing field, which shaped the name token wherever the
         pattern used it; it folds to an inline modifier on that token
         (:meth:`StrUtils.attach_modifier`), so the rule survives the field and
-        becomes visible in the field that states the name. The other two
-        decorated the name the Output Filename produced -- the timestamp appended, then the Version
-        pattern wrapping the result as ``{stem}`` -- and the field spells both
-        itself now, so substituting its own placeholder form lands the same file.
-        *pattern* comes back untouched when neither is given.
+        becomes visible in the field that states the name. *pattern* comes back
+        untouched when *name_regex* is blank. Keyword-only: the retired Version
+        pattern and Timestamp flag it once took went in pythontk 0.19.0, so a
+        positional caller still passing one is refused rather than read as a
+        regex.
         """
         spec = cls.fold_legacy_regex(name_regex)
-        if not (version_format or timestamp or spec):
+        if not spec:
             return pattern
         folded = StrUtils.expand_wildcard(
             cls.strip_deliverable_extension(pattern),
             key=cls.NAME_KEY,
             wildcard=cls.NAME_WILDCARD,
         )
-        if spec:
-            # Into the pattern, not onto the value: retiring the field must not
-            # drop the rule, and the user can now SEE what it does. Every
-            # spelling of the name token gets it, retired ones included --
-            # the field shaped the NAME, not one way of writing it.
-            for token in (cls.NAME_KEY, *cls.NAME_KEY_ALIASES):
-                folded = StrUtils.attach_modifier(folded, token, spec)
-        if timestamp:
-            folded += "_{date}_{time}"
-        if version_format:
-            folded = version_format.replace("{stem}", folded)
+        # Into the pattern, not onto the value: retiring the field must not
+        # drop the rule, and the user can now SEE what it does. Every
+        # spelling of the name token gets it, retired ones included --
+        # the field shaped the NAME, not one way of writing it.
+        for token in (cls.NAME_KEY, *cls.NAME_KEY_ALIASES):
+            folded = StrUtils.attach_modifier(folded, token, spec)
         return folded
 
     @classmethod
@@ -910,7 +868,7 @@ class ExportProfile:
     }
     #: The retired Baked Reflections row's table: label -> TOKEN (the levels
     #: are :attr:`ExportRun._BAKED_REFLECTION_LEVELS`). Read privately by the
-    #: rule that still names an older preset's choice (:meth:`_retired_row_notes`).
+    #: rule that still names an older preset's choice (:meth:`retired_row_notes`).
     _BAKED_REFLECTIONS_OPTIONS: Dict[str, str] = {
         "Off (Pure Bake)": "off",
         "Quarter": "quarter",
@@ -1109,10 +1067,6 @@ class ExportRun:
     export_path: str = ""
     #: An :attr:`OUTPUT_FORMATS` token.
     output_format: str = "fbx"
-    #: The retired Version pattern (a headless ``tasks["version"]``, which
-    #: warns and goes in 0.19.0), carried to the exporter's entry point to be
-    #: folded into the name once (:meth:`ExportProfile.fold_legacy_naming`).
-    version_format: str = ""
     #: The Texture File Type dial -- the container every texture the export
     #: ships is written in (each destination clamps what it cannot carry).
     #: None is "Original".
@@ -1228,7 +1182,8 @@ class ExportRun:
     )
     #: The ``tasks`` keys that are modes, not tasks -- what :meth:`from_tasks`
     #: pops (legacy spellings included) so none reaches the dispatcher as an
-    #: unknown task.
+    #: unknown task. ``version`` is the removed Version pattern, popped to be
+    #: refused by name (:meth:`from_tasks`).
     MODE_KEYS: ClassVar[Tuple[str, ...]] = (
         "version",
         "output_format",
@@ -1497,7 +1452,9 @@ class ExportRun:
         RDO, key reduction -- each None when off; the key reduction rides
         Optimize Keys and is inert without it). A retired Baked Reflections
         row, which an older panel still sends, is dropped with a note: the
-        deliverable publishes the recipe's own level. A GLB-only format drops
+        deliverable publishes the recipe's own level. A ``version`` key (the
+        Version pattern, removed in 0.19.0) is an ``"error"`` note naming the
+        counter that replaces it. A GLB-only format drops
         :attr:`FBX_KEY_HYGIENE` with a note: the FBX is then a temp
         intermediate the converter resamples per frame. ``optimize_textures``
         and ``convert_textures`` are READ, not
@@ -1520,18 +1477,18 @@ class ExportRun:
         tasks = dict(tasks or {})
         notes: List[Tuple[str, str]] = []
 
-        version_format = tasks.pop("version", "") or ""
-        if version_format:
-            # SAVED data: a profile saved before the retirement still carries
-            # it, so it keeps the longest window (re-dated from 0.12.0 on
-            # 2026-10-24, CODE_STANDARD §0) where the API shims went.
-            Deprecation.warn(
-                "tasks['version']",
-                "a {n} counter in the Output Filename, e.g. '*_v{n:03d}'",
-                remove_in="0.19.0",
-                kind="parameter",
-                since="2026-09-23",
-                reason="Until then the exporter folds it into the name once.",
+        if tasks.pop("version", ""):
+            # Removed in 0.19.0 (retired 2026-09-23). A caller still sending
+            # it asked for a versioned name; writing the unversioned one
+            # instead would land a file nobody asked for, so the run stops
+            # and says what replaces it.
+            notes.append(
+                (
+                    "error",
+                    "Export aborted: tasks['version'] was removed in pythontk "
+                    "0.19.0 -- write a {n} counter into the Output Filename "
+                    "instead, e.g. '*_v{n:03d}'.",
+                )
             )
         output_format = str(tasks.pop("output_format", "") or "").lower()
         if not output_format:
@@ -1650,7 +1607,6 @@ class ExportRun:
                 )
         run = cls(
             output_format=output_format,
-            version_format=str(version_format),
             texture_file_type=texture_file_type,
             ktx2_fallback=ktx2_fallback,
             texture_write_back=bool(write_back),

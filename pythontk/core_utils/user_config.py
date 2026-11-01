@@ -13,9 +13,10 @@ the ecosystem's GUI settings/template stores and import ``qtpy``, but this modul
 must be usable from **headless, Qt-free** contexts -- notably the photogrammetry
 engines running inside Metashape's bundled Python 3.9 (where Qt is absent and
 engine code must not import it). So the consolidated location
-(``<per-user-config>/uitk/<package>/``) is resolved HERE, with plain
-``os``/``pathlib``, and uitk's ``PresetManager.get_presets_root`` delegates to it:
-one owner, so one :data:`CONFIG_ROOT_ENV_VAR` override moves every store.
+(``<per-user-config>/<UserConfig.ROOT_NAME>/<package>/``) is resolved HERE, with
+plain ``os``/``pathlib``, and uitk's ``PresetManager.get_presets_root`` delegates
+to it: one owner, so one :attr:`UserConfig.CONFIG_ROOT_ENV_VAR` override moves
+every store.
 
 JSON (not TOML) is deliberate: ``tomllib`` is 3.11+ and won't import under
 Metashape's 3.9; ``json`` is stdlib everywhere.
@@ -33,12 +34,6 @@ from pathlib import Path
 from typing import Any, Mapping, Optional, Union
 
 logger = logging.getLogger(__name__)
-
-# Env var that redirects the ecosystem user-config root wholesale. uitk's
-# ``PresetManager.get_presets_root()`` delegates to :meth:`UserConfig.user_config_root`,
-# so one override moves every store.
-CONFIG_ROOT_ENV_VAR = "UITK_PRESETS_ROOT"
-_ECOSYSTEM_WRAPPER = "uitk"
 
 
 class UserConfig:
@@ -58,11 +53,17 @@ class UserConfig:
     partial ``<user_config_root>/mypkg/myapp.json`` overriding only what differs.
     """
 
-    #: Env var that redirects the ecosystem user-config root wholesale -- the
-    #: public spelling of the module constant of the same name, so another
-    #: package reaches it through the root (``ptk.UserConfig.CONFIG_ROOT_ENV_VAR``)
-    #: instead of this module's path.
-    CONFIG_ROOT_ENV_VAR: str = CONFIG_ROOT_ENV_VAR
+    #: The folder in the OS per-user config dir that :meth:`user_config_root`
+    #: names: the ecosystem default, which every store's presets and settings
+    #: are saved under. A saved location, so it keeps the spelling it was first
+    #: saved with (uitk kept the first presets there), and data rather than a
+    #: package this one knows: an application keeping a root of its own sets it.
+    ROOT_NAME: str = "uitk"
+    #: Env var that redirects the user-config root wholesale (uitk's
+    #: ``PresetManager.get_presets_root()`` delegates here, so one override moves
+    #: every store): the ecosystem default, spelled as users' setups name it.
+    #: Read through the root (``ptk.UserConfig.CONFIG_ROOT_ENV_VAR``).
+    CONFIG_ROOT_ENV_VAR: str = "UITK_PRESETS_ROOT"
     #: Env var that redirects the per-user CACHE root (:meth:`cache_dir`)
     #: wholesale; :meth:`TestSandbox.temp <pythontk.TestSandbox.temp>` points it
     #: into its throwaway root.
@@ -260,10 +261,11 @@ class UserConfig:
     def user_config_root() -> Path:
         """The ecosystem per-user config directory, resolved **without Qt**.
 
-        Honors ``$UITK_PRESETS_ROOT`` (used as given; ``~`` and ``%VAR%`` expanded).
-        Otherwise the host-independent per-user config dir plus a ``uitk`` wrapper
-        folder. The one owner of the root: uitk's ``PresetManager.get_presets_root()``
-        delegates here.
+        Honors ``$UITK_PRESETS_ROOT`` (:attr:`CONFIG_ROOT_ENV_VAR`; used as
+        given, ``~`` and ``%VAR%`` expanded). Otherwise the host-independent
+        per-user config dir plus the :attr:`ROOT_NAME` folder (``uitk``). The one
+        owner of the root: uitk's ``PresetManager.get_presets_root()`` delegates
+        here.
 
         * Windows: ``%LOCALAPPDATA%/uitk``
         * macOS:   ``~/Library/Preferences/uitk``
@@ -273,7 +275,7 @@ class UserConfig:
         spec requires (and Qt does) -- used as given, the root moved with the
         working directory.
         """
-        override = os.environ.get(CONFIG_ROOT_ENV_VAR)
+        override = os.environ.get(UserConfig.CONFIG_ROOT_ENV_VAR)
         if override:
             p = Path(UserConfig.expand(override))
             return p if p.is_absolute() else p.absolute()
@@ -287,7 +289,7 @@ class UserConfig:
             base = os.path.join(os.path.expanduser("~"), "Library", "Preferences")
         else:
             base = UserConfig.xdg_home("config")
-        root = Path(base) / _ECOSYSTEM_WRAPPER
+        root = Path(base) / UserConfig.ROOT_NAME
         return root if root.is_absolute() else root.absolute()
 
     #: The ecosystem's folder in the OS cache dir.
@@ -338,3 +340,7 @@ class UserConfig:
         if create:
             folder.mkdir(parents=True, exist_ok=True)
         return folder
+
+
+#: The module spelling of :attr:`UserConfig.CONFIG_ROOT_ENV_VAR`, its owner.
+CONFIG_ROOT_ENV_VAR = UserConfig.CONFIG_ROOT_ENV_VAR

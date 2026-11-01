@@ -28,11 +28,13 @@ The pure half of both DCC Scene Exporters, layered model -> planner -> hooks:
   check override, run config) and
   :mod:`~pythontk.core_utils.engines.scene_export.scene_data_sidecar` the
   scene-data sidecar's file format (:class:`SceneDataSidecarBase`); mayatk and
-  blendertk subclass both and supply the scene I/O through hooks.
+  blendertk bind both to their host and override nothing: the sidecar's
+  ``HOST`` adapter (a :class:`SidecarHost`), the exporter's ``STORE`` (the
+  host's :class:`SceneStoreBase`).
 
 Scene-reaching behaviour (reading carriers, writing the file, the DCC's
-dialogs) is the DCC adapters' -- mayatk / blendertk ``env_utils`` -- behind
-overridable hooks with pure defaults.
+dialogs) is the DCC adapters' -- mayatk / blendertk ``env_utils`` -- injected
+through those seams, with pure defaults (:class:`PureSidecarHost`, no store).
 """
 
 # Lazy-loaded via parent package - no explicit imports needed

@@ -54,7 +54,7 @@ logger = logging.getLogger(__name__)
 _LUMA = np.asarray(Color.REC709_LUMINANCE)
 
 
-class _HighlightsMixin:
+class _Highlights:
     """The bake's lights drawn into per-receiver copies of its reflection probe."""
 
     #: The GGX roughness a light's highlight is placed and matched with.
@@ -83,9 +83,11 @@ class _HighlightsMixin:
     # Public
     # ------------------------------------------------------------------
 
-    @classmethod
+    def __init__(self, mc: type) -> None:
+        self._mc = mc  # the facade class: every name it exposes is read through it
+
     def highlight_probe_layers(
-        cls,
+        self,
         glb,
         lights: Optional[Sequence[Dict[str, Any]]],
         probe: Optional[Dict[str, Any]] = None,
@@ -93,39 +95,12 @@ class _HighlightsMixin:
         baked: Optional[Sequence[str]] = None,
         eye: Optional[Sequence[float]] = None,
     ) -> List[Dict[str, Any]]:
-        """The probe's highlight copies: for each receiver group, the lights it is shown.
-
-        Each layer is what its group's copy adds to the probe as captured
-        (radiance in the probe's own units, the three.js equirect layout --
-        top row +Y): the bake's lights, each drawn where box projection shows
-        it true for that group and scaled so the light it gives the group's
-        surfaces is the light's own (see the module).
-
-        Parameters:
-            glb: ``.glb`` path or an open :class:`GlbEdit`: the geometry the
-                groups are read from (model space, metres), and -- unless given
-                -- its ``lightmaps`` manifest's probe and baked materials.
-            lights: The bake's lights in metres (:meth:`lights_in_metres`,
-                applied here too: a light it leaves out is left out).
-            probe: ``{"position", "box"}`` (metres; ``box`` ``{min, max}`` or
-                ``None`` for a probe read as distant); default the file's.
-            width: The probe's width in texels (the interior's copy is drawn
-                at it, an unbaked object's at half); default 1024.
-            baked: Material names that carry a lightmap; default the file's.
-            eye: Where the room is seen from; default the start camera's node
-                (:attr:`HIGHLIGHT_EYE_NODE`), else the probe's position.
-
-        Returns:
-            ``[{"materials", "receivers", "image"}]`` -- ``receivers``
-            ``"interior"`` or ``"unbaked"``; ``image`` an
-            ``(h, w, 3)`` float32 array. Empty when there is nothing to light.
-        """
         # The one light validator (idempotent on its own output): a light
         # written wrong is left out, never the pass.
-        lights = cls.lights_in_metres(lights)
+        lights = self._mc.lights_in_metres(lights)
         if not lights:
             return []
-        with cls.open_glb(glb) as edit:
+        with self._mc.open_glb(glb) as edit:
             block = SceneRecords.glb_block(edit.gltf, SceneRecords.LIGHTMAPS) or {}
             probe = probe if probe is not None else block.get("probe")
             if not isinstance(probe, dict) or not probe.get("position"):
@@ -133,29 +108,29 @@ class _HighlightsMixin:
             baked_names = set(
                 baked if baked is not None else (block.get("materials") or {})
             )
-            meshes = cls._highlight_meshes(edit)
+            meshes = self._mc._highlight_meshes(edit)
             if eye is None:
-                eye = cls._highlight_eye(edit)
+                eye = self._mc._highlight_eye(edit)
         C = np.asarray(probe["position"], float)
         box = probe.get("box")
         lo = np.asarray(box["min"], float) if box else None
         hi = np.asarray(box["max"], float) if box else None
         eye = np.asarray(eye if eye is not None else C, float)
         width = int(width or 1024) // 2 * 2
-        groups = cls._highlight_groups(meshes, baked_names, lo, hi)
+        groups = self._mc._highlight_groups(meshes, baked_names, lo, hi)
         layers = []
         for group in groups:
             pts, nrm = group["points"], group["normals"]
             unbaked = group["receivers"] == "unbaked"
             focal, scales = [], []
             for light in lights:
-                F, s = cls._highlight_placement(
+                F, s = self._mc._highlight_placement(
                     light, pts, nrm, eye, lo, hi, irradiance=unbaked
                 )
                 focal.append(F)
                 scales.append(s)
             w = width if group["receivers"] == "interior" else max(64, width // 2)
-            image = cls._highlight_layer(lights, focal, scales, C, lo, hi, w)
+            image = self._mc._highlight_layer(lights, focal, scales, C, lo, hi, w)
             if not np.any(image > 0):
                 continue
             layers.append(
@@ -167,24 +142,11 @@ class _HighlightsMixin:
             )
         return layers
 
-    @classmethod
     def lights_in_metres(
-        cls,
+        self,
         lights: Optional[Sequence[Dict[str, Any]]],
         unit_scale: Optional[float] = None,
     ) -> Optional[List[Dict[str, Any]]]:
-        """The bake's lights in metres and the viewer's units, or ``None``.
-
-        Lights arrive in scene units: the lightmap record's (``LightmapRecord``)
-        at the record's *unit_scale* (metres per unit), a host's
-        ``specular_lights`` (mayatk ``LightUtils``) with ``unit_scale`` beside
-        each -- a light's own wins, then *unit_scale*, then metres.
-        This carries metres: a point or spot light's intensity in candela (its
-        irradiance falls over metres, so it scales by ``unit_scale`` squared),
-        a rect's radiance as it is. One without a position, a type or a
-        positive intensity is left out -- a field that is no number leaves its
-        light out, never the bake that reads them.
-        """
         if not isinstance(lights, (list, tuple)):
             return None
         out: List[Dict[str, Any]] = []
@@ -234,9 +196,8 @@ class _HighlightsMixin:
     # Embedding (the lightmap pass's)
     # ------------------------------------------------------------------
 
-    @classmethod
     def _embed_highlight_probes(
-        cls,
+        self,
         edit,
         probe: Dict[str, Any],
         baked: Sequence[str],
@@ -255,15 +216,15 @@ class _HighlightsMixin:
         Radiance header's, and the viewpoint and lights it was drawn from are
         how it was made, not what it is: neither is published.
         """
-        lights = cls.lights_in_metres(lights, unit_scale)
+        lights = self._mc.lights_in_metres(lights, unit_scale)
         if not lights:
             return None
         from pythontk.img_utils._img_utils import ImgUtils
 
-        width = cls._radiance_width(edit, probe.get("bufferView")) or 1024
-        eye = cls._highlight_eye(edit) or list(probe["position"])
+        width = self._radiance_width(edit, probe.get("bufferView")) or 1024
+        eye = self._mc._highlight_eye(edit) or list(probe["position"])
         try:
-            layers = cls.highlight_probe_layers(
+            layers = self._mc.highlight_probe_layers(
                 edit, lights, probe=probe, width=width, baked=baked, eye=eye
             )
         except Exception as error:  # noqa: BLE001 -- never the bake's cost
@@ -276,7 +237,7 @@ class _HighlightsMixin:
             except (ImportError, ValueError) as error:
                 logger.warning("Probe highlight layer not encoded: %s", error)
                 continue
-            views = cls._append_bin_views(edit, [raw])
+            views = self._mc._append_bin_views(edit, [raw])
             if not views:
                 continue
             # Which group a copy was drawn for is how it was made, not what it
@@ -320,9 +281,8 @@ class _HighlightsMixin:
     #: and the copy's place in the record, from 1.
     FBX_HIGHLIGHT_NAME: str = "{stem}_Highlight{index}.hdr"
 
-    @classmethod
     def embed_fbx_highlight_probes(
-        cls,
+        self,
         fbx: str,
         glb: Optional[str] = None,
         *,
@@ -330,41 +290,6 @@ class _HighlightsMixin:
         hdr_codec: Any = None,
         logger: Optional[logging.Logger] = None,
     ) -> List[str]:
-        """Give an FBX deliverable's probe the highlight copies its GLB ships.
-
-        A GLB's probe carries copies with the bake's lights drawn in
-        (:meth:`_embed_highlight_probes`). The FBX carried the probe alone, so
-        a reader that shades it as the WebXR viewer does (unitytk's
-        deliverable shading) lit its metals with the probe as captured, the
-        bench's lights missing from them. The copies are *glb*'s -- the GLB
-        this export built from *fbx* -- or, without one, those of a GLB built
-        here the same way (:meth:`fbx_to_glb`, whose lightmap pass draws
-        them) from *fbx* without its takes (:meth:`_fbx_static_scene`), so
-        both deliverables carry the same copies to the byte. Each
-        goes inside the FBX as its Radiance bytes, under
-        :attr:`FBX_HIGHLIGHT_NAME`, and the record's probe lists them:
-        ``highlights: [{"map", "objects": [{"name", "hierarchy"}]}]``. An
-        engine binds a renderer, not a material, so each mesh node is listed
-        under the one copy holding most of its triangles.
-
-        Run on a freshly written FBX: a name the file already embeds keeps its
-        bytes (:meth:`FbxMedia.embed`). A no-op on a file whose record has no
-        probe or no lights. Never the deliverable's cost: a failure is warned
-        and the file stays as written.
-
-        Parameters:
-            fbx: The FBX deliverable, rewritten in place.
-            glb: A GLB built from *fbx*; ``None`` builds one (FBX2glTF must be
-                installed: none is downloaded for this).
-            search_dirs: Where the bake's maps and probe are, for that build
-                (:meth:`apply_glb_lightmaps`).
-            hdr_codec: That build's HDR encoder (:meth:`apply_glb_lightmaps`).
-            logger: Where the outcome is said; this module's otherwise.
-
-        Returns:
-            The copies' file names, in the record's order; empty when none
-            shipped.
-        """
         from pythontk.file_utils.mesh_convert.fbx_media import FbxMedia
         from pythontk.file_utils.temp_artifacts import TempArtifacts
 
@@ -380,16 +305,18 @@ class _HighlightsMixin:
         if not (
             isinstance(probe, dict)
             and probe.get("map")
-            and cls.lights_in_metres(current.get("lights"), current.get("unit_scale"))
+            and self._mc.lights_in_metres(
+                current.get("lights"), current.get("unit_scale")
+            )
         ):
             return []
         store = TempArtifacts("fbx_highlights", policy="scoped")
         try:
-            copies = cls._fbx_highlight_copies(fbx, glb, store, search_dirs, hdr_codec)
+            copies = self._fbx_highlight_copies(fbx, glb, store, search_dirs, hdr_codec)
             stem = os.path.splitext(os.path.basename(str(probe["map"])))[0]
             entries, files = [], []
             for index, copy in enumerate(copies, 1):
-                name = cls.FBX_HIGHLIGHT_NAME.format(stem=stem, index=index)
+                name = self._mc.FBX_HIGHLIGHT_NAME.format(stem=stem, index=index)
                 path = os.path.join(store.dir_path(), name)
                 with open(path, "wb") as fh:
                     fh.write(copy["bytes"])
@@ -415,16 +342,15 @@ class _HighlightsMixin:
             )
         return [entry["map"] for entry in entries]
 
-    @classmethod
     def _fbx_highlight_copies(
-        cls, fbx: str, glb: Optional[str], store, search_dirs, hdr_codec
+        self, fbx: str, glb: Optional[str], store, search_dirs, hdr_codec
     ) -> List[Dict[str, Any]]:
         """*glb*'s probe copies -- built into *store* when ``None``, from *fbx*'s
         scene at rest (:meth:`_fbx_static_scene`) -- each ``{"bytes",
         "objects"}`` (:meth:`_highlight_receivers`)."""
         if glb is None:
-            source = cls._fbx_static_scene(fbx, store)
-            glb = cls.fbx_to_glb(
+            source = self._mc._fbx_static_scene(fbx, store)
+            glb = self._mc.fbx_to_glb(
                 source,
                 os.path.join(store.dir_path(), "highlights.glb"),
                 overwrite=True,
@@ -436,7 +362,7 @@ class _HighlightsMixin:
                 # would warn that the export was written with animation off.
                 data_export={SceneRecords.SHOTS.key: None} if source != fbx else None,
             )
-        with cls.open_glb(glb) as edit:
+        with self._mc.open_glb(glb) as edit:
             block = SceneRecords.glb_block(edit.gltf, SceneRecords.LIGHTMAPS) or {}
             highlights = (block.get("probe") or {}).get("highlights")
             entries = [
@@ -444,7 +370,7 @@ class _HighlightsMixin:
                 for e in highlights or []
                 if isinstance(e, dict) and isinstance(e.get("bufferView"), int)
             ]
-            objects = cls._highlight_receivers(
+            objects = self._mc._highlight_receivers(
                 edit.gltf, [set(e.get("materials") or ()) for e in entries]
             )
             copies = []
@@ -480,9 +406,8 @@ class _HighlightsMixin:
     #: The root FBX2glTF puts every converted scene under; not the scene's.
     _CONVERTER_ROOT: str = "RootNode"
 
-    @classmethod
     def _highlight_receivers(
-        cls, gltf: Dict[str, Any], materials: Sequence[set]
+        self, gltf: Dict[str, Any], materials: Sequence[set]
     ) -> List[List[Dict[str, Any]]]:
         """The mesh nodes each copy shades, ``{"name", "hierarchy"}`` -- a node
         under the copy whose *materials* hold most of its triangles (the first
@@ -492,7 +417,7 @@ class _HighlightsMixin:
         meshes = gltf.get("meshes") or []
         mats = gltf.get("materials") or []
         accessors = gltf.get("accessors") or []
-        parents = cls._node_parents(gltf)
+        parents = self._mc._lightmaps._node_parents(gltf)
         out: List[List[Dict[str, Any]]] = [[] for _ in materials]
         for index, node in enumerate(nodes):
             mesh = node.get("mesh")
@@ -515,9 +440,9 @@ class _HighlightsMixin:
                 continue
             lineage = [
                 str(nodes[i].get("name") or "")
-                for i in reversed(cls._node_lineage(parents, index))
+                for i in reversed(self._mc._lightmaps._node_lineage(parents, index))
             ]
-            if len(lineage) > 1 and lineage[0] == cls._CONVERTER_ROOT:
+            if len(lineage) > 1 and lineage[0] == self._CONVERTER_ROOT:
                 lineage = lineage[1:]
             out[votes.index(max(votes))].append({"name": lineage[-1], "hierarchy": lineage})
         return out
@@ -526,13 +451,12 @@ class _HighlightsMixin:
     # Geometry
     # ------------------------------------------------------------------
 
-    @classmethod
-    def _highlight_eye(cls, edit) -> Optional[List[float]]:
+    def _highlight_eye(self, edit) -> Optional[List[float]]:
         """The start camera's world position (:attr:`HIGHLIGHT_EYE_NODE`, a
         namespaced one too), or ``None``."""
         from pythontk.file_utils.mesh_convert.glb.reader import GlbReader
 
-        name = cls.HIGHLIGHT_EYE_NODE
+        name = self._mc.HIGHLIGHT_EYE_NODE
         nodes = edit.gltf.get("nodes") or []
         index = next(
             (i for i, n in enumerate(nodes) if n.get("name") == name),
@@ -550,8 +474,7 @@ class _HighlightsMixin:
         position = GlbReader(edit).world_position(index)
         return list(position) if position else None
 
-    @classmethod
-    def _highlight_meshes(cls, edit) -> List[Dict[str, Any]]:
+    def _highlight_meshes(self, edit) -> List[Dict[str, Any]]:
         """Every triangle primitive in model space: ``{material, triangles, normals}``.
 
         ``triangles`` ``(n, 3, 3)`` corners and ``normals`` ``(n, 3, 3)`` their
@@ -610,9 +533,8 @@ class _HighlightsMixin:
                 out.append({"material": name, "triangles": corners, "normals": vn})
         return out
 
-    @classmethod
     def _highlight_samples(
-        cls, meshes: Sequence[Dict[str, Any]], seed: int = 0
+        self, meshes: Sequence[Dict[str, Any]], seed: int = 0
     ) -> Tuple[np.ndarray, np.ndarray]:
         """Area-weighted points ``(n, 3)`` and normals ``(n, 3)`` on *meshes*' triangles
         (:attr:`HIGHLIGHT_SAMPLES_PER_M2`, at least :attr:`HIGHLIGHT_MIN_SAMPLES`
@@ -623,15 +545,18 @@ class _HighlightsMixin:
         same surfaces another way draws the same copies."""
         if not meshes:
             return np.zeros((0, 3)), np.zeros((0, 3))
-        c, vn = cls._canonical_triangles(
+        c, vn = self._canonical_triangles(
             np.concatenate([m["triangles"] for m in meshes]),
             np.concatenate([m["normals"] for m in meshes]),
         )
         area = 0.5 * np.linalg.norm(np.cross(c[:, 1] - c[:, 0], c[:, 2] - c[:, 0]), axis=1)
         total = float(area.sum())
         wanted = min(
-            max(total * cls.HIGHLIGHT_SAMPLES_PER_M2, cls.HIGHLIGHT_MIN_SAMPLES),
-            cls._HIGHLIGHT_MAX_SAMPLES,
+            max(
+                total * self._mc.HIGHLIGHT_SAMPLES_PER_M2,
+                self._mc.HIGHLIGHT_MIN_SAMPLES,
+            ),
+            self._mc._HIGHLIGHT_MAX_SAMPLES,
         )
         rng = np.random.default_rng(seed)
         tri = np.repeat(np.arange(len(c)), rng.poisson(area * wanted / max(total, 1e-9)))
@@ -667,9 +592,8 @@ class _HighlightsMixin:
         order = np.lexsort(np.take_along_axis(key, turn, 1).reshape(len(key), 9).T[::-1])
         return corners[order], normals[order]
 
-    @classmethod
     def _highlight_groups(
-        cls,
+        self,
         meshes: Sequence[Dict[str, Any]],
         baked: set,
         lo: Optional[np.ndarray],
@@ -729,18 +653,18 @@ class _HighlightsMixin:
         for members in clusters.values():
             groups.append({"receivers": "unbaked", "materials": members})
 
-        if len(groups) >= cls.HIGHLIGHT_MAX_COPIES:
+        if len(groups) >= self._mc.HIGHLIGHT_MAX_COPIES:
             logger.info(
                 "Probe highlights: %d unbaked group(s) past the %d copies a probe "
                 "ships read the probe as captured.",
-                len(groups) - cls.HIGHLIGHT_MAX_COPIES + 1,
-                cls.HIGHLIGHT_MAX_COPIES,
+                len(groups) - self._mc.HIGHLIGHT_MAX_COPIES + 1,
+                self._mc.HIGHLIGHT_MAX_COPIES,
             )
-            groups = groups[: cls.HIGHLIGHT_MAX_COPIES - 1]
+            groups = groups[: self._mc.HIGHLIGHT_MAX_COPIES - 1]
         if interior:
             groups.append({"receivers": "interior", "materials": interior})
         for group in groups:
-            group["points"], group["normals"] = cls._highlight_samples(
+            group["points"], group["normals"] = self._mc._highlight_samples(
                 [x for m in group["materials"] for x in by_material[m]]
             )
         return [g for g in groups if len(g["points"])]
@@ -762,17 +686,15 @@ class _HighlightsMixin:
         angle = float(light.get("angle", math.pi / 4))
         return math.cos(angle), math.cos(angle * (1.0 - float(light.get("penumbra", 0.0))))
 
-    @classmethod
-    def _rect_frame(cls, light) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def _rect_frame(self, light) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """A rect's ``(facing, right, up)``: the way it shines, its width and height axes."""
-        facing = cls._unit(light.get("direction"), (0, -1, 0))
-        right = cls._unit(light.get("right"), (1, 0, 0))
-        up = cls._unit(np.cross(facing, right), (0, 0, 1))
+        facing = self._unit(light.get("direction"), (0, -1, 0))
+        right = self._unit(light.get("right"), (1, 0, 0))
+        up = self._unit(np.cross(facing, right), (0, 0, 1))
         right = np.cross(up, facing)
         return facing, right, up
 
-    @classmethod
-    def _highlight_field(cls, light, points: np.ndarray):
+    def _highlight_field(self, light, points: np.ndarray):
         """The light at each point as three.js lights it: ``(E, direction, luma)``.
 
         ``E`` ``(n, 3)`` the irradiance on a surface facing it (a point or spot
@@ -785,7 +707,7 @@ class _HighlightsMixin:
         X = np.asarray(light["position"], float)
         kind = light["type"]
         if kind == "rect":
-            facing, right, up = cls._rect_frame(light)
+            facing, right, up = self._rect_frame(light)
             w, h = float(light.get("width") or 1.0), float(light.get("height") or 1.0)
             n_long = 12
             nu = n_long if w >= h else max(2, int(round(n_long * w / h)))
@@ -800,7 +722,7 @@ class _HighlightsMixin:
         else:
             emitters = [X]
             power = color * intensity
-            facing = cls._unit(light.get("direction"), (0, -1, 0))
+            facing = self._unit(light.get("direction"), (0, -1, 0))
         E = np.zeros(points.shape)
         V = np.zeros(points.shape)
         S = np.zeros(len(points))
@@ -811,7 +733,7 @@ class _HighlightsMixin:
             f = 1.0 / np.maximum(d2, 0.01)
             if kind == "spot":
                 f = f * MathUtils.smoothstep(
-                    (-lh) @ facing, *cls._spot_cone(light)
+                    (-lh) @ facing, *self._spot_cone(light)
                 )
             elif kind == "rect":
                 f = f * np.maximum((-lh) @ facing, 0.0)
@@ -840,8 +762,7 @@ class _HighlightsMixin:
         t = np.where(np.isfinite(t), t, np.inf).min(-1)
         return origin + d * t[..., None]
 
-    @classmethod
-    def _highlight_placement(cls, light, points, normals, eye, lo, hi, irradiance):
+    def _highlight_placement(self, light, points, normals, eye, lo, hi, irradiance):
         """``(F, scale)``: where the light is drawn from and how bright, for these receivers.
 
         F is its highlight hot spot as the eye sees it (squared-weight
@@ -852,7 +773,7 @@ class _HighlightsMixin:
         the light's own: the same highlight, or the same irradiance.
         """
         X = np.asarray(light["position"], float)
-        E, d, S = cls._highlight_field(light, points)
+        E, d, S = self._highlight_field(light, points)
         nl = np.clip((normals * d).sum(1), 0.0, None)
         live = S * nl
         if irradiance:
@@ -860,15 +781,15 @@ class _HighlightsMixin:
         else:
             v = eye - points
             v /= np.maximum(np.linalg.norm(v, axis=1, keepdims=True), 1e-12)
-            spec = live * cls._ggx_d(normals, d, v, cls.HIGHLIGHT_ROUGHNESS)
+            spec = live * self._ggx_d(normals, d, v, self._mc.HIGHLIGHT_ROUGHNESS)
             weights = spec * spec
         if weights.sum() <= 0.0:
             return points.mean(0) if len(points) else X, 0.0
         F = (points * weights[:, None]).sum(0) / weights.sum()
-        toward = cls._unit(X - F, (0, 1, 0))
-        S_F = float(cls._highlight_field(light, F[None])[2][0])
+        toward = self._unit(X - F, (0, 1, 0))
+        S_F = float(self._highlight_field(light, F[None])[2][0])
         if lo is not None:
-            B = cls._box_exit(F, toward[None], lo, hi)[0]
+            B = self._mc._box_exit(F, toward[None], lo, hi)[0]
             b = B - points
             bd2 = np.maximum((b * b).sum(1), 1e-12)
             b /= np.sqrt(bd2)[:, None]
@@ -878,11 +799,11 @@ class _HighlightsMixin:
             proxy = np.full(len(points), S_F)
         proxy = proxy * np.clip((normals * b).sum(1), 0.0, None)
         if not irradiance:
-            live = live * cls._ggx_d(normals, d, v, cls.HIGHLIGHT_ROUGHNESS)
-            proxy = proxy * cls._ggx_d(normals, b, v, cls.HIGHLIGHT_ROUGHNESS)
+            live = live * self._ggx_d(normals, d, v, self._mc.HIGHLIGHT_ROUGHNESS)
+            proxy = proxy * self._ggx_d(normals, b, v, self._mc.HIGHLIGHT_ROUGHNESS)
         if live.sum() <= 0.0 or proxy.sum() <= 0.0:
             return F, 0.0
-        low, high = cls._HIGHLIGHT_SCALE_RANGE
+        low, high = self._HIGHLIGHT_SCALE_RANGE
         return F, float(np.clip(live.sum() / proxy.sum(), low, high))
 
     # ------------------------------------------------------------------
@@ -908,8 +829,7 @@ class _HighlightsMixin:
             -1,
         )
 
-    @classmethod
-    def _proxy_radiance(cls, light, F, origin, d, far, scale, r):
+    def _proxy_radiance(self, light, F, origin, d, far, scale, r):
         """Radiance ``(..., 3)`` rays ``origin + s d`` (``s < far``) meet on the light, as F sees it
         (a point or spot light as a sphere of radius *r*: :meth:`_proxy_radius`)."""
         X = np.asarray(light["position"], float)
@@ -917,7 +837,7 @@ class _HighlightsMixin:
         intensity = float(light["intensity"]) * scale
         out = np.zeros(d.shape[:-1] + (3,))
         if light["type"] == "rect":
-            facing, right, up = cls._rect_frame(light)
+            facing, right, up = self._rect_frame(light)
             if float(np.dot(facing, F - X)) <= 0.0:
                 return out  # behind a one-sided rect
             denom = d @ facing
@@ -937,9 +857,9 @@ class _HighlightsMixin:
         omega = 2.0 * math.pi * (1.0 - math.sqrt(1.0 - (r / dist) ** 2))
         att = 1.0
         if light["type"] == "spot":
-            axis = cls._unit(light.get("direction"), (0, -1, 0))
+            axis = self._unit(light.get("direction"), (0, -1, 0))
             att = MathUtils.smoothstep(
-                float(np.dot((F - X) / dist, axis)), *cls._spot_cone(light)
+                float(np.dot((F - X) / dist, axis)), *self._spot_cone(light)
             )
             if att <= 0.0:
                 return out
@@ -952,14 +872,13 @@ class _HighlightsMixin:
         out[(disc > 0) & (s > 0) & (s < far)] = L * color
         return out
 
-    @classmethod
-    def _highlight_layer(cls, lights, focal, scales, C, lo, hi, width):
+    def _highlight_layer(self, lights, focal, scales, C, lo, hi, width):
         """``(width/2, width, 3)``: each light drawn from its focal point, onto the box as C reads it.
 
         Each light is drawn only over its footprint: a coarse pass with its
         bounds grown by a coarse texel finds the texels it can reach.
         """
-        h, w, ss = width // 2, width, cls.HIGHLIGHT_SUPERSAMPLE
+        h, w, ss = width // 2, width, self._mc.HIGHLIGHT_SUPERSAMPLE
         layer = np.zeros((h, w, 3))
         # Coarse texels of f x f fine ones: f divides the height, so both grids
         # tile the same rows and columns.
@@ -967,15 +886,17 @@ class _HighlightsMixin:
         while h % f:
             f -= 1
         cw = w // f
-        coarse = cls._equirect_directions(np.arange(h // f), np.arange(cw), cw, h // f, 1)
-        coarse_b = cls._box_exit(C, coarse, lo, hi) if lo is not None else None
+        coarse = self._equirect_directions(
+            np.arange(h // f), np.arange(cw), cw, h // f, 1
+        )
+        coarse_b = self._mc._box_exit(C, coarse, lo, hi) if lo is not None else None
         for light, F, scale in zip(lights, focal, scales):
             if scale <= 0.0:
                 continue
             F = np.asarray(F, float)
-            r = cls._proxy_radius(light, F, C, lo, hi, w)
-            reach = cls._rect_reach(light) if light["type"] == "rect" else r
-            hit = cls._coarse_reach(light, F, C, coarse, coarse_b, reach, cw)
+            r = self._mc._proxy_radius(light, F, C, lo, hi, w)
+            reach = self._rect_reach(light) if light["type"] == "rect" else r
+            hit = self._coarse_reach(light, F, C, coarse, coarse_b, reach, cw)
             if not hit.any():
                 continue
             # Grown by a coarse texel; columns wrap round, rows stop at the poles.
@@ -987,21 +908,20 @@ class _HighlightsMixin:
             cols = (cols_c[:, None] * f + np.arange(f)[None]).ravel()
             for start in range(0, len(rows), 64):
                 rs = rows[start : start + 64]
-                d = cls._equirect_directions(rs, cols, w, h, ss)
+                d = self._equirect_directions(rs, cols, w, h, ss)
                 if lo is not None:
-                    B = cls._box_exit(C, d, lo, hi)
+                    B = self._mc._box_exit(C, d, lo, hi)
                     fd = B - F
                     far = np.linalg.norm(fd, axis=-1)
                     fd = fd / np.maximum(far, 1e-12)[..., None]
                 else:
                     fd, far = d, np.full(d.shape[:-1], np.inf)
-                rad = cls._proxy_radiance(light, F, F, fd, far, scale, r)
+                rad = self._proxy_radiance(light, F, F, fd, far, scale, r)
                 rad = rad.reshape(len(rs), ss, len(cols), ss, 3).mean((1, 3))
                 layer[np.ix_(rs, cols)] += rad
         return layer.astype(np.float32)
 
-    @classmethod
-    def _proxy_radius(cls, light, F, C, lo, hi, width) -> float:
+    def _proxy_radius(self, light, F, C, lo, hi, width) -> float:
         """The sphere a point or spot light is drawn as, seen from F: its own
         radius, at least :attr:`HIGHLIGHT_MIN_ANGLE` and at least one texel --
         the layer's texels are laid out from C, and a light smaller than one as
@@ -1014,10 +934,12 @@ class _HighlightsMixin:
         dist = float(np.linalg.norm(X - F))
         texel = 2.0 * math.pi / width
         if lo is not None:
-            toward = cls._unit(X - F, (0, 1, 0))
-            B = cls._box_exit(F, toward[None], lo, hi)[0]
+            toward = self._unit(X - F, (0, 1, 0))
+            B = self._mc._box_exit(F, toward[None], lo, hi)[0]
             texel *= float(np.linalg.norm(B - C)) / max(float(np.linalg.norm(B - F)), 1e-9)
-        angle = min(max(math.radians(cls.HIGHLIGHT_MIN_ANGLE), texel), math.atan(0.5))
+        angle = min(
+            max(math.radians(self._mc.HIGHLIGHT_MIN_ANGLE), texel), math.atan(0.5)
+        )
         r = max(float(light.get("radius") or 0.0), dist * math.tan(angle))
         return min(r, 0.5 * dist)
 
@@ -1026,8 +948,7 @@ class _HighlightsMixin:
         """The radius of a sphere about a rect light holding all of it: its half-diagonal."""
         return 0.5 * math.hypot(float(light.get("width") or 1.0), float(light.get("height") or 1.0))
 
-    @classmethod
-    def _coarse_reach(cls, light, F, C, coarse, coarse_b, reach, cw):
+    def _coarse_reach(self, light, F, C, coarse, coarse_b, reach, cw):
         """Coarse texels whose ray from F passes within the light's bounds, grown by a texel."""
         X = np.asarray(light["position"], float)
         dist = float(np.linalg.norm(X - F))

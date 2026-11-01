@@ -47,6 +47,7 @@ except ImportError as e:
 # From this package:
 from pythontk.core_utils._core_utils import CoreUtils
 from pythontk.core_utils.help_mixin import HelpMixin
+from pythontk.core_utils.logging_mixin import LoggingMixin
 from pythontk.core_utils.naming_convention import NamingConvention
 from pythontk.file_utils._file_utils import FileUtils
 
@@ -84,6 +85,7 @@ class ImgUtils(
     _ImgAtlasInternal,
     _ImgRasterizeInternal,
     _ImgColorSpaceInternal,
+    LoggingMixin,
     HelpMixin,
 ):
     """Helper methods for working with image file formats."""
@@ -916,8 +918,8 @@ class ImgUtils(
         if ext in cls.LOSSY_FORMATS:
             kwargs = cls._apply_lossy_kwargs(ext, quality, kwargs)
         elif quality is not None:
-            print(
-                f"# ImgUtils: '{ext}' is a lossless container; ignoring "
+            cls.logger.warning(
+                f"'{ext}' is a lossless container; ignoring "
                 f"quality={quality} for {name}."
             )
 
@@ -1356,7 +1358,7 @@ class ImgUtils(
                 continue
 
             if not os.path.exists(path):
-                print(f"Warning: Image path not found: {path}")
+                cls.logger.warning(f"Image path not found: {path}")
                 continue
 
             try:
@@ -1378,8 +1380,8 @@ class ImgUtils(
                     "format": img_format,
                 }
                 info_list.append(info)
-            except Exception as e:
-                print(f"Error getting info for {path}: {e}")
+            except Exception as e:  # noqa: BLE001 -- one unreadable file, not the report
+                cls.logger.warning(f"Image not read, so not reported: {path}: {e}")
 
         return info_list
 
@@ -1452,7 +1454,9 @@ class ImgUtils(
         if (width, height) == (new_width, new_height):
             return im
 
-        print(f"Resizing to POT: {width}x{height} -> {new_width}x{new_height}")
+        cls.logger.result(
+            f"Resizing to POT: {width}x{height} -> {new_width}x{new_height}"
+        )
         return im.resize((new_width, new_height), Image.Resampling.LANCZOS)
 
     @classmethod
@@ -3486,33 +3490,25 @@ class ImgUtils(
         Returns:
             Tuple of (is_constant, color_value).
             color_value is a tuple of channel values (e.g. (255, 0, 0) for red).
+
+        Raises:
+            Whatever :meth:`ensure_image` raises for an image it cannot read.
         """
-        try:
-            img = cls.ensure_image(image)
-            extrema = img.getextrema()
+        img = cls.ensure_image(image)
+        extrema = img.getextrema()
 
-            # Handle single channel (L) vs multi-channel (RGB/RGBA)
-            # Single channel returns (min, max)
-            # Multi-channel returns [(min, max), (min, max), ...]
-            if extrema and isinstance(extrema[0], (int, float)):
-                extrema = [extrema]
+        # Handle single channel (L) vs multi-channel (RGB/RGBA)
+        # Single channel returns (min, max)
+        # Multi-channel returns [(min, max), (min, max), ...]
+        if extrema and isinstance(extrema[0], (int, float)):
+            extrema = [extrema]
 
-            is_constant = True
-            color = []
-
-            for min_val, max_val in extrema:
-                if (max_val - min_val) > tolerance:
-                    is_constant = False
-                    break
-                color.append(int((min_val + max_val) / 2))
-
-            if is_constant:
-                return True, tuple(color)
-            return False, None
-
-        except Exception as e:
-            print(f"Error checking image constancy: {e}")
-            return False, None
+        color = []
+        for min_val, max_val in extrema:
+            if (max_val - min_val) > tolerance:
+                return False, None
+            color.append(int((min_val + max_val) / 2))
+        return True, tuple(color)
 
     @classmethod
     def get_base_texture_name(

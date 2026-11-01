@@ -322,7 +322,7 @@ class _DeprecationInternal:
     def _as_reached(record: DeprecationRecord, owner: Any) -> DeprecationRecord:
         """*record* named after the class its name was reached through, when
         that class inherits it: a facade composed of private mixins
-        (``MeshConvert`` of ``_SidecarMixin``) reports the name its caller
+        (``Facade`` of ``_PartMixin``) reports the name its caller
         wrote, not a class the caller never saw. Reached through the class
         that declares it, or through no class, it reads as declared.
 

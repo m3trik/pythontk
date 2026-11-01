@@ -35,6 +35,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from pythontk import (
     FileUtils,
+    GlbReader,
     HandoffRecord,
     ImgUtils,
     Ktx2Encoder,
@@ -1180,44 +1181,10 @@ class TestGlbReadGuards(unittest.TestCase):
         with self.assertRaises(ValueError):
             MeshConvert.check_glb_materials(path)
 
-
-class TestBaseColorRecordHonesty(unittest.TestCase):
-    """``set_glb_base_color`` must not report a texture it did not embed."""
-
-    def setUp(self):
-        self.tmp = tempfile.mkdtemp(prefix="meshconvert_basecolor_")
-
-    def tearDown(self):
-        shutil.rmtree(self.tmp, ignore_errors=True)
-
-    def test_unembeddable_texture_is_not_reported_as_written(self):
-        gltf = {
-            "asset": {"version": "2.0"},
-            "materials": [{"name": "Body", "pbrMetallicRoughness": {}}],
-        }
-        json_bytes = json.dumps(gltf).encode("utf-8")
-        json_bytes += b" " * ((4 - (len(json_bytes) % 4)) % 4)
-        path = os.path.join(self.tmp, "m.glb")
-        with open(path, "wb") as f:
-            f.write(struct.pack("<4sII", b"glTF", 2, 12 + 8 + len(json_bytes)))
-            f.write(struct.pack("<I4s", len(json_bytes), b"JSON") + json_bytes)
-
-        # A texture path that cannot be embedded (file does not exist), plus a
-        # colour so the entry is still written.
-        records = MeshConvert.set_glb_base_color(
-            path,
-            {
-                "Body": {
-                    "texture": os.path.join(self.tmp, "missing.png"),
-                    "color": [1.0, 0.0, 0.0],
-                }
-            },
-        )
-        self.assertEqual(len(records), 1)
-        self.assertIsNone(
-            records[0]["texture"],
-            "no baseColorTexture was written — the record must not claim one",
-        )
+    def test_a_file_that_is_not_a_glb_raises_value_error(self):
+        path = self._truncated(b"not a glb at all")  # no glTF magic
+        with self.assertRaises(ValueError):
+            MeshConvert.check_glb_materials(path)
 
 
 def _write_glb_file(path, gltf, bin_chunk=b""):
@@ -1463,6 +1430,21 @@ class TestGlbEditSession(unittest.TestCase):
         return path
 
     @staticmethod
+    def _record(**materials):
+        """A ``materials`` record stating each ``name={fields}`` -- what
+        :meth:`MeshConvert.apply_glb_materials` reads; an unstated field takes
+        its default."""
+        return {
+            "version": 1,
+            "materials": [{"name": name, **fields} for name, fields in materials.items()],
+        }
+
+    @staticmethod
+    def _maps(*paths):
+        """``{file name: path}`` for each map on disk, as the record names them."""
+        return {os.path.basename(path): path for path in paths}
+
+    @staticmethod
     def _counting_write():
         """``(patcher, writes)`` — wraps ``GlbEdit.write`` and records each call."""
         real = MeshConvert.GlbEdit.write
@@ -1492,27 +1474,40 @@ class TestGlbEditSession(unittest.TestCase):
         self.assertEqual(declared, os.path.getsize(path), "GLB total length is stale")
 
     def test_one_session_writes_once_for_every_applier(self):
-        """Two channel writers sharing a session must produce one write."""
+        """Two appliers sharing a session must produce one write."""
         path = self._write_glb(
-            {"asset": {"version": "2.0"}, "materials": [{"name": "Body"}]},
+            {
+                "asset": {"version": "2.0"},
+                "materials": [
+                    {"name": "Body"},
+                    {"name": "Lens", "normalTexture": {"index": 0}},
+                ],
+                "textures": [{"source": 0}],
+                "images": [{"uri": "lens_Normal.png"}],
+            },
             bin_chunk=b"GEOMETRY",
         )
         patcher, writes = self._counting_write()
         with patcher:
             with MeshConvert.open_glb(path) as session:
-                MeshConvert.set_glb_base_color(
-                    session, {"Body": {"color": (0.2, 0.4, 0.8)}}
+                MeshConvert.apply_glb_materials(
+                    session,
+                    self._record(
+                        Body={
+                            "baseColorFactor": [0.2, 0.4, 0.8, 1.0],
+                            "emissiveFactor": [1.0, 0.0, 0.0],
+                        }
+                    ),
                 )
-                MeshConvert.set_glb_emissive(
-                    session, {"Body": {"color": (1.0, 0.0, 0.0)}}
-                )
+                MeshConvert.set_glb_normal_scale(session, 1.5, lightmapped_only=False)
 
         self.assertEqual(len(writes), 1, "the session must write once, not per applier")
-        mat = MeshConvert._read_glb(path).gltf["materials"][0]
+        body, lens = MeshConvert._read_glb(path).gltf["materials"]
         self.assertEqual(
-            mat["pbrMetallicRoughness"]["baseColorFactor"][:3], [0.2, 0.4, 0.8]
+            body["pbrMetallicRoughness"]["baseColorFactor"], [0.2, 0.4, 0.8, 1.0]
         )
-        self.assertEqual(mat["emissiveFactor"], [1.0, 0.0, 0.0])
+        self.assertEqual(body["emissiveFactor"], [1.0, 0.0, 0.0])
+        self.assertEqual(lens["normalTexture"]["scale"], 1.5)
 
     def test_a_path_target_still_writes_for_itself(self):
         """The path form stays self-contained — sharing is opt-in, not required."""
@@ -1521,15 +1516,20 @@ class TestGlbEditSession(unittest.TestCase):
         )
         patcher, writes = self._counting_write()
         with patcher:
-            MeshConvert.set_glb_base_color(path, {"Body": {"color": (0.2, 0.4, 0.8)}})
-            MeshConvert.set_glb_emissive(path, {"Body": {"color": (1.0, 0.0, 0.0)}})
+            MeshConvert.apply_glb_materials(
+                path, self._record(Body={"baseColorFactor": [0.2, 0.4, 0.8, 1.0]})
+            )
+            MeshConvert.apply_glb_materials(
+                path, self._record(Body={"emissiveFactor": [1.0, 0.0, 0.0]})
+            )
         self.assertEqual(len(writes), 2)
 
     def test_a_black_emissive_switches_the_converters_glow_off(self):
         """Off means off: FBX2glTF glows a mapped emissive at 1.0 whatever the DCC
         said, so a material authored dark (Maya's ``emissive_intensity`` 0) must
         leave with factor 0 and no map -- skipped, a production room's ceiling
-        panels lit WebXR at full (2026-10-17)."""
+        panels lit WebXR at full (2026-10-17). The map the record names is not
+        embedded for it."""
         path = self._write_glb(
             {
                 "asset": {"version": "2.0"},
@@ -1547,28 +1547,35 @@ class TestGlbEditSession(unittest.TestCase):
                 "images": [{"uri": "panel_Emissive.png"}],
             }
         )
-        records = MeshConvert.set_glb_emissive(
-            path, {"Panel": {"color": (0.0, 0.0, 0.0), "texture": self._png()}}
+        png = self._png()
+        records = MeshConvert.apply_glb_materials(
+            path,
+            self._record(
+                Panel={"emissiveFactor": [0.0, 0.0, 0.0], "emissiveTexture": "map.png"}
+            ),
+            self._maps(png),
         )
-        mat = MeshConvert._read_glb(path).gltf["materials"][0]
+        gltf = MeshConvert._read_glb(path).gltf
+        mat = gltf["materials"][0]
         self.assertEqual(mat["emissiveFactor"], [0.0, 0.0, 0.0])
         self.assertNotIn("emissiveTexture", mat)
         self.assertNotIn("KHR_materials_emissive_strength", mat.get("extensions") or {})
         self.assertEqual(len(records), 1)
-        self.assertEqual(records[0]["factor"], [0.0, 0.0, 0.0])
-        self.assertIsNone(records[0]["texture"])  # nothing embedded for an unlit map
+        self.assertEqual(records[0]["maps"], [])  # nothing embedded for an unlit map
+        self.assertEqual(gltf["images"], [{"uri": "panel_Emissive.png"}])
 
     def test_an_applier_that_matches_nothing_writes_nothing(self):
-        """No match, no edit, no I/O — the usual case for the alpha repair."""
+        """No match, no edit, no I/O — the usual case for the alpha repair. A
+        record stating no material is the same no-op."""
         path = self._write_glb(
             {"asset": {"version": "2.0"}, "materials": [{"name": "Body"}]}
         )
         before = open(path, "rb").read()
         patcher, writes = self._counting_write()
         with patcher:
-            self.assertEqual(
-                MeshConvert.set_glb_emissive(path, {"Absent": {"color": (1, 1, 1)}}), []
-            )
+            for record in (self._record(Absent={}), {"materials": []}, None):
+                with self.subTest(record=record):
+                    self.assertEqual(MeshConvert.apply_glb_materials(path, record), [])
         self.assertEqual(writes, [])
         self.assertEqual(open(path, "rb").read(), before)
 
@@ -1581,19 +1588,51 @@ class TestGlbEditSession(unittest.TestCase):
         JSON chunk untouched.
         """
         geometry = b"GEOMETRY" * 8
+        # The converter's material as the record restates it, one field apart:
+        # the compact rewrite of the same fields fits the indented chunk.
+        body = {
+            "name": "Body",
+            "pbrMetallicRoughness": {
+                "baseColorFactor": [1.0, 1.0, 1.0, 1.0],
+                "metallicFactor": 1.0,
+                "roughnessFactor": 1.0,
+            },
+            "emissiveFactor": [0.0, 0.0, 0.0],
+            "alphaMode": "OPAQUE",
+            "doubleSided": False,
+        }
         path = self._write_glb(
-            {"asset": {"version": "2.0"}, "materials": [{"name": "Body"}]},
+            {"asset": {"version": "2.0"}, "materials": [body]},
             bin_chunk=geometry,
             pretty=True,
         )
         size_before = os.path.getsize(path)
 
-        MeshConvert.set_glb_emissive(path, {"Body": {"color": (1.0, 0.5, 0.0)}})
+        MeshConvert.apply_glb_materials(
+            path, self._record(Body={"emissiveFactor": [1.0, 0.5, 0.0]})
+        )
 
         self.assertEqual(os.path.getsize(path), size_before)
         edit = MeshConvert._read_glb(path)
         self.assertEqual(edit.gltf["materials"][0]["emissiveFactor"], [1.0, 0.5, 0.0])
         self.assertEqual(bytes(edit.bin_data), geometry)
+
+    def test_a_growing_json_only_edit_keeps_the_bin_byte_identical(self):
+        """JSON that outgrows its chunk with nothing embedded: the file is
+        rewritten, and the BIN chunk comes back as it was, byte for byte."""
+        geometry = b"GEOMETRYDATA1234"
+        path = self._write_glb(
+            {"asset": {"version": "2.0"}, "materials": [{"name": "Body"}]},
+            bin_chunk=geometry,
+        )
+        size_before = os.path.getsize(path)
+
+        MeshConvert.apply_glb_materials(
+            path, self._record(Body={"emissiveFactor": [1.0, 1.0, 1.0]})
+        )
+
+        self.assertGreater(os.path.getsize(path), size_before)
+        self.assertEqual(bytes(MeshConvert._read_glb(path).bin_data), geometry)
 
     def test_a_growing_edit_falls_back_to_a_full_rewrite(self):
         """When the JSON no longer fits, the geometry must still come back whole."""
@@ -1604,7 +1643,13 @@ class TestGlbEditSession(unittest.TestCase):
         )
         size_before = os.path.getsize(path)
 
-        MeshConvert.set_glb_emissive(path, {"Body": {"texture": self._png()}})
+        MeshConvert.apply_glb_materials(
+            path,
+            self._record(
+                Body={"emissiveFactor": [1.0, 1.0, 1.0], "emissiveTexture": "map.png"}
+            ),
+            self._maps(self._png()),
+        )
 
         # Growth is what distinguishes this from the in-place path, which holds
         # the size fixed — asserting only that the file parses would pass on
@@ -1624,7 +1669,7 @@ class TestGlbEditSession(unittest.TestCase):
         The re-encode branch already warned and skipped; the direct PNG/JPEG
         read did not, so the same failure aborted the channel writer depending
         only on the file's extension — and it was the one file operation left
-        inside an applier, able to take a whole sidecar section with it.
+        inside an applier, able to take a whole materials record with it.
         """
         png = self._png()
         path = self._write_glb(
@@ -1639,15 +1684,87 @@ class TestGlbEditSession(unittest.TestCase):
             return real_open(file, *args, **kwargs)
 
         with patch("builtins.open", refusing_open):
-            records = MeshConvert.set_glb_base_color(
-                path, {"Body": {"texture": png, "color": [1.0, 0.0, 0.0]}}
+            records = MeshConvert.apply_glb_materials(
+                path,
+                self._record(
+                    Body={
+                        "baseColorFactor": [1.0, 0.0, 0.0, 1.0],
+                        "baseColorTexture": "map.png",
+                    }
+                ),
+                self._maps(png),
             )
 
         self.assertEqual(len(records), 1, "the colour must still be written")
-        self.assertIsNone(
-            records[0]["texture"], "no texture was embedded — don't claim one"
+        self.assertEqual(
+            (records[0]["maps"], records[0]["missing"]),
+            ([], ["map.png"]),
+            "no texture was embedded — don't claim one",
         )
-        self.assertNotIn("images", MeshConvert._read_glb(path).gltf)
+        gltf = MeshConvert._read_glb(path).gltf
+        self.assertNotIn("images", gltf)
+        self.assertEqual(
+            gltf["materials"][0]["pbrMetallicRoughness"]["baseColorFactor"],
+            [1.0, 0.0, 0.0, 1.0],
+        )
+
+    def test_an_image_no_decoder_reads_is_skipped_not_embedded(self):
+        """A file no decoder can read must be reported, not written as a data URI.
+
+        Junk bytes under a TIFF extension: the Pillow fallback tries and fails
+        to decode it, so it takes the same rejected path as a format with no
+        decoder at all (EXR, or no Pillow installed).
+        """
+        path = self._write_glb(
+            {"asset": {"version": "2.0"}, "materials": [{"name": "Body"}]}
+        )
+        tif = os.path.join(self.tmp, "e.tif")
+        with open(tif, "wb") as f:
+            f.write(b"II*\x00")
+        (written,) = MeshConvert.apply_glb_materials(
+            path,
+            self._record(
+                Body={"emissiveFactor": [1.0, 1.0, 1.0], "emissiveTexture": "e.tif"}
+            ),
+            self._maps(tif),
+        )
+        self.assertEqual(written["missing"], ["e.tif"])
+        gltf = MeshConvert._read_glb(path).gltf
+        self.assertNotIn("emissiveTexture", gltf["materials"][0])
+        self.assertNotIn("images", gltf)
+
+    def test_a_tga_map_is_reencoded_to_png(self):
+        """TGA is everywhere in game art, and glTF cannot hold it natively.
+
+        Rejecting it by extension silently downgraded the material to
+        colour-only; with Pillow present it must arrive as an embedded PNG.
+        """
+        from PIL import Image
+
+        path = self._write_glb(
+            {"asset": {"version": "2.0"}, "materials": [{"name": "Body"}]}
+        )
+        tga = os.path.join(self.tmp, "emis.tga")
+        Image.new("RGB", (2, 2), (255, 0, 0)).save(tga)
+        (written,) = MeshConvert.apply_glb_materials(
+            path,
+            self._record(
+                Body={"emissiveFactor": [1.0, 1.0, 1.0], "emissiveTexture": "emis.tga"}
+            ),
+            self._maps(tga),
+        )
+        self.assertEqual(written["maps"], ["emis.tga"])
+        edit = MeshConvert._read_glb(path)
+        image = edit.gltf["images"][0]
+        self.assertEqual(image["mimeType"], "image/png")
+        # The payload really is a PNG, not TGA bytes under a PNG label.
+        view = edit.gltf["bufferViews"][image["bufferView"]]
+        start = view.get("byteOffset", 0)
+        self.assertTrue(
+            bytes(edit.bin_data[start : start + view["byteLength"]]).startswith(
+                b"\x89PNG"
+            )
+        )
 
     def test_a_clean_glb_is_never_read_past_its_json_chunk(self):
         """The repair that runs after *every* conversion must stay cheap.
@@ -1677,88 +1794,35 @@ class TestGlbEditSession(unittest.TestCase):
         self.assertIsInstance(edit.bin_data, memoryview)
         self.assertEqual(bytes(edit.bin_data), b"GEOMETRY")
 
-    def test_a_base_color_texture_neutralises_the_converters_tint(self):
-        """A texture with no colour beside it must not stay multiplied by a tint.
-
-        Measured on a production room (StingrayPBS -> FBX2glTF 0.13.1): the FBX
-        carries no DiffuseColor for a Stingray material, so every material
-        reached the GLB at a flat 0.5 grey baseColorFactor. The sidecar rebound
-        the texture correctly on top of it and left the factor alone, and glTF
-        multiplies the two -- the whole room shipped at HALF its authored
-        albedo, with nothing in the envelope reporting a problem.
-        """
-        png = self._png()
-        path = self._write_glb(
-            {
-                "asset": {"version": "2.0"},
-                "materials": [
-                    {
-                        "name": "Body",
-                        "pbrMetallicRoughness": {
-                            "baseColorFactor": [0.5, 0.5, 0.5, 1.0]
-                        },
-                    }
-                ],
-            }
-        )
-        MeshConvert.set_glb_base_color(path, {"Body": {"texture": png}})
-
-        pbr = MeshConvert._read_glb(path).gltf["materials"][0]["pbrMetallicRoughness"]
-        self.assertEqual(pbr["baseColorFactor"], [1.0, 1.0, 1.0, 1.0])
-        self.assertIn("baseColorTexture", pbr)
-
-    def test_a_base_color_texture_keeps_the_materials_alpha(self):
-        """Neutralising the tint must not turn a transparent material opaque."""
-        png = self._png()
-        path = self._write_glb(
-            {
-                "asset": {"version": "2.0"},
-                "materials": [
-                    {
-                        "name": "Body",
-                        "pbrMetallicRoughness": {
-                            "baseColorFactor": [0.5, 0.5, 0.5, 0.25]
-                        },
-                    }
-                ],
-            }
-        )
-        MeshConvert.set_glb_base_color(path, {"Body": {"texture": png}})
-
-        pbr = MeshConvert._read_glb(path).gltf["materials"][0]["pbrMetallicRoughness"]
-        self.assertEqual(pbr["baseColorFactor"], [1.0, 1.0, 1.0, 0.25])
-
-    def test_an_explicit_base_colour_still_wins_over_the_texture(self):
-        """An authored tint is intent -- only the converter's fallback is reset."""
-        png = self._png()
-        path = self._write_glb(
-            {"asset": {"version": "2.0"}, "materials": [{"name": "Body"}]}
-        )
-        MeshConvert.set_glb_base_color(
-            path, {"Body": {"texture": png, "color": (0.2, 0.4, 0.8)}}
-        )
-
-        pbr = MeshConvert._read_glb(path).gltf["materials"][0]["pbrMetallicRoughness"]
-        self.assertEqual(
-            [round(c, 3) for c in pbr["baseColorFactor"][:3]], [0.2, 0.4, 0.8]
-        )
-
     def test_a_shared_texture_is_embedded_once_across_channels(self):
-        """One file on disk, one embedded copy — the embed cache spans the session."""
+        """One file on disk, one embedded copy — the embed cache spans the
+        session: two appliers on it, the map in two channels."""
         png = self._png()
         path = self._write_glb(
-            {"asset": {"version": "2.0"}, "materials": [{"name": "Body"}]}
+            {
+                "asset": {"version": "2.0"},
+                "materials": [{"name": "Body"}, {"name": "Lens"}],
+            }
         )
+        maps = self._maps(png)
         with MeshConvert.open_glb(path) as session:
-            MeshConvert.set_glb_base_color(session, {"Body": {"texture": png}})
-            MeshConvert.set_glb_emissive(session, {"Body": {"texture": png}})
+            MeshConvert.apply_glb_materials(
+                session, self._record(Body={"baseColorTexture": "map.png"}), maps
+            )
+            MeshConvert.apply_glb_materials(
+                session,
+                self._record(
+                    Lens={"emissiveFactor": [1.0, 1.0, 1.0], "emissiveTexture": "map.png"}
+                ),
+                maps,
+            )
 
         gltf = MeshConvert._read_glb(path).gltf
         self.assertEqual(len(gltf["images"]), 1)
-        mat = gltf["materials"][0]
+        body, lens = gltf["materials"]
         self.assertEqual(
-            mat["pbrMetallicRoughness"]["baseColorTexture"]["index"],
-            mat["emissiveTexture"]["index"],
+            body["pbrMetallicRoughness"]["baseColorTexture"]["index"],
+            lens["emissiveTexture"]["index"],
         )
 
     def test_an_embed_reuses_bytes_the_glb_already_carries(self):
@@ -1766,8 +1830,8 @@ class TestGlbEditSession(unittest.TestCase):
 
         The embed cache is keyed by source PATH, so it can only dedupe embeds
         made this session — it cannot see that the FBX->GLB conversion already
-        wrote the very same texture into the BIN chunk. Since the sidecar
-        re-applies exactly the channels FBX translation drops, the normal case
+        wrote the very same texture into the BIN chunk. Since the materials
+        record restates exactly the maps FBX translation drops, the normal case
         was two copies of the same bytes, the second inflated ~33% by base64.
         Measured on a production room: 23 MB duplicated, 31 MB on disk, a
         quarter of the deliverable.
@@ -1786,7 +1850,11 @@ class TestGlbEditSession(unittest.TestCase):
             bin_chunk=raw,
         )
         with MeshConvert.open_glb(path) as session:
-            MeshConvert.set_glb_base_color(session, {"Body": {"texture": png}})
+            MeshConvert.apply_glb_materials(
+                session,
+                self._record(Body={"baseColorTexture": "map.png"}),
+                self._maps(png),
+            )
 
         edit = MeshConvert._read_glb(path)
         gltf = edit.gltf
@@ -1823,8 +1891,12 @@ class TestGlbEditSession(unittest.TestCase):
             }
         )
         with MeshConvert.open_glb(path) as session:
-            MeshConvert.set_glb_base_color(
-                session, {"One": {"texture": first}, "Two": {"texture": second}}
+            MeshConvert.apply_glb_materials(
+                session,
+                self._record(
+                    One={"baseColorTexture": "a.png"}, Two={"baseColorTexture": "b.png"}
+                ),
+                self._maps(first, second),
             )
 
         gltf = MeshConvert._read_glb(path).gltf
@@ -1854,7 +1926,11 @@ class TestGlbEditSession(unittest.TestCase):
             {"asset": {"version": "2.0"}, "materials": [{"name": "Body"}]}
         )
         with MeshConvert.open_glb(path) as session:
-            MeshConvert.set_glb_base_color(session, {"Body": {"texture": png}})
+            MeshConvert.apply_glb_materials(
+                session,
+                self._record(Body={"baseColorTexture": "map.png"}),
+                self._maps(png),
+            )
 
         edit = MeshConvert._read_glb(path)
         gltf = edit.gltf
@@ -1899,7 +1975,11 @@ class TestGlbEditSession(unittest.TestCase):
             bin_chunk=geometry,
         )
         with MeshConvert.open_glb(path) as session:
-            MeshConvert.set_glb_base_color(session, {"Body": {"texture": png}})
+            MeshConvert.apply_glb_materials(
+                session,
+                self._record(Body={"baseColorTexture": "map.png"}),
+                self._maps(png),
+            )
 
         edit = MeshConvert._read_glb(path)
         gltf = edit.gltf
@@ -1924,7 +2004,11 @@ class TestGlbEditSession(unittest.TestCase):
             }
         )
         with MeshConvert.open_glb(path) as session:
-            MeshConvert.set_glb_base_color(session, {"Body": {"texture": self._png()}})
+            MeshConvert.apply_glb_materials(
+                session,
+                self._record(Body={"baseColorTexture": "map.png"}),
+                self._maps(self._png()),
+            )
 
         gltf = MeshConvert._read_glb(path).gltf
         self.assertEqual(gltf["buffers"][0]["uri"], "geometry.bin")
@@ -1947,7 +2031,11 @@ class TestGlbEditSession(unittest.TestCase):
             tail=extra,
         )
         with MeshConvert.open_glb(path) as session:
-            MeshConvert.set_glb_base_color(session, {"Body": {"texture": self._png()}})
+            MeshConvert.apply_glb_materials(
+                session,
+                self._record(Body={"baseColorTexture": "map.png"}),
+                self._maps(self._png()),
+            )
 
         self._assert_container_intact(path)
         edit = MeshConvert._read_glb(path)
@@ -1975,7 +2063,11 @@ class TestGlbEditSession(unittest.TestCase):
             tail=extra,
         )
         with MeshConvert.open_glb(path) as session:
-            MeshConvert.set_glb_base_color(session, {"Body": {"texture": self._png()}})
+            MeshConvert.apply_glb_materials(
+                session,
+                self._record(Body={"baseColorTexture": "map.png"}),
+                self._maps(self._png()),
+            )
 
         self._assert_container_intact(path)
         edit = MeshConvert._read_glb(path)
@@ -1998,7 +2090,11 @@ class TestGlbEditSession(unittest.TestCase):
             {"asset": {"version": "2.0"}, "materials": [{"name": "Body"}]}
         )
         with MeshConvert.open_glb(path) as session:
-            MeshConvert.set_glb_base_color(session, {"Body": {"texture": self._png()}})
+            MeshConvert.apply_glb_materials(
+                session,
+                self._record(Body={"baseColorTexture": "map.png"}),
+                self._maps(self._png()),
+            )
 
         gltf = MeshConvert._read_glb(path).gltf
         self.assertTrue(
@@ -2025,7 +2121,11 @@ class TestGlbEditSession(unittest.TestCase):
             bin_chunk=raw,
         )
         with MeshConvert.open_glb(path) as session:
-            MeshConvert.set_glb_base_color(session, {"Body": {"texture": fresh}})
+            MeshConvert.apply_glb_materials(
+                session,
+                self._record(Body={"baseColorTexture": "fresh.png"}),
+                self._maps(fresh),
+            )
 
         gltf = MeshConvert._read_glb(path).gltf
         self.assertEqual(len(gltf["images"]), 2)
@@ -2213,15 +2313,16 @@ class TestGlbEditSession(unittest.TestCase):
         from pythontk.file_utils.mesh_convert.fbx_file import FbxFile
 
         ticks = FbxFile.TICKS_PER_SECOND
-        # 2000 nodes over a 100 s take at 24 fps = 4.8M node-frames.
+        # 2000 nodes over a 100 s take at the 30 fps bake = 6M node-frames.
         animated = build_fbx(
             os.path.join(self.tmp, "animated.fbx"),
             {},
             models=2000,
             takes={"Take 001": (0, 100 * ticks)},
         )
-        self.assertEqual(MeshConvert.bake_node_frames(animated), 2000 * 100 * 24)
-        expected = 2000 * 100 * 24 * MeshConvert.TIMEOUT_SECONDS_PER_NODE_FRAME
+        self.assertEqual(MeshConvert.CONVERSION_BAKE_FPS, 30.0)
+        self.assertEqual(MeshConvert.bake_node_frames(animated), 2000 * 100 * 30)
+        expected = 2000 * 100 * 30 * MeshConvert.TIMEOUT_SECONDS_PER_NODE_FRAME
         self.assertGreater(
             expected, MeshConvert.DEFAULT_TIMEOUT, "fixture too small to test"
         )
@@ -2405,44 +2506,6 @@ class TestGlbEditSession(unittest.TestCase):
         self.assertEqual(
             max(decode(gltf["images"][1]).size), 128, "lightmap must keep its size"
         )
-
-    def test_metallic_roughness_summary_counts_only_what_it_wrote(self):
-        """The foreign-packing headline must not claim work that never happened.
-
-        It is derived from the sources that actually reached a material, not from
-        the input spec: ``_match_glb_materials`` drops entries naming a material
-        the GLB does not have, and a pack failure drops more. Counting the input
-        made the headline say "2 MSAO maps" when one of the two materials was
-        never touched.
-        """
-        from PIL import Image
-
-        msao_present = os.path.join(self.tmp, "present_MSAO.png")
-        msao_absent = os.path.join(self.tmp, "absent_MSAO.png")
-        Image.new("RGBA", (8, 8), (200, 60, 0, 100)).save(msao_present)
-        Image.new("RGBA", (8, 8), (10, 20, 0, 30)).save(msao_absent)
-
-        path = self._write_glb(
-            {
-                "asset": {"version": "2.0"},
-                "materials": [{"name": "present"}],
-            }
-        )
-        with self.assertLogs(
-            "pythontk.file_utils.mesh_convert", level="WARNING"
-        ) as caught:
-            records = MeshConvert.set_glb_metallic_roughness(
-                path,
-                {
-                    "present": {"metallic": msao_present},
-                    "absent": {"metallic": msao_absent},
-                },
-            )
-        self.assertEqual(len(records), 1, "only the matched material is written")
-        headline = [m for m in caught.output if "non-glTF mask packing" in m]
-        self.assertEqual(len(headline), 1, f"one headline expected: {caught.output}")
-        self.assertIn("1 MSAO map", headline[0])
-        self.assertNotIn("2 MSAO", headline[0])
 
     def test_optimize_splits_a_shared_bufferview_when_owners_diverge(self):
         """Two images can share ONE bufferView, and then need different bytes.
@@ -2728,137 +2791,33 @@ class TestGlbEditSession(unittest.TestCase):
             "texCoord-1 occlusion image must not resize",
         )
 
-    def test_metallic_roughness_repair_replaces_a_white_orm(self):
-        """The packed ORM must carry the REAL maps, blue channel = metallic.
-
-        The production failure this section exists for: FBX2glTF packs a
-        solid-white ORM when it cannot resolve the source maps, and glTF reads
-        metallic from blue — so the material renders metallic=1, whose diffuse
-        response is zero, and a lightmap (diffuse-only) lights nothing.
-        """
-        from PIL import Image
-
-        rough = os.path.join(self.tmp, "rough.png")
-        metal = os.path.join(self.tmp, "metal.png")
-        Image.new("L", (4, 4), 128).save(rough)
-        Image.new("L", (4, 4), 10).save(metal)
-        path = self._write_glb(
-            {
-                "asset": {"version": "2.0"},
-                "materials": [
-                    {
-                        "name": "Room",
-                        "pbrMetallicRoughness": {
-                            "metallicRoughnessTexture": {"index": 0},
-                            "metallicFactor": 1.0,
-                        },
-                    }
-                ],
-                "textures": [{"source": 0}],
-                "images": [{"name": "white_orm.png"}],
-            }
-        )
-        with MeshConvert.open_glb(path) as session:
-            records = MeshConvert.set_glb_metallic_roughness(
-                session, {"Room": {"roughness": rough, "metallic": metal}}
-            )
-        self.assertEqual(len(records), 1)
-
-        edit = MeshConvert._read_glb(path)
-        gltf = edit.gltf
-        pbr = gltf["materials"][0]["pbrMetallicRoughness"]
-        tex = pbr["metallicRoughnessTexture"]["index"]
-        img = gltf["images"][gltf["textures"][tex]["source"]]
-        import io as iolib
-
-        view = gltf["bufferViews"][img["bufferView"]]
-        start = view.get("byteOffset", 0)
-        raw = bytes(edit.bin_data[start : start + view["byteLength"]])
-        pixels = Image.open(iolib.BytesIO(raw)).convert("RGB").getpixel((1, 1))
-        self.assertEqual(pixels[2], 10, "blue channel must be the metallic map")
-        self.assertEqual(pixels[1], 128, "green channel must be the roughness map")
-        self.assertEqual(pixels[0], 255, "red (occlusion) fills white when absent")
-        self.assertEqual(pbr["metallicFactor"], 1.0)
-
-    def test_metallic_roughness_binds_occlusion_to_the_packed_orm(self):
-        """The AO packed into R must actually be sampled: glTF reads occlusion
-        ONLY from ``occlusionTexture``, so an ORM bound solely as
-        ``metallicRoughnessTexture`` ships its AO as dead payload (measured on
-        a delivered preview GLB: 0 of 57 materials sampled it). Three cases,
-        one rule each:
-
-        * a free slot binds (the spec's packed-ORM idiom -- same image, both
-          slots);
-        * a slot still naming the converted ORM this write replaces is
-          REPOINTED (FBX2glTF binds its own packing there, and the stale
-          reference samples the -- often solid-white -- image it emitted);
-        * a separate authored AO map is left alone.
-        """
-        from PIL import Image
-
-        ao = os.path.join(self.tmp, "ao.png")
-        Image.new("L", (4, 4), 200).save(ao)
-        path = self._write_glb(
-            {
-                "asset": {"version": "2.0"},
-                "materials": [
-                    {"name": "free"},
-                    {
-                        "name": "stale",
-                        "pbrMetallicRoughness": {
-                            "metallicRoughnessTexture": {"index": 0}
-                        },
-                        "occlusionTexture": {"index": 0},
-                    },
-                    {
-                        "name": "authored",
-                        "pbrMetallicRoughness": {
-                            "metallicRoughnessTexture": {"index": 0}
-                        },
-                        "occlusionTexture": {"index": 1},
-                    },
-                ],
-                "textures": [{"source": 0}, {"source": 1}],
-                "images": [{"name": "fbx2gltf_orm.png"}, {"name": "real_ao.png"}],
-            }
-        )
-        spec = {"occlusion": ao}
-        with MeshConvert.open_glb(path) as session:
-            MeshConvert.set_glb_metallic_roughness(
-                session,
-                {"free": dict(spec), "stale": dict(spec), "authored": dict(spec)},
-            )
-        gltf = MeshConvert._read_glb(path).gltf
-        by_name = {m["name"]: m for m in gltf["materials"]}
-        for case in ("free", "stale"):
-            mat = by_name[case]
-            packed = mat["pbrMetallicRoughness"]["metallicRoughnessTexture"]["index"]
-            self.assertEqual(
-                mat["occlusionTexture"]["index"], packed, f"{case}: slot must bind"
-            )
-        self.assertEqual(
-            by_name["authored"]["occlusionTexture"]["index"],
-            1,
-            "an authored separate AO map must never be displaced",
-        )
-
     def test_prune_unreferenced_textures_drops_the_displaced_converted_orm(self):
         """The image the ORM repack displaces must not ship as dead payload.
 
-        Measured on a production delivery (HOOKS_PINS.glb): after
-        ``set_glb_metallic_roughness`` rebound both slots to its packed image,
-        FBX2glTF's ``ao_met_rough_<mat>`` stayed in ``images``/``textures`` and
-        its full-size PNG in the BIN -- 2 MB the reviewer flagged as an
-        orphaned texture, per material, per export.
+        Measured on a production delivery (HOOKS_PINS.glb): after the ORM
+        repack rebound both slots to its packed image, FBX2glTF's
+        ``ao_met_rough_<mat>`` stayed in ``images``/``textures`` and its
+        full-size PNG in the BIN -- 2 MB the reviewer flagged as an orphaned
+        texture, per material, per export.
         """
         from PIL import Image
 
         rough = os.path.join(self.tmp, "rough.png")
+        ao = os.path.join(self.tmp, "ao.png")
         Image.new("L", (4, 4), 128).save(rough)
+        Image.new("L", (4, 4), 200).save(ao)
         path, geometry = _converted_orm_glb(self.tmp)
         with MeshConvert.open_glb(path) as session:
-            MeshConvert.set_glb_metallic_roughness(
-                session, {"Room": {"roughness": rough}}
+            MeshConvert.apply_glb_materials(
+                session,
+                self._record(
+                    Room={
+                        "metallicFactor": 0.0,
+                        "roughnessTexture": "rough.png",
+                        "occlusionTexture": "ao.png",
+                    }
+                ),
+                self._maps(rough, ao),
             )
             dropped = MeshConvert.prune_glb_unreferenced_textures(session)
         self.assertEqual(dropped["images"], 1)
@@ -3064,12 +3023,12 @@ class TestGlbEditSession(unittest.TestCase):
                 "materials": [{"name": "A"}, {"name": "B"}],
             }
         )
-        spec = {"roughness": rough}
+        spec = {"roughnessTexture": "r2.png"}
         with MeshConvert.open_glb(path) as session:
-            records = MeshConvert.set_glb_metallic_roughness(
-                session, {"A": dict(spec), "B": dict(spec)}
+            records = MeshConvert.apply_glb_materials(
+                session, self._record(A=dict(spec), B=dict(spec)), self._maps(rough)
             )
-        self.assertEqual(len(records), 2)
+        self.assertEqual([r["orm"] for r in records], [True, True])
         gltf = MeshConvert._read_glb(path).gltf
         self.assertEqual(len(gltf["images"]), 1, "shared sources embedded twice")
 
@@ -3104,7 +3063,9 @@ class TestGlbEditSession(unittest.TestCase):
         before = open(path, "rb").read()
         with self.assertRaises(RuntimeError):
             with MeshConvert.open_glb(path) as session:
-                MeshConvert.set_glb_emissive(session, {"Body": {"color": (1, 1, 1)}})
+                MeshConvert.apply_glb_materials(
+                    session, self._record(Body={"emissiveFactor": [1.0, 1.0, 1.0]})
+                )
                 raise RuntimeError("interrupted mid-edit")
         self.assertEqual(open(path, "rb").read(), before)
 
@@ -3694,12 +3655,13 @@ class TestGlbHandoff(unittest.TestCase):
 
 
 class TestSceneSidecar(unittest.TestCase):
-    """The retired scene-sidecar envelope (2026-10-20; removed in 0.18.0).
+    """The retired scene-sidecar envelope (2026-10-20).
 
-    What a host that predates the ``materials`` record still sends: its
-    sections are applied as they were, and the file carries the handoff its
-    source and lighting make (``extras.handoff``) -- never the envelope, nor
-    the per-section outcome, which is the build's report.
+    What a host that predates the ``materials`` record still sends: the file
+    carries the handoff its source and lighting make (``extras.handoff``),
+    never the envelope; its sections are read no more (their appliers were
+    removed 2026-10-31 -- the FBX's ``materials`` record states every
+    material).
     """
 
     def setUp(self):
@@ -3733,11 +3695,6 @@ class TestSceneSidecar(unittest.TestCase):
                 asset="scene.fbx",
             )
 
-    def _apply(self, glb, envelope):
-        """The retired applier, which still applies an envelope's sections."""
-        with self.assertWarns(DeprecationWarning):
-            return MeshConvert.apply_scene_sidecar(glb, envelope)
-
     def _assert_embeds(self, glb, envelope):
         """The GLB carries the envelope's handoff and nothing else of it --
         named against the file's blocks (none here) as every handoff is.
@@ -3760,23 +3717,6 @@ class TestSceneSidecar(unittest.TestCase):
             "the caller's envelope was mutated",
         )
         return extras[HandoffRecord.KEY]
-
-    def test_apply_scene_sidecar_prunes_what_its_appliers_displace(self):
-        """The applier tail sweeps the images the section writers unbound:
-        the converter's ORM, displaced by the repack, must not ship as dead
-        payload."""
-        from PIL import Image
-
-        rough = os.path.join(self.tmp, "rough.png")
-        Image.new("L", (4, 4), 128).save(rough)
-        path, geometry = _converted_orm_glb(self.tmp)
-        envelope = self._envelope(
-            {"metallic_roughness": {"Room": {"roughness": rough}}}
-        )
-        self.assertEqual(
-            self._apply(path, envelope), {"metallic_roughness": "1 of 1"}
-        )
-        _assert_no_dead_payload(self, path, geometry)
 
     def test_build_scene_sidecar_wraps_the_glb_handoff(self):
         """What a host that predates the materials record builds: its
@@ -3808,182 +3748,20 @@ class TestSceneSidecar(unittest.TestCase):
         self.assertIsNone(MeshConvert.read_glb_handoff(glb))
 
         current = self._write_glb("current.glb", materials=[{"name": "m"}])
-        self._apply(current, self._envelope({}))
+        with MeshConvert.open_glb(current) as edit:
+            MeshConvert.embed_glb_handoff(
+                edit, HandoffRecord.block("glb", None, self._envelope({})["source"])
+            )
         with self.assertWarns(DeprecationWarning):
             self.assertEqual(
                 MeshConvert.read_scene_sidecar(current),
                 MeshConvert.read_glb_handoff(current),
             )
 
-    def test_every_material_carrying_a_name_is_repaired_not_just_the_last(self):
-        """glTF names are not unique, and this pipeline relies on that: the
-        fade pass clones a material per faded subtree and keeps its name, and
-        FBX2glTF itself emits duplicates. The matcher held a ``{name: material}``
-        dict, so a repair landed on whichever copy came LAST -- measured on a
-        production assembly as the one-primitive fade clone of a screen
-        material, while the eleven-primitive original kept the converter's
-        white metallic-roughness packing.
-
-        The summary still counts NAMES: three copies of one material repaired
-        is "1 of 1", not "3 of 1".
-        """
-        glb = self._write_glb(
-            materials=[{"name": "m"}, {"name": "m"}, {"name": "other"}, {"name": "m"}]
-        )
-        envelope = self._envelope({"alpha_mode": {"m": {"mode": "MASK"}}})
-
-        summary = self._apply(glb, envelope)
-
-        self.assertEqual(summary, {"alpha_mode": "1 of 1"})
-        modes = [
-            m.get("alphaMode") for m in MeshConvert._read_glb(glb).gltf["materials"]
-        ]
-        self.assertEqual(modes, ["MASK", "MASK", None, "MASK"])
-
-    def test_apply_survives_a_malformed_section(self):
-        """A null section is skipped by the dispatch, never the thing that
-        raises: the container catch handles OSError/ValueError only, so a
-        TypeError would abort an apply that was otherwise entirely fine."""
-        glb = self._write_glb(materials=[{"name": "m"}])
-        envelope = self._envelope(
-            {"emissive": None, "base_color": {"m": {"color": [0, 1, 0]}}}
-        )
-        self.assertEqual(self._apply(glb, envelope), {"base_color": "1 of 1"})
-        self._assert_embeds(glb, envelope)
-
-    def test_the_summary_denominator_counts_only_materials_this_glb_HAS(self):
-        """A scene-wide envelope measured against an exported subset.
-
-        ``SceneState.read`` describes the SCENE, so its sections name every
-        material the scene holds -- reference materials, ID materials, anything
-        on geometry that did not export. Counting those as the denominator made
-        a correct deliverable report ``base_color: 10 of 23`` on a production
-        assembly: 13 of the 23 named materials were not in the GLB at all, and
-        an artist reading that sees 13 failed repairs. Same distinction the
-        lightmap pass already draws with ``out_of_scope``.
-        """
-        glb = self._write_glb(materials=[{"name": "here"}])
-        envelope = self._envelope(
-            {
-                "base_color": {
-                    "here": {"color": [0, 1, 0]},
-                    "REF_elsewhere": {"color": [1, 0, 0]},
-                    "standardSurface1": {"color": [0, 0, 1]},
-                }
-            }
-        )
-        summary = self._apply(glb, envelope)
-        self.assertEqual(
-            summary,
-            {"base_color": "1 of 1 (2 not in this export)"},
-            "the count must separate what MISSED from what was never here",
-        )
-
-    def test_a_genuine_miss_is_still_counted_as_a_miss(self):
-        """The scope clause must not become a way to hide real failures: a
-        material the GLB HAS and the applier did not write is a defect."""
-        glb = self._write_glb(materials=[{"name": "here"}, {"name": "also_here"}])
-        envelope = self._envelope({"alpha_mode": {"here": "OPAQUE"}})
-        with unittest.mock.patch.object(
-            MeshConvert, "set_glb_alpha_mode", return_value=[]
-        ):
-            summary = self._apply(glb, envelope)
-        self.assertEqual(summary, {"alpha_mode": "0 of 1 matched"})
-
-    def test_a_section_matching_NOTHING_stays_loud_rather_than_claiming_scope(self):
-        """Zero overlap is the one case scope cannot explain away.
-
-        "every name is out of scope" and "every name is misspelled" are the
-        same observation from inside the file, and one of them is a defect. The
-        applier's own warning names the entries AND lists the GLB's materials,
-        which is what a reader needs to tell them apart -- so this keeps the
-        miss wording and does not offer an excuse it cannot justify.
-        """
-        glb = self._write_glb(materials=[{"name": "here"}])
-        envelope = self._envelope(
-            {"base_color": {"REF_elsewhere": {"color": [1, 0, 0]}}}
-        )
-        summary = self._apply(glb, envelope)
-        self.assertEqual(summary, {"base_color": "0 of 1 matched"})
-
-    def test_an_applier_that_matches_MORE_than_the_names_falls_back(self):
-        """The scope model assumes exact-name matching, which every shipped
-        applier does. One that resolved namespace-tolerantly would land more
-        than the intersection allows, and the count would read "2 of 1" -- a
-        number that cannot be true. Fall back to the plain count instead."""
-        glb = self._write_glb(materials=[{"name": "here"}, {"name": "NS:here"}])
-        envelope = self._envelope(
-            {"base_color": {"here": {"color": [0, 1, 0]}, "gone": {"color": [1, 0, 0]}}}
-        )
-        with unittest.mock.patch.object(
-            MeshConvert, "set_glb_base_color", return_value=["here", "NS:here"]
-        ):
-            summary = self._apply(glb, envelope)
-        self.assertEqual(summary, {"base_color": "2 of 2"})
-
-    def test_a_section_not_keyed_by_material_keeps_the_plain_count(self):
-        """The scope test is an INTERSECTION with the file's material names, so
-        a future section keyed on anything else must fall back rather than
-        report every entry as out of scope."""
-        self.assertIsNone(
-            MeshConvert._sidecar_section_scope({"here"}, ["not", "a", "map"])
-        )
-        self.assertIsNone(MeshConvert._sidecar_section_scope({"here"}, {"nope": 1}))
-        self.assertEqual(
-            MeshConvert._sidecar_section_scope({"here"}, {"here": 1, "gone": 2}), 1
-        )
-
-    def test_apply_dispatches_sections_and_embeds_the_handoff(self):
-        """Apply + embed happen in one session: the sections land in the
-        materials, the envelope's handoff in the root extras."""
-        glb = self._write_glb(materials=[{"name": "m"}])
-        envelope = self._envelope({"emissive": {"m": {"color": [1, 0, 0]}}})
-        summary = self._apply(glb, envelope)
-        self.assertEqual(summary, {"emissive": "1 of 1"})
-
-        with MeshConvert.open_glb(glb) as edit:
-            self.assertEqual(
-                edit.gltf["materials"][0]["emissiveFactor"], [1.0, 0.0, 0.0]
-            )
-        self._assert_embeds(glb, envelope)
-
-    def test_apply_composes_with_an_open_session(self):
-        """Session form: the owner writes once; apply must not write for itself."""
-        glb = self._write_glb(materials=[{"name": "m"}])
-        envelope = self._envelope({"base_color": {"m": {"color": [0, 0.5, 0]}}})
-        with MeshConvert.open_glb(glb) as edit:
-            summary = self._apply(edit, envelope)
-        self.assertEqual(summary, {"base_color": "1 of 1"})
-        with MeshConvert.open_glb(glb) as edit:
-            self.assertEqual(
-                edit.gltf["materials"][0]["pbrMetallicRoughness"]["baseColorFactor"],
-                [0.0, 0.5, 0.0, 1.0],
-            )
-
-    def test_apply_none_is_a_true_noop(self):
-        glb = self._write_glb(materials=[{"name": "m"}])
-        before = open(glb, "rb").read()
-        self.assertEqual(self._apply(glb, None), {})
-        self.assertEqual(open(glb, "rb").read(), before)
-        self.assertIsNone(MeshConvert.read_glb_handoff(glb))
-
-    def test_apply_empty_sections_still_embeds(self):
-        """An envelope with nothing to repair still carries its handoff."""
-        glb = self._write_glb(materials=[{"name": "m"}])
-        envelope = self._envelope({})
-        self.assertEqual(self._apply(glb, envelope), {})
-        self._assert_embeds(glb, envelope)
-
-    def test_unknown_sections_are_skipped_never_fatal(self):
-        """Forward compatibility: a reader skips sections it does not know."""
-        glb = self._write_glb(materials=[{"name": "m"}])
-        envelope = self._envelope({"lights": {"key": {"intensity": 5}}})
-        self.assertEqual(self._apply(glb, envelope), {})
-        self._assert_embeds(glb, envelope)
-
-    def test_fbx_to_glb_sidecar_param_applies_in_the_conversion_pass(self):
+    def test_an_envelopes_sections_are_read_no_more(self):
         """An older host's envelope, on a file carrying no materials record:
-        its sections still repair the conversion, said as retired."""
+        its handoff is embedded and its sections repair nothing -- their
+        appliers were removed 2026-10-31. Added: 2026-10-31"""
         src = os.path.join(self.tmp, "model.fbx")
         with open(src, "wb") as fh:
             fh.write(b"fake-fbx")
@@ -4009,18 +3787,15 @@ class TestSceneSidecar(unittest.TestCase):
         with (
             patch("shutil.which", return_value=os.path.join(self.tmp, "bin")),
             patch("subprocess.run", side_effect=fake_run),
-            self.assertWarns(DeprecationWarning),
         ):
             out = MeshConvert.fbx_to_glb(
                 src, dst, overwrite=True, sidecar=envelope, report=report
             )
 
         self._assert_embeds(out, envelope)
-        self.assertEqual(report["sidecar"], {"emissive": "1 of 1"})
+        self.assertNotIn("sidecar", report, "no section applied, none reported")
         with MeshConvert.open_glb(out) as edit:
-            self.assertEqual(
-                edit.gltf["materials"][0]["emissiveFactor"], [0.0, 1.0, 0.0]
-            )
+            self.assertNotIn("emissiveFactor", edit.gltf["materials"][0])
 
     def test_a_file_that_states_its_materials_takes_only_the_envelopes_handoff(self):
         """The ``materials`` record states every material, so an envelope's
@@ -4049,7 +3824,7 @@ class TestSceneSidecar(unittest.TestCase):
         report = {}
         out = _convert_prebuilt(self.tmp, converted, sidecar=envelope, report=report)
         self._assert_embeds(out, envelope)
-        self.assertEqual(report["sidecar"], {})
+        self.assertNotIn("sidecar", report)
         with MeshConvert.open_glb(out) as edit:
             self.assertNotIn("emissiveFactor", edit.gltf["materials"][0])
             self.assertEqual(edit.gltf.get("nodes") or [], [])
@@ -4696,9 +4471,9 @@ class TestSuspectOrmMaterials(unittest.TestCase):
     FBX2glTF white-fills a grayscale ("L"-mode) PBR source, and glTF reads
     metallic from the ORM's blue channel -- so the converter's packing renders
     metallic=1: no diffuse response, and pure black under a lightmap (which
-    contributes to diffuse alone). `set_glb_metallic_roughness` repairs the
-    materials the sidecar names; these tests cover the ones it does not reach,
-    which shipped that failure with nothing said.
+    contributes to diffuse alone). `apply_glb_materials` repacks the materials
+    the record states; these tests cover the ones it does not reach, which
+    shipped that failure with nothing said.
     """
 
     def setUp(self):
@@ -4876,14 +4651,13 @@ class TestSuspectOrmMaterials(unittest.TestCase):
             MeshConvert.GLTF_ORM_CHANNELS[MeshConvert._ORM_HARMFUL_CHANNEL], "Metallic"
         )
 
-    def test_apply_scene_sidecar_reports_what_its_sections_left_behind(self):
+    def test_the_build_warns_of_what_its_repairs_left_behind(self):
         """The warning has to fire where the deliverable is actually built.
 
-        A producer whose sidecar covers only some materials is the measured
-        production case -- the covered room looks right, the omitted material
-        ships black -- so the check runs inside the apply pass, against the
-        section's own name set. (The retired envelope's path; the materials
-        record's exempts what it packed the same way.)
+        A repair that covers only some materials is the measured production
+        case -- the covered room looks right, the omitted material ships
+        black -- so the build's check is told the names it repaired (the
+        materials record's packed ORMs, ``fbx_to_glb``) and names the rest.
         """
         path = self._glb(
             materials=[
@@ -4892,18 +4666,11 @@ class TestSuspectOrmMaterials(unittest.TestCase):
             ],
             blobs=[self._png((255, 255, 255))],
         )
-        with self.assertWarns(DeprecationWarning):
-            envelope = MeshConvert.build_scene_sidecar(
-                {"metallic_roughness": {"repaired": {"metallic": "m.png"}}},
-                source={"application": "test", "version": "0"},
-                asset="scene.fbx",
-            )
-
         with (
             self.assertLogs("pythontk.file_utils.mesh_convert", level="WARNING") as caught,
-            self.assertWarns(DeprecationWarning),
+            MeshConvert.open_glb(path) as edit,
         ):
-            MeshConvert.apply_scene_sidecar(path, envelope)
+            MeshConvert._sidecar._warn_destructive_orms(edit, described=["repaired"])
 
         flagged = [m for m in caught.output if "Metallic=1 everywhere" in m]
         self.assertEqual(len(flagged), 1)
@@ -4923,21 +4690,14 @@ class TestSuspectOrmMaterials(unittest.TestCase):
             materials=[self._orm_material("undescribed", 0)],
             blobs=[self._png((40, 190, 90))],
         )
-        with self.assertWarns(DeprecationWarning):
-            envelope = MeshConvert.build_scene_sidecar(
-                {"emissive": {"other": {"color": [0, 1, 0]}}},
-                source={"application": "test", "version": "0"},
-                asset="scene.fbx",
-            )
-
         with (
             self.assertLogs("pythontk.file_utils.mesh_convert", level="WARNING") as caught,
-            self.assertWarns(DeprecationWarning),
+            MeshConvert.open_glb(path) as edit,
         ):
             logging.getLogger("pythontk.file_utils.mesh_convert").warning(
                 "sentinel so assertLogs always has a record"
             )
-            MeshConvert.apply_scene_sidecar(path, envelope)
+            MeshConvert._sidecar._warn_destructive_orms(edit, described=["other"])
 
         self.assertEqual(
             [m for m in caught.output if "Metallic=1" in m or "unvalidated" in m], []
@@ -7020,12 +6780,12 @@ class TestGlbLightmaps(unittest.TestCase):
 
     def test_lightmap_displaces_a_packed_orm_occlusion_silently(self):
         """A slot holding the material's own metallicRoughnessTexture is the
-        packed-ORM occlusion binding (set_glb_metallic_roughness, or FBX2glTF's
-        converted packing), not an authored map -- its R channel is AO the bake
-        already contains. Displacing it must not fire the authored-map warning:
-        with the ORM writer now binding that slot on nearly every repaired
-        material, the warning would fire on nearly every lightmapped material
-        and bury the real signal it exists to carry."""
+        packed-ORM occlusion binding (the materials record's packed ORM, or
+        FBX2glTF's converted packing), not an authored map -- its R channel is
+        AO the bake already contains. Displacing it must not fire the
+        authored-map warning: with the ORM writer now binding that slot on
+        nearly every repaired material, the warning would fire on nearly every
+        lightmapped material and bury the real signal it exists to carry."""
         exr = self._exr()
         gltf = self._scene(
             self._manifest([{"name": "room", "map": os.path.basename(exr)}])
@@ -8076,163 +7836,6 @@ class TestOptimizeGlbKtx2(unittest.TestCase):
         with open(path, "rb") as f:
             after = f.read()
         self.assertEqual(after, before, "no partial rewrite")
-
-
-class TestSetGlbAlphaMode(unittest.TestCase):
-    """The sidecar's alpha_mode section: alphaMode / alphaCutoff by material name."""
-
-    def setUp(self):
-        import pythontk as ptk
-
-        artifacts = ptk.TempArtifacts("mesh_convert_alpha_mode", policy="scoped")
-        self.tmp = artifacts.dir_path()
-        self.addCleanup(artifacts.cleanup)
-
-    def _glb(self, name, materials):
-        path = os.path.join(self.tmp, name)
-        with open(path, "wb") as f:
-            f.write(
-                TestCheckGlbMaterials._build_glb(
-                    materials=materials, images=[], textures=[], image_blobs=[]
-                )
-            )
-        return path
-
-    @staticmethod
-    def _materials(path):
-        with open(path, "rb") as f:
-            f.read(12)
-            chunk0_len = struct.unpack("<I", f.read(4))[0]
-            f.read(4)
-            return json.loads(f.read(chunk0_len).decode("utf-8"))["materials"]
-
-    def test_mask_writes_mode_and_cutoff(self):
-        path = self._glb("cutout.glb", [{"name": "M", "alphaMode": "BLEND"}])
-        records = MeshConvert.set_glb_alpha_mode(
-            path, {"M": {"mode": "MASK", "cutoff": 0.25}}
-        )
-        self.assertEqual(len(records), 1)
-        mat = self._materials(path)[0]
-        self.assertEqual(mat["alphaMode"], "MASK")
-        self.assertAlmostEqual(mat["alphaCutoff"], 0.25)
-
-    def test_blend_drops_a_stale_cutoff(self):
-        path = self._glb(
-            "glass.glb", [{"name": "G", "alphaMode": "MASK", "alphaCutoff": 0.5}]
-        )
-        MeshConvert.set_glb_alpha_mode(path, {"G": {"mode": "BLEND"}})
-        mat = self._materials(path)[0]
-        self.assertEqual(mat["alphaMode"], "BLEND")
-        self.assertNotIn("alphaCutoff", mat)
-
-    def test_registered_as_a_sidecar_section(self):
-        with self.assertWarns(DeprecationWarning):
-            appliers = MeshConvert.SIDECAR_APPLIERS
-        self.assertEqual(appliers.get("alpha_mode"), "set_glb_alpha_mode")
-
-
-class TestSetGlbUnlit(unittest.TestCase):
-    """The sidecar's unlit section: KHR_materials_unlit by material name.
-
-    A projected shadow plane reached WebXR lit, and the environment's specular
-    made it brighter than the floor it lay on (2026-10-15).
-    """
-
-    setUp = TestSetGlbAlphaMode.setUp
-    _glb = TestSetGlbAlphaMode._glb
-
-    @staticmethod
-    def _gltf(path):
-        with open(path, "rb") as f:
-            f.read(12)
-            chunk0_len = struct.unpack("<I", f.read(4))[0]
-            f.read(4)
-            return json.loads(f.read(chunk0_len).decode("utf-8"))
-
-    def test_marks_only_the_named_material_and_declares_the_extension(self):
-        path = self._glb(
-            "shadow.glb",
-            [
-                {"name": "S", "alphaMode": "BLEND"},
-                {"name": "Floor", "pbrMetallicRoughness": {"roughnessFactor": 0.4}},
-            ],
-        )
-        records = MeshConvert.set_glb_unlit(path, {"S": {}, "Missing": {}})
-        self.assertEqual(records, [{"material": "S"}])
-        gltf = self._gltf(path)
-        shadow, floor = gltf["materials"]
-        self.assertEqual(shadow["extensions"], {"KHR_materials_unlit": {}})
-        self.assertEqual(shadow["alphaMode"], "BLEND", "alpha stays as authored")
-        self.assertEqual(shadow["pbrMetallicRoughness"]["roughnessFactor"], 1.0)
-        self.assertNotIn("extensions", floor)
-        self.assertIn("KHR_materials_unlit", gltf["extensionsUsed"])
-
-    def test_nothing_named_leaves_the_file_alone(self):
-        path = self._glb("plain.glb", [{"name": "Floor"}])
-        self.assertEqual(MeshConvert.set_glb_unlit(path, {"Missing": {}}), [])
-        self.assertNotIn("extensionsUsed", self._gltf(path))
-
-    def test_registered_as_a_sidecar_section(self):
-        with self.assertWarns(DeprecationWarning):
-            appliers = MeshConvert.SIDECAR_APPLIERS
-        self.assertEqual(appliers.get("unlit"), "set_glb_unlit")
-
-
-class TestSetGlbBaseColorAlpha(unittest.TestCase):
-    """The base-colour section's ``alpha``: the material's own opacity factor.
-
-    A shadow plane whose fade sat at a static 0.836 in Maya (texture alpha x
-    the plane's opacity) reached WebXR at alpha 1.0 -- solid black where Maya
-    drew it half-transparent (2026-10-15): no writer stated the factor.
-    """
-
-    setUp = TestSetGlbAlphaMode.setUp
-    _glb = TestSetGlbAlphaMode._glb
-    _gltf = staticmethod(TestSetGlbUnlit._gltf)
-
-    def _factor(self, path):
-        return self._gltf(path)["materials"][0]["pbrMetallicRoughness"][
-            "baseColorFactor"
-        ]
-
-    def test_alpha_alone_keeps_the_colour(self):
-        path = self._glb(
-            "fade.glb",
-            [
-                {
-                    "name": "S",
-                    "pbrMetallicRoughness": {"baseColorFactor": [0.5, 0.5, 0.5, 1.0]},
-                }
-            ],
-        )
-        records = MeshConvert.set_glb_base_color(path, {"S": {"alpha": 0.6}})
-        self.assertEqual(len(records), 1)
-        self.assertEqual(self._factor(path), [0.5, 0.5, 0.5, 0.6])
-
-    def test_alpha_with_a_colour(self):
-        path = self._glb("tint.glb", [{"name": "S"}])
-        MeshConvert.set_glb_base_color(
-            path, {"S": {"color": (0.0, 0.0, 0.0), "alpha": 0.25}}
-        )
-        self.assertEqual(self._factor(path), [0.0, 0.0, 0.0, 0.25])
-
-    def test_alpha_is_clamped(self):
-        path = self._glb("clamp.glb", [{"name": "S"}])
-        MeshConvert.set_glb_base_color(path, {"S": {"alpha": 1.7}})
-        self.assertEqual(self._factor(path), [1.0, 1.0, 1.0, 1.0])
-
-    def test_no_alpha_keeps_the_converters(self):
-        path = self._glb(
-            "keep.glb",
-            [
-                {
-                    "name": "S",
-                    "pbrMetallicRoughness": {"baseColorFactor": [1.0, 1.0, 1.0, 0.4]},
-                }
-            ],
-        )
-        MeshConvert.set_glb_base_color(path, {"S": {"color": (0.2, 0.2, 0.2)}})
-        self.assertEqual(self._factor(path), [0.2, 0.2, 0.2, 0.4])
 
 
 class TestApplyGlbAnimations(unittest.TestCase):
@@ -9506,7 +9109,8 @@ class TestFadeClonesInTheConversion(unittest.TestCase):
 
     The production shape: the preview used to apply the scene sidecar in a
     pass of its own AFTER ``fbx_to_glb``, whose chain had already cloned the
-    faded materials. Measured: the metallic-roughness repair reached one
+    faded materials; the ``materials`` record the FBX carries is the by-name
+    statement now. Measured: the metallic-roughness repair reached one
     one-primitive fade clone of ``SCREENS_TEST_CMPTS_MAT`` and the
     eleven-primitive original kept FBX2glTF's packing (roughness and metalness
     255 everywhere). Asserted through ``alphaMode`` because it is the one
@@ -9518,17 +9122,26 @@ class TestFadeClonesInTheConversion(unittest.TestCase):
         self.tmp = tempfile.mkdtemp(prefix="meshconvert_fadeorder_")
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
 
-    def test_the_original_takes_the_sidecar_and_the_clone_stays_blend(self):
+    def test_the_original_takes_the_record_and_the_clone_stays_blend(self):
+        """The FBX's record states SKIN cut out; it lands on the original
+        before the fade pass clones it. (Ported 2026-10-31 from the retired
+        sidecar's sections, which no build reads now.)"""
         fixture = TestApplyGlbFades()
         fixture.tmp = self.tmp
         converted = fixture._glb(name="converted.glb")
-        # An older host's envelope: its sections still repair a file that
-        # carries no materials record, said as retired.
-        envelope = {
-            "version": 2,
-            "source": {"application": "test", "version": "0"},
-            "asset": "in.fbx",
-            "sections": {"alpha_mode": {"SKIN": {"mode": "MASK", "cutoff": 0.4}}},
+        record = {
+            "version": 1,
+            "materials": [
+                {
+                    "name": "SKIN",
+                    "baseColorFactor": [1.0, 1.0, 1.0, 1.0],
+                    "metallicFactor": 0.0,
+                    "roughnessFactor": 1.0,
+                    "emissiveFactor": [0.0, 0.0, 0.0],
+                    "alphaMode": "MASK",
+                    "alphaCutoff": 0.4,
+                }
+            ],
         }
 
         def _run(cmd, **kw):
@@ -9537,21 +9150,28 @@ class TestFadeClonesInTheConversion(unittest.TestCase):
             sh.copyfile(converted, cmd[cmd.index("-o") + 1] + ".glb")
             return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
 
-        src = os.path.join(self.tmp, "in.fbx")
-        open(src, "wb").write(b"fbx")
+        # The record rides the converted file's carrier, as FBX2glTF
+        # transcribes it, and states the FBX's own SKIN.
+        with MeshConvert.open_glb(converted) as edit:
+            edit.gltf.setdefault("nodes", []).append(
+                {
+                    "name": MeshConvert.DATA_EXPORT_NODE,
+                    "extras": {MeshConvert.MATERIALS_KEY: json.dumps(record)},
+                }
+            )
+            edit.dirty = True
+        src = build_stingray_fbx(os.path.join(self.tmp, "in.fbx"), {}, name="SKIN")
         report = {}
         with (
             unittest.mock.patch.object(
                 MeshConvert, "resolve_binary", return_value="FBX2glTF"
             ),
             unittest.mock.patch("subprocess.run", side_effect=_run),
-            self.assertWarns(DeprecationWarning),
         ):
             out = MeshConvert.fbx_to_glb(
                 src,
                 overwrite=True,
                 prompt=False,
-                sidecar=envelope,
                 lightmaps=False,
                 report=report,
             )
@@ -9562,10 +9182,7 @@ class TestFadeClonesInTheConversion(unittest.TestCase):
         self.assertEqual(skins[0].get("alphaMode"), "MASK", "the original")
         self.assertEqual(skins[0].get("alphaCutoff"), 0.4)
         self.assertEqual(skins[1].get("alphaMode"), "BLEND", "the fade clone")
-        # The outcome is the build's report; the file carries the handoff.
-        self.assertEqual(report["sidecar"], {"alpha_mode": "1 of 1"})
-        self.assertNotIn("scene_sidecar_applied", gltf["extras"])
-        self.assertIn(HandoffRecord.KEY, gltf["extras"])
+        self.assertNotIn("sidecar", report)
 
     def test_a_handoff_that_blows_up_costs_the_handoff_not_the_conversion(self):
         """The preview routes its handoff through the conversion, and a push
@@ -9679,10 +9296,10 @@ class TestFbxToGlbReport(unittest.TestCase):
             ],
         }
 
-    def test_the_sidecar_outcome_is_the_builds_report_not_the_files(self):
-        """An older host's envelope on a file with no materials record: what
-        its sections did is reported to the caller, and the file carries the
-        handoff alone -- the outcome described the build, not the asset."""
+    def test_an_envelope_gives_the_file_its_handoff_alone(self):
+        """An older host's envelope on a file with no materials record: the
+        file carries the handoff alone, named against the blocks the build
+        added, and no section is applied or reported (removed 2026-10-31)."""
         with self.assertWarns(DeprecationWarning):
             envelope = MeshConvert.build_scene_sidecar(
                 {"emissive": {"roomMat": {"color": [1, 0, 0]}}},
@@ -9690,9 +9307,8 @@ class TestFbxToGlbReport(unittest.TestCase):
                 asset="in.fbx",
             )
         report = {}
-        with self.assertWarns(DeprecationWarning):
-            out = self._convert(self._lit_glb({}), sidecar=envelope, report=report)
-        self.assertEqual(report["sidecar"], {"emissive": "1 of 1"})
+        out = self._convert(self._lit_glb({}), sidecar=envelope, report=report)
+        self.assertNotIn("sidecar", report)
         extras = MeshConvert._read_glb(out).gltf["extras"]
         self.assertNotIn("scene_sidecar_applied", extras)
         self.assertNotIn("scene_sidecar", extras)
@@ -9733,7 +9349,7 @@ class TestFbxToGlbReport(unittest.TestCase):
         report = {}
         self._convert(self._lit_glb({}), report=report)
         self.assertEqual(report["lightmaps"]["expected"], 0)
-        self.assertEqual(report["sidecar"], {}, "no envelope offered, none applied")
+        self.assertNotIn("sidecar", report, "no section is applied, none reported")
 
     def test_the_report_keeps_the_manifest_the_file_no_longer_carries(self):
         """The GLB states its lightmaps once, in its own block: the carrier's
@@ -9778,9 +9394,9 @@ class TestFbxToGlbReport(unittest.TestCase):
     def test_images_no_material_samples_are_swept_inside_the_chain(self):
         """Maya's IBL maps (`diffuse_cube` / `specular_cube` / `ibl_brdf_lut`)
         ride every embedded-media export and FBX2glTF re-embeds them; glTF has
-        no slot for them. `apply_scene_sidecar` swept them at its tail, so a
-        conversion offered NO envelope shipped the dead payload and paid the
-        texture pass to compress it. The sweep is the chain's own now."""
+        no slot for them. The retired sidecar applier swept them at its tail,
+        so a conversion offered NO envelope shipped the dead payload and paid
+        the texture pass to compress it. The sweep is the chain's own now."""
         pixel = "data:image/png;base64,iVBORw0KGgo="
         images = [{"name": "Albedo", "uri": pixel}] + [
             {"name": name, "uri": pixel}
@@ -13788,7 +13404,9 @@ class TestBakedLightsLeaveTheGlb(unittest.TestCase):
             gltf["extras"] = {SceneRecords.LIGHTMAPS.key: block}
         return _write_glb_file(os.path.join(self.tmp, "prebuilt.glb"), gltf)
 
-    _gltf = staticmethod(TestSetGlbUnlit._gltf)
+    @staticmethod
+    def _gltf(path):
+        return MeshConvert._read_glb(path).gltf
 
     def _converted(self, lightmapped):
         return self._gltf(_convert_prebuilt(self.tmp, self._prebuilt(lightmapped)))
@@ -14323,6 +13941,29 @@ class TestMaterialsRecord(unittest.TestCase):
             self.assertEqual(edit.gltf["extensionsUsed"], ["KHR_texture_transform"])
             self.assertNotIn("extensionsRequired", edit.gltf)
 
+    def test_a_mask_states_its_cutoff(self):
+        """FBX2glTF reads ``alphaMode`` off the base colour's alpha alone, so a
+        cutout reaches the GLB as BLEND: the record's MASK and cutoff win."""
+        glb = self._glb({"name": "orm", "alphaMode": "BLEND"}, {})
+        record = {
+            "version": 1,
+            "materials": [{"name": "orm", "alphaMode": "MASK", "alphaCutoff": 0.25}],
+        }
+        MeshConvert.apply_glb_materials(glb, record, {})
+        with MeshConvert.open_glb(glb) as edit:
+            (mat,) = edit.materials
+            self.assertEqual((mat["alphaMode"], mat["alphaCutoff"]), ("MASK", 0.25))
+
+    def test_any_other_mode_drops_a_stale_cutoff(self):
+        """glTF reads ``alphaCutoff`` under MASK alone; a blend keeps none."""
+        glb = self._glb({"name": "orm", "alphaMode": "MASK", "alphaCutoff": 0.5}, {})
+        record = {"version": 1, "materials": [{"name": "orm", "alphaMode": "BLEND"}]}
+        MeshConvert.apply_glb_materials(glb, record, {})
+        with MeshConvert.open_glb(glb) as edit:
+            (mat,) = edit.materials
+            self.assertEqual(mat["alphaMode"], "BLEND")
+            self.assertNotIn("alphaCutoff", mat)
+
 
 @unittest.skipUnless(_FBX2GLTF, "FBX2glTF is not installed (nothing is downloaded here)")
 class TestMaterialsRecordThroughTheConverter(unittest.TestCase):
@@ -14372,6 +14013,39 @@ class TestMaterialsRecordThroughTheConverter(unittest.TestCase):
         self.assertNotIn("orm", report)
         self.assertEqual(report["handoff"]["source"], {"application": "test"})
 
+    def test_a_map_only_the_record_names_reaches_the_glb_built_from_the_file(self):
+        """An openPBRSurface reaches the FBX as a placeholder with no map, so
+        the map its ``materials`` entry names is in the file only once the
+        dependency pass embeds it; a GLB built from the delivered file alone
+        -- no folder holding the map -- then binds it from the file itself.
+        Added: 2026-10-31"""
+        from pythontk import FbxMedia, GlbPipeline
+
+        maps = os.path.join(self.tmp, "sourceimages")
+        os.makedirs(maps)
+        with open(os.path.join(maps, "OP_Base.png"), "wb") as fh:
+            fh.write(self._png((40, 160, 220)))
+        entry = {
+            "name": "orm", "baseColorFactor": [1.0, 1.0, 1.0, 1.0],
+            "baseColorTexture": "OP_Base.png", "metallicFactor": 0.0,
+            "roughnessFactor": 0.5, "emissiveFactor": [0.0, 0.0, 0.0], "alphaMode": "OPAQUE",
+        }
+        fbx = self._stingray(maps={}, records={"materials": {"version": 1, "materials": [entry]}})
+        report = FbxMedia.embed_dependencies(fbx, search_dirs=[maps])
+        self.assertEqual(report["embedded"], ["OP_Base.png"])
+        shutil.rmtree(maps)  # the file alone
+        built = GlbPipeline.build(fbx, os.path.join(self.tmp, "alone.glb"), downsize=False)
+        with MeshConvert.open_glb(built["glb"]) as edit:
+            (mat,) = edit.materials
+            texture = mat["pbrMetallicRoughness"].get("baseColorTexture")
+            self.assertIsNotNone(texture, "the record's map did not reach the GLB")
+            # The map's own pixels (the build re-encodes it: a code value apart).
+            image = edit.image_for_texture(texture["index"])
+            for channel, value in (("R", 40), ("G", 160), ("B", 220)):
+                low, high = edit.channel_extrema(image, channel)
+                self.assertLessEqual(abs(low - value), 2, channel)
+                self.assertLessEqual(abs(high - value), 2, channel)
+
     def test_the_record_the_fbx_carries_states_the_glb_and_leaves_its_extras(self):
         """The export's statement wins over the file's own reading (an unlit
         the material cannot say), and the GLB keeps no second account of its
@@ -14391,6 +14065,850 @@ class TestMaterialsRecordThroughTheConverter(unittest.TestCase):
             self.assertIsNone(
                 MeshConvert.data_export_channel(edit.gltf, MeshConvert.MATERIALS_KEY)
             )
+
+
+class TestFacadeComposition(unittest.TestCase):
+    """MeshConvert is a facade over its parts, not a class built from mixins:
+    each job is a collaborator it builds on the class it is read through, and
+    the whole public surface is the facade's own."""
+
+    def test_the_facade_inherits_no_job(self):
+        from pythontk import HelpMixin
+
+        self.assertEqual(MeshConvert.__bases__, (HelpMixin,))
+
+    def test_every_public_name_is_the_facades_own(self):
+        from pythontk import HelpMixin
+
+        inherited = sorted(
+            name
+            for name in dir(MeshConvert)
+            if not name.startswith("_")
+            and name not in vars(MeshConvert)
+            and not hasattr(HelpMixin, name)
+        )
+        self.assertEqual(inherited, [])
+
+    def test_a_subclass_override_reaches_a_parts_own_calls(self):
+        class Stop(Exception):
+            pass
+
+        class Sub(MeshConvert):
+            @classmethod
+            def open_glb(cls, glb):
+                raise Stop(glb)
+
+        with self.assertRaises(Stop):
+            Sub.read_glb_handoff("never_opened.glb")
+
+    def test_a_subclass_dialect_row_reads_with_the_subclass_method(self):
+        """``FBX_FAMILIES``' seam -- a new dialect is one row and its method --
+        holds on a subclass: the row's method is found on the class read
+        through, as the row is."""
+        from test_fbx_media import build_stingray_fbx
+
+        tmp = tempfile.mkdtemp(prefix="mc_dialect_")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        path = build_stingray_fbx(
+            os.path.join(tmp, "m.fbx"), {}, props={"custom_marker": 1.0}, name="m"
+        )
+
+        class Sub(MeshConvert):
+            FBX_FAMILIES = (
+                ("pbr", "Maya|custom_marker", "_fbx_custom_props"),
+            ) + MeshConvert.FBX_FAMILIES
+
+            @staticmethod
+            def _fbx_custom_props(props, notes, name):
+                return {"base_color": (1.0, 0.0, 0.0), "metallic": 0.0}
+
+        (entry,) = Sub.read_fbx_materials(path)["materials"]
+        self.assertEqual(entry["baseColorFactor"][:3], [1.0, 0.0, 0.0])
+
+    def test_every_delegation_forwards_its_own_signature(self):
+        """Each one-statement delegation hands its part a parameter list the
+        part's method declares the same (names, kinds, defaults), every
+        parameter by its own name: the facade's copy of a signature cannot
+        drift from the implementation's."""
+        import ast
+        import inspect
+
+        from pythontk.core_utils.class_property import ClassProperty
+        from pythontk.file_utils.mesh_convert import _mesh_convert as module
+
+        parts = {
+            name: value.getter
+            for name, value in vars(MeshConvert).items()
+            if isinstance(value, ClassProperty) and isinstance(value.getter, type)
+        }
+        tree = ast.parse(inspect.getsource(module))
+        facade = next(
+            n
+            for n in tree.body
+            if isinstance(n, ast.ClassDef) and n.name == "MeshConvert"
+        )
+        checked, problems = 0, []
+        for fn in facade.body:
+            if not isinstance(fn, ast.FunctionDef):
+                continue
+            body = [
+                s
+                for s in fn.body
+                if not (isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant))
+            ]
+            if len(body) != 1 or not isinstance(body[0], ast.Return):
+                continue
+            call = body[0].value
+            if not isinstance(call, ast.Call):
+                continue
+            chain, node = [], call.func
+            while isinstance(node, ast.Attribute):
+                chain.insert(0, node.attr)
+                node = node.value
+            if isinstance(node, ast.Name):
+                chain.insert(0, node.id)
+            if len(chain) == 3 and chain[1] in parts:  # cls.<part>.<name>
+                target = getattr(parts[chain[1]], chain[2], None)
+            elif len(chain) == 2 and chain[0] in vars(module) and chain[0] != "cls":
+                target = getattr(vars(module)[chain[0]], chain[1], None)  # Part.name
+            else:
+                continue  # an inlined statement, not a delegation
+            checked += 1
+            if target is None:
+                problems.append(f"{fn.name}: no {'.'.join(chain)}")
+                continue
+            wanted = [
+                (p.name, p.kind, p.default)
+                for p in inspect.signature(target).parameters.values()
+                if p.name not in ("self", "cls")
+            ]
+            given = [
+                (p.name, p.kind, p.default)
+                for p in inspect.signature(
+                    getattr(MeshConvert, fn.name)
+                ).parameters.values()
+            ]
+            if given != wanted:
+                problems.append(f"{fn.name}: signature {given} != {wanted}")
+            names = [p[0] for p in wanted]
+            passed = [
+                (names[i] if i < len(names) else None, ast.unparse(a).lstrip("*"))
+                for i, a in enumerate(call.args)
+            ] + [(k.arg, ast.unparse(k.value)) for k in call.keywords]
+            for name, expr in passed:
+                if name is not None and name != expr:
+                    problems.append(f"{fn.name}: {name} <- {expr}")
+            if sorted(e for _, e in passed) != sorted(names):
+                problems.append(f"{fn.name}: forwards {passed}, declares {names}")
+        self.assertGreater(checked, 80)
+        self.assertEqual(problems, [])
+
+
+class TestNonFiniteKeys(unittest.TestCase):
+    """A converted GLB's animation values and key times are finite, as glTF
+    requires.
+
+    Repro (``test_assets/fbx/maya_tangents.fbx``, FBX2glTF 0.13.1): the file
+    keys node ``tangents`` at scale 0 on frame 1, and the converter, which bakes
+    each node's local matrix per frame and decomposes it, writes that frame's
+    rotation as a NaN quaternion -- a degenerate matrix has no rotation to
+    recover. The GLB then failed its own NaN gate, and ``gltf_to_fbx`` crashed
+    on it ("cannot convert float NaN to integer").
+    """
+
+    LOGGER = "pythontk.file_utils.mesh_convert._fbx2gltf"
+    NAN, INF = float("nan"), float("inf")
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="meshconvert_nonfinite_")
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    @staticmethod
+    def _turn(degrees):
+        """A rotation of *degrees* about +Y, as a glTF quaternion."""
+        half = math.radians(degrees) / 2.0
+        return (0.0, math.sin(half), 0.0, math.cos(half))
+
+    def _glb(self, clips, image=False, name="anim.glb"):
+        """Nodes ``spin``, ``move``, ``void`` and *clips* ``{clip name: [(node,
+        path, values, options)]}``, three keys a frame apart unless *options*
+        says ``times``; ``interpolation`` sets the sampler's, ``bounds`` keeps
+        the output's min/max, ``share`` reads the output of the clip's channel
+        at that position, ``pointer`` targets a KHR_animation_pointer. With
+        *image*, a PNG lands in the BIN after every animation accessor."""
+        from test_gltf2fbx import GltfBuilder, png_bytes
+
+        b = GltfBuilder()
+        b.gltf["nodes"] = [{"name": "spin"}, {"name": "move"}, {"name": "void"}]
+        b.gltf["scenes"] = [{"nodes": [0, 1, 2]}]
+        animations = []
+        for clip, channels in clips.items():
+            samplers, wired, outputs = [], [], []
+            for node, path, values, options in channels:
+                times = options.get("times", [0.0, 1 / 24.0, 2 / 24.0])
+                source = b.accessor(times, "SCALAR")
+                finite = [t for t in times if math.isfinite(t)]
+                b.accessors[source]["min"] = [min(finite)]
+                b.accessors[source]["max"] = [max(finite)]
+                if "share" in options:
+                    output = outputs[options["share"]]
+                else:
+                    width = len(values[0])
+                    kind = {1: "SCALAR", 3: "VEC3", 4: "VEC4"}[width]
+                    output = b.accessor(values, kind)
+                    if options.get("bounds"):
+                        b.accessors[output]["min"] = [
+                            min(v[i] for v in values) for i in range(width)
+                        ]
+                        b.accessors[output]["max"] = [
+                            max(v[i] for v in values) for i in range(width)
+                        ]
+                    else:
+                        b.accessors[output].pop("min", None)
+                        b.accessors[output].pop("max", None)
+                outputs.append(output)
+                sampler = {"input": source, "output": output}
+                if "interpolation" in options:
+                    sampler["interpolation"] = options["interpolation"]
+                samplers.append(sampler)
+                target = {"node": node, "path": path}
+                if "pointer" in options:
+                    target = {
+                        "path": "pointer",
+                        "extensions": {
+                            "KHR_animation_pointer": {"pointer": options["pointer"]}
+                        },
+                    }
+                wired.append({"sampler": len(samplers) - 1, "target": target})
+            animations.append({"name": clip, "samplers": samplers, "channels": wired})
+        b.gltf["animations"] = animations
+        if image:
+            b.gltf["images"] = []
+            b.image(png_bytes((10, 20, 30, 255)), "after.png")
+        return b.write_glb(os.path.join(self.tmp, name))
+
+    @staticmethod
+    def _channel(glb, node, path, clip=0):
+        """``(times, values, output accessor)`` of one channel, as written."""
+        reader = GlbReader.load(glb)
+        animation = reader.gltf["animations"][clip]
+        for channel in animation["channels"]:
+            if channel["target"] == {"node": node, "path": path}:
+                sampler = animation["samplers"][channel["sampler"]]
+                return (
+                    [t[0] for t in reader.accessor(sampler["input"])],
+                    reader.accessor(sampler["output"]),
+                    reader.gltf["accessors"][sampler["output"]],
+                )
+        return None
+
+    def _repair(self, glb, level="WARNING"):
+        with self.assertLogs(self.LOGGER, level) as logs:
+            report = MeshConvert.fix_glb_nonfinite_keys(glb)
+        return report, logs.output
+
+    def assertClose(self, got, want, places=5):
+        self.assertEqual(len(got), len(want))
+        for a, b in zip(got, want):
+            self.assertAlmostEqual(a, b, places=places, msg=f"{got} != {want}")
+
+    # ---------------------------------------------------------------- values
+    def test_an_interior_key_is_interpolated_by_its_time(self):
+        """Between two finite keys, the value the motion had there: a slerp
+        for a rotation, a lerp otherwise, by time (here a third of the way)."""
+        times = [0.0, 1 / 24.0, 3 / 24.0]
+        glb = self._glb(
+            {
+                "Take": [
+                    (
+                        0,
+                        "rotation",
+                        [self._turn(0), (self.NAN,) * 4, self._turn(30)],
+                        {"times": times},
+                    ),
+                    (
+                        1,
+                        "translation",
+                        [(0, 0, 0), (self.INF, 0, 0), (3, 0, 0)],
+                        {"times": times, "bounds": True},
+                    ),
+                ]
+            }
+        )
+        report, said = self._repair(glb)
+        self.assertEqual(report, {"keys": 2, "channels": 2, "dropped": 0})
+        self.assertClose(self._channel(glb, 0, "rotation")[1][1], self._turn(10))
+        _, moved, accessor = self._channel(glb, 1, "translation")
+        self.assertClose(moved[1], (1.0, 0.0, 0.0))
+        # The bounds an output states are its values' bounds again.
+        self.assertEqual(
+            (accessor["min"], accessor["max"]), ([0.0, 0.0, 0.0], [3.0, 0.0, 0.0])
+        )
+        joined = "\n".join(said)
+        self.assertIn("'Take'", joined)
+        self.assertIn("'spin'", joined)
+        self.assertIn("'move'", joined)
+        self.assertEqual(GlbReader.load(glb).nan_findings(deep=True), [])
+
+    def test_an_end_key_holds_its_nearest_finite_key(self):
+        glb = self._glb(
+            {
+                "Take": [
+                    (
+                        0,
+                        "rotation",
+                        [(self.NAN,) * 4, (self.NAN,) * 4, self._turn(30)],
+                        {},
+                    ),
+                    (1, "translation", [(0, 0, 0), (1, 0, 0), (self.NAN, 0, 0)], {}),
+                ]
+            }
+        )
+        report, said = self._repair(glb)
+        self.assertEqual(report, {"keys": 3, "channels": 2, "dropped": 0})
+        turned = self._channel(glb, 0, "rotation")[1]
+        self.assertClose(turned[0], self._turn(30))
+        self.assertClose(turned[1], self._turn(30))
+        self.assertClose(self._channel(glb, 1, "translation")[1][2], (1.0, 0.0, 0.0))
+        # Only a rotation's report says why a converter writes one.
+        (moved,) = [line for line in said if "'move'" in line]
+        self.assertNotIn("rotation to recover", moved)
+        (spun,) = [line for line in said if "'spin'" in line]
+        self.assertIn("rotation to recover", spun)
+
+    def test_a_cubic_key_is_interpolated_with_flat_tangents(self):
+        zero, one, two = (0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (2.0, 0.0, 0.0)
+        glb = self._glb(
+            {
+                "Take": [
+                    (
+                        1,
+                        "translation",
+                        [zero, zero, one, one, (self.NAN, 0, 0), one, one, two, zero],
+                        {"interpolation": "CUBICSPLINE"},
+                    )
+                ]
+            }
+        )
+        report, _ = self._repair(glb)
+        self.assertEqual(report, {"keys": 1, "channels": 1, "dropped": 0})
+        values = self._channel(glb, 1, "translation")[1]
+        self.assertEqual(
+            values[3:6], [zero, one, zero]
+        )  # in-tangent, value, out-tangent
+        self.assertEqual(values[:3] + values[6:], [zero, zero, one, one, two, zero])
+
+    def test_a_shared_output_is_repaired_once_and_said_once(self):
+        glb = self._glb(
+            {
+                "A": [
+                    (
+                        0,
+                        "rotation",
+                        [self._turn(0), (self.NAN,) * 4, self._turn(20)],
+                        {},
+                    )
+                ],
+                "B": [
+                    (1, "translation", [(0, 0, 0)] * 3, {}),
+                    (0, "rotation", None, {"share": 0}),
+                ],
+            }
+        )
+        # Clip B's second channel reads clip B's first output: rewire it to A's.
+        with MeshConvert.open_glb(glb) as edit:
+            first = edit.gltf["animations"][0]["samplers"][0]["output"]
+            edit.gltf["animations"][1]["samplers"][1]["output"] = first
+            edit.dirty = True
+        report, said = self._repair(glb)
+        self.assertEqual(report, {"keys": 1, "channels": 2, "dropped": 0})
+        self.assertEqual(len(said), 1, said)
+        self.assertIn("'A'", said[0])
+        self.assertIn("'B'", said[0])
+        self.assertEqual(said[0].count("'spin'"), 1, said[0])
+        self.assertClose(
+            self._channel(glb, 0, "rotation", clip=1)[1][1], self._turn(10)
+        )
+
+    def test_a_pointer_channel_is_named_by_its_pointer(self):
+        pointer = "/materials/0/pbrMetallicRoughness/baseColorFactor"
+        glb = self._glb(
+            {
+                "Fade": [
+                    (
+                        None,
+                        None,
+                        [(1, 1, 1, 1), (self.NAN,) * 4, (1, 1, 1, 0)],
+                        {"pointer": pointer},
+                    )
+                ]
+            }
+        )
+        report, said = self._repair(glb)
+        self.assertEqual(report["keys"], 1)
+        self.assertIn(repr(pointer), said[0])
+        self.assertNotIn("None", said[0])
+
+    # --------------------------------------------------------- key times
+    def test_a_non_finite_key_time_takes_its_place_in_the_spacing(self):
+        """A key time has no value to borrow: an interior one takes its place
+        between its finite neighbours by index, an end one its neighbours'
+        spacing; the input's bounds follow."""
+        glb = self._glb(
+            {
+                "Take": [
+                    (
+                        1,
+                        "translation",
+                        [(0, 0, 0), (1, 0, 0), (2, 0, 0)],
+                        {"times": [0.0, self.NAN, 2 / 24.0]},
+                    ),
+                    (
+                        0,
+                        "rotation",
+                        [self._turn(0)] * 3,
+                        {"times": [0.0, 1 / 24.0, self.INF]},
+                    ),
+                ]
+            }
+        )
+        report, said = self._repair(glb)
+        self.assertEqual(report, {"keys": 2, "channels": 2, "dropped": 0})
+        self.assertClose(
+            self._channel(glb, 1, "translation")[0], [0.0, 1 / 24.0, 2 / 24.0]
+        )
+        times = self._channel(glb, 0, "rotation")[0]
+        self.assertClose(times, [0.0, 1 / 24.0, 2 / 24.0])
+        reader = GlbReader.load(glb)
+        source = reader.gltf["animations"][0]["samplers"][1]["input"]
+        self.assertAlmostEqual(
+            reader.gltf["accessors"][source]["max"][0], 2 / 24.0, places=6
+        )
+        self.assertTrue(any("key time" in line for line in said), said)
+
+    # ------------------------------------------------------- what is dropped
+    def test_a_channel_with_no_finite_key_is_dropped_and_the_file_stays_whole(self):
+        """The hollow channel is FIRST, so dropping it renumbers the samplers
+        the rest read; an image sits after the animation bytes, so the
+        compaction moves it; a clip left with nothing is pruned."""
+        bounded = [self._turn(0), self._turn(10), self._turn(20)]
+        glb = self._glb(
+            {
+                "Take": [
+                    (2, "scale", [(self.NAN,) * 3] * 3, {}),
+                    (0, "rotation", bounded, {"bounds": True}),
+                ],
+                "Only": [(2, "translation", [(self.INF, 0, 0)] * 3, {})],
+            },
+            image=True,
+        )
+        before = MeshConvert._read_glb(glb)
+        image = before.image_bytes(before.gltf["images"][0])
+        report, said = self._repair(glb)
+        self.assertEqual(report, {"keys": 0, "channels": 0, "dropped": 2})
+        self.assertTrue(all("'void'" in line for line in said), said)
+        after = MeshConvert._read_glb(glb)
+        (animation,) = after.gltf["animations"]
+        self.assertEqual(animation["name"], "Take")
+        self.assertEqual(
+            animation["channels"],
+            [{"sampler": 0, "target": {"node": 0, "path": "rotation"}}],
+        )
+        self.assertEqual(len(animation["samplers"]), 1)
+        _, turned, accessor = self._channel(glb, 0, "rotation")
+        for got, want in zip(turned, bounded):
+            self.assertClose(got, want)
+        self.assertIn("min", accessor)
+        self.assertEqual(after.image_bytes(after.gltf["images"][0]), image)
+        self.assertEqual(GlbReader.load(glb).nan_findings(deep=True), [])
+
+    def test_a_finite_file_is_left_as_it_is(self):
+        glb = self._glb({"Take": [(0, "rotation", [(0, 0, 0, 1)] * 3, {})]})
+        with open(glb, "rb") as fh:
+            before = fh.read()
+        self.assertEqual(
+            MeshConvert.fix_glb_nonfinite_keys(glb),
+            {"keys": 0, "channels": 0, "dropped": 0},
+        )
+        with open(glb, "rb") as fh:
+            self.assertEqual(fh.read(), before)
+
+    # ------------------------------------------------------ the converter
+    @unittest.skipUnless(
+        _FBX2GLTF, "FBX2glTF is not installed; this test downloads nothing"
+    )
+    def test_the_fixtures_conversion_ships_only_finite_keys(self):
+        src = os.path.join(
+            os.path.dirname(__file__), "test_assets", "fbx", "maya_tangents.fbx"
+        )
+        fbx = os.path.join(self.tmp, "maya_tangents.fbx")
+        shutil.copy(src, fbx)
+        with self.assertLogs(self.LOGGER, "WARNING") as logs:
+            glb = MeshConvert.fbx_to_glb(fbx, os.path.join(self.tmp, "out.glb"))
+        self.assertEqual(GlbReader.load(glb).nan_findings(deep=True), [])
+        said = [line for line in logs.output if "non-finite" in line]
+        self.assertEqual(len(said), 1, logs.output)
+        for word in ("'Take 001'", "'tangents'", "rotation"):
+            self.assertIn(word, said[0])
+
+    @unittest.skipUnless(
+        _FBX2GLTF, "FBX2glTF is not installed; this test downloads nothing"
+    )
+    def test_a_mid_animation_zero_scale_keeps_the_authored_turn(self):
+        """The round trip that showed the hold was wrong: a node squashed flat
+        in the middle of a spin (scale Y through 0 at 0.5 s) comes back turned
+        as authored there, not paused at a neighbour's angle."""
+        from test_gltf2fbx import GltfBuilder
+
+        b = GltfBuilder()
+        times = [k / 24.0 for k in range(25)]
+        source = b.accessor(times, "SCALAR")
+        b.accessors[source].update(min=[0.0], max=[1.0])
+        spin = b.accessor([self._turn(10 * k) for k in range(25)], "VEC4")
+        squash = b.accessor([(1.0, abs(k - 12) / 12.0, 1.0) for k in range(25)], "VEC3")
+        for index in (spin, squash):
+            b.accessors[index].pop("min", None)
+            b.accessors[index].pop("max", None)
+        b.gltf.update(
+            scenes=[{"nodes": [0]}],
+            nodes=[{"name": "squash"}],
+            animations=[
+                {
+                    "name": "Take",
+                    "samplers": [
+                        {"input": source, "output": spin},
+                        {"input": source, "output": squash},
+                    ],
+                    "channels": [
+                        {"sampler": 0, "target": {"node": 0, "path": "rotation"}},
+                        {"sampler": 1, "target": {"node": 0, "path": "scale"}},
+                    ],
+                }
+            ],
+        )
+        authored = b.write_glb(os.path.join(self.tmp, "squash.glb"))
+        fbx = MeshConvert.gltf_to_fbx(authored, os.path.join(self.tmp, "squash.fbx"))
+        glb = MeshConvert.fbx_to_glb(fbx, os.path.join(self.tmp, "squash_rt.glb"))
+        reader = GlbReader.load(glb)
+        self.assertEqual(reader.nan_findings(deep=True), [])
+        node = reader.node_index("squash")
+        animation = reader.gltf["animations"][0]
+        (channel,) = [
+            c
+            for c in animation["channels"]
+            if c["target"] == {"node": node, "path": "rotation"}
+        ]
+        sampler = animation["samplers"][channel["sampler"]]
+        keys = [t[0] for t in reader.accessor(sampler["input"])]
+        at = min(range(len(keys)), key=lambda k: abs(keys[k] - 0.5))
+        self.assertAlmostEqual(keys[at], 0.5, places=4)
+        got = reader.accessor(sampler["output"])[at]
+        want = self._turn(120)
+        self.assertAlmostEqual(
+            abs(sum(a * b for a, b in zip(got, want))), 1.0, places=4
+        )
+
+    @unittest.skipUnless(
+        _FBX2GLTF, "FBX2glTF is not installed; this test downloads nothing"
+    )
+    def test_a_flat_nodes_tilt_survives_the_converter(self):
+        """A node scaled flat on one axis for the whole clip decomposes to a
+        NaN rotation on every key, and FBX2glTF drops that channel itself:
+        the node played unrotated before any repair here could run. The tilt
+        is read back from the FBX (``MeshConvert.restore_glb_rotations``) --
+        here on a take the converter left with no channel, so no time input
+        either: one is minted on its bake grid."""
+        for args, fps in (
+            (None, MeshConvert.CONVERSION_BAKE_FPS),
+            (["--anim-framerate", "bake60"], 60.0),
+        ):
+            with self.subTest(fps=fps):
+                self._assert_flat_tilt(args, fps)
+
+    def _assert_flat_tilt(self, args, fps):
+        from test_gltf2fbx import GltfBuilder
+
+        b = GltfBuilder()
+        source = b.accessor([k / 24.0 for k in range(6)], "SCALAR")
+        b.accessors[source].update(min=[0.0], max=[5 / 24.0])
+        half = [math.radians(9 * k) for k in range(6)]  # 18 degrees a key about X
+        tilt = b.accessor([(math.sin(h), 0.0, 0.0, math.cos(h)) for h in half], "VEC4")
+        b.gltf.update(
+            scenes=[{"nodes": [0]}],
+            nodes=[{"name": "flat", "scale": [1.0, 0.0, 1.0]}],
+            animations=[
+                {
+                    "name": "Take",
+                    "samplers": [{"input": source, "output": tilt}],
+                    "channels": [
+                        {"sampler": 0, "target": {"node": 0, "path": "rotation"}}
+                    ],
+                }
+            ],
+        )
+        stem = os.path.join(self.tmp, f"flat_{fps:g}")
+        authored = b.write_glb(stem + ".glb")
+        fbx = MeshConvert.gltf_to_fbx(authored, stem + ".fbx")
+        glb = MeshConvert.fbx_to_glb(fbx, stem + "_rt.glb", extra_args=args)
+        reader = GlbReader.load(glb)
+        node = reader.node_index("flat")
+        rotations = [
+            (a, c)
+            for a in reader.gltf.get("animations") or []
+            for c in a["channels"]
+            if c["target"] == {"node": node, "path": "rotation"}
+        ]
+        self.assertTrue(rotations, "the flat node's tilt did not survive")
+        ((animation, channel),) = rotations
+        sampler = animation["samplers"][channel["sampler"]]
+        times = [t[0] for t in reader.accessor(sampler["input"])]
+        # The converter's grid: the take's 5/24 s, a frame of the bake rate.
+        count = int(5 / 24.0 * fps) + 1
+        self.assertEqual(len(times), count)
+        for k, t in enumerate(times):
+            self.assertAlmostEqual(t, k / fps, places=6)
+        self.assertAlmostEqual(
+            reader.gltf["accessors"][sampler["input"]]["max"][0], times[-1], places=6
+        )
+        # The authored tilt wherever it is read: 18 degrees a 1/24 s key.
+        for t, (x, y, z, w) in zip(times, reader.accessor(sampler["output"])):
+            half = math.radians(18 * 24 * t) / 2
+            self.assertAlmostEqual(
+                abs(x * math.sin(half) + w * math.cos(half)), 1.0, places=6
+            )
+        self.assertEqual(reader.nan_findings(deep=True), [])
+
+
+@unittest.skipUnless(
+    _FBX2GLTF, "FBX2glTF is not installed; this test downloads nothing"
+)
+class TestFlatNodeRotations(unittest.TestCase):
+    """The rotation FBX2glTF drops from a node scaled flat on one axis is read
+    back from its FBX, composed as the converter composes it.
+
+    Each fixture pairs a flat node with a ROUND twin keyed alike: the
+    converter writes the twin's rotation itself, so the twin is the reference
+    for every convention at once -- rotation order, pre/post rotation, the axis
+    turn of a root child, each take's time input and t = 0.
+    """
+
+    #: Two unit quaternions this close (``1 - |dot|``) are one rotation, to
+    #: the float32 the converter writes.
+    CLOSE = 1e-6
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="meshconvert_flat_")
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def _converted(self, fbx):
+        """FBX2glTF's own output for *fbx*, as :meth:`MeshConvert.fbx_to_glb`
+        runs it, before any pass."""
+        base = os.path.join(self.tmp, "raw")
+        subprocess.run(
+            [_FBX2GLTF, "-i", fbx, "-o", base, "--binary", "--user-properties"],
+            check=True,
+            capture_output=True,
+        )
+        return base + ".glb"
+
+    @staticmethod
+    def _channels(glb):
+        """``{(animation, node name, path): (input, output, values)}``."""
+        reader = GlbReader.load(glb)
+        names = [node.get("name") for node in reader.gltf["nodes"]]
+        found = {}
+        for animation in reader.gltf.get("animations") or []:
+            for channel in animation["channels"]:
+                sampler = animation["samplers"][channel["sampler"]]
+                key = (
+                    animation["name"],
+                    names[channel["target"]["node"]],
+                    channel["target"]["path"],
+                )
+                found.setdefault(key, []).append(
+                    (
+                        sampler["input"],
+                        sampler["output"],
+                        reader.accessor(sampler["output"]),
+                    )
+                )
+        return found
+
+    @staticmethod
+    def _rest(glb, name):
+        reader = GlbReader.load(glb)
+        return reader.gltf["nodes"][reader.node_index(name)].get("rotation")
+
+    def assertSameRotations(self, got, want):
+        self.assertEqual(len(got), len(want))
+        for a, b in zip(got, want):
+            self.assertLess(1 - abs(sum(x * y for x, y in zip(a, b))), self.CLOSE)
+
+    def assertTwins(self, before, after, take, flat, twin):
+        """*flat* gained one rotation channel in *take*, on the input its
+        *twin*'s shares, turning as the converter turned the twin."""
+        self.assertNotIn((take, flat, "rotation"), before)
+        ((source, _output, values),) = after[(take, flat, "rotation")]
+        ((twin_source, _twin_output, twin_values),) = after[(take, twin, "rotation")]
+        self.assertEqual(source, twin_source)
+        self.assertSameRotations(values, twin_values)
+
+    def test_each_take_gets_the_channel_the_converter_dropped_and_no_other(self):
+        """A node flat at rest loses every rotation (its rest too); one flat at
+        every key of take A only that take's. Take B starts off the bake grid
+        (frame 10.5), where the converter's t = 0 is the frame it truncates to.
+        Every channel the converter wrote stays as it wrote it, and a second
+        run changes nothing."""
+        from test_fbx_media import build_curve_fbx
+
+        def ramp(first, step):
+            return [(first + f, step * f) for f in range(8)]
+
+        takes = {
+            "A": {
+                ("round", "Lcl Rotation", "d|X"): ramp(0, 18.0),
+                ("flat", "Lcl Rotation", "d|X"): ramp(0, 18.0),
+                ("squash_round", "Lcl Rotation", "d|Z"): ramp(0, -11.0),
+                ("squash", "Lcl Rotation", "d|Z"): ramp(0, -11.0),
+                ("squash", "Lcl Scaling", "d|X"): [(f, 0.0) for f in range(8)],
+                ("squash", "Lcl Scaling", "d|Y"): [(f, 1.0) for f in range(8)],
+                ("squash", "Lcl Scaling", "d|Z"): [(f, 1.0) for f in range(8)],
+            },
+            "B": {
+                ("round", "Lcl Rotation", "d|X"): ramp(10.5, 5.0),
+                ("flat", "Lcl Rotation", "d|X"): ramp(10.5, 5.0),
+                ("squash", "Lcl Rotation", "d|Z"): ramp(10.5, 7.0),
+            },
+        }
+        tilt = {"Lcl Rotation": (12.0, 0.0, 0.0)}
+        fbx = build_curve_fbx(
+            os.path.join(self.tmp, "takes.fbx"),
+            takes,
+            poses={
+                "round": tilt,
+                "flat": {**tilt, "Lcl Scaling": (1.0, 0.0, 1.0)},
+                "squash_round": {"Lcl Scaling": (1.0, 1.0, 1.0)},
+                "squash": {"Lcl Scaling": (1.0, 1.0, 1.0)},
+            },
+        )
+        glb = self._converted(fbx)
+        before = self._channels(glb)
+        self.assertIsNone(self._rest(glb, "flat"))  # the defect, as shipped
+
+        report = MeshConvert.restore_glb_rotations(glb, fbx)
+
+        self.assertEqual(report, {"nodes": 1, "channels": 3})
+        after = self._channels(glb)
+        for key, written in before.items():
+            self.assertEqual(after[key], written, key)  # never rewritten
+        for key in set(after) - set(before):
+            self.assertEqual(len(after[key]), 1, key)  # never doubled
+        self.assertTwins(before, after, "A", "flat", "round")
+        self.assertTwins(before, after, "B", "flat", "round")
+        self.assertTwins(before, after, "A", "squash", "squash_round")
+        # Not flat in B: the converter's own channel, the only one.
+        self.assertIn(("B", "squash", "rotation"), before)
+        self.assertSameRotations(
+            [self._rest(glb, "flat")], [self._rest(glb, "round")]
+        )
+        with open(glb, "rb") as fh:
+            restored = fh.read()
+        self.assertEqual(
+            MeshConvert.restore_glb_rotations(glb, fbx), {"nodes": 0, "channels": 0}
+        )
+        with open(glb, "rb") as fh:
+            self.assertEqual(fh.read(), restored)
+
+    def test_order_pre_post_rotation_and_the_axis_turn_compose_as_converted(self):
+        """In a Z-up file: a root child with a ZXY order and pre/post rotation
+        (both in XYZ order), its child in YZX, and a model whose order and
+        pre/post rotation RotationActive switches off."""
+        from test_fbx_media import build_curve_fbx
+
+        posed = {
+            "RotationOrder": 4,
+            "PreRotation": (10.0, 20.0, 30.0),
+            "PostRotation": (5.0, -15.0, 25.0),
+            "Lcl Rotation": (30.0, 5.0, 0.0),
+        }
+        poses = {
+            "root": {**posed, "RotationActive": 1},
+            "kid": {"RotationOrder": 2, "RotationActive": 1},
+            "idle": {**posed, "RotationActive": 0},
+        }
+        flat = {"Lcl Scaling": (1.0, 0.0, 1.0)}
+        keys = {
+            axis: [(f, step * f) for f in range(6)]
+            for axis, step in (("d|X", 18.0), ("d|Y", -7.0), ("d|Z", 11.0))
+        }
+        takes = {
+            "Take": {
+                (f"{model}{suffix}", "Lcl Rotation", axis): curve
+                for model in poses
+                for suffix in ("_round", "_flat")
+                for axis, curve in keys.items()
+            }
+        }
+        fbx = build_curve_fbx(
+            os.path.join(self.tmp, "posed.fbx"),
+            takes,
+            poses={
+                f"{model}{suffix}": {**pose, **(flat if suffix == "_flat" else {})}
+                for model, pose in poses.items()
+                for suffix in ("_round", "_flat")
+            },
+            parents={"kid_round": "root_round", "kid_flat": "root_round"},
+            axes={"UpAxis": 2, "UpAxisSign": 1, "FrontAxis": 1, "FrontAxisSign": -1},
+        )
+        glb = self._converted(fbx)
+        before = self._channels(glb)
+
+        report = MeshConvert.restore_glb_rotations(glb, fbx)
+
+        self.assertEqual(report, {"nodes": 2, "channels": 3})
+        after = self._channels(glb)
+        for model in poses:
+            with self.subTest(model=model):
+                self.assertTwins(
+                    before, after, "Take", f"{model}_flat", f"{model}_round"
+                )
+                twin = self._rest(glb, f"{model}_round")
+                rest = self._rest(glb, f"{model}_flat")
+                if twin is None or abs(twin[3]) == 1.0:
+                    self.assertIsNone(rest)  # nothing to restore: no tilt at rest
+                else:
+                    self.assertSameRotations([rest], [twin])
+
+    def test_a_file_with_no_flat_node_lacking_a_rotation_never_reads_its_fbx(self):
+        """A flat node that states its rotation lost nothing, and a curve
+        proxy -- FBX-only transport carrying a ramp on ``scale.x`` -- is flat
+        wherever the ramp reads 0: neither costs the FBX's curves a read."""
+        from test_gltf2fbx import GltfBuilder
+
+        b = GltfBuilder()
+        marker = {MeshConvert.CURVE_PROXY_MARKER: {"type": "Bool", "value": True}}
+        proxy = {"fromFBX": {"userProperties": marker}}
+        b.gltf.update(
+            scenes=[{"nodes": [0, 1, 2]}],
+            nodes=[
+                {"name": "round"},
+                {
+                    "name": "tilted",
+                    "scale": [1.0, 0.0, 1.0],
+                    "rotation": [0.0, 0.0, 0.0, 1.0],
+                },
+                {"name": "fade__opacity", "scale": [0.0, 1.0, 1.0], "extras": proxy},
+            ],
+        )
+        glb = b.write_glb(os.path.join(self.tmp, "round.glb"))
+        with open(glb, "rb") as fh:
+            before = fh.read()
+        missing = os.path.join(self.tmp, "no_such.fbx")
+        self.assertEqual(
+            MeshConvert.restore_glb_rotations(glb, missing), {"nodes": 0, "channels": 0}
+        )
+        with open(glb, "rb") as fh:
+            self.assertEqual(fh.read(), before)
 
 
 if __name__ == "__main__":

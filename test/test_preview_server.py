@@ -9,7 +9,6 @@ no-store caching posture that keeps a warm browser cache from pinning a stale
 asset.
 """
 
-import base64
 import json
 import logging
 import mimetypes
@@ -1902,24 +1901,22 @@ class PreviewDelivererTestCase(unittest.TestCase):
     def _fake_convert(self, src, dst=None, **kwargs):
         """Stand in for FBX2glTF: record the call and write a GLB-shaped file.
 
-        A *parseable* GLB, not just the magic bytes: the sidecar step opens the
-        converted file once for all its sections, so a stub that only looked
-        like a GLB from four bytes away would now fail at the container rather
-        than exercise the appliers under test.
+        A *parseable* GLB, not just the magic bytes: the handoff step opens
+        the converted file, so a stub that only looked like a GLB from four
+        bytes away would fail at the container.
         """
         self.converted.append({"src": src, "dst": dst, **kwargs})
         Path(dst).write_bytes(self._glb_bytes({"asset": {"version": "2.0"}}))
-        # What the real chain does with an older host's envelope on a file
-        # that states no materials (this one): applies its sections inside the
-        # conversion, embeds its handoff and reports the outcome to the caller
-        # -- the deliverer applies nothing itself, so a stub that only wrote
-        # bytes would leave every sidecar assertion below testing air.
+        # What the real chain does with an older host's envelope: embeds its
+        # handoff inside the conversion -- its sections are read no more
+        # (removed 2026-10-31) -- so the deliverer embeds nothing itself.
         report = kwargs.get("report")
-        if report is not None:
-            sidecar = kwargs.get("sidecar")
-            report["sidecar"] = (
-                MeshConvert._apply_scene_sidecar(dst, sidecar) if sidecar else {}
-            )
+        sidecar = kwargs.get("sidecar")
+        if sidecar:
+            with MeshConvert.open_glb(dst) as edit:
+                MeshConvert.embed_glb_handoff(
+                    edit, MeshConvert._sidecar._handoff_of(sidecar)
+                )
         if report is not None and kwargs.get("data_export"):
             report["data_export"] = sorted(kwargs["data_export"])
         return dst
@@ -2612,25 +2609,6 @@ class PreviewDelivererTestCase(unittest.TestCase):
         # claim a tab exists on the one machine where none does.
         self.assertFalse(result["opened_browser"])
 
-    def test_scene_sidecar_section_is_applied_to_the_glb(self):
-        """The sidecar carries what FBX can't; sections dispatch by name."""
-        self.bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
-        sections = {"emissive": {"m": {"color": (1, 0, 0)}}}
-        target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.fbx_to_glb"
-        emissive_target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.set_glb_emissive"
-        with unittest.mock.patch(target, side_effect=self._fake_convert):
-            with unittest.mock.patch(emissive_target, return_value=[{}]) as applied:
-                self.bridge.deliverer.deliver(
-                    self.bridge,
-                    Payload(
-                        primary=self._fbx(),
-                        extras={"scene_sidecar": _sidecar(sections)},
-                    ),
-                    HandoffRequest(),
-                )
-        applied.assert_called_once()
-        self.assertEqual(applied.call_args[0][1], sections["emissive"])
-
     def test_the_sidecar_is_handed_to_the_conversion_itself(self):
         """The conversion's own chain clones materials (one per faded
         subtree), and a clone copies its source as it stands -- so the
@@ -2677,79 +2655,22 @@ class PreviewDelivererTestCase(unittest.TestCase):
     def test_absent_sidecar_leaves_the_glb_untouched(self):
         """Sidecar off must be a true passthrough — that is what makes it a probe.
 
-        Passthrough of *scene data*: nothing the sidecar would have written is
-        written. The dead-payload sweep above still runs, because it only drops
-        what no material references — it cannot change what the preview shows.
+        Passthrough of *scene data*: no material is written outside the
+        conversion, which states them from the FBX's own record. The
+        dead-payload sweep above still runs, because it only drops what no
+        material references — it cannot change what the preview shows.
         """
         self.bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
         target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.fbx_to_glb"
-        emissive_target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.set_glb_emissive"
+        materials_target = (
+            "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.apply_glb_materials"
+        )
         with unittest.mock.patch(target, side_effect=self._fake_convert):
-            with unittest.mock.patch(emissive_target) as applied:
+            with unittest.mock.patch(materials_target) as applied:
                 self.bridge.deliverer.deliver(
                     self.bridge, Payload(primary=self._fbx()), HandoffRequest()
                 )
         applied.assert_not_called()
-
-    def test_a_failing_sidecar_section_still_publishes(self):
-        """A broken section must not cost the whole preview."""
-        self.bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
-        target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.fbx_to_glb"
-        emissive_target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.set_glb_emissive"
-        with unittest.mock.patch(target, side_effect=self._fake_convert):
-            with unittest.mock.patch(emissive_target, side_effect=ValueError("bad")):
-                result = self.bridge.deliverer.deliver(
-                    self.bridge,
-                    Payload(
-                        primary=self._fbx(),
-                        extras={
-                            "scene_sidecar": _sidecar(
-                                {"emissive": {"m": {"color": (1, 0, 0)}}}
-                            )
-                        },
-                    ),
-                    HandoffRequest(),
-                )
-        self.assertEqual(result["version"], 1)
-
-    def test_sidecar_summary_rides_back_on_the_result(self):
-        """The panel needs to say what happened; silence was the original bug."""
-        self.bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
-        target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.fbx_to_glb"
-        emissive_target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.set_glb_emissive"
-        sections = {"emissive": {"a": {"color": (1, 0, 0)}, "b": {"color": (0, 1, 0)}}}
-        with unittest.mock.patch(target, side_effect=self._fake_convert):
-            with unittest.mock.patch(emissive_target, return_value=[{}, {}]):
-                result = self.bridge.deliverer.deliver(
-                    self.bridge,
-                    Payload(
-                        primary=self._fbx(),
-                        extras={"scene_sidecar": _sidecar(sections)},
-                    ),
-                    HandoffRequest(),
-                )
-        self.assertEqual(result["sidecar"], {"emissive": "2 of 2"})
-
-    def test_sidecar_that_matches_nothing_is_reported_not_silent(self):
-        """A name mismatch makes the section a no-op — it must not look like success."""
-        self.bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
-        target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.fbx_to_glb"
-        emissive_target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.set_glb_emissive"
-        with unittest.mock.patch(target, side_effect=self._fake_convert):
-            with unittest.mock.patch(emissive_target, return_value=[]):
-                result = self.bridge.deliverer.deliver(
-                    self.bridge,
-                    Payload(
-                        primary=self._fbx(),
-                        extras={
-                            "scene_sidecar": _sidecar(
-                                {"emissive": {"gone": {"color": (1, 0, 0)}}}
-                            )
-                        },
-                    ),
-                    HandoffRequest(),
-                )
-        self.assertEqual(result["sidecar"], {"emissive": "0 of 1 matched"})
 
     def test_summary_separates_off_from_nothing_to_carry(self):
         """Both render the same unlit preview; the report must tell them apart.
@@ -2843,31 +2764,6 @@ class PreviewDelivererTestCase(unittest.TestCase):
         with self.assertWarns(DeprecationWarning):
             self.assertIn("nothing to carry", PreviewBridge.sidecar_summary(result))
 
-    def test_producer_envelope_reaches_the_appliers_unwrapped(self):
-        """Producer wraps, deliverer unwraps — the pair contract, end to end.
-
-        Everything between `_attach_sidecar` and the applier call is real
-        here; only the converter and the GLB writer are stubbed. A schema
-        drift between the two halves fails this test rather than surfacing as
-        a silently unlit preview in a live DCC.
-        """
-        bridge = _SidecarPreviewBridge()
-        bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
-        target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.fbx_to_glb"
-        emissive_target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.set_glb_emissive"
-        with (
-            unittest.mock.patch(target, side_effect=self._fake_convert),
-            unittest.mock.patch(emissive_target, return_value=[{}]) as applied,
-            self.assertWarns(DeprecationWarning),
-        ):
-            result = bridge.send()
-        applied.assert_called_once()
-        self.assertEqual(
-            applied.call_args[0][1], _SidecarPreviewBridge.sections["emissive"]
-        )
-        self.assertEqual(result["sidecar"], {"emissive": "1 of 1"})
-        self.assertTrue(result["sidecar_requested"])
-
     def test_a_released_hosts_push_still_publishes(self):
         """Bug: mayatk 0.27.1 and blendertk 0.19.2 hand their scene read to
         ``PreviewBridge._attach_sidecar``, which this release had deleted --
@@ -2946,13 +2842,10 @@ class PreviewDelivererTestCase(unittest.TestCase):
 
     def test_the_envelopes_handoff_is_embedded_in_the_published_glb(self):
         """The published artifact is self-describing -- the handoff the
-        envelope's source makes, inside -- and the outcome rides the result.
-
-        No applier is patched here: the fake GLB has no materials, so the
-        emissive section reports "0 of 1 matched" -- on the result, which
-        describes the push; the file carries neither the envelope nor that
-        outcome, only what describes the asset, readable back out of the
-        served file with no side files.
+        envelope's source makes, inside -- readable back out of the served
+        file with no side files; the file carries no envelope, and the
+        envelope's sections are read no more (removed 2026-10-31), so the
+        result reports none applied.
         """
         bridge = _SidecarPreviewBridge()
         bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
@@ -2971,7 +2864,7 @@ class PreviewDelivererTestCase(unittest.TestCase):
         with MeshConvert.open_glb(str(served)) as edit:
             self.assertNotIn("scene_sidecar", edit.gltf["extras"])
             self.assertNotIn("scene_sidecar_applied", edit.gltf["extras"])
-        self.assertEqual(result["sidecar"], {"emissive": "0 of 1 matched"})
+        self.assertEqual(result["sidecar"], {})
 
     def test_the_deliverer_sets_the_start_and_locomotion_on_every_publish(self):
         """Its `user_pos` and `locomotion` are the one place each is set:
@@ -3166,250 +3059,6 @@ class PayloadPassTestCase(unittest.TestCase):
                 self.bridge, Payload(primary=original), request
             )
         self.assertEqual(self.converted, [original])
-
-
-class SetGlbEmissiveTestCase(unittest.TestCase):
-    """The GLB-side repair for the emissive channel Maya's FBX exporter drops."""
-
-    def setUp(self):
-        self.temp = TempArtifacts("test_glb_emissive", policy="scoped")
-        self.glb = Path(self.temp.path(extension=".glb"))
-
-    def tearDown(self):
-        self.temp.cleanup()
-
-    def _write_glb(self, gltf, bin_chunk=b"\x01\x02\x03\x04"):
-        payload = json.dumps(gltf).encode("utf-8")
-        payload += b" " * ((4 - (len(payload) % 4)) % 4)
-        rest = struct.pack("<I", len(bin_chunk)) + b"BIN\x00" + bin_chunk
-        with open(self.glb, "wb") as f:
-            f.write(b"glTF")
-            f.write(struct.pack("<I", 2))
-            f.write(struct.pack("<I", 12 + 8 + len(payload) + len(rest)))
-            f.write(struct.pack("<I", len(payload)))
-            f.write(b"JSON")
-            f.write(payload)
-            f.write(rest)
-        return self.glb
-
-    def _read_back(self):
-        edit = MeshConvert._read_glb(str(self.glb))
-        return edit.gltf, edit.rest, edit.bin_data
-
-    def _png(self, name="emis.png"):
-        """A minimal valid 1x1 PNG on disk."""
-        path = Path(self.temp.dir_path()) / name
-        path.write_bytes(
-            base64.b64decode(
-                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z"
-                "8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
-            )
-        )
-        return str(path)
-
-    def test_writes_emissive_factor_by_material_name(self):
-        self._write_glb({"materials": [{"name": "m_arnold"}]})
-        records = MeshConvert.set_glb_emissive(
-            str(self.glb), {"m_arnold": {"color": (1, 0.5, 0)}}
-        )
-        self.assertEqual(len(records), 1)
-        gltf, _rest, _bin = self._read_back()
-        self.assertEqual(gltf["materials"][0]["emissiveFactor"], [1, 0.5, 0])
-
-    def test_bin_chunk_survives_the_edit(self):
-        """The JSON chunk is rewritten; geometry must come back byte-identical."""
-        self._write_glb({"materials": [{"name": "m"}]}, bin_chunk=b"GEOMETRYDATA1234")
-        MeshConvert.set_glb_emissive(str(self.glb), {"m": {"color": (1, 1, 1)}})
-        _gltf, _rest, bin_data = self._read_back()
-        self.assertEqual(bin_data, b"GEOMETRYDATA1234")
-
-    def test_over_unit_emission_becomes_strength_not_clipping(self):
-        """A Maya emission of 5.0 must not flatten to 1.0."""
-        self._write_glb({"materials": [{"name": "m"}]})
-        MeshConvert.set_glb_emissive(str(self.glb), {"m": {"color": (5.0, 2.5, 0.0)}})
-        gltf, _rest, _bin = self._read_back()
-        mat = gltf["materials"][0]
-        self.assertEqual(mat["emissiveFactor"], [1.0, 0.5, 0.0])
-        ext = mat["extensions"]["KHR_materials_emissive_strength"]
-        self.assertEqual(ext["emissiveStrength"], 5.0)
-        self.assertIn("KHR_materials_emissive_strength", gltf["extensionsUsed"])
-
-    def test_sub_unit_emission_declares_no_extension(self):
-        self._write_glb({"materials": [{"name": "m"}]})
-        MeshConvert.set_glb_emissive(str(self.glb), {"m": {"color": (0.5, 0.5, 0.5)}})
-        gltf, _rest, _bin = self._read_back()
-        self.assertNotIn("extensions", gltf["materials"][0])
-        self.assertNotIn("extensionsUsed", gltf)
-
-    def test_texture_is_embedded_into_the_bin(self):
-        self._write_glb({"materials": [{"name": "m"}]})
-        records = MeshConvert.set_glb_emissive(
-            str(self.glb), {"m": {"texture": self._png()}}
-        )
-        self.assertEqual(len(records), 1)
-        gltf, _rest, _bin = self._read_back()
-        self.assertEqual(gltf["materials"][0]["emissiveTexture"]["index"], 0)
-        # Relocated out of the JSON chunk on close — base64 in a deliverable is
-        # a 33% premium on every embedded map.
-        self.assertNotIn("uri", gltf["images"][0])
-        self.assertIn("bufferView", gltf["images"][0])
-        # A texture with no color must still light up, not stay black.
-        self.assertEqual(gltf["materials"][0]["emissiveFactor"], [1.0, 1.0, 1.0])
-
-    def test_repeated_texture_path_is_embedded_once(self):
-        self._write_glb({"materials": [{"name": "a"}, {"name": "b"}]})
-        png = self._png()
-        MeshConvert.set_glb_emissive(
-            str(self.glb), {"a": {"texture": png}, "b": {"texture": png}}
-        )
-        gltf, _rest, _bin = self._read_back()
-        self.assertEqual(len(gltf["images"]), 1)
-        self.assertEqual(len(gltf["textures"]), 1)
-        self.assertEqual(gltf["materials"][0]["emissiveTexture"]["index"], 0)
-        self.assertEqual(gltf["materials"][1]["emissiveTexture"]["index"], 0)
-
-    def test_unreadable_image_is_skipped_not_embedded(self):
-        """A file no decoder can read must be reported, not written as a data URI.
-
-        Junk bytes under a TIFF extension: the Pillow fallback tries and fails
-        to decode it, so it takes the same rejected path as a format with no
-        decoder at all (EXR, or no Pillow installed).
-        """
-        self._write_glb({"materials": [{"name": "m"}]})
-        tif = Path(self.temp.dir_path()) / "e.tif"
-        tif.write_bytes(b"II*\x00")
-        MeshConvert.set_glb_emissive(str(self.glb), {"m": {"texture": str(tif)}})
-        gltf, _rest, _bin = self._read_back()
-        self.assertNotIn("emissiveTexture", gltf["materials"][0])
-        self.assertNotIn("images", gltf)
-
-    def test_tga_texture_is_reencoded_to_png(self):
-        """TGA is everywhere in game art, and glTF cannot hold it natively.
-
-        Rejecting it by extension silently downgraded the material to
-        colour-only; with Pillow present it must arrive as an embedded PNG.
-        """
-        try:
-            from PIL import Image
-        except ImportError:
-            self.skipTest("Pillow not installed")
-        self._write_glb({"materials": [{"name": "m"}]})
-        tga = Path(self.temp.dir_path()) / "emis.tga"
-        Image.new("RGB", (2, 2), (255, 0, 0)).save(tga)
-        records = MeshConvert.set_glb_emissive(
-            str(self.glb), {"m": {"texture": str(tga)}}
-        )
-        self.assertEqual(len(records), 1)
-        gltf, _rest, _bin = self._read_back()
-        image = gltf["images"][0]
-        self.assertEqual(image["mimeType"], "image/png")
-        # The payload really is a PNG, not TGA bytes under a PNG label.
-        view = gltf["bufferViews"][image["bufferView"]]
-        start = view.get("byteOffset", 0)
-        self.assertTrue(
-            bytes(_bin[start : start + view["byteLength"]]).startswith(b"\x89PNG")
-        )
-
-    def test_a_zero_factor_switches_the_emission_off_and_embeds_nothing(self):
-        """A zero colour is the DCC saying the material emits nothing (Maya's
-        reader sends it for a mapped emissive at weight 0): the emission is
-        switched off -- factor 0, no map -- rather than left to the converter,
-        which glows a mapped emissive at 1.0. Nothing is embedded for it.
-        """
-        self._write_glb({"materials": [{"name": "m"}]})
-        records = MeshConvert.set_glb_emissive(
-            str(self.glb), {"m": {"texture": self._png(), "color": (0, 0, 0)}}
-        )
-        self.assertEqual([r["factor"] for r in records], [[0.0, 0.0, 0.0]])
-        gltf, _rest, _bin = self._read_back()
-        mat = gltf["materials"][0]
-        self.assertNotIn("emissiveTexture", mat)
-        self.assertEqual(mat["emissiveFactor"], [0.0, 0.0, 0.0])
-        # Decided before embedding — no orphaned image left in the file.
-        self.assertNotIn("images", gltf)
-
-    def test_unknown_material_name_is_ignored(self):
-        self._write_glb({"materials": [{"name": "present"}]})
-        self.assertEqual(
-            MeshConvert.set_glb_emissive(
-                str(self.glb), {"absent": {"color": (1, 1, 1)}}
-            ),
-            [],
-        )
-
-    def test_empty_mapping_is_a_no_op(self):
-        self._write_glb({"materials": [{"name": "m"}]})
-        before = self.glb.read_bytes()
-        self.assertEqual(MeshConvert.set_glb_emissive(str(self.glb), {}), [])
-        self.assertEqual(self.glb.read_bytes(), before)
-
-    def test_base_color_factor_is_written_preserving_alpha(self):
-        """Colour must not silently turn a transparent material opaque."""
-        self._write_glb(
-            {
-                "materials": [
-                    {
-                        "name": "m",
-                        "pbrMetallicRoughness": {"baseColorFactor": [1, 1, 1, 0.25]},
-                    }
-                ]
-            }
-        )
-        MeshConvert.set_glb_base_color(str(self.glb), {"m": {"color": (0.2, 0.4, 0.8)}})
-        gltf, _rest, _bin = self._read_back()
-        self.assertEqual(
-            gltf["materials"][0]["pbrMetallicRoughness"]["baseColorFactor"],
-            [0.2, 0.4, 0.8, 0.25],
-        )
-
-    def test_base_color_black_is_written_not_skipped(self):
-        """Unlike emissive, black is a legitimate base colour."""
-        self._write_glb({"materials": [{"name": "m"}]})
-        records = MeshConvert.set_glb_base_color(
-            str(self.glb), {"m": {"color": (0, 0, 0)}}
-        )
-        self.assertEqual(len(records), 1)
-        gltf, _rest, _bin = self._read_back()
-        self.assertEqual(
-            gltf["materials"][0]["pbrMetallicRoughness"]["baseColorFactor"],
-            [0.0, 0.0, 0.0, 1.0],
-        )
-
-    def test_base_color_is_clamped_not_normalized(self):
-        """There is no strength extension for base colour — clamp into range."""
-        self._write_glb({"materials": [{"name": "m"}]})
-        MeshConvert.set_glb_base_color(
-            str(self.glb), {"m": {"color": (2.0, -1.0, 0.5)}}
-        )
-        gltf, _rest, _bin = self._read_back()
-        self.assertEqual(
-            gltf["materials"][0]["pbrMetallicRoughness"]["baseColorFactor"],
-            [1.0, 0.0, 0.5, 1.0],
-        )
-        self.assertNotIn("extensions", gltf["materials"][0])
-
-    def test_base_color_texture_embeds(self):
-        self._write_glb({"materials": [{"name": "m"}]})
-        MeshConvert.set_glb_base_color(str(self.glb), {"m": {"texture": self._png()}})
-        gltf, _rest, _bin = self._read_back()
-        pbr = gltf["materials"][0]["pbrMetallicRoughness"]
-        self.assertEqual(pbr["baseColorTexture"]["index"], 0)
-        self.assertNotIn("uri", gltf["images"][0])
-        self.assertIn("bufferView", gltf["images"][0])
-
-    def test_base_color_unknown_material_is_ignored(self):
-        self._write_glb({"materials": [{"name": "present"}]})
-        self.assertEqual(
-            MeshConvert.set_glb_base_color(
-                str(self.glb), {"absent": {"color": (1, 0, 0)}}
-            ),
-            [],
-        )
-
-    def test_non_glb_input_raises(self):
-        self.glb.write_bytes(b"not a glb at all")
-        with self.assertRaises(ValueError):
-            MeshConvert.set_glb_emissive(str(self.glb), {"m": {"color": (1, 1, 1)}})
 
 
 class PublishFileTestCase(unittest.TestCase):
@@ -4837,7 +4486,10 @@ class PreviewShareTestCase(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertIs(json.loads(body)["guest"], True)
         self.assertEqual(_raw(port, "GET", f"/{token}/", host=host)[0], 200)
-        for outside in ("/", "/manifest.json", f"/{token[:-1]}x/manifest.json"):
+        # A segment one character off -- never the token itself, whatever its
+        # last character (a token ending in the substitute was a 1-in-64 flake).
+        wrong = token[:-1] + ("y" if token.endswith("x") else "x")
+        for outside in ("/", "/manifest.json", f"/{wrong}/manifest.json"):
             self.assertEqual(_raw(port, "GET", outside, host=host)[0], 404, outside)
             self.assertEqual(_raw(port, "HEAD", outside, host=host)[0], 404, outside)
         # The bare segment is sent inside, or the page's relative URLs would
@@ -4852,6 +4504,71 @@ class PreviewShareTestCase(unittest.TestCase):
         self.assertEqual(
             _raw(port, "POST", "/viewer-closed?id=t", host=host, body=b"")[0], 404
         )
+
+    def _during_teardown(self, ask):
+        """Call *ask* while :meth:`unshare` stops the tunnel -- the step that
+        takes time -- and return what it answered."""
+        tunnel = self.server._tunnel
+        real_stop = tunnel.stop
+        seen = {}
+
+        def stop(*args, **kwargs):
+            seen.update(ask())
+            return real_stop(*args, **kwargs)
+
+        with unittest.mock.patch.object(tunnel, "stop", side_effect=stop):
+            self.server.unshare()
+        return seen
+
+    def test_a_guest_request_while_the_share_ends_is_refused(self):
+        """REGRESSION (2026-10-29): an unshare cleared the private segment
+        before it closed the guest listener, so for as long as the tunnel took
+        to stop, the still-open listener answered ``/`` and ``/manifest.json``
+        with no segment, under the public name it still admitted."""
+        _info, token = self._private()
+        port, host = self.server.guest_port, "guest-share.example.test"
+
+        def ask():
+            answers = {}
+            for path in ("/", "/manifest.json", f"/{token}/manifest.json"):
+                try:
+                    answers[path] = _raw(port, "GET", path, host=host)[0]
+                except OSError:
+                    answers[path] = "refused"
+            return answers
+
+        seen = self._during_teardown(ask)
+        self.assertEqual(len(seen), 3)
+        self.assertEqual(
+            {path: status for path, status in seen.items() if status == 200}, {}
+        )
+
+    def test_a_kept_alive_guest_connection_answers_nothing_once_the_share_ends(self):
+        """A connection a guest (or the tunnel) kept alive outlives the closed
+        listener: its handler thread reads the next request with the share's
+        state already gone, so a closing listener answers nothing at all."""
+        import http.client
+
+        _info, token = self._private()
+        connection = http.client.HTTPConnection(
+            "127.0.0.1", self.server.guest_port, timeout=5
+        )
+        self.addCleanup(connection.close)
+        connection.request("GET", f"/{token}/manifest.json")
+        response = connection.getresponse()
+        response.read()
+        self.assertEqual(response.status, 200)
+
+        def ask():
+            try:
+                connection.request("GET", "/manifest.json")
+                answer = connection.getresponse()
+                answer.read()
+                return {"status": answer.status}
+            except (OSError, http.client.HTTPException):
+                return {"status": "refused"}
+
+        self.assertNotEqual(self._during_teardown(ask), {"status": 200})
 
     def test_each_private_share_mints_its_own_link(self):
         """A private link is good for one share: the next has another, and the

@@ -5,7 +5,7 @@ import os as _os
 from pythontk.core_utils.module_resolver import bootstrap_package
 
 __package__ = "pythontk"
-__version__ = "0.18.2"
+__version__ = "0.19.0"
 
 """Expose toolkit utilities with explicit resolver include maps for clarity."""
 
@@ -41,6 +41,9 @@ DEFAULT_INCLUDE = {
         "ExportResult",
         "SequenceEncoder",
         "SequenceExporter",
+        # Its host adapter seam, and the pure host a DCC's adapter builds on.
+        "SequenceHost",
+        "PureSequenceHost",
     ],
     "file_utils._file_utils": "*",
     "file_utils.metadata": "Metadata",
@@ -78,6 +81,10 @@ DEFAULT_INCLUDE = {
     # (resolve, search order, claims, relocation) -- the lightmap markers of
     # both DCC bakers today; any record that names files that way.
     "file_utils.file_dependencies": ["FileDependencies"],
+    # Gather the files a set of readers use into one folder, keyed by reader:
+    # names kept, a clash kept apart by its parent folders, identical files
+    # shared (the Texture Path Editor's Find & Copy / Collect, both DCCs).
+    "file_utils.file_collect": ["FileCollect", "CollectHost", "PureCollectHost"],
     "file_utils.pending_files": ["PendingFiles"],
     # The tile / frame token vocabulary of a path (<UDIM>, <uvtile>, <u>_<v>,
     # <f>): detect, collapse to a representative, expand to the set.
@@ -93,9 +100,19 @@ DEFAULT_INCLUDE = {
         "Workspace",
         "WorkspaceTemplates",
     ],
+    # The workspaces under a root, measured and shaped as a tree (the Workspaces
+    # panel's map); each DCC binds its host adapter (``WorkspaceMapBase.HOST``).
+    "file_utils.workspace_map": [
+        "WorkspaceMapBase",
+        "WorkspaceMapHost",
+        "PureWorkspaceMapHost",
+    ],
     # Per-scene notes kept with the project: one file both DCCs' Reference
     # Manager panels read and write.
     "file_utils.scene_notes": ["SceneNotes"],
+    # The Reference Manager's listing rules and Naming conventions (the save
+    # path a script reproduces), over a project's Workspace.
+    "file_utils.scene_listing": ["SceneListing"],
     # A project's bakes of foreign scenes: one slot per source, the record
     # inside each bake (host-read), purged by reference -- both DCC bridges.
     "file_utils.bake_cache": ["BakeCache"],
@@ -109,9 +126,12 @@ DEFAULT_INCLUDE = {
     "math_utils.weights": "Weights",
     "math_utils.ramp_keys": "RampKeys",
     "math_utils.key_curve": ["KeyCurve", "CurveKey"],
+    "math_utils.quaternion": "Quaternion",
     "geo_utils.polyline": "Polyline",
     "geo_utils.pointcloud": "PointCloud",
     "geo_utils.rail_surface": "RailSurface",
+    # The curtain drape over RailSurface: both hosts' CurtainMesh subclass it.
+    "geo_utils.curtain_drape": "CurtainDrape",
     "geo_utils.plate_emitter": "PlateEmitter",
     "geo_utils.shadow_projection": [
         "ShadowProjection",
@@ -121,8 +141,15 @@ DEFAULT_INCLUDE = {
     ],
     "geo_utils.shadow_horizon": ["ShadowHorizon", "HeightFieldMap", "HorizonMap"],
     # Where a lightmap bake's reflection probe stands, by ray casts a DCC
-    # hands it (mayatk's and blendertk's ProbePlacement subclass it).
-    "geo_utils.probe_placement": ["ProbePlacement", "ProbeRays", "ProbeSite"],
+    # hands it through its host adapter (mayatk's and blendertk's
+    # ProbePlacement bind theirs).
+    "geo_utils.probe_placement": [
+        "ProbePlacement",
+        "ProbeRays",
+        "ProbeSite",
+        "ProbeHost",
+        "ProbeMesh",
+    ],
     # Articulated rigs: the joint model + grab solver every runtime ports, and
     # the geometry rules that propose a rig from the parts alone.
     "geo_utils.articulation.model": "ArticulationModel",
@@ -155,6 +182,14 @@ DEFAULT_INCLUDE = {
         "BudgetPage",
     ],
     "geo_utils.uv.transfer": ["UvTransfer", "TransferTable"],
+    # The Texture Combine panel's Transfer run (UVs or textures), written once
+    # over each library's host adapter (``TextureCombine.run_transfer``).
+    "geo_utils.uv.transfer_run": [
+        "TransferRun",
+        "TransferResult",
+        "TransferHost",
+        "PureTransferHost",
+    ],
     "geo_utils.uv.cylinder_seams": "CylinderSeams",
     # Scene-export engine -- the pure half of both DCC Scene Exporters.
     # Declarative widget definitions -> run configuration (the two Scene
@@ -178,11 +213,9 @@ DEFAULT_INCLUDE = {
     # crossing of records into another scene.
     "core_utils.engines.scene_export.scene_records": [
         "Scope",
-        "Kind",
         "RecordSpec",
         "Record",
         "SceneRecords",
-        "Merge",
         "GlbBlock",
         "WebProjection",
     ],
@@ -215,9 +248,14 @@ DEFAULT_INCLUDE = {
         "RecordTransfer",
     ],
     # The scene-data sidecar's format / naming / migration / diff report, and
-    # the exporter's orchestration shell -- each DCC subclasses both and
-    # supplies its scene hooks.
-    "core_utils.engines.scene_export.scene_data_sidecar": ["SceneDataSidecarBase"],
+    # the exporter's orchestration shell -- each DCC binds both to its host
+    # (the sidecar's HOST adapter, the exporter's STORE), overriding nothing.
+    "core_utils.engines.scene_export.scene_data_sidecar": [
+        "SceneDataSidecarBase",
+        # Its host adapter seam, and the pure host a DCC's adapter builds on.
+        "SidecarHost",
+        "PureSidecarHost",
+    ],
     "core_utils.engines.scene_export.scene_exporter": ["SceneExporterBase"],
     # Shots engine — DCC-agnostic shot model core shared by mayatk / blendertk
     "core_utils.engines.shots.shot_model": [
@@ -237,6 +275,12 @@ DEFAULT_INCLUDE = {
         "NativeStepFollowed",
         "SHOT_PALETTE",
         "SHOT_STATUS_LEVELS",
+        # The store's host adapter seam: the protocol each DCC implements
+        # (``mtk.MayaShotsHost``, ``btk.BlenderShotsHost``) and its pure defaults,
+        # and the hand-off codec its ``transfer()`` returns.
+        "ShotsHost",
+        "PureShotsHost",
+        "ShotTransferHost",
     ],
     # The shot system's record of what IT wrote on scene curves, so those
     # writes can be released when the boundary that caused them moves.
@@ -255,12 +299,15 @@ DEFAULT_INCLUDE = {
         "EffectRecipe",
     ],
     # Key stash engine — clips of keys parked outside the working animation,
-    # inert until retrieved; the DCC adapters (mayatk / blendertk ``KeyStash``)
-    # subclass it and own where the keys physically live.
+    # inert until retrieved; one store on every host, over the host adapter
+    # each DCC implements (``mtk.KeyStash`` / ``btk.KeyStash`` bind theirs and
+    # own where the keys physically live) and its pure defaults.
     "core_utils.engines.key_stash.key_stash_model": [
         "KeyStash",
         "StashedClip",
         "StashChanged",
+        "KeyStashHost",
+        "PureKeyStashHost",
     ],
     # Look match: light a baked scene to match a reference (the engine's own
     # command line is `python -m pythontk.core_utils.engines.lighting.look_match`).
@@ -387,13 +434,20 @@ DEFAULT_INCLUDE = {
         "BatchResult",
         "NormalOutputMode",
     ],
-    "core_utils.engines.textures.map_optimizer": ["MapOptimizer", "Op"],
+    "core_utils.engines.textures.map_optimizer": ["MapOptimizer"],
     "core_utils.engines.textures.region_masks": [
         "RegionGroup",
         "RegionGroupRegistry",
         "RegionMaskManifest",
         "RegionMaskPacker",
         "EmissiveGroupsRecord",
+    ],
+    # Emissive groups: the host-free model mayatk and blendertk drive through
+    # their own half (an ``EmissiveGroupsHost``).
+    "core_utils.engines.textures.emissive_groups": [
+        "EmissiveGroupsModel",
+        "EmissiveGroupsHost",
+        "PureEmissiveGroupsHost",
     ],
     "core_utils.engines.textures.mat_report": ["MatReport"],
     "core_utils._core_utils": "*",
@@ -407,6 +461,7 @@ DEFAULT_INCLUDE = {
     # surface (README gates here and downstream build on it).
     "core_utils.doc_audit": "DocAudit",
     "core_utils.package_manager": "PackageManager",
+    "core_utils.package_requirement": "PackageRequirement",
     "core_utils.class_property": "ClassProperty",
     # LoggerExt / LevelAwareFormatter are reached by raw module path today
     # (uitk's example wiring, mayatk's scene_audit), which is a published
@@ -432,7 +487,7 @@ DEFAULT_INCLUDE = {
     "core_utils.hierarchy_utils.hierarchy_diff": "HierarchyDiff",
     "core_utils.singleton_mixin": "SingletonMixin",
     "core_utils.step_toggle": ["StepToggle"],
-    "core_utils.module_reloader": ["ModuleReloader", "ReloadReport", "reload_package"],
+    "core_utils.module_reloader": ["ModuleReloader", "ReloadReport"],
     "core_utils.execution_monitor._execution_monitor": "ExecutionMonitor",
     "core_utils.cancel_scope": ["CancelScope", "OperationCancelled"],
     "core_utils.qc_log": ["QcLog", "QcGate", "GateError"],
@@ -567,7 +622,7 @@ DEFAULT_INCLUDE = {
     "net_utils.rpc.installer": [
         "PluginInstaller",
     ],
-    "net_utils.rpc.job": ["Call", "Result", "RpcJob"],
+    "net_utils.rpc.job": ["RpcJob"],
     # The in-application half of the RPC pair (`client` drives it from outside).
     # Exposed here for the plugin that loads in place and can import pythontk;
     # installed plugins stage `plugin_core.py` into their payload instead.
@@ -585,7 +640,67 @@ DEFAULT_INCLUDE = {
 #: Public names that left this package (CODE_STANDARD section 5): no alias, so a
 #: read raises MovedNameError naming the new home. ``{name: (new home, version)}``;
 #: a move adds its names here in the same change set.
-MOVED_NAMES = {}
+MOVED_NAMES = {
+    # A flat wrapper over the class it fronted (CODE_STANDARD section 4).
+    "reload_package": ("pythontk.ModuleReloader().reload", "0.19.0"),
+    # Generic names off the root, on the class that owns them (the policy above).
+    "Kind": ("pythontk.SceneRecords.Kind", "0.19.0"),
+    "Merge": ("pythontk.SceneRecords.Merge", "0.19.0"),
+    "Op": ("pythontk.MapOptimizer.Op", "0.19.0"),
+    # Removed with the "speedrun" translation (2026-10-27, no replacement): a
+    # retired template name now raises FileNotFoundError in load_mapping.
+    "Mapping.retired": (
+        "pythontk.core_utils.engines.shots.manifest.mapping.Mapping.load_mapping",
+        "0.19.0",
+    ),
+    # The Scene Exporter panel reads its own rows (pythontk knows no Qt).
+    "ExportProfile.read_values": (
+        "tentacle.slots.tools.scene_exporter.SceneExporterSlots",
+        "0.19.0",
+    ),
+    "ExportProfile.value_method": (
+        "tentacle.slots.tools.scene_exporter.SceneExporterSlots",
+        "0.19.0",
+    ),
+    "ExportProfile.CHECKBOX": (
+        "tentacle.slots.tools.scene_exporter.SceneExporterSlots",
+        "0.19.0",
+    ),
+    # Where a node-keyed record lists its nodes, declared on the record itself.
+    "FbxMedia.NODE_ENTRIES": ("pythontk.RecordSpec.nodes", "0.19.0"),
+    # The scene sidecar's material sections: the FBX's materials record states
+    # every material (removed 2026-10-31).
+    "MeshConvert.apply_scene_sidecar": ("pythontk.MeshConvert.apply_glb_materials", "0.19.0"),
+    "MeshConvert.SIDECAR_APPLIERS": ("pythontk.MeshConvert.apply_glb_materials", "0.19.0"),
+    "MeshConvert.embed_scene_sidecar": ("pythontk.MeshConvert.embed_glb_handoff", "0.19.0"),
+    "MeshConvert.sidecar_foreign_packings": ("pythontk.MapFactory.foreign_packings", "0.19.0"),
+    # The per-channel writers those sections ran (removed 2026-10-31).
+    "MeshConvert.set_glb_base_color": ("pythontk.MeshConvert.apply_glb_materials", "0.19.0"),
+    "MeshConvert.set_glb_emissive": ("pythontk.MeshConvert.apply_glb_materials", "0.19.0"),
+    "MeshConvert.set_glb_metallic_roughness": ("pythontk.MeshConvert.apply_glb_materials", "0.19.0"),
+    "MeshConvert.set_glb_alpha_mode": ("pythontk.MeshConvert.apply_glb_materials", "0.19.0"),
+    "MeshConvert.set_glb_unlit": ("pythontk.MeshConvert.apply_glb_materials", "0.19.0"),
+    # The host seam's one convention: a <Domain>Host Protocol beside the model,
+    # a Pure<Domain>Host default, a HOST class attribute (2026-11-01).
+    "EmissiveGroupsAdapter": ("pythontk.EmissiveGroupsHost", "0.19.0"),
+    "EmissiveGroupsModel.adapter": ("pythontk.EmissiveGroupsModel.HOST", "0.19.0"),
+    # The removed tasks["version"] pattern it carried: the Output Filename's own
+    # {n} counter states a version (removed 2026-11-01).
+    "ExportRun.version_format": ("pythontk.ExportProfile.VERSION_TOKEN", "0.19.0"),
+}
 
 bootstrap_package(globals(), include=DEFAULT_INCLUDE, moved=MOVED_NAMES)
-# Test: 222117
+
+# Generic names off the root, like Kind / Merge / Op above, but aliased for a window:
+# the released extapps imports these two at module top and publishes off the
+# cascade, so a moved-name error would break every install that upgrades
+# pythontk alone. Chains onto the bootstrap's ``__getattr__``.
+from pythontk.core_utils.deprecation import Deprecation as _Deprecation  # noqa: E402
+
+_Deprecation.attributes(
+    globals(),
+    {"Call": "pythontk.RpcJob.Call", "Result": "pythontk.RpcJob.Result"},
+    remove_in="0.20.0",
+    since="2026-10-29",
+)
+del _Deprecation

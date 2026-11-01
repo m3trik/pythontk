@@ -1,10 +1,12 @@
 # !/usr/bin/python
 # coding=utf-8
+from collections.abc import Mapping
 from typing import (
     Any,
     Callable,
     Dict,
     Iterable,
+    Iterator,
     List,
     Optional,
     Sequence,
@@ -211,6 +213,38 @@ class IterUtils(HelpMixin):
             return original_dict
         else:
             return dict(items)
+
+    @staticmethod
+    def values_at(data: Any, path: Sequence[Any]) -> Iterator[Any]:
+        """The values at *path* in nested mappings and lists -- a decoded JSON
+        payload, say: each step is a key into a mapping, ``"*"`` every item of
+        a list. A step that does not apply (a key a mapping lacks, ``"*"`` on
+        anything but a list, a key into anything but a mapping) finds nothing
+        there, never an error.
+
+        Parameters:
+            data: The structure to walk.
+            path: The steps, outermost first; an empty path finds *data*.
+
+        Returns:
+            Iterator: The values found, in document order.
+
+        Example:
+            >>> payload = {"objects": [{"name": "a"}, {"name": "b"}, {}]}
+            >>> list(IterUtils.values_at(payload, ("objects", "*", "name")))
+            ['a', 'b']
+        """
+        found = [data]
+        for step in path:
+            reached = []
+            for value in found:
+                if step == "*":
+                    if isinstance(value, list):
+                        reached.extend(value)
+                elif isinstance(value, Mapping) and step in value:
+                    reached.append(value[step])
+            found = reached
+        yield from found
 
     @staticmethod
     def rindex(itr, item):

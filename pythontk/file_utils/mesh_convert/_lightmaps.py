@@ -7,17 +7,15 @@ mesh nodes, encodes the maps for the web and binds them, and keeps every
 lightmap marker and manifest copy saying what the file ships.
 
 One job of :class:`MeshConvert`, composed in ``_mesh_convert.py``; it reaches
-the other passes through ``cls``.
+the other passes through the facade it holds (``self._mc``).
 """
 
 import logging
 import os
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
-# Eager: the retired names' Deprecation decorators run at class definition
-# and the signatures name GlbEdit / GlbTarget; SceneRecords and
+# Eager: the signatures name GlbEdit / GlbTarget; SceneRecords and
 # LightmapRecord are light declaration modules every pass reads.
-from pythontk.core_utils.deprecation import Deprecation
 from pythontk.core_utils.engines.scene_export.lightmap_record import LightmapRecord
 from pythontk.core_utils.engines.scene_export.scene_records import SceneRecords
 from pythontk.file_utils.mesh_convert.glb.edit import GlbEdit, GlbTarget
@@ -25,7 +23,7 @@ from pythontk.file_utils.mesh_convert.glb.edit import GlbEdit, GlbTarget
 logger = logging.getLogger(__name__)
 
 
-class _LightmapsMixin:
+class _Lightmaps:
     """Lightmaps: resolve, encode, bind, and correct the manifest copies.
 
     A private part of :class:`MeshConvert`; call it through the facade.
@@ -44,8 +42,10 @@ class _LightmapsMixin:
     #: production room, from a single base material's clones).
     LIGHTMAP_CLONE_SUFFIX = "~lm"
 
-    @classmethod
-    def _lightmap_clone_base(cls, name: str) -> str:
+    def __init__(self, mc: type) -> None:
+        self._mc = mc  # the facade class: every name it exposes is read through it
+
+    def _lightmap_clone_base(self, name: str) -> str:
         """The material *name* was cloned from, or *name* when it is not a clone.
 
         Only a ``~lm`` followed by digits is a clone marker: the suffix is legal
@@ -53,11 +53,10 @@ class _LightmapsMixin:
         rewrite one.
         """
         text = str(name)
-        base, sep, tail = text.rpartition(cls.LIGHTMAP_CLONE_SUFFIX)
+        base, sep, tail = text.rpartition(self._mc.LIGHTMAP_CLONE_SUFFIX)
         return base if sep and base and tail.isdigit() else text
 
-    @classmethod
-    def _lightmap_manifest(cls, gltf: dict) -> Optional[Dict[str, Any]]:
+    def _lightmap_manifest(self, gltf: dict) -> Optional[Dict[str, Any]]:
         """The ``lightmaps`` record on a parsed glTF's carrier, or ``None``.
 
         The channel read is :meth:`data_export_channel`; this adds only the
@@ -65,32 +64,15 @@ class _LightmapsMixin:
         holding anything else reads as absent rather than reaching the walk as
         something without ``.get``.
         """
-        data = cls.data_export_channel(gltf, SceneRecords.LIGHTMAPS.key)
+        data = self._mc.data_export_channel(gltf, SceneRecords.LIGHTMAPS.key)
         return data if isinstance(data, dict) else None
 
-    @classmethod
     def lightmaps_block(
-        cls,
+        self,
         materials: Dict[str, float],
         carrier: str = "occlusion",
         probe: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """The ``lightmaps`` block a GLB carries (``SceneRecords.LIGHTMAPS.glb``),
-        the one statement of its shape whichever exporter writes the file.
-
-        What the file states nowhere else: each lightmapped material's
-        intensity -- the scalar restoring its map's range -- the texture slot
-        the lightmaps ride (*carrier*), and the bake's embedded *probe*. A
-        material's map is its bound texture and the UV set that texture's
-        texCoord, which the file already states; sRGB is the one encoding a
-        lightmap ships in, so the block states none.
-
-        Parameters:
-            materials: ``{material name: intensity}``.
-            carrier: The texture slot a lightmap rides (``"occlusion"``: the
-                one every viewer here reads; see :meth:`apply_glb_lightmaps`).
-            probe: The embedded probe's entry (:meth:`embed_glb_lightmap_probe`).
-        """
         block: Dict[str, Any] = {
             "version": SceneRecords.LIGHTMAPS.glb.version,
             "carrier": carrier,
@@ -103,9 +85,8 @@ class _LightmapsMixin:
             block["probe"] = dict(probe)
         return block
 
-    @classmethod
     def _lightmap_final_values(
-        cls, gltf: dict, bound: Optional[Dict[str, Dict[str, Any]]]
+        self, gltf: dict, bound: Optional[Dict[str, Dict[str, Any]]]
     ) -> Dict[int, Dict[str, Any]]:
         """``{node index: {"map"}}``: each node's lightmap in this file.
 
@@ -159,9 +140,8 @@ class _LightmapsMixin:
                 changed = True
         return changed
 
-    @classmethod
     def _correct_manifest_entries(
-        cls, gltf: dict, manifest: dict, final: Optional[Dict[int, Dict[str, Any]]]
+        self, gltf: dict, manifest: dict, final: Optional[Dict[int, Dict[str, Any]]]
     ) -> bool:
         """Correct a manifest's entries from *final*; True when one changed.
 
@@ -177,8 +157,8 @@ class _LightmapsMixin:
             return False
         if not SceneRecords.LIGHTMAPS.is_current(manifest):
             return False
-        nodes_by_name, leaf_index, _users, lineage = cls._lightmap_node_index(gltf)
-        resolved = cls._resolve_lightmap_entries(
+        nodes_by_name, leaf_index, _users, lineage = self._lightmap_node_index(gltf)
+        resolved = self._resolve_lightmap_entries(
             entries, nodes_by_name, leaf_index, lineage
         )
         index_of = {id(node): i for i, node in enumerate(gltf.get("nodes") or [])}
@@ -188,22 +168,10 @@ class _LightmapsMixin:
                 continue
             shipped = [final.get(index_of.get(id(node))) for node in nodes or ()]
             if shipped and all(v and v == shipped[0] for v in shipped):
-                changed |= cls._correct_lightmap_record(entry, shipped[0])
+                changed |= self._correct_lightmap_record(entry, shipped[0])
         return changed
 
-    @classmethod
-    @Deprecation.symbol(
-        "nothing -- no record has carried a folder hint since 0.11.0",
-        remove_in="0.18.0",
-        since="2026-10-24",
-    )
-    def without_locate_hints(cls, data_export: Dict[str, Any]) -> Dict[str, Any]:
-        """*data_export* as given: the folder hints this removed went with
-        0.11.0 (the maps' folders ride the private ``lightmap_dirs``)."""
-        return data_export
-
-    @classmethod
-    def _correct_record(cls, gltf: dict, final: Optional[dict]) -> bool:
+    def _correct_record(self, gltf: dict, final: Optional[dict]) -> bool:
         """Correct the carrier's ``lightmaps`` record to what this file ships.
 
         The bake writes the record BEFORE the web encode exists, so its entries
@@ -219,77 +187,24 @@ class _LightmapsMixin:
             Whether the record changed.
         """
         key = SceneRecords.LIGHTMAPS.key
-        found = cls._data_export_carrier(gltf, key)
-        record = cls.data_export_channel(gltf, key)
+        found = self._mc._sidecar._data_export_carrier(gltf, key)
+        record = self._mc.data_export_channel(gltf, key)
         if found is None or not isinstance(record, dict):
             return False
-        if not cls._correct_manifest_entries(gltf, record, final):
+        if not self._correct_manifest_entries(gltf, record, final):
             return False
-        cls._write_data_export(found[0], key, record)
+        self._mc._sidecar._write_data_export(found[0], key, record)
         return True
 
-    @classmethod
-    @Deprecation.symbol(
-        "MeshConvert.data_export_channel(gltf, SceneRecords.LIGHTMAPS.key) -- a "
-        "finished GLB carries no record; its lightmaps are its extras.lightmaps "
-        "block (SceneRecords.glb_block)",
-        remove_in="0.18.0",
-        since="2026-10-24",
-    )
-    def read_glb_lightmap_manifest(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]:
-        """The ``lightmaps`` record riding a GLB's carrier node, or ``None`` --
-        always ``None`` on a finished GLB, whose records leave it
-        (:meth:`strip_fbx_records`); retired with that.
+    def read_glb_lightmap_manifest(self, glb: GlbTarget) -> Optional[Dict[str, Any]]:
+        with self._mc.open_glb(glb) as edit:
+            return self._mc._lightmap_manifest(edit.gltf)
 
-        The manifest travels **in-band**: the host DCC publishes it as a string user
-        property on its ``data_export`` carrier node, Maya's FBX exporter writes it as
-        an FBX user property, and FBX2glTF's ``--user-properties`` (always passed by
-        :meth:`fbx_to_glb`) transcribes it into that node's glTF extras as
-        ``extras.fromFBX.userProperties.<key>`` -- probe-verified against v0.13.1.
-        So no consumer has to pass anything; the deliverable feeds its own repair.
-
-        A GLB that never made the FBX hop carries the same key as a TOP-LEVEL node
-        extra instead (a native glTF export's custom properties), and both shapes
-        are read -- the marker walk knows both, and a probe that knew only one
-        would make this whole path a silent no-op on half the deliverables.
-        Returns ``None`` for a GLB carrying neither, which is a clean no-op for
-        every caller.
-        """
-        with cls.open_glb(glb) as edit:
-            return cls._lightmap_manifest(edit.gltf)
-
-    @classmethod
-    @Deprecation.symbol(
-        "MeshConvert.finish_glb -- it drops every record and marker a GLB's nodes hold",
-        remove_in="0.18.0",
-        since="2026-10-24",
-    )
-    def fix_glb_lightmap_metadata(cls, glb: GlbTarget) -> int:
-        """Leave a GLB its one statement of its lightmaps: ``extras.lightmaps``.
-
-        The bake writes two more on the way out -- each baked object's
-        ``lightmapInfo`` marker and the ``lightmaps`` record on the
-        data_export carrier -- as the scene holds them, BEFORE the web encode
-        exists: an ``.exr`` that ships nowhere, at the pre-normalisation
-        intensity, beside the authoring folder. A GLB built from an FBX drops
-        them once every pass has read them (:meth:`strip_fbx_records`); this is
-        the same for a GLB that build never touched -- blendertk's native glTF
-        export, whose ``floor`` shipped ``.exr`` @ 1.0 beside a ``.png`` @ 3.19
-        (measured in Blender 5.1).
-
-        A GLB with no ``extras.lightmaps`` is left as found: nothing is
-        embedded, so the copies may be all it says of its lightmaps.
-
-        Parameters:
-            glb: ``.glb`` path (modified in place) or an open :class:`GlbEdit`.
-
-        Returns:
-            How many nodes changed; 0 when the file already states them once.
-        """
-        with cls.open_glb(glb) as edit:
+    def fix_glb_lightmap_metadata(self, glb: GlbTarget) -> int:
+        with self._mc.open_glb(glb) as edit:
             if not SceneRecords.glb_block(edit.gltf, SceneRecords.LIGHTMAPS):
                 return 0
-            changed = cls.strip_fbx_records(edit.gltf)
+            changed = self._mc.strip_fbx_records(edit.gltf)
             if changed:
                 edit.dirty = True
             return changed
@@ -317,8 +232,7 @@ class _LightmapsMixin:
             seen.add(chain[-1])
         return chain
 
-    @classmethod
-    def _lightmap_node_index(cls, gltf: dict):
+    def _lightmap_node_index(self, gltf: dict):
         """Index a glTF's MESH nodes for manifest lookup.
 
         Returns ``(nodes_by_name, leaf_index, mesh_users, lineage)``: nodes
@@ -331,7 +245,7 @@ class _LightmapsMixin:
         (:meth:`_resolve_lightmap_entries`).
         """
         nodes = gltf.get("nodes", []) or []
-        parents = cls._node_parents(gltf)
+        parents = self._node_parents(gltf)
         nodes_by_name: Dict[str, List[dict]] = {}
         mesh_users: Dict[int, int] = {}  # mesh index -> node reference count
         lineage: Dict[int, Tuple[str, ...]] = {}
@@ -342,7 +256,7 @@ class _LightmapsMixin:
             mesh_users[node["mesh"]] = mesh_users.get(node["mesh"], 0) + 1
             lineage[id(node)] = tuple(
                 str(nodes[i].get("name") or "")
-                for i in reversed(cls._node_lineage(parents, index))
+                for i in reversed(self._node_lineage(parents, index))
             )
         leaf_index: Dict[str, List[str]] = {}
         for full in nodes_by_name:
@@ -366,9 +280,8 @@ class _LightmapsMixin:
             score += 1
         return score
 
-    @classmethod
     def _resolve_lightmap_entries(
-        cls,
+        self,
         entries: Sequence[Any],
         nodes_by_name: Dict[str, List[dict]],
         leaf_index: Dict[str, List[str]],
@@ -408,7 +321,7 @@ class _LightmapsMixin:
                 # where the file's NAMELESS mesh nodes are indexed.
                 resolved.append((None, "absent", []))
                 continue
-            nodes, status, leaves = cls._resolve_lightmap_node(
+            nodes, status, leaves = self._resolve_lightmap_node(
                 name, nodes_by_name, leaf_index
             )
             resolved.append((nodes, status, leaves))
@@ -456,7 +369,7 @@ class _LightmapsMixin:
                 exact = int(resolved[i][1] == "exact")
                 for node in pools[i]:
                     score = (
-                        cls._hierarchy_score(hierarchy, lineage.get(id(node), ()))
+                        self._hierarchy_score(hierarchy, lineage.get(id(node), ()))
                         if usable
                         else 0
                     )
@@ -490,9 +403,8 @@ class _LightmapsMixin:
                     resolved[i] = (None, "ambiguous", paths)
         return resolved
 
-    @classmethod
     def _resolve_lightmap_node(
-        cls,
+        self,
         name: Optional[str],
         nodes_by_name: Dict[str, List[dict]],
         leaf_index: Dict[str, List[str]],
@@ -526,29 +438,10 @@ class _LightmapsMixin:
             return None, "ambiguous", leaves
         return None, "absent", []
 
-    @classmethod
-    def lightmap_manifest_coverage(cls, glb: GlbTarget) -> Dict[str, List[str]]:
-        """Split a GLB's bake manifest by whether this GLB actually carries each object.
-
-        The manifest is a **scene** record -- the bake commits to the scene, and
-        every export of any subset of it carries the whole thing -- so the
-        manifest's length is not the number of objects a given deliverable was
-        supposed to light. Reading it as one makes a selection export report
-        every unselected object as unlit, which is a false alarm raised
-        precisely when the deliverable is correct.
-
-        Returns ``{"present", "ambiguous", "absent"}`` name lists -- one item
-        per ENTRY, so a name two objects share is listed once per object --
-        where *present* is in scope and bindable, *ambiguous* is in scope but
-        matched several nodes nothing tells apart (a real failure), and
-        *absent* has no node in this GLB at all (out of scope -- or, if it was
-        meant to be exported, a name mismatch this cannot tell apart from a
-        scope boundary). Resolved by the binder's own rule
-        (:meth:`_resolve_lightmap_entries`).
-        """
-        with cls.open_glb(glb) as edit:
-            manifest = cls._lightmap_manifest(edit.gltf) or {}
-            nodes_by_name, leaf_index, _, lineage = cls._lightmap_node_index(edit.gltf)
+    def lightmap_manifest_coverage(self, glb: GlbTarget) -> Dict[str, List[str]]:
+        with self._mc.open_glb(glb) as edit:
+            manifest = self._mc._lightmap_manifest(edit.gltf) or {}
+            nodes_by_name, leaf_index, _, lineage = self._lightmap_node_index(edit.gltf)
             buckets: Dict[str, List[str]] = {
                 "present": [],
                 "ambiguous": [],
@@ -559,7 +452,7 @@ class _LightmapsMixin:
                 for e in manifest.get("objects") or []
                 if isinstance(e, dict) and e.get("name")
             ]
-            resolved = cls._resolve_lightmap_entries(
+            resolved = self._resolve_lightmap_entries(
                 entries, nodes_by_name, leaf_index, lineage
             )
             for entry, (_, status, _) in zip(entries, resolved):
@@ -571,18 +464,6 @@ class _LightmapsMixin:
     def lightmap_report(
         coverage: Dict[str, List[str]], bound: Sequence[Dict[str, Any]]
     ) -> Dict[str, Any]:
-        """``{"expected", "bound", "unbound", "out_of_scope"}`` for one bind.
-
-        *coverage* is :meth:`lightmap_manifest_coverage` read BEFORE the bind
-        (a miss leaves no record, so only the manifest can say what was
-        wanted), *bound* what :meth:`apply_glb_lightmaps` returned. Scoped to
-        this GLB: the bake manifest is a SCENE record every export carries
-        whole, and counting it against a selection reported every unselected
-        object as unlit. An ambiguous leaf stays in scope -- it IS in the file
-        and did not bind. ``out_of_scope`` is kept rather than dropped: "3 of 3
-        lit" over a 50-object scene is only reassuring once you can see the
-        other 47 were never in the export.
-        """
         wanted = list(coverage.get("present", [])) + list(coverage.get("ambiguous", []))
         # Counted in OBJECTS, not names: a record is per (object, material), and
         # two objects can share a name -- each its own manifest entry, told
@@ -606,43 +487,16 @@ class _LightmapsMixin:
             "out_of_scope": len(coverage.get("absent", [])),
         }
 
-    @classmethod
     def embed_glb_lightmap_probe(
-        cls,
+        self,
         glb: GlbTarget,
         probe: Optional[Dict[str, Any]],
         search_dirs: Sequence[str],
         hdr_codec: Any = None,
     ) -> Optional[Dict[str, Any]]:
-        """Embed a bake's reflection probe in a GLB that ships its lightmaps; its entry, or ``None``.
-
-        The native-export twin of what :meth:`apply_glb_lightmaps` does as it
-        binds: a host whose own exporter wrote the ``lightmaps`` block
-        (blendertk's ``LightmapWebExport``) embeds the probe AFTER the export
-        and :meth:`finish_glb`, since the view it rides exists only once the
-        file does. *probe* is the scene's own probe record
-        (``LightmapRecords.probe``: its unit beside it); its file is found by
-        name in *search_dirs*, embedded whole and published as the block's
-        ``probe`` (:meth:`_embed_lightmap_probe`). A GLB with no ``lightmaps``
-        block is left as found: nothing in it binds a lightmap, so nothing
-        would read a probe. One whose block carries a probe already keeps it
-        (idempotent).
-
-        Parameters:
-            glb: ``.glb`` path (modified in place) or an open :class:`GlbEdit`.
-            probe: ``{"map", "position", "box", "unit_scale"}``; ``None``
-                when the bake captured none (nothing is embedded).
-            search_dirs: Folders to find the probe's file in, in priority order.
-            hdr_codec: The host's HDR codec (see :meth:`apply_glb_lightmaps`);
-                its ``encode_hdr_radiance`` encodes the probe.
-
-        Returns:
-            The ``lightmaps`` entry embedded, or ``None`` (logged when the
-            file has a manifest but the probe could not be embedded).
-        """
         if not isinstance(probe, dict):
             return None  # the bake captured none: nothing to embed
-        with cls.open_glb(glb) as edit:
+        with self._mc.open_glb(glb) as edit:
             block = SceneRecords.glb_block(edit.gltf, SceneRecords.LIGHTMAPS)
             if block is None:
                 return None
@@ -653,7 +507,7 @@ class _LightmapsMixin:
                 # Embedded already (an export that runs it twice): a second
                 # copy would only orphan the first's bytes.
                 return embedded
-            entry = cls._embed_lightmap_probe(
+            entry = self._embed_lightmap_probe(
                 edit,
                 probe,
                 probe.get("unit_scale"),
@@ -666,9 +520,8 @@ class _LightmapsMixin:
             edit.dirty = True
             return entry
 
-    @classmethod
     def _embed_lightmap_probe(
-        cls,
+        self,
         edit: GlbEdit,
         probe: Optional[Dict[str, Any]],
         unit_scale: Optional[float],
@@ -734,7 +587,7 @@ class _LightmapsMixin:
         except (ImportError, ValueError, OSError) as error:
             logger.warning("Reflection probe %r not encoded: %s", basename, error)
             return None
-        views = cls._append_bin_views(edit, [raw])
+        views = self._mc._append_bin_views(edit, [raw])
         if not views:
             logger.warning(
                 "Reflection probe %r not embedded: the GLB's buffer is external.",
@@ -756,23 +609,8 @@ class _LightmapsMixin:
             }
         return entry
 
-    @classmethod
-    def strip_glb_baked_lights(cls, glb: GlbTarget) -> List[str]:
-        """Drop every ``KHR_lights_punctual`` light from a lightmapped GLB.
-
-        A lightmap already holds every light in the scene -- the bake renders
-        all of them -- so a light that also ships is counted twice, and the
-        second time without a shadow: twelve bake spots reached a
-        moody room's GLB through a saved FBX preset with lights on, and the
-        floor under the table read 3x its baked value in WebXR (2026-10-16).
-        Self-feeding like the lightmap pass: a GLB with no ``lightmaps``
-        block (:meth:`SceneRecords.glb_block`) keeps its lights, which are then
-        its only lighting.
-
-        Returns:
-            The names of the nodes that carried a light, in file order.
-        """
-        with cls.open_glb(glb) as edit:
+    def strip_glb_baked_lights(self, glb: GlbTarget) -> List[str]:
+        with self._mc.open_glb(glb) as edit:
             gltf = edit.gltf
             if not SceneRecords.glb_block(gltf, SceneRecords.LIGHTMAPS):
                 return []
@@ -807,9 +645,8 @@ class _LightmapsMixin:
             )
             return carried
 
-    @classmethod
     def apply_glb_lightmaps(
-        cls,
+        self,
         glb: GlbTarget,
         search_dirs: Sequence[str] = (),
         carrier: str = "occlusion",
@@ -817,96 +654,6 @@ class _LightmapsMixin:
         replace_authored: bool = True,
         hdr_codec: Any = None,
     ) -> List[Dict[str, Any]]:
-        """Wire a host DCC's committed lightmaps into a GLB for the web viewer.
-
-        The GLB consumer half of the scene-state contract: the bake tool commits to
-        the *scene* (per-shape markers -> the ``lightmaps`` manifest on the
-        FBX ``data_export`` carrier), and this reads that manifest back **out of the
-        GLB itself** (:meth:`_current_record`), encodes each referenced HDR
-        EXR for the web (:meth:`ImgUtils.encode_hdr_for_web`), embeds it, and binds it
-        as the material's ``occlusionTexture`` on ``TEXCOORD_1`` with the
-        ``lightmaps`` root-extras manifest the viewer rebinds from. glTF has no
-        lightmap slot; the occlusion carrier is the convention the viewer (and
-        blendertk's native exporter) already share -- a naive viewer degrades to grey
-        AO rather than to nothing.
-
-        A GLB with no manifest is a clean no-op, which is what makes it safe to run
-        unconditionally after every conversion. Name matching is exact first, then
-        namespace-tolerant: a name that misses is retried with the ``NS:`` prefix
-        stripped from both sides and binds only when that leaf is unambiguous among
-        the GLB's nodes (manifests and exports can disagree about namespaces
-        without either being wrong -- an older publisher stripped them, some
-        exporters flatten them). A name several objects share -- FBX carries leaf
-        names only -- is settled by each entry's ``hierarchy`` against where each
-        node sits (:meth:`_resolve_lightmap_entries`). Every remaining miss is
-        loud: a name nothing tells apart, a name matching no node at all, a
-        primitive without ``TEXCOORD_1`` (the FBX was exported without the second
-        UV set) and an EXR that cannot be found are each warned and skipped, never
-        guessed at. A material worn by objects baked into DIFFERENT maps (a
-        secondary material two objects share, or a Per-Object bake of instances)
-        binds a copy per object after the first, like a per-instance rect below
-        -- it used to be refused, and the object wore the first claimant's
-        lighting. The copies are one per (material, map, rect), shared by every
-        object baked into that patch of that map.
-
-        Parameters:
-            glb: ``.glb`` path (modified in place) or an open :class:`GlbEdit`.
-            search_dirs: Directories to resolve the manifest's EXR basenames
-                against, in priority order -- the host's own answer to where
-                its maps live (a DCC's ``LightmapRecords.search_dirs``: the
-                folders the bake markers name first).  Tried after the folders
-                a manifest written before 0.11.0 still names, before the GLB's
-                directory.
-            carrier: ``"occlusion"`` (default) or ``"emissive"`` -- which material
-                slot carries the map (mirror of blendertk's ``CARRIERS``).
-            percentile: Divide each map by this percentile of its lit values
-                instead of its capped peak (see
-                :meth:`ImgUtils.encode_hdr_pixels_for_web`).
-            replace_authored: Whether a map already sitting in the carrier slot
-                gives way to the lightmap. ``True`` (default) displaces it with
-                a warning -- a bake IS the deliverable, and its occlusion term
-                supersedes a separate AO map. ``False`` keeps the authored map
-                and skips the lightmap for that material, warned. Either way, a
-                slot holding the material's own ``metallicRoughnessTexture`` is
-                NOT authored -- that is the packed-ORM occlusion binding
-                (:meth:`set_glb_metallic_roughness`, or FBX2glTF's converted
-                packing), whose R channel the bake already contains -- so it is
-                displaced silently regardless.
-            hdr_codec: What encodes the float images: an object with
-                :class:`ImgUtils`' two HDR encoders --
-                ``encode_hdr_for_web(path, percentile) -> (png_bytes, scalar)``
-                for each lightmap and ``encode_hdr_radiance(path) -> bytes``
-                for the probe. ``None`` is :class:`ImgUtils`, whose only
-                float-image codec is cv2; a host whose Python has none
-                (Blender's) hands its own image writer
-                (blendertk's ``LightmapWebExport``) -- without it every map
-                was warned "not encoded" and the GLB shipped unlit.
-
-        **Per-instance atlas rects travel as glTF-standard ``KHR_texture_transform``.**
-        A manifest record with a non-identity ``scaleOffset`` (an instance's patch of a
-        shared atlas over the mesh's shared [0,1] unwrap) cannot bind on the shared
-        material -- every sibling would sample the same patch -- so its node gets its
-        own MATERIAL clone carrying the rect as a texture transform, and, when the node
-        shares its glTF mesh with siblings (FBX2glTF preserves instancing as one mesh
-        referenced by many nodes -- probe-measured), its own MESH entry too. Both
-        clones are pure JSON referencing the same accessors/bufferViews: zero geometry
-        or texture duplication, and any compliant viewer (three.js, model-viewer,
-        Babylon, the production WebXR app) renders the rect with no custom code.
-
-        **The bake's reflection probe rides along.** A manifest ``probe`` (the
-        HDR the host captured of the room it baked, its capture point and the
-        box its reflections project onto, in scene units beside ``unit_scale``)
-        is embedded whole and published as ``lightmaps.probe``
-        (:meth:`_embed_lightmap_probe`), in metres -- the environment a viewer
-        reflects off baked surfaces and lights unbaked ones with.
-
-        Returns:
-            One record per (object, material) binding: ``{"material", "object",
-            "map", "intensity", "scaleOffset", "entry"}`` -- several objects
-            sharing one atlas material each get a record, and ``entry`` is the
-            manifest entry's index, which tells apart objects that share a name.
-            Empty when there was no manifest or nothing matched.
-        """
         import copy
 
         from pythontk.img_utils._img_utils import ImgUtils
@@ -938,11 +685,11 @@ class _LightmapsMixin:
         # ONE session for the read and the write: the manifest is read from the very
         # GLB being edited, so re-opening the path to find it would re-read and
         # re-parse the file that GlbEdit exists to read exactly once.
-        with cls.open_glb(glb) as edit:
+        with self._mc.open_glb(glb) as edit:
             gltf = edit.gltf
             # A map bound through a misread record looks like a bad bake
             # rather than a version problem: another schema is refused.
-            manifest = cls._current_record(gltf, SceneRecords.LIGHTMAPS)
+            manifest = self._mc._current_record(gltf, SceneRecords.LIGHTMAPS)
             if not manifest:
                 return []
             entries = manifest.get("objects") or []
@@ -958,10 +705,10 @@ class _LightmapsMixin:
             dirs = [d for d in search_dirs if d]
             dirs.append(os.path.dirname(os.path.abspath(edit.path)))
 
-            nodes_by_name, leaf_index, mesh_users, lineage = cls._lightmap_node_index(
+            nodes_by_name, leaf_index, mesh_users, lineage = self._lightmap_node_index(
                 gltf
             )
-            resolutions = cls._resolve_lightmap_entries(
+            resolutions = self._resolve_lightmap_entries(
                 entries, nodes_by_name, leaf_index, lineage
             )
             #: Manifest entries with no node in this GLB. The manifest is a
@@ -1125,7 +872,7 @@ class _LightmapsMixin:
                         encoded = _encode(src)
                         scalars[src] = None if encoded is None else encoded[1]
                         if encoded is not None:
-                            cls._embed_image_bytes(
+                            self._mc._images._embed_image_bytes(
                                 edit, src, encoded[0], name=png_name, clamp=True
                             )
                             encodes[src] = (None, encoded[1])  # bytes are in
@@ -1252,7 +999,7 @@ class _LightmapsMixin:
                             if key not in clones:
                                 clone = copy.deepcopy(base)
                                 clone["name"] = (
-                                    f"{base_name}{cls.LIGHTMAP_CLONE_SUFFIX}"
+                                    f"{base_name}{self._mc.LIGHTMAP_CLONE_SUFFIX}"
                                     f"{len(gltf['materials'])}"
                                 )
                                 binding: Dict[str, Any] = {
@@ -1371,18 +1118,18 @@ class _LightmapsMixin:
                 if "KHR_texture_transform" not in ext_used:
                     ext_used.append("KHR_texture_transform")
             if web_materials:
-                block = cls.lightmaps_block(
+                block = self._mc.lightmaps_block(
                     {name: bound["intensity"] for name, bound in web_materials.items()},
                     carrier,
                 )
                 unit = manifest.get("unit_scale")
-                probe = cls._embed_lightmap_probe(
+                probe = self._embed_lightmap_probe(
                     edit, manifest.get("probe"), unit, dirs, hdr_codec=hdr_codec
                 )
                 if probe:
                     # The bake's lights reach the file as highlights drawn into
                     # copies of the probe, never as lights (_highlights.py).
-                    highlights = cls._embed_highlight_probes(
+                    highlights = self._mc._highlights._embed_highlight_probes(
                         edit, probe, list(web_materials), manifest.get("lights"), unit
                     )
                     if highlights:
@@ -1394,8 +1141,8 @@ class _LightmapsMixin:
                 # The record's entries this run bound still name the .exr at
                 # the pre-normalisation intensity: corrected from what the bind
                 # gave each material, read back through each node's materials.
-                cls._correct_record(
-                    edit.gltf, cls._lightmap_final_values(edit.gltf, web_materials)
+                self._mc._correct_record(
+                    edit.gltf, self._mc._lightmap_final_values(edit.gltf, web_materials)
                 )
                 edit.dirty = True
             elif len(entries) > len(out_of_scope):

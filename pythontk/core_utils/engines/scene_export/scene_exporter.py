@@ -3,32 +3,50 @@
 """The Scene Exporter's orchestration shell, written once for both DCCs.
 
 mayatk's and blendertk's ``SceneExporter`` subclass :class:`SceneExporterBase`
-and keep only what reaches their scene: the export write itself
-(``perform_export``), the object scope, the FBX/USD options and presets, and
-the naming tokens a scene spells.  What they share is here: the logging
-setup, the run's ``(current, total, message)`` progress stream, the task
-pipeline run with its per-check override decision, the export button's
-contract (:meth:`SceneExporterBase.run_config_from_values` over
+for its configuration and add only what reaches their scene: the export write
+itself (``perform_export``), the object scope, the FBX/USD options and presets,
+and the naming tokens a scene spells.  They override none of it: what the
+shell reads of the scene comes through the host's scene store (``STORE``).
+What they share is here: the logging setup, the run's ``(current, total,
+message)`` progress stream, the task pipeline run with its per-check override
+decision, the export button's contract
+(:meth:`SceneExporterBase.run_config_from_values` over
 :class:`~pythontk.ExportProfile`), the export folder, and the run log -- one
 file per scene in the per-user cache (:class:`~pythontk.RunLog`).
 
-Hooks (override in the DCC subclass; defaults describe no scene):
+Configuration (set on the DCC subclass; defaults describe no scene) and the
+two seams a panel answers:
 
 =====================================  ======================================
 ``TASK_MANAGER_CLASS``                 the host's ``TaskManager`` (a
                                        :class:`~pythontk.TaskFactory`), built
                                        with the exporter's logger
-``_saved_scene_path()``                the open scene's saved path, ``""``
-                                       unsaved
+``STORE``                              the host's scene store (a
+                                       :class:`~pythontk.SceneStoreBase`, its
+                                       ``DataNodes``): ``scene_path()`` is the
+                                       open scene's saved path, ``""`` unsaved
 ``KEPT_EDITS_ADVICE``                  what a run that stopped before its
                                        write tells the user about the edits
                                        it kept
 ``confirm(question)``                  consent for an export-time side effect
-                                       (the panel overrides it with a dialog)
+                                       (a panel passes its dialog: ``confirm=``)
 ``decide_check_failure(check, ...)``   override this failed check, every one
-                                       from here, or stop (the panel overrides
-                                       it with a three-button dialog)
+                                       from here, or stop (a panel passes its
+                                       three-button dialog:
+                                       ``decide_check_failure=``)
 =====================================  ======================================
+
+A panel composes an exporter rather than subclassing it: it builds the host's
+``SceneExporter`` with its own ``logger`` and its two dialogs
+(:meth:`SceneExporterBase.__init__`) and calls the panel-facing API --
+:meth:`~SceneExporterBase.definition_tables`,
+:meth:`~SceneExporterBase.run_config_from_values`,
+:meth:`~SceneExporterBase.resolve_export_dir`,
+:meth:`~SceneExporterBase.note_retired_panel_state`,
+:meth:`~SceneExporterBase.note_retired_preset_rows`,
+:meth:`~SceneExporterBase.migrate_legacy_regex` and
+:attr:`~SceneExporterBase.export_cancelled` (tentacle's shared Scene Exporter
+panel is the one caller).
 """
 
 import html
@@ -44,8 +62,9 @@ from pythontk.core_utils.logging_mixin import LoggingMixin, RunLog
 class SceneExporterBase(LoggingMixin):
     """The DCC-free half of a Scene Exporter: progress, consent, run config.
 
-    Subclass per host and set :attr:`TASK_MANAGER_CLASS`; see the module
-    docstring for the hooks.  The ``export_dir`` / ``export_path`` attributes
+    Subclass per host to configure it (:attr:`TASK_MANAGER_CLASS`,
+    :attr:`STORE`; see the module docstring) and add the host's export, never
+    to override it.  The ``export_dir`` / ``export_path`` attributes
     the run-log helpers read are stamped by the host's ``perform_export``.
     """
 
@@ -53,13 +72,49 @@ class SceneExporterBase(LoggingMixin):
     #: constructed as ``TASK_MANAGER_CLASS(logger)``; set by the DCC subclass.
     TASK_MANAGER_CLASS: Any = None
 
+    #: The host's scene store (a ``ptk.SceneStoreBase``: its ``DataNodes``),
+    #: what the shell reads the open scene's saved path from; set by the DCC
+    #: subclass. ``None``: no scene.
+    STORE: Any = None
+
     #: Said after the list of edits a run kept when it stopped before its
     #: write -- the host words its own undo story.
     KEPT_EDITS_ADVICE = "Revert to the saved file if that is not what you want."
 
     def __init__(
-        self, log_level: str = "WARNING", log_handler: Optional[object] = None
+        self,
+        log_level: Optional[str] = "WARNING",
+        log_handler: Optional[object] = None,
+        *,
+        logger: Optional[logging.Logger] = None,
+        confirm: Optional[Callable[[str], bool]] = None,
+        decide_check_failure: Optional[
+            Callable[[str, List[str], List[str]], str]
+        ] = None,
     ):
+        """Build the exporter and its task manager.
+
+        Parameters:
+            log_level: The logger's level; ``None`` leaves it as it is (a panel
+                passing its own *logger* keeps the panel's level).
+            log_handler: A handler to add to the logger.
+            logger: Log through this logger instead of the class-shared one
+                (``LoggingMixin.use_logger``) -- a panel's, so the run lands in
+                its log. Adopted before the task manager is built, which takes
+                the same logger, so every task's line lands there too.
+            confirm: Replaces :meth:`confirm` for this instance (a panel's
+                Yes/No dialog).
+            decide_check_failure: Replaces :meth:`decide_check_failure` for this
+                instance (a panel's three-button dialog).
+        """
+        if logger is not None:
+            self.use_logger(logger)
+        # The seams a panel answers with its dialogs: an instance attribute
+        # shadows the method, and every caller reads ``self.<seam>``.
+        if confirm is not None:
+            self.confirm = confirm
+        if decide_check_failure is not None:
+            self.decide_check_failure = decide_check_failure
         self._setup_logging(log_level, log_handler)
 
         self.task_manager = self.TASK_MANAGER_CLASS(self.logger)
@@ -82,6 +137,13 @@ class SceneExporterBase(LoggingMixin):
         #: what the panel's footer reports after the run.
         self._export_cancelled = False
         self.logger.debug("Task manager initialized in SceneExporter.")
+
+    @property
+    def export_cancelled(self) -> bool:
+        """Whether the last :meth:`perform_export` stopped on a cancel (Esc held
+        over a panel, a caller's ``False``) rather than any other abort -- what
+        a panel's footer says after the run."""
+        return bool(getattr(self, "_export_cancelled", False))
 
     def _setup_logging(
         self, log_level: Optional[str], log_handler: Optional[object]
@@ -133,9 +195,11 @@ class SceneExporterBase(LoggingMixin):
             self.logger.warning(f"The run log could not be opened ({error}): {path}")
 
     def _saved_scene_path(self) -> str:
-        """Scene hook: the open scene's saved path, ``""`` while it is unsaved
-        (the default: no scene)."""
-        return ""
+        """The open scene's saved path, ``""`` while it is unsaved: the host's
+        scene store's (``STORE.scene_path``); ``""`` with no store."""
+        if self.STORE is None:
+            return ""
+        return self.STORE.scene_path() or ""
 
     def confirm(self, question: str) -> bool:
         """Yes/no consent for an export-time side effect (a tool download).
@@ -201,7 +265,7 @@ class SceneExporterBase(LoggingMixin):
         A check with no row (a headless caller's own) reads as its name made
         legible: ``check_path_length`` -> "Path Length".
         """
-        definition = self._definition_tables()[1].get(check) or {}
+        definition = self.definition_tables()[1].get(check) or {}
         label = definition.get("setText") or definition.get("set_row_label")
         if label:
             return str(label)
@@ -492,11 +556,24 @@ class SceneExporterBase(LoggingMixin):
     # The export button's contract (the panel's b000, written once)
     # ------------------------------------------------------------------
 
-    #: The Output Format row (``cmb004``): label -> ``output_format`` token.
-    #: APPEND-ONLY -- the combo (and every saved preset) persists by index.
+    #: The Output Format row (:attr:`SETTINGS_DEFINITIONS`): label ->
+    #: ``output_format`` token. APPEND-ONLY -- the combo (and every saved
+    #: preset) persists by index.
     OUTPUT_FORMATS = ptk.ExportProfile.OUTPUT_FORMATS
 
-    def _definition_tables(self):
+    #: The Settings rows the export reads that are no task or check definition,
+    #: declared as rows: the panel reads them with its task and check rows, and
+    #: :meth:`run_config_from_values` takes each from the values by its
+    #: objectName. That objectName is a saved name every export preset stores,
+    #: so it is never renamed, here or in a host binding: the panel builds its
+    #: widget under the same spelling (tentacle's ``SceneExporterSlots``, held
+    #: to this row by its test). ``output_format``: the Output Format combo,
+    #: whose value ``perform_export`` reads as ``tasks["output_format"]``.
+    SETTINGS_DEFINITIONS: Dict[str, Dict[str, Any]] = {
+        "output_format": {"widget_type": "ComboBox", "object_name": "cmb004"},
+    }
+
+    def definition_tables(self) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         """``(tasks, checks)`` -- the panel's two definition tables, built once.
 
         The two properties assemble every row's tooltip on each access, and a
@@ -519,13 +596,20 @@ class SceneExporterBase(LoggingMixin):
 
         The export button's contract, through
         :meth:`pythontk.ExportProfile.run_config` (the one copy both DCC panels
-        read their widgets with); this adds the settings row that is not a task
-        definition: ``output_format`` (``cmb004``) into the tasks.
+        turn their rows' values into a run with); this adds the Settings row
+        that is no task definition (:attr:`SETTINGS_DEFINITIONS`):
+        ``output_format`` into the tasks.
+
+        Parameters:
+            values: ``{objectName: value}`` -- every task, check and
+                :attr:`SETTINGS_DEFINITIONS` row the panel read.
+            override_checks: Override Checks is armed: the checks are dropped.
+            ignore_groups_case_sensitive: The Ignore row's case toggle.
 
         Returns:
             ``{"tasks", "export_mode", "export_visible"}``.
         """
-        tasks_def, checks_def = self._definition_tables()
+        tasks_def, checks_def = self.definition_tables()
         config = ptk.ExportProfile.run_config(
             values,
             tasks_def,
@@ -533,12 +617,13 @@ class SceneExporterBase(LoggingMixin):
             override_checks=override_checks,
             ignore_groups_case_sensitive=ignore_groups_case_sensitive,
         )
-        output_format = values.get("cmb004")
+        row = self.SETTINGS_DEFINITIONS["output_format"]
+        output_format = values.get(ptk.ExportProfile.widget_key("output_format", row))
         if output_format:
             config["tasks"]["output_format"] = output_format
         return config
 
-    def _note_retired_preset_rows(
+    def note_retired_preset_rows(
         self, name: str, stored: Optional[Dict[str, Any]]
     ) -> None:
         """Log what preset *name* asked of a row that has since retired.
@@ -546,7 +631,7 @@ class SceneExporterBase(LoggingMixin):
         Both panels call this when a preset is picked: the load skips a key no
         widget takes, so a preset saved before a row retired would otherwise
         stop doing what it asked without a word
-        (:meth:`pythontk.ExportProfile._retired_row_notes`).
+        (:meth:`pythontk.ExportProfile.retired_row_notes`).
 
         Parameters:
             name: The preset's name, as its combo shows it.
@@ -555,8 +640,8 @@ class SceneExporterBase(LoggingMixin):
         """
         if not name or not stored:
             return
-        tasks_def, checks_def = self._definition_tables()
-        for level, message in ptk.ExportProfile._retired_row_notes(
+        tasks_def, checks_def = self.definition_tables()
+        for level, message in ptk.ExportProfile.retired_row_notes(
             stored, tasks_def, checks_def
         ):
             getattr(self.logger, level)(f"Preset '{name}': {message}")
@@ -581,16 +666,16 @@ class SceneExporterBase(LoggingMixin):
                 found[name] = store.value(key)
         return found
 
-    def _note_retired_panel_state(self, store: Any) -> None:
+    def note_retired_panel_state(self, store: Any) -> None:
         """Say once what the panel's saved state asked of a row since retired.
 
         The state a panel saves outlives a row it no longer builds: a restore
         skips a key no widget takes, so a user whose saved state ran a check
         through its own row -- beside its fix row off -- would lose the check
-        with nothing said (:meth:`_note_retired_preset_rows` says the same for
+        with nothing said (:meth:`note_retired_preset_rows` says the same for
         a preset). Both panels call this when they open, with their window's
         settings store; the notes are
-        :meth:`pythontk.ExportProfile._retired_row_notes`, read off the
+        :meth:`pythontk.ExportProfile.retired_row_notes`, read off the
         retired rows' saved values and the live fix rows' (saved, or their
         definition's default). The retired rows' keys are then removed
         through the same store, so the notes are said once.
@@ -602,8 +687,8 @@ class SceneExporterBase(LoggingMixin):
         """
         try:
             profile = ptk.ExportProfile
-            tasks_def, checks_def = self._definition_tables()
-            retired = profile._retired_row_keys(tasks_def, checks_def)
+            tasks_def, checks_def = self.definition_tables()
+            retired = profile.retired_row_keys(tasks_def, checks_def)
             fixes = {
                 profile.widget_key(task, tasks_def[task]): tasks_def[task]
                 for task in profile.VERIFYING_CHECKS
@@ -620,7 +705,7 @@ class SceneExporterBase(LoggingMixin):
                 if "setChecked" in spec
             }
             stored.update(saved)
-            for level, message in profile._retired_row_notes(
+            for level, message in profile.retired_row_notes(
                 stored, tasks_def, checks_def
             ):
                 getattr(self.logger, level)(f"The panel's saved state: {message}")
@@ -635,7 +720,7 @@ class SceneExporterBase(LoggingMixin):
     #: The objectName the retired RegEx field saved its value under.
     _RETIRED_REGEX_ROW = "txt002"
 
-    def _migrate_legacy_regex(
+    def migrate_legacy_regex(
         self, store: Any, name_row: str, save: Callable[[str], Any]
     ) -> Optional[str]:
         """Fold the retired RegEx field's saved value into the Output Filename, once.
@@ -645,8 +730,8 @@ class SceneExporterBase(LoggingMixin):
         widget, so the user's naming rule would quietly stop applying. Both
         panels call this when they open -- BEFORE the switchboard restores their
         widgets: the Output Filename's saved pattern and the RegEx field's saved
-        value (:meth:`_saved_widget_values`) fold through the SAME call the
-        export makes (:meth:`pythontk.ExportProfile.fold_legacy_naming`), and
+        value (:meth:`_saved_widget_values`) fold through
+        :meth:`pythontk.ExportProfile.fold_legacy_naming`, and
         *save* stores the result as the Output Filename's value, so the restore
         that follows shows it. (Set on the widget instead, the fold was
         overwritten by that restore.) The retired key goes only once the fold
@@ -714,7 +799,7 @@ class SceneExporterBase(LoggingMixin):
     VERSION_TOKEN = ptk.ExportProfile.VERSION_TOKEN
     OUTPUT_EXTENSIONS = ptk.ExportProfile.OUTPUT_EXTENSIONS
 
-    def _resolve_export_dir(self, export_dir: Optional[str]) -> str:
+    def resolve_export_dir(self, export_dir: Optional[str]) -> str:
         """The folder an export writes to: *export_dir* expanded, else the saved
         scene's own folder; ``""`` when there is neither (an unsaved scene with
         no directory set, which :meth:`perform_export` refuses)."""

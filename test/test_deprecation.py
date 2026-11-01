@@ -1003,8 +1003,8 @@ class DeprecationClassAttributeTest(BaseTestCase):
             Deprecation.class_attribute(1, "x", remove_in="soon")
 
     def test_a_name_reached_through_a_facade_is_reported_as_the_facades(self):
-        """A facade composed of private mixins (``MeshConvert`` of
-        ``_SidecarMixin``) is the class its callers write: the notice names
+        """A facade composed of private mixins (``Facade`` of ``_Part``) is
+        the class its callers write: the notice names
         it, never a mixin they never saw -- for a constant, a classmethod and
         a method alike. Reached through the declaring class, it reads as
         declared."""

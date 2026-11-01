@@ -157,8 +157,9 @@ class LightRigPayload(SchemaSpec):
     VERSION = 1
     #: The rig library's preset collection (:meth:`library`).
     LIBRARY = "light_rigs"
-    #: Where the library lived before it was shared: mayatk's own, until 2026-10.
-    _LEGACY_PACKAGES = ("mayatk",)
+    #: The folder under the user-config root the library lived in before it was
+    #: shared (mayatk's own, until 2026-10): a saved location, spelled as it was.
+    _LEGACY_FOLDERS = ("mayatk",)
 
     version: int = _field(
         help="The payload's version (LightRigPayload.VERSION).", required=True
@@ -195,6 +196,6 @@ class LightRigPayload(SchemaSpec):
 
         store = PresetStore(cls.LIBRARY)
         store.adopt(
-            *(store.user_dir.parent / p / cls.LIBRARY for p in cls._LEGACY_PACKAGES)
+            *(store.user_dir.parent / p / cls.LIBRARY for p in cls._LEGACY_FOLDERS)
         )
         return store

@@ -3,8 +3,8 @@
 """Tests for :class:`pythontk.SceneDataSidecarBase` -- the host-agnostic sidecar.
 
 The DCC suites (mayatk / blendertk ``test_scene_data_sidecar``) drive the same
-code through their subclasses and scene hooks; these pin the base contract on
-plain path strings, and the hook seams a subclass plugs into.
+code through their host adapters; these pin the base contract on plain path
+strings, and the adapter seam (``SidecarHost``) over fake hosts.
 """
 
 import json
@@ -13,7 +13,9 @@ import shutil
 import unittest
 
 from pythontk.core_utils.engines.scene_export.scene_data_sidecar import (
+    PureSidecarHost,
     SceneDataSidecarBase as SD,
+    SidecarHost,
 )
 from pythontk.core_utils.engines.scene_export.scene_records import SceneRecords
 from pythontk.core_utils.test_sandbox import TestSandbox
@@ -21,12 +23,21 @@ from pythontk.core_utils.test_sandbox import TestSandbox
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
-class _Closing(SD):
-    """A host whose export ships every node's parent chain (Maya's rule)."""
+class _ChainHost(PureSidecarHost):
+    """A fake host whose export ships every node's parent chain (Maya's rule)
+    and whose paths carry a leading ``|`` and namespaces."""
 
-    @classmethod
-    def _close(cls, paths):
-        return cls.with_ancestors(paths)
+    ships_parent_chain = True
+
+    @staticmethod
+    def clean_path(path):
+        return "|".join(p.split(":")[-1] for p in path.lstrip("|").split("|"))
+
+
+class _Closing(SD):
+    """The shared sidecar bound to the fake chain-shipping host."""
+
+    HOST = _ChainHost()
 
 
 class SidecarCase(unittest.TestCase):
@@ -187,12 +198,23 @@ class TestCompare(SidecarCase):
         self.assertEqual(_Closing.compare(self.export, {"A", "A|B"}), (True, [], []))
 
 
-class TestHooks(unittest.TestCase):
-    def test_the_defaults_record_exactly_the_given_paths(self):
-        self.assertEqual(SD.build_full_path_set(["A|B", "A|B", "C"]), {"A|B", "C"})
+class TestHostAdapter(unittest.TestCase):
+    """Every scene read goes through ``HOST``, a short fixed interface."""
 
-    def test_a_host_hook_is_what_the_full_build_goes_through(self):
-        class _Host(SD):
+    def test_the_pure_host_records_exactly_the_given_paths(self):
+        self.assertIsInstance(SD.HOST, PureSidecarHost)
+        self.assertEqual(SD.build_full_path_set(["A|B", "A|B", "C"]), {"A|B", "C"})
+        self.assertEqual(SD.build_clean_path_set(["|A|B"]), {"|A|B"})
+
+    def test_the_pure_host_answers_the_whole_protocol(self):
+        members = {n for n in vars(SidecarHost) if not n.startswith("_")}
+        members |= set(SidecarHost.__annotations__)
+        self.assertEqual(
+            [m for m in sorted(members) if not hasattr(PureSidecarHost, m)], []
+        )
+
+    def test_the_full_build_goes_through_the_host(self):
+        class _Host(PureSidecarHost):
             @staticmethod
             def expand_to_descendants(objects):
                 return [o + "|child" for o in objects] + list(objects)
@@ -201,9 +223,24 @@ class TestHooks(unittest.TestCase):
             def drop_intermediate(nodes):
                 return [n for n in nodes if not n.endswith("Orig")]
 
+        class Bound(SD):
+            HOST = _Host()
+
         self.assertEqual(
-            _Host.build_full_path_set(["A", "AOrig"]), {"A", "A|child", "AOrig|child"}
+            Bound.build_full_path_set(["A", "AOrig"]), {"A", "A|child", "AOrig|child"}
         )
+        # The binding is configuration: the base's own methods serve it.
+        self.assertEqual({n for n in vars(Bound) if not n.startswith("__")}, {"HOST"})
+
+    def test_a_chain_shipping_host_cleans_then_closes(self):
+        # Maya's spelling and rule: the leading bar and namespaces go, and the
+        # set is closed under ancestors -- what exportSelected writes.
+        self.assertEqual(
+            _Closing.build_clean_path_set(["|ns:G|ns:SUB|ns:C", "|X"]),
+            {"G", "G|SUB", "G|SUB|C", "X"},
+        )
+        self.assertEqual(_Closing._close(["A|B"]), {"A", "A|B"})
+        self.assertEqual(SD._close(["A|B"]), {"A|B"})
 
     def test_with_ancestors_closes_a_set(self):
         self.assertEqual(SD.with_ancestors({"A|B|C"}), {"A", "A|B", "A|B|C"})

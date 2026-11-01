@@ -652,6 +652,88 @@ class HandoffContractTest(unittest.TestCase):
         self.assertIsNone(HandoffBridge()._scene_objects())
 
 
+class HandoffScopeObjectsTest(unittest.TestCase):
+    """``HandoffBridge.scope_objects``: every hand-off resolves the shared scope
+    words through its host hooks -- not only a preview, since a panel that
+    sends a host's scope through any bridge asks it the same question. Added:
+    2026-10-31 (the Unity Workflow app's Current Scene source)."""
+
+    class _Host(HandoffBridge):
+        payload_prefix = "ptk_scope_test"
+
+        def __init__(self, scene=None, visible=None):
+            super().__init__()
+            self._scene, self._visible = scene, visible
+
+        def _resolve_objects(self, objects):
+            return ["<selection>"] if objects is None else list(objects)
+
+        def _scene_objects(self):
+            return self._scene
+
+        def _visible_objects(self):
+            return self._visible
+
+    def test_a_plain_hand_off_resolves_the_scope_words(self):
+        host = self._Host(scene=["a", "b"], visible=["b"])
+        self.assertEqual(host.scope_objects(), ["<selection>"])
+        self.assertEqual(host.scope_objects("all"), ["a", "b"])
+        self.assertEqual(host.scope_objects("visible"), ["b"])
+
+    def test_an_unknown_scope_never_widens(self):
+        host = self._Host(scene=["a", "b"], visible=["b"])
+        self.assertEqual(host.scope_objects("bogus"), ["<selection>"])
+
+    def test_an_unanswered_hook_narrows_to_the_selection(self):
+        self.assertEqual(self._Host().scope_objects("all"), ["<selection>"])
+
+
+class HandoffWithoutDeliveryTest(unittest.TestCase):
+    """A bridge with neither a deliverer nor a ``_deliver`` of its own refuses
+    BEFORE it produces: the export is the expensive step, and paying for it
+    only to raise in the delivery left a payload nobody reads. A bridge whose
+    delivery a caller attaches (the Unity hosts' halves) says what is missing.
+    Added: 2026-10-31"""
+
+    def _bridge(self):
+        produced = []
+
+        class _B(HandoffBridge):
+            payload_prefix = "ptk_no_delivery_test"
+
+            def _resolve_objects(self, objects):
+                return list(objects or ["x"])
+
+            def _produce(self, objects, request):
+                produced.append(objects)
+                return Payload(primary="p.fbx")
+
+        b = _B()
+        b.logger.setLevel("CRITICAL")
+        return b, produced
+
+    def test_no_deliverer_refuses_before_producing(self):
+        br, produced = self._bridge()
+        with mock.patch.object(br.logger, "error") as error:
+            self.assertIsNone(br.send(["a"]))
+        self.assertEqual(produced, [])
+        self.assertIn("no deliverer", error.call_args[0][0])
+
+    def test_an_attached_deliverer_delivers(self):
+        br, produced = self._bridge()
+        deliverer = mock.MagicMock(name="deliverer")
+        deliverer.preflight.return_value = True
+        deliverer.deliver.return_value = {"ok": True}
+        br.deliverer = deliverer
+        self.assertEqual(br.send(["a"]), {"ok": True})
+        self.assertEqual(produced, [["a"]])
+
+    def test_a_bridge_delivering_itself_needs_no_strategy(self):
+        br, produced = self._bridge()
+        br._deliver = lambda payload, request: {"own": True}
+        self.assertEqual(br.send(["a"]), {"own": True})
+
+
 class ChildSysPathTest(unittest.TestCase):
     """``HandoffBridge.child_sys_path``: what a CHILD APP may safely be handed.
 

@@ -10,6 +10,7 @@ the writer here was also checked by hand against two Maya-written files
 byte for byte.
 """
 
+import hashlib
 import io
 import json
 import os
@@ -598,6 +599,9 @@ def build_curve_fbx(
     layers=None,
     base_layer=lambda take: "BaseLayer",
     user=(),
+    poses=None,
+    parents=None,
+    axes=None,
 ) -> str:
     """An FBX whose takes animate real curves, written by :class:`FbxWriter`.
 
@@ -614,7 +618,14 @@ def build_curve_fbx(
     gives a take extra, empty layers; *base_layer* names a take's first layer
     (Maya's ``BaseLayer``; Blender names it after the take); *user* names
     the user properties (``A+U``, a DCC's custom attributes) every model
-    declares. 30 fps (``TimeMode`` 6).
+    declares. *poses* ``{model: {property: value}}`` gives a model its own
+    transform properties (``Lcl Scaling``, ``RotationOrder``,
+    ``PreRotation`` ...), a model no take keys among them -- the FBX SDK
+    reads no model without one, so a file FBX2glTF converts poses each;
+    *parents* ``{model: parent model}`` parents one under another (the root,
+    by default); *axes*
+    ``{property: int}`` declares the axis system (``UpAxis``, ``UpAxisSign``
+    ...). 30 fps (``TimeMode`` 6).
     """
     from pythontk.file_utils.mesh_convert._fbx_writer import FbxNode, FbxWriter
 
@@ -633,17 +644,26 @@ def build_curve_fbx(
         row = ["OO" if prop is None else "OP", w.i64(child), w.i64(parent)]
         connections.add("C", *row, *([] if prop is None else [prop]))
 
-    for channels in takes.values():
-        for model, *_rest in channels:
-            if model not in models:
-                models[model] = next(uid)
-                record = obj("Model", models[model], model, "Model")
-                record.props[2] = "Null"
-                link(models[model], 0)
-                if user:
-                    declared = record.add("Properties70")
-                    for prop in user:
-                        declared.p(prop, "Number", "", "A+U", 0.0)
+    kinds = {"RotationOrder": "enum", "RotationActive": "bool"}
+    named = [model for channels in takes.values() for model, *_rest in channels]
+    for model in dict.fromkeys([*named, *(poses or {}), *(parents or {})]):
+        models[model] = next(uid)
+        record = obj("Model", models[model], model, "Model")
+        record.props[2] = "Null"
+        own = (poses or {}).get(model, {})
+        if user or own:
+            declared = record.add("Properties70")
+            for prop, value in own.items():
+                if prop in kinds:
+                    declared.p(prop, kinds[prop], "", "", value)
+                elif prop.startswith("Lcl "):
+                    declared.p(prop, prop, "", "A", *map(float, value))
+                else:
+                    declared.p(prop, "Vector3D", "Vector", "", *map(float, value))
+            for prop in user:
+                declared.p(prop, "Number", "", "A+U", 0.0)
+    for model, oid in models.items():
+        link(oid, models[parents[model]] if model in (parents or {}) else 0)
 
     spans = {}
     for take, channels in takes.items():
@@ -709,6 +729,8 @@ def build_curve_fbx(
     settings = FbxNode("GlobalSettings")
     settings.add("Version", 1000)
     grid = settings.add("Properties70")
+    for prop, value in (axes or {}).items():
+        grid.p(prop, "int", "Integer", "", value)
     grid.p("TimeMode", "enum", "", "", 6)
     grid.p("CustomFrameRate", "double", "Number", "", -1.0)
     definitions = FbxNode("Definitions")
@@ -890,6 +912,88 @@ class FbxMediaTestCase(unittest.TestCase):
             fh.write(b"not an fbx" * 40)
         with self.assertRaises(ValueError):
             FbxMedia.embedded(junk)
+
+
+class RepairNullNormalsTestCase(unittest.TestCase):
+    """:meth:`FbxMedia.repair_null_normals` (2026-10-31): Maya writes a
+    ``(0, 0, 0)`` normal for each corner of a zero-area face, and Substance
+    Painter's FBX reader then drops the mesh's WHOLE normal layer (its hard
+    edges with it)."""
+
+    #: Quad A: a unit square. Quad B: zero-area, on A's edge 2-3, its other two
+    #: vertices (4, 5) coincident with 3 and 2 and used by no other face.
+    POINTS = [0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 0, 1, 0, 1, 1, 0]
+    CORNERS = [0, 1, 2, -4, 3, 2, 5, -5]
+    QUAD_A = [0.0, 0.0, 1.0] * 4
+
+    def setUp(self):
+        self.temp = TempArtifacts("test_fbx_media_normals", policy="scoped")
+        self.dir = self.temp.dir_path()
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def _fbx(self, quad_b):
+        layer = [
+            ("Version", [I32(102)], []),
+            ("Name", [b""], []),
+            ("MappingInformationType", [b"ByPolygonVertex"], []),
+            ("ReferenceInformationType", [b"Direct"], []),
+            ("Normals", [Doubles(self.QUAD_A + quad_b)], []),
+        ]
+        objects = [
+            (
+                "Geometry",
+                [3001, b"\x00\x01Geometry", b"Mesh"],
+                [
+                    ("Vertices", [Doubles(self.POINTS)], []),
+                    ("PolygonVertexIndex", [Ints(self.CORNERS)], []),
+                    ("LayerElementNormal", [I32(0)], layer),
+                ],
+            ),
+            ("Model", [3002, b"sliver\x00\x01Model", b"Mesh"], []),
+        ]
+        connections = [("C", [b"OO", 3001, 3002], [])]
+        return _write_fbx(
+            os.path.join(self.dir, "mesh.fbx"),
+            [("Objects", [], objects), ("Connections", [], connections)],
+        )
+
+    @staticmethod
+    def _normals(path):
+        def walk(nodes):
+            for node in nodes:
+                if node["name"] == "Normals":
+                    return list(node["props"][0])
+                found = walk(node["children"])
+                if found is not None:
+                    return found
+            return None
+
+        return walk(FbxFile.load(path, decode_arrays=True).roots)
+
+    def test_null_corners_take_a_neighbour_on_their_vertex_or_a_unit_vector(self):
+        path = self._fbx([0.0, 0.0, 0.0] * 4)
+
+        report = FbxMedia.repair_null_normals(path)
+
+        self.assertEqual(report, {"sliver": 4})
+        normals = self._normals(path)
+        self.assertEqual(normals[:12], self.QUAD_A, "a valid normal changed")
+        for k in range(len(normals) // 3):
+            vector = normals[k * 3 : k * 3 + 3]
+            self.assertAlmostEqual(sum(c * c for c in vector), 1.0, msg=f"corner {k}")
+        # Corners on vertices 3 and 2 borrow quad A's normal there.
+        self.assertEqual(normals[12:18], [0.0, 0.0, 1.0, 0.0, 0.0, 1.0])
+
+    def test_a_file_with_no_null_vector_is_not_rewritten(self):
+        path = self._fbx([0.0, 0.0, 1.0] * 4)
+        with open(path, "rb") as handle:
+            before = handle.read()
+
+        self.assertEqual(FbxMedia.repair_null_normals(path), {})
+        with open(path, "rb") as handle:
+            self.assertEqual(handle.read(), before)
 
 
 class DropTakesTestCase(unittest.TestCase):
@@ -1399,7 +1503,7 @@ class MergeTakesTestCase(unittest.TestCase):
 
         fbx = FbxFile.load(out)
         layers = [
-            FbxFile._display_name(r["props"][1])
+            FbxFile.display_name(r["props"][1])
             for r in fbx.iter_objects()
             if r["name"] == "AnimationLayer"
         ]
@@ -2034,6 +2138,31 @@ class EmbedTestCase(unittest.TestCase):
             ["Room_Lightmap.exr", "Lamp_Lightmap.exr", "Room_Probe.exr"],
         )
 
+    def test_a_record_of_its_name_on_another_node_is_no_record(self):
+        """A property named as a record on a node that is no carrier is an
+        artist's -- Maya's FBX exporter writes every custom string attribute as
+        a user property -- and no reader takes it: not the materials reader
+        (``MeshConvert._carried_record``), not unitytk's ``CarrierFile``, so
+        not ``record`` / ``records`` / ``dependencies`` either, which read it
+        (review, 2026-10-31). Added: 2026-10-31"""
+        lamp = {"version": 1, "materials": []}
+        path = build_carrier_fbx(
+            os.path.join(self.dir, "artist.fbx"),
+            {"shadows": self.SHADOWS},
+            others={"Lamp_geo": {"materials": lamp, "lightmaps": self.LIGHTMAPS}},
+        )
+        self.assertIsNone(FbxMedia.record(path, "materials"))
+        self.assertEqual(FbxMedia.records(path, ["materials", "lightmaps"]), {})
+        self.assertEqual(
+            FbxMedia.dependencies(path),
+            ["Box_shadow.png", "shadow_atlas_horizon.png", "Box_horizon.png"],
+        )
+        # A module's carrier and a numbered copy are carriers.
+        numbered = build_carrier_fbx(
+            os.path.join(self.dir, "numbered.fbx"), {}, others={"NS:data_export1": {"materials": lamp}}
+        )
+        self.assertEqual(FbxMedia.record(numbered, "materials"), lamp)
+
     #: A referenced module's lightmaps as that module was last exported
     #: alone: its own spelling of each name (no namespace), a probe.
     MODULE_LIGHTMAPS = {
@@ -2256,6 +2385,55 @@ class EmbedTestCase(unittest.TestCase):
         self.assertEqual(payloads["Lamp_Lightmap.exr"], self.files["Lamp_Lightmap.exr"])
         self.assertEqual(payloads["Box_shadow.png"], self.silhouette)
 
+    def test_the_materials_records_maps_ride_in_like_the_other_records(self):
+        """A map the ``materials`` record names that Maya's FBX exporter leaves
+        out -- an openPBRSurface's: the FBX knows no slot of it -- reached
+        neither Unity nor a GLB built from the file (2026-10-31, a Scene
+        Exporter deliverable). The pass embeds it as it does a lightmap,
+        resolved through the same folders; one the material already embeds is
+        left, one found nowhere is reported; each name once, though two
+        materials share it. Added: 2026-10-31"""
+        own = png_bytes((4, 4), "RGBA")
+        with open(os.path.join(self.maps, "OP_Base.png"), "wb") as fh:
+            fh.write(b"an openPBR colour map" + bytes(range(256)))
+
+        def entry(name, **maps):
+            return {
+                "name": name, "baseColorFactor": [1.0, 1.0, 1.0, 1.0], "metallicFactor": 0.0,
+                "roughnessFactor": 0.5, "emissiveFactor": [0.0, 0.0, 0.0],
+                "alphaMode": "OPAQUE", **maps,
+            }
+
+        record = {
+            "version": 1,
+            "materials": [
+                entry("OP_mat", baseColorTexture="OP_Base.png", normalTexture="OP_Gone.png"),
+                entry("SS_mat", baseColorTexture="SS_Own.png", roughnessTexture="OP_Base.png"),
+            ],
+        }
+        src = build_carrier_fbx(
+            os.path.join(self.dir, "materials.fbx"),
+            {"lightmaps": self.LIGHTMAPS, "materials": record},
+            media={"SS_Own.png": own},
+        )
+        named = self.NAMED[:3] + ["OP_Base.png", "SS_Own.png", "OP_Gone.png"]
+        self.assertEqual(FbxMedia.dependencies(src), named)
+        out = os.path.join(self.dir, "out.fbx")
+        with self.assertLogs("pythontk.file_utils.mesh_convert.fbx_media", "WARNING"):
+            report = FbxMedia.embed_dependencies(src, out, search_dirs=[self.maps])
+        self.assertEqual(report["named"], named)
+        self.assertIn("OP_Base.png", report["embedded"])
+        self.assertEqual(report["present"], ["SS_Own.png"])
+        self.assertEqual(report["missing"], ["OP_Gone.png"])
+        # What the GLB applier reads a map off the file by (_apply_fbx_materials).
+        read = os.path.join(self.dir, "read")
+        os.makedirs(read)
+        got = FbxMedia.extract(out, read, ["OP_Base.png", "SS_Own.png"])
+        with open(got["OP_Base.png"], "rb") as fh:
+            self.assertEqual(fh.read(), b"an openPBR colour map" + bytes(range(256)))
+        with open(got["SS_Own.png"], "rb") as fh:
+            self.assertEqual(fh.read(), own)
+
     def test_a_name_the_folders_miss_is_found_under_the_walk_root(self):
         """The folders a host records can lag the disk; the root it keeps its
         files under is walked for what they miss, and the warning names that
@@ -2339,6 +2517,80 @@ class EmbedTestCase(unittest.TestCase):
             for f in self._videos(out).values()
         }
         self.assertEqual(payloads["footstep.wav"], b"RIFF....WAVE take three")
+
+    # ---- the audio record's digests: what the pass embedded -------------
+    # ``media`` is the SHA-256 of each audio file the FBX carries, by the
+    # event name whose stem it is: the content Unity compares a same-named
+    # clip against before it reuses one. Written by the pass that embeds, from
+    # the bytes inside, so a write without it (a raw File > Export, whose
+    # producer digested nothing) reads as one from before the digests, and
+    # Unity extracts or binds by name as it did. Added: 2026-10-31
+
+    AUDIO = {
+        "version": 2,
+        "fps": 24.0,
+        "events": [
+            {"clip": "", "frame": 0, "name": "footstep"},
+            {"clip": "", "frame": 4, "name": "ghost"},
+        ],
+    }
+
+    def _audio_fbx(self, payload=None):
+        return build_carrier_fbx(
+            os.path.join(self.dir, "audio.fbx"), {"audio": payload or self.AUDIO}
+        )
+
+    def test_embed_dependencies_digests_the_audio_it_embeds_into_the_record(self):
+        take = os.path.join(self.dir, "footstep_take3.wav")
+        with open(take, "wb") as fh:
+            fh.write(b"RIFF....WAVE take three")
+        out = os.path.join(self.dir, "out.fbx")
+        FbxMedia.embed_dependencies(self._audio_fbx(), out, files=[("footstep.wav", take)])
+        record = FbxMedia.record(out, "audio")
+        self.assertEqual(
+            record["media"],
+            {"footstep": hashlib.sha256(b"RIFF....WAVE take three").hexdigest()},
+            "ghost has no file inside: no digest",
+        )
+        self.assertEqual(record["events"], self.AUDIO["events"])
+        self.assertIsNone(FbxMedia.record(self._audio_fbx(), "audio").get("media"))
+
+    def test_a_digest_is_of_the_bytes_inside_not_the_file_handed_over(self):
+        """A name the FBX already embeds stays as it is; its digest is its own."""
+        first = os.path.join(self.dir, "first.wav")
+        later = os.path.join(self.dir, "later.wav")
+        for path, data in ((first, b"RIFF first"), (later, b"RIFF later")):
+            with open(path, "wb") as fh:
+                fh.write(data)
+        once = os.path.join(self.dir, "once.fbx")
+        FbxMedia.embed(self._audio_fbx(), once, files=[("footstep.wav", first)])
+        out = os.path.join(self.dir, "out.fbx")
+        report = FbxMedia.embed_dependencies(once, out, files=[("footstep.wav", later)])
+        self.assertEqual(report["embedded"], [])
+        self.assertEqual(
+            FbxMedia.record(out, "audio")["media"],
+            {"footstep": hashlib.sha256(b"RIFF first").hexdigest()},
+        )
+
+    def test_a_digest_for_a_file_no_longer_inside_is_pruned(self):
+        stale = dict(self.AUDIO, media={"ghost": "ab" * 32})
+        src = self._audio_fbx(stale)
+        before = os.path.getmtime(src)
+        FbxMedia.embed_dependencies(src)
+        self.assertIsNone(FbxMedia.record(src, "audio").get("media"))
+        self.assertGreaterEqual(os.path.getmtime(src), before)
+
+    def test_digesting_again_writes_nothing(self):
+        take = os.path.join(self.dir, "footstep.wav")
+        with open(take, "wb") as fh:
+            fh.write(b"RIFF....WAVE")
+        out = os.path.join(self.dir, "out.fbx")
+        FbxMedia.embed_dependencies(self._audio_fbx(), out, files=[take])
+        with open(out, "rb") as fh:
+            written = fh.read()
+        FbxMedia.embed_dependencies(out, files=[take])
+        with open(out, "rb") as fh:
+            self.assertEqual(fh.read(), written)
 
     def test_audio_events_names_the_tracks_the_manifest_plays(self):
         """An audio event names its TRACK, not a file: a host resolves each
@@ -2764,7 +3016,7 @@ class SplitPivotInstancesTestCase(unittest.TestCase):
         names, vertices = {}, {}
         for record in loaded.iter_objects():
             if record["name"] == "Model":
-                names[record["props"][0]] = FbxFile._display_name(record["props"][1])
+                names[record["props"][0]] = FbxFile.display_name(record["props"][1])
             elif record["name"] == "Geometry":
                 vertices[record["props"][0]] = next(
                     c["props"][0] for c in record["children"] if c["name"] == "Vertices"
@@ -2810,6 +3062,168 @@ class SplitPivotInstancesTestCase(unittest.TestCase):
         report = FbxMedia.split_pivot_instances(self.path)
         self.assertEqual(report["geometries"], 0)
         self.assertEqual(report["deformed"], ["wallShape"])
+
+
+def build_placeholder_fbx(path: str, record, material="NS:openpbr_MAT") -> str:
+    """An FBX as Maya writes an openPBRSurface: a grey Lambert placeholder
+    (DiffuseColor 0.5, no transparency), its ``materials`` record on the
+    ``data_export`` carrier."""
+
+    def p(*values):
+        return ("P", list(values), [])
+
+    carrier = (
+        "Model",
+        [1002, b"data_export\x00\x01Model", b"Null"],
+        [
+            (
+                "Properties70",
+                [],
+                [p(b"materials", b"KString", b"", b"U", json.dumps(record).encode())],
+            )
+        ],
+    )
+    placeholder = (
+        "Material",
+        [3001, material.encode() + b"\x00\x01Material", b""],
+        [
+            ("ShadingModel", [b"lambert"], []),
+            (
+                "Properties70",
+                [],
+                [
+                    p(b"DiffuseColor", b"Color", b"", b"A", 0.5, 0.5, 0.5),
+                    p(b"Diffuse", b"Vector3D", b"Vector", b"", 0.4, 0.4, 0.4),
+                    p(b"DiffuseFactor", b"Number", b"", b"A", 0.8),
+                    p(b"TransparentColor", b"Color", b"", b"A", 0.0, 0.0, 0.0),
+                    p(b"TransparencyFactor", b"Number", b"", b"A", 1.0),
+                ],
+            ),
+        ],
+    )
+    other = ("Material", [3002, b"untold\x00\x01Material", b""], [("ShadingModel", [b"lambert"], [])])
+    objects = [
+        ("Model", [1001, b"Crate\x00\x01Model", b"Mesh"], []),
+        carrier,
+        placeholder,
+        other,
+    ]
+    connections = [
+        ("C", [b"OO", 1001, 0], []),
+        ("C", [b"OO", 1002, 0], []),
+        ("C", [b"OO", 3001, 1001], []),
+        ("C", [b"OO", 3002, 1001], []),
+    ]
+    return _write_fbx(path, [("Objects", [], objects), ("Connections", [], connections)])
+
+
+class StateMaterialsTestCase(unittest.TestCase):
+    """``state_materials``: the FBX states each material as its ``materials``
+    record does, so a reader of the file's own materials sees its colour.
+    Measured 2026-10-05 (Maya 2025 -> Unity): an openPBRSurface reached the
+    FBX as a grey Lambert placeholder, and Unity's own import showed it grey.
+    Added: 2026-10-31"""
+
+    def setUp(self):
+        self.temp = TempArtifacts("test_fbx_media_state", policy="scoped")
+        self.addCleanup(self.temp.cleanup)
+        self.dir = self.temp.dir_path()
+
+    @staticmethod
+    def _record(**entry):
+        return {
+            "version": 1,
+            "materials": [
+                {
+                    "name": "NS:openpbr_MAT",
+                    "baseColorFactor": [0.8, 0.2, 0.1, 0.6],
+                    "metallicFactor": 0.0,
+                    "roughnessFactor": 0.5,
+                    "emissiveFactor": [0.0, 0.5, 1.0],
+                    "alphaMode": "BLEND",
+                    **entry,
+                }
+            ],
+        }
+
+    def _stated(self, path, name="NS:openpbr_MAT"):
+        return next(m for m in FbxFile.load(path).materials() if m["name"] == name)
+
+    def test_each_material_takes_its_entrys_colour_emission_and_alpha(self):
+        path = build_placeholder_fbx(os.path.join(self.dir, "p.fbx"), self._record())
+        self.assertEqual(FbxMedia.state_materials(path), {"materials": ["NS:openpbr_MAT"]})
+        props = self._stated(path)["props"]
+        rounded = lambda v: tuple(round(c, 6) for c in v)  # noqa: E731
+        self.assertEqual(rounded(props["DiffuseColor"]), (0.8, 0.2, 0.1))
+        self.assertEqual(props["DiffuseFactor"], 1.0)
+        self.assertEqual(rounded(props["Diffuse"]), (0.8, 0.2, 0.1), "the product too")
+        self.assertEqual(rounded(props["EmissiveColor"]), (0.0, 0.5, 1.0))
+        self.assertEqual(props["EmissiveFactor"], 1.0)
+        self.assertNotIn("Emissive", props, "a computed product it never wrote")
+        self.assertEqual(rounded(props["TransparentColor"]), (0.4, 0.4, 0.4))
+        self.assertEqual(props["TransparencyFactor"], 1.0)
+        self.assertAlmostEqual(props["Opacity"], 0.6, places=6)
+        self.assertEqual(self._stated(path, "untold")["props"], {}, "no entry, untouched")
+
+    def test_a_stock_reader_of_the_file_reads_back_what_the_record_states(self):
+        """The legacy family -- how every engine reads FBX's own models --
+        reads the stated material back as its entry."""
+        from pythontk.core_utils.engines.scene_export.material_record import (
+            MaterialFamilies,
+        )
+
+        record = self._record()
+        path = build_placeholder_fbx(os.path.join(self.dir, "p.fbx"), record)
+        FbxMedia.state_materials(path)
+        stated = self._stated(path)
+        read = MaterialFamilies.entry(
+            "legacy",
+            stated["name"],
+            {
+                k: v
+                for k, v in stated["props"].items()
+                if k in MaterialFamilies.PROPS["legacy"]
+            },
+        )
+        entry = record["materials"][0]
+        self.assertEqual(
+            [round(c, 6) for c in read["baseColorFactor"]], entry["baseColorFactor"]
+        )
+        self.assertEqual([round(c, 6) for c in read["emissiveFactor"]], entry["emissiveFactor"])
+        self.assertEqual(read["alphaMode"], "BLEND")
+
+    def test_over_a_map_the_factor_is_the_multiplier(self):
+        path = build_placeholder_fbx(
+            os.path.join(self.dir, "p.fbx"),
+            self._record(baseColorFactor=[0.5, 0.5, 0.5, 1.0], baseColorTexture="a.png"),
+        )
+        FbxMedia.state_materials(path)
+        props = self._stated(path)["props"]
+        self.assertEqual(props["DiffuseColor"], (1.0, 1.0, 1.0))
+        self.assertEqual(props["DiffuseFactor"], 0.5)
+        self.assertEqual(props["TransparentColor"], (0.0, 0.0, 0.0), "opaque, as Maya writes it")
+
+    def test_a_name_without_its_namespace_joins_by_its_leaf(self):
+        path = build_placeholder_fbx(
+            os.path.join(self.dir, "p.fbx"), self._record(), material="openpbr_MAT"
+        )
+        self.assertEqual(FbxMedia.state_materials(path), {"materials": ["openpbr_MAT"]})
+
+    def test_a_file_without_a_record_is_not_written(self):
+        path = build_placeholder_fbx(
+            os.path.join(self.dir, "p.fbx"), {"version": 1, "materials": []}
+        )
+        before = open(path, "rb").read()
+        self.assertEqual(FbxMedia.state_materials(path), {"materials": []})
+        self.assertEqual(open(path, "rb").read(), before)
+
+    def test_the_deliverable_finish_runs_it(self):
+        from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
+
+        path = build_placeholder_fbx(os.path.join(self.dir, "p.fbx"), self._record())
+        report = MeshConvert.finish_fbx_deliverable(path)
+        self.assertEqual(report["materials"], {"materials": ["NS:openpbr_MAT"]})
+        self.assertEqual(self._stated(path)["props"]["DiffuseFactor"], 1.0)
 
 
 class DropHostLightingTestCase(unittest.TestCase):

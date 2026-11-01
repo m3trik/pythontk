@@ -3,7 +3,7 @@
 """The GLB's image table: embedding, de-duplication and pruning.
 
 One job of :class:`MeshConvert`, composed in ``_mesh_convert.py``; it reaches
-the other passes through ``cls``.
+the other passes through the facade it holds (``self._mc``).
 """
 
 import base64
@@ -18,7 +18,7 @@ from pythontk.file_utils.mesh_convert.glb.edit import GlbEdit, GlbTarget
 logger = logging.getLogger(__name__)
 
 
-class _ImagesMixin:
+class _Images:
     """Image embedding, de-duplication and pruning.
 
     A private part of :class:`MeshConvert`; call it through the facade.
@@ -48,8 +48,10 @@ class _ImagesMixin:
         [ext.lstrip(".") for ext in IMAGE_MIME_TYPES] + ["webp", "ktx2"]
     )
 
-    @classmethod
-    def _image_prune_refusal(cls, gltf: Dict[str, Any]) -> Optional[str]:
+    def __init__(self, mc: type) -> None:
+        self._mc = mc  # the facade class: every name it exposes is read through it
+
+    def _image_prune_refusal(self, gltf: Dict[str, Any]) -> Optional[str]:
         """Why images may NOT be dropped from *gltf*, or ``None`` when they may.
 
         Shared by :meth:`prune_glb_unreferenced_textures`, which enforces it,
@@ -70,7 +72,7 @@ class _ImagesMixin:
           reads. The same single-buffer assumption `optimize_glb_textures`
           makes.
         """
-        foreign = cls._IMAGE_REFERRING_EXTENSIONS & set(
+        foreign = self._IMAGE_REFERRING_EXTENSIONS & set(
             gltf.get("extensionsUsed") or []
         )
         if foreign:
@@ -82,37 +84,9 @@ class _ImagesMixin:
             return "the file has bufferViews outside the embedded BIN (buffer 0)."
         return None
 
-    @classmethod
     def decode_glb_textures(
-        cls, glb: str, dst: str, *, overwrite: bool = False
+        self, glb: str, dst: str, *, overwrite: bool = False
     ) -> Optional[str]:
-        """Write a copy of *glb* whose KTX2 images are PNG; return its path.
-
-        The way in for an importer that cannot read ``KHR_texture_basisu``:
-        Blender 5.1's refuses the WHOLE file when the extension is required,
-        which every KTX2 deliverable this package writes declares. Each KTX2
-        image is decoded (:meth:`Ktx2Encoder.decode`) and replaced in place --
-        same index, so every texture keeps its source -- the extension is
-        dropped from each texture and from ``extensionsUsed`` /
-        ``extensionsRequired``, and the KTX2 payload is reclaimed. Geometry,
-        animation and every other byte are untouched. *glb* itself never is.
-
-        Parameters:
-            glb: The source GLB.
-            dst: Where the copy goes.
-            overwrite: Replace an existing *dst*.
-
-        Returns:
-            *dst*, or ``None`` when no texture needs the extension to reach
-            its image (none uses KTX2, or each has a core ``source`` fallback):
-            every importer reads *glb* as it is.
-
-        Raises:
-            FileExistsError: *dst* exists and *overwrite* is False.
-            FileNotFoundError: A KTX2 image needs decoding and no ``ktx``
-                tool (KTX-Software) is installed.
-            RuntimeError: ``ktx`` could not decode an image.
-        """
         import shutil
 
         from pythontk.file_utils.temp_artifacts import TempArtifacts
@@ -206,45 +180,8 @@ class _ImagesMixin:
         )
         return dst
 
-    @classmethod
-    def dedupe_glb_images(cls, glb: GlbTarget) -> Dict[str, int]:
-        """Collapse byte-identical embedded images onto one copy.
-
-        FBX2glTF embeds per MATERIAL, so two DCC materials wiring one texture
-        file arrive as two images with identical bytes -- and glTF has no
-        reason to keep both, since a texture names an image by index and any
-        number may name the same one. The session's ``image_digests`` dedupe
-        cannot reach this: it is write-side, stopping a WRITER from appending a
-        payload already embedded, and by the time it runs the converter's own
-        pair is already in the file. Measured on a production assembly: two
-        duplicate pairs, 154.7 KB of a delivered 5.9 MB -- and, because this
-        runs before :meth:`optimize_glb_textures`, two full-size decodes,
-        resizes and re-encodes that bought nothing.
-
-        Content-addressed, never name-addressed, for the same reason
-        ``image_digests`` is: the copies arrive by different routes and their
-        names are the one thing that may lie in either direction -- two
-        different maps can share a name, and one map can carry two.
-
-        Every texture pointing at a dropped image is rebound to the survivor
-        (``source`` and every entry of :attr:`TEXTURE_CONTAINER_EXTENSIONS`,
-        the same set `image_for_texture` resolves a binding through), as is
-        every scene-sidecar reference to it; then the orphaned images and their
-        exclusive bufferViews are reclaimed by
-        :meth:`prune_glb_unreferenced_textures` -- which already owns index
-        remapping and BIN repacking, so this pass only has to decide WHAT is
-        redundant. Textures themselves are kept: two textures sampling one
-        image may still differ by sampler, and collapsing them is a separate
-        question this pass does not answer.
-
-        Parameters:
-            glb: Path to a ``.glb``, modified in place, or an open session.
-
-        Returns:
-            ``{"images": n, "bytes": n}`` -- images dropped and BIN payload
-            reclaimed. A file with nothing to collapse is not rewritten.
-        """
-        with cls.open_glb(glb) as edit:
+    def dedupe_glb_images(self, glb: GlbTarget) -> Dict[str, int]:
+        with self._mc.open_glb(glb) as edit:
             gltf = edit.gltf
             images = gltf.get("images") or []
             if len(images) < 2:
@@ -253,7 +190,7 @@ class _ImagesMixin:
             # orphans it creates can then be collected, and the prune that
             # collects them has two refusals. Rebinding into one of those would
             # strand payload no later pass can ever reach.
-            refusal = cls._image_prune_refusal(gltf)
+            refusal = self._image_prune_refusal(gltf)
             if refusal:
                 logger.info("dedupe_glb_images: skipped, %s", refusal)
                 return {"images": 0, "bytes": 0}
@@ -282,7 +219,7 @@ class _ImagesMixin:
                 if source in replacement:
                     texture["source"] = replacement[source]
                 extensions = texture.get("extensions") or {}
-                for name in cls.TEXTURE_CONTAINER_EXTENSIONS:
+                for name in self._mc.TEXTURE_CONTAINER_EXTENSIONS:
                     binding = extensions.get(name)
                     if (
                         isinstance(binding, dict)
@@ -293,7 +230,7 @@ class _ImagesMixin:
             # The duplicates are now unreferenced; the prune owns dropping them
             # (and their exclusive views), remapping every surviving index and
             # rebuilding the BIN.
-            dropped = cls.prune_glb_unreferenced_textures(edit)
+            dropped = self._mc.prune_glb_unreferenced_textures(edit)
 
         if dropped["images"]:
             logger.info(
@@ -304,52 +241,14 @@ class _ImagesMixin:
             )
         return {"images": dropped["images"], "bytes": dropped["bytes"]}
 
-    @classmethod
-    def prune_glb_unreferenced_textures(cls, glb: GlbTarget) -> Dict[str, int]:
-        """Drop textures no material samples, and the images/bufferViews only they used.
-
-        The applier-tail sweep. Every channel writer here REBINDS a slot to the
-        image it embeds and leaves whatever that slot named before in place --
-        which for the ORM repack is FBX2glTF's own ``ao_met_rough_<mat>``
-        packing, a full-size PNG in the BIN chunk. Measured on a production
-        delivery (HOOKS_PINS.glb): 4 images, 1 unreferenced, 2 MB of dead
-        payload the reviewer flagged as an orphaned texture -- one per repacked
-        material, every export. Writers cannot prune for themselves: a texture
-        is only provably dead once EVERY writer on the session has run, and
-        dropping an image renumbers everything after it.
-
-        Referenced means sampled by a material: any ``textureInfo`` in the
-        material tree (a dict under a key ending in ``Texture`` with an integer
-        ``index`` -- the spec's own naming for the core slots and every
-        ``KHR_materials_*`` extension). Images are kept when a surviving
-        texture reads them through ``source`` or an extension source
-        (``KHR_texture_basisu``, ``EXT_texture_webp``). A bufferView is dropped
-        only when the pruned images were its ONLY readers -- FBX2glTF does point
-        two images at one view, and a view could in principle be shared with an
-        accessor. Every surviving index is remapped in place: texture indices
-        across the material tree and the session's embed cache, image indices
-        in ``textures``, and ``bufferView`` keys anywhere in the document (the
-        key is spec-uniform, so a generic walk covers accessors, sparse
-        indices/values, images and compression extensions alike). The BIN is
-        rebuilt from the surviving views only, 4-byte padded like every
-        repack here.
-
-        Runs after the materials are stated, and again wherever a later
-        applier unbinds an image. Safe to run standalone on any GLB; a file
-        with nothing to drop is not rewritten.
-
-        Returns:
-            ``{"textures": n, "images": n, "bytes": n}`` -- what was dropped;
-            ``bytes`` is BIN payload reclaimed (a data-URI image counts 0 here,
-            its saving shows up in the JSON chunk).
-        """
-        with cls.open_glb(glb) as edit:
+    def prune_glb_unreferenced_textures(self, glb: GlbTarget) -> Dict[str, int]:
+        with self._mc.open_glb(glb) as edit:
             gltf = edit.gltf
             textures = gltf.get("textures") or []
             images = gltf.get("images") or []
             if not textures and not images:
                 return {"textures": 0, "images": 0, "bytes": 0}
-            refusal = cls._image_prune_refusal(gltf)
+            refusal = self._image_prune_refusal(gltf)
             if refusal:
                 logger.info("prune_glb_unreferenced_textures: skipped, %s", refusal)
                 return {"textures": 0, "images": 0, "bytes": 0}
@@ -385,7 +284,7 @@ class _ImagesMixin:
             # ibl_brdf_lut sit at low indices), so every projected plane
             # shipped a stale index. extras.lightmaps is immune only
             # because it stores names.
-            shadow_slots = cls._shadow_texture_slots(
+            shadow_slots = self._mc._shadow_rigs._shadow_texture_slots(
                 SceneRecords.glb_block(gltf, SceneRecords.SHADOWS)
             )
             live_textures |= {
@@ -428,7 +327,7 @@ class _ImagesMixin:
             # a dead set, walk the survivors separately, or remap indices.
             gltf["images"] = [images[old] for old in image_map]
             images = gltf["images"]
-            reclaimed = cls._compact_bin(edit)
+            reclaimed = self._mc._compact_bin(edit)
 
             # --- renumber what survives ---------------------------------------
             kept_textures = []
@@ -455,7 +354,7 @@ class _ImagesMixin:
                 if index in texture_map
             }
             edit._image_digests = None
-            cls._prune_empty_containers(gltf)
+            self._prune_empty_containers(gltf)
             edit.dirty = True
 
         logger.info(
@@ -484,8 +383,7 @@ class _ImagesMixin:
             if not gltf.get(key):
                 gltf.pop(key, None)
 
-    @classmethod
-    def _embed_image(cls, edit: "GlbEdit", path: str) -> Optional[int]:
+    def _embed_image(self, edit: "GlbEdit", path: str) -> Optional[int]:
         """Embed *path* as an image and return its texture index.
 
         Shared by every channel writer here. The payload is staged as a
@@ -506,7 +404,7 @@ class _ImagesMixin:
         if not os.path.isfile(path):
             logger.warning("GLB texture embed: file not found: %s", path)
             return None
-        mime = cls.IMAGE_MIME_TYPES.get(os.path.splitext(path)[1].lower())
+        mime = self._mc.IMAGE_MIME_TYPES.get(os.path.splitext(path)[1].lower())
         if mime is not None:
             # Guarded like the re-encode branch below, which this asymmetry had
             # left as the only safe one: a PNG that exists but cannot be read
@@ -527,17 +425,16 @@ class _ImagesMixin:
             # written as-is they would be an unloadable data URI rather than a
             # reported failure. Re-encode to PNG when Pillow can read them;
             # only what it cannot (EXR, or no Pillow at all) is rejected.
-            raw = cls._reencode_as_png(path)
+            raw = self._reencode_as_png(path)
             if raw is None:
                 logger.warning("GLB texture embed: unsupported image type: %s", path)
                 return None
             mime = "image/png"
 
-        return cls._embed_image_bytes(edit, path, raw, mime)
+        return self._embed_image_bytes(edit, path, raw, mime)
 
-    @classmethod
     def _embed_image_bytes(
-        cls,
+        self,
         edit: "GlbEdit",
         cache_key: str,
         raw: bytes,

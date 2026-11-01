@@ -7,7 +7,7 @@ semantic) and :meth:`optimize_glb_textures`, which applies it and declares
 the texture-container extensions it binds.
 
 One job of :class:`MeshConvert`, composed in ``_mesh_convert.py``; it reaches
-the other passes through ``cls``.
+the other passes through the facade it holds (``self._mc``).
 """
 
 import hashlib
@@ -16,31 +16,17 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
-from pythontk.core_utils.class_property import ClassProperty
 from pythontk.core_utils.engines.scene_export.scene_records import SceneRecords
 from pythontk.file_utils.mesh_convert.glb.edit import GlbTarget
 
 logger = logging.getLogger(__name__)
 
 
-class _TexturesMixin:
+class _Textures:
     """Web-delivery texture pass and its policy.
 
     A private part of :class:`MeshConvert`; call it through the facade.
     """
-
-    @ClassProperty
-    def OPTIMIZE_WORKERS(cls) -> int:
-        """Deprecated alias of :attr:`ImgUtils.ENCODE_WORKERS`, for one release.
-
-        The encode pass's worker cap moved to :meth:`ImgUtils.encode_workers`,
-        the one policy every texture pass shares, and this reads it. Read-only:
-        assigning it no longer changes the pass -- set
-        ``ImgUtils.ENCODE_WORKERS``, or pass ``workers=``.
-        """
-        from pythontk.img_utils._img_utils import ImgUtils
-
-        return ImgUtils.ENCODE_WORKERS
 
     #: Longest edge a web deliverable's textures keep, the container they are
     #: re-encoded to, and whether a KTX2 image also carries a PNG/JPEG twin
@@ -102,15 +88,6 @@ class _TexturesMixin:
     #: reason), and not color, the perceptual detail.
     SECONDARY_SEMANTICS: Tuple[str, ...] = ("data",)
 
-    @ClassProperty
-    def UASTC_RDO_NORMAL_MAX(cls) -> float:
-        """The RDO lambda a normal map is capped at whatever the caller asks:
-        toktx's guidance, owned by :attr:`Ktx2Encoder.UASTC_RDO_NORMAL_MAX` so
-        the map optimizer applies the same number. Read-only."""
-        from pythontk.img_utils.ktx2_encoder import Ktx2Encoder
-
-        return Ktx2Encoder.UASTC_RDO_NORMAL_MAX
-
     #: Slot semantics a chroma-subsampled codec may be used on. The WebP twin of
     #: :attr:`BASIS_BY_SEMANTIC`'s ETC1S row, and deliberately the same rule --
     #: lossy only where the channels ARE colour and the eye is the judge. An
@@ -134,45 +111,11 @@ class _TexturesMixin:
     #: are this pass's critical path (one 2K normal map is ~10 s of it).
     LOSSLESS_WEBP: Dict[str, Any] = {"lossless": True, "quality": 75}
 
-    @classmethod
-    def drop_glb_texture_fallbacks(cls, glb: GlbTarget) -> Dict[str, int]:
-        """Drop the PNG/JPEG twin of every texture that also ships KTX2.
+    def __init__(self, mc: type) -> None:
+        self._mc = mc  # the facade class: every name it exposes is read through it
 
-        ``KHR_texture_basisu`` is written as an OPTIONAL extension: the texture
-        names a supercompressed image through the extension and an ordinary one
-        through ``source``, so a reader without the extension still has a
-        picture. The cost is that the deliverable carries both encodings of
-        every map -- on the PROPS assembly, 40.66 MB of PNG beside 34.71 MB of
-        KTX2, so the KTX2 pass more than doubled the texture budget it was
-        meant to cut.
-
-        This drops the fallbacks and moves ``KHR_texture_basisu`` into
-        ``extensionsRequired``, which is what the spec asks of a file that can
-        no longer be read without it. That is a DELIVERY decision, not a
-        cleanup: the result needs a reader with the extension (in three.js, a
-        registered ``KTX2Loader``). Callers that cannot promise one must not
-        run this pass.
-
-        Deliberately NOT wired into :meth:`fbx_to_glb` -- unlike
-        :meth:`compact_glb_animations`, which is byte-exact and therefore
-        unconditional. The pipeline owns this decision one step earlier:
-        :meth:`web_delivery_texture_params` builds with ``ktx2_fallback=False``,
-        so ``optimize_glb_textures`` never writes the twin in the first place.
-        This is the RETROFIT, for a finished GLB that already carries twins --
-        one built before that policy, or by a caller that asked for them.
-
-        Only a texture that HAS a KTX2 twin loses its fallback -- a texture
-        shipping a lone PNG keeps it -- and the orphaned images are collected
-        by :meth:`prune_glb_unreferenced_textures`, which owns image
-        renumbering and BIN repacking.
-
-        Parameters:
-            glb: Path to a ``.glb``, modified in place, or an open session.
-
-        Returns:
-            ``{"textures": n, "images": n, "bytes": n}``.
-        """
-        with cls.open_glb(glb) as edit:
+    def drop_glb_texture_fallbacks(self, glb: GlbTarget) -> Dict[str, int]:
+        with self._mc.open_glb(glb) as edit:
             gltf = edit.gltf
             textures = gltf.get("textures") or []
             if not textures:
@@ -199,7 +142,7 @@ class _TexturesMixin:
             edit.dirty = True
 
             before = len(gltf.get("images") or [])
-            result = cls.prune_glb_unreferenced_textures(edit)
+            result = self._mc.prune_glb_unreferenced_textures(edit)
             dropped = before - len(gltf.get("images") or [])
             reclaimed = int((result or {}).get("bytes") or 0)
             logger.info(
@@ -211,8 +154,7 @@ class _TexturesMixin:
             )
             return {"textures": touched, "images": dropped, "bytes": reclaimed}
 
-    @classmethod
-    def _image_semantics(cls, edit) -> Dict[int, str]:
+    def _image_semantics(self, edit) -> Dict[int, str]:
         """Map image index -> the strongest slot semantic sampling it.
 
         The structural classification KTX2 mode encodes by: "color" (base
@@ -224,7 +166,7 @@ class _TexturesMixin:
         image a loader would sample.
         """
         semantics: Dict[int, str] = {}
-        rank = cls._SEMANTIC_RANK
+        rank = self._SEMANTIC_RANK
 
         def note(ref: Optional[dict], semantic: str) -> None:
             if not ref:
@@ -245,9 +187,8 @@ class _TexturesMixin:
             note(mat.get("normalTexture"), "normal")
         return semantics
 
-    @classmethod
     def _uastc_rdo_for(
-        cls, semantic: Optional[str], uastc_rdo: Optional[float]
+        self, semantic: Optional[str], uastc_rdo: Optional[float]
     ) -> Optional[float]:
         """The RDO lambda a UASTC encode of *semantic* takes: the caller's,
         capped at :attr:`UASTC_RDO_NORMAL_MAX` for a normal map; None = off."""
@@ -255,9 +196,8 @@ class _TexturesMixin:
 
         return Ktx2Encoder.rdo_for(uastc_rdo, normal_map=semantic == "normal")
 
-    @classmethod
     def describe_texture_pass(
-        cls,
+        self,
         summary: Dict[str, Any],
         image_format: str,
         max_size: int = 0,
@@ -265,35 +205,6 @@ class _TexturesMixin:
         uastc_rdo: Optional[float] = None,
         uastc_rdo_dictionary: Optional[int] = None,
     ) -> str:
-        """Human-readable outcome of :meth:`optimize_glb_textures`, for log lines.
-
-        Twin of :meth:`MapOptimizer.describe_size_clamp`, and here for the same
-        reason: the wording is a claim about THIS method's contract, and both
-        DCC exporters have to make it. They cannot import each other, so a
-        sentence written in both drifts in both -- which it already had, the
-        Blender copy trailing Maya's.
-
-        The claim worth centralising is that *max_size* is a **ceiling, not a
-        target**. An asset authored at the ceiling resamples nothing, so a
-        caller that reports the MODE ("resized") tells its user the exporter
-        rescaled textures it never touched -- read, on a 2048 set under a 2048
-        ceiling, as "it upscaled my maps to 2K". ``summary["resized"]`` is the
-        count that actually happened, and this renders it.
-
-        Parameters:
-            summary: What :meth:`optimize_glb_textures` returned. Empty means
-                the pass ran and replaced nothing, which gets its own sentence
-                -- "asked for and got nothing" must not read like "never ran".
-            image_format: The carrier the pass was asked for (``"KTX2"``, ...).
-            max_size: The ceiling that was in force; ``0`` = never resample.
-            secondary_max_size: The data-map ceiling in force, if any.
-            uastc_rdo: The UASTC RDO lambda in force, if any.
-            uastc_rdo_dictionary: The RDO dictionary size in force, if any
-                (None is toktx's own); named only beside an RDO lambda.
-
-        Returns:
-            One complete sentence, ready to log.
-        """
         if not summary:
             return (
                 f"GLB texture pass ({image_format}) changed nothing: no "
@@ -347,8 +258,7 @@ class _TexturesMixin:
             f"{summary['bytes_after'] / 1e6:.1f} MB ({did})."
         )
 
-    @classmethod
-    def _reconcile_texture_extensions(cls, gltf: Dict[str, Any]) -> None:
+    def _reconcile_texture_extensions(self, gltf: Dict[str, Any]) -> None:
         """Re-derive the texture-container extension declarations from the bindings.
 
         ``extensionsUsed`` and ``extensionsRequired`` are claims about what a
@@ -375,7 +285,7 @@ class _TexturesMixin:
         self-healing on a file that arrives with stale declarations.
         """
         textures = gltf.get("textures") or []
-        for name in cls.TEXTURE_CONTAINER_EXTENSIONS:
+        for name in self._mc.TEXTURE_CONTAINER_EXTENSIONS:
             bindings = [t for t in textures if name in (t.get("extensions") or {})]
             claims = (
                 ("extensionsUsed", bool(bindings)),
@@ -391,9 +301,8 @@ class _TexturesMixin:
                 if key in gltf and not gltf[key]:
                     del gltf[key]
 
-    @classmethod
     def web_delivery_texture_params(
-        cls,
+        self,
         image_format: Optional[str] = None,
         max_size: Optional[int] = None,
         ktx2_fallback: Optional[bool] = None,
@@ -401,90 +310,35 @@ class _TexturesMixin:
         uastc_rdo: Optional[float] = None,
         uastc_rdo_dictionary: Optional[int] = None,
     ) -> Dict[str, Any]:
-        """:meth:`optimize_glb_textures` kwargs for a WEB deliverable.
-
-        The one definition of "finished for the web", so the producers of that
-        deliverable cannot each hold their own. They did, and it showed:
-        measured on one production assembly, in one session, from one scene --
-        the WebXR preview shipped 8.71 MB of WebP, the scene exporter with its
-        panel dials untouched shipped 280.13 MB of full-resolution PNG, and the
-        same exporter with the dials set to WebP shipped 22.06 MB because its
-        size ceiling resolved from an absent template budget to "never
-        resample". An artist approves the first and hands a developer the
-        second; nothing in either log says they differ.
-
-        Every parameter distinguishes *unspecified* from *chosen*: ``None``
-        takes the policy, and any other value -- ``0`` for "keep every pixel"
-        included -- is the caller's decision. That matters because the callers
-        pass values resolved from UI dials whose own "unset" is falsy, and a
-        falsy default reaching :meth:`optimize_glb_textures` as an explicit
-        argument stops inheriting anything and starts meaning something.
-
-        ``ktx2_fallback`` is policy too, and off: the PNG/JPEG twin a KTX2 image
-        can carry serves only a stock glTF importer, and a web deliverable is
-        read by a basisu-capable viewer. Leaving it to each producer ("a
-        property of the consumer") let the exporters keep the twins -- a
-        production 4K assembly shipped 145.8 MB of them beside 123.1 MB of KTX2,
-        48% of the GLB. A caller whose GLB must also open in Blender or Unreal
-        asks for the twins here -- the scene exporters' ``KTX2 + PNG/JPEG``
-        Texture File Type does.
-
-        Parameters:
-            image_format: Container override, as a format id (``"WEBP"``) or a
-                file extension (``"jpg"``, the vocabulary of the Scene
-                Exporter's Texture File Type row) -- returned as the id
-                :meth:`optimize_glb_textures` needs. ``None``/empty takes
-                :attr:`WEB_DELIVERY_FORMAT`.
-            max_size: Longest-edge ceiling in pixels; ``None`` takes
-                :attr:`WEB_DELIVERY_MAX_SIZE`, ``0`` skips resizing.
-            ktx2_fallback: Whether each KTX2 image also carries a PNG/JPEG
-                twin (KTX2 mode only); ``None`` takes
-                :attr:`WEB_DELIVERY_KTX2_FALLBACK` (no twins).
-            secondary_max_size: A lower ceiling for the packed data maps
-                (:attr:`SECONDARY_SEMANTICS`); ``None`` takes
-                :attr:`WEB_DELIVERY_SECONDARY_MAX_SIZE`, ``0`` follows
-                ``max_size``.
-            uastc_rdo: UASTC RDO lambda for the KTX2 encodes; ``None`` takes
-                :attr:`WEB_DELIVERY_UASTC_RDO`, ``0`` is off.
-            uastc_rdo_dictionary: RDO dictionary size for those encodes;
-                ``None`` takes :attr:`WEB_DELIVERY_UASTC_RDO_DICTIONARY`, ``0``
-                is toktx's own.
-
-        Returns:
-            ``{"image_format": str, "max_size": int, "ktx2_fallback": bool,
-            "secondary_max_size": int, "uastc_rdo": float | None,
-            "uastc_rdo_dictionary": int | None}``.
-        """
         return {
-            "image_format": cls._image_format_id(image_format)
-            or cls.WEB_DELIVERY_FORMAT,
+            "image_format": self._image_format_id(image_format)
+            or self._mc.WEB_DELIVERY_FORMAT,
             "max_size": (
-                cls.WEB_DELIVERY_MAX_SIZE if max_size is None else int(max_size)
+                self._mc.WEB_DELIVERY_MAX_SIZE if max_size is None else int(max_size)
             ),
             "ktx2_fallback": (
-                cls.WEB_DELIVERY_KTX2_FALLBACK
+                self._mc.WEB_DELIVERY_KTX2_FALLBACK
                 if ktx2_fallback is None
                 else bool(ktx2_fallback)
             ),
             "secondary_max_size": (
-                cls.WEB_DELIVERY_SECONDARY_MAX_SIZE
+                self._mc.WEB_DELIVERY_SECONDARY_MAX_SIZE
                 if secondary_max_size is None
                 else int(secondary_max_size)
             ),
             "uastc_rdo": (
-                cls.WEB_DELIVERY_UASTC_RDO
+                self._mc.WEB_DELIVERY_UASTC_RDO
                 if uastc_rdo is None
                 else (float(uastc_rdo) or None)
             ),
             "uastc_rdo_dictionary": (
-                cls.WEB_DELIVERY_UASTC_RDO_DICTIONARY
+                self._mc.WEB_DELIVERY_UASTC_RDO_DICTIONARY
                 if uastc_rdo_dictionary is None
                 else (int(uastc_rdo_dictionary) or None)
             ),
         }
 
-    @classmethod
-    def _image_format_id(cls, container: Optional[str]) -> str:
+    def _image_format_id(self, container: Optional[str]) -> str:
         """*container* as the format id :meth:`optimize_glb_textures` needs.
 
         That pass hands ``image_format`` straight to Pillow AND builds the glTF
@@ -504,7 +358,7 @@ class _TexturesMixin:
         token = str(container or "").strip().lower().lstrip(".")
         if not token:
             return ""
-        mime = cls.IMAGE_MIME_TYPES.get(f".{token}", "")
+        mime = self._mc.IMAGE_MIME_TYPES.get(f".{token}", "")
         return (mime.split("/")[-1] or token).upper()
 
     @staticmethod
@@ -521,9 +375,8 @@ class _TexturesMixin:
         """
         return sorted(jobs, key=lambda key: len(jobs[key]), reverse=True)
 
-    @classmethod
     def optimize_glb_textures(
-        cls,
+        self,
         glb: GlbTarget,
         max_size: int = WEB_DELIVERY_MAX_SIZE,
         image_format: str = WEB_DELIVERY_FORMAT,
@@ -534,144 +387,6 @@ class _TexturesMixin:
         uastc_rdo: Optional[float] = WEB_DELIVERY_UASTC_RDO,
         uastc_rdo_dictionary: Optional[int] = WEB_DELIVERY_UASTC_RDO_DICTIONARY,
     ) -> Dict[str, Any]:
-        """Downsize and re-encode a GLB's embedded images for web delivery.
-
-        The texture budget IS the file: measured on a production room, the GLB
-        was 94.7 MB of which 87.8 MB (93%) was uncompressed source PNG -- a
-        24 MB normal map, a 20 MB character texture -- against 2.6 MB of
-        geometry. A headset streams that, then holds it decoded in GPU memory.
-        blendertk's native web export learned this first
-        (``LightmapWebExport``: *"the texture budget is the whole file
-        size"*); this is the same policy for the FBX->GLB path the WebXR
-        preview and the exporters use, as a separate opt-in pass so plain
-        conversions stay byte-stable.
-
-        Every embedded image (bufferView-backed or data URI) is decoded,
-        resized so its longest edge is *max_size*, and re-encoded. WebP is the
-        default, and because nothing core-readable survives that pass (the
-        image IS the WebP), ``EXT_texture_webp`` lands in ``extensionsRequired``
-        -- the file says it needs a WebP-capable reader instead of handing a
-        core one WebP bytes through a plain ``source``, which glTF 2.0, whose
-        core permits image/jpeg and image/png only, does not allow. WebP is
-        alpha-capable, universally decoded by WebXR-class browsers, and roughly
-        an order of magnitude smaller than PNG at visually equal quality.
-
-        The lossy encoder is used only where the channels ARE colour -- base
-        colour and emissive (:attr:`LOSSY_SAFE_SEMANTICS`). Normal and
-        metallic-roughness/occlusion maps re-encode LOSSLESS, because WebP's
-        lossy mode is YUV 4:2:0 and their X/Z and metalness/occlusion channels
-        sit in the half-resolution chroma planes, where they are resampled as
-        if the eye were judging them; the same split
-        :attr:`BASIS_BY_SEMANTIC` makes for KTX2. Lightmaps are additionally
-        exempt from the resize (the bake sized them deliberately) and never
-        lossy-encoded whatever they are sampled as; a lightmap is found by its
-        binding -- a texCoord-1 occlusion/emissive map -- never by its name, so
-        a digest-deduped image whose name lies is still protected. A re-encode
-        that comes out larger keeps the original bytes.
-
-        The BIN chunk is repacked -- image payloads replaced, former data-URI
-        images relocated into it (dropping base64's 33%), every other
-        bufferView's bytes copied verbatim with offsets recomputed. Textures
-        sampling a converted image gain the standard ``EXT_texture_webp``
-        binding while keeping their plain ``source`` as the fallback the
-        extension spec describes.
-
-        ``image_format="KTX2"`` is the GPU-memory half: images are encoded to
-        KTX2/Basis Universal (requires the ``toktx`` encoder -- see
-        ``pythontk.Ktx2Encoder``; the pass raises upfront when it is missing
-        rather than silently shipping WebP) and textures rebind through
-        ``KHR_texture_basisu``. Where WebP only shrinks the wire, Basis stays
-        block-compressed in GPU memory -- measured on a delivered preview GLB,
-        6 MB of WebP decoded to ~740 MB of RGBA+mips, which is the actual
-        headset ceiling. Specifics of this mode, chosen deliberately:
-
-        * **Per-slot codecs** -- images sampled as normal / metallic-roughness /
-          occlusion encode UASTC + linear; base color / emissive encode ETC1S +
-          sRGB; an image shared across slots takes the stricter treatment, and
-          one bound to a texture but to no material slot gets UASTC + sRGB. An
-          image *no texture samples* is left as found -- nothing could rebind
-          it, and a non-core ``image/ktx2`` that no declaration enables is
-          invalid glTF. Same rule as ``MapOptimizer.resolve_compression``,
-          keyed structurally (by glTF slot) instead of by filename.
-        * **Lightmaps take UASTC + sRGB** (:attr:`LIGHTMAP_BASIS`, which says
-          why and what it measured) -- never ETC1S, which blotches them as
-          lossy WebP does, never RDO, and never resampled: a lightmap whose
-          edges are not both powers of two cannot meet the snap below, so it
-          keeps a lossless container instead, as every lightmap does with
-          :attr:`LIGHTMAP_BASIS` set to None. That container follows
-          *ktx2_fallback*: with fallbacks ON it is the core-readable PNG,
-          because EXT_texture_webp may only stay out of ``extensionsRequired``
-          when the texture carries a PNG/JPEG twin, and WebP + twin costs more
-          than the PNG alone (measured: 103 KB + 209 KB vs 209 KB). Pure
-          delivery takes lossless WebP and requires the extension.
-        * **No core-readable fallback by default** (*ktx2_fallback*, the
-          web-delivery policy): the extension lands in
-          ``extensionsRequired`` and the deliverable needs a
-          ``KHR_texture_basisu``-capable viewer (three.js ``KTX2Loader``; the
-          bundled preview page wires it). ``ktx2_fallback=True`` embeds a
-          resized PNG/JPEG twin per converted image, bound as the texture's
-          plain ``source`` -- the escape hatch the spec defines -- so the
-          extension stays in ``extensionsUsed`` and a stock glTF importer
-          (Blender, Unreal, Unity) still opens the file. That premium is a
-          second copy, not a modest one: UASTC-class images (normals,
-          metallic-roughness/occlusion) fall back to PNG, about the size of
-          their KTX2, and ETC1S color to JPEG at *quality* (PNG when it
-          carries alpha) -- measured on a production 4K assembly, 145.8 MB
-          of twins beside 123.1 MB of KTX2. A fallback whose own encode
-          fails is logged and dropped, and that image's binding re-tips the
-          extension into ``extensionsRequired`` -- never an unreadable
-          texture with a declaration claiming otherwise.
-        * **Dimensions snap down to power-of-two** -- ``KHR_texture_basisu``
-          requires multiple-of-4 dimensions and full mip pyramids (generated at
-          encode time; a GPU-compressed texture cannot mip itself), and POT is
-          what the WebGL/WebGPU backends want for that anyway. No-op for the
-          usual POT sources.
-        * **A larger encode is kept** (unlike the transport formats): UASTC can
-          exceed a source PNG on the wire and still be the right answer,
-          because the win being bought is GPU-resident format, not bytes.
-
-        Parameters:
-            glb: Path to a .glb, modified in place, or an open session.
-            max_size: Longest edge kept after resize. 0/None skips resizing.
-            image_format: ``"WEBP"`` (default), ``"KTX2"``, or any PIL-writable
-                format.
-            quality: Lossy quality for WEBP/JPEG, and the ETC1S quality dial in
-                KTX2 mode (UASTC's tier is fixed by the encoder). Also the
-                JPEG quality of KTX2-mode fallback images.
-            workers: Concurrent encode threads. Defaults to
-                :meth:`ImgUtils.encode_workers` (a memory-capped count shared
-                with every other texture pass); 1 forces the serial path.
-            ktx2_fallback: KTX2 mode only. ``False`` (default,
-                :attr:`WEB_DELIVERY_KTX2_FALLBACK`) ships KTX2 alone and
-                hard-requires a basisu-capable viewer
-                (``extensionsRequired``). ``True`` embeds a core-readable
-                PNG/JPEG twin per converted image and binds it as the
-                texture's plain ``source``, keeping the GLB importable
-                everywhere (extension in ``extensionsUsed``).
-            secondary_max_size: A lower longest-edge ceiling for the packed
-                data maps alone (:attr:`SECONDARY_SEMANTICS`: metallic-
-                roughness / occlusion), never above *max_size*; ``0`` follows
-                *max_size*. Color and normal maps keep the primary ceiling.
-            uastc_rdo: KTX2 mode only. UASTC rate-distortion lambda for the
-                normal / data encodes (``toktx --uastc_rdo_l``); a normal map
-                is capped at :attr:`UASTC_RDO_NORMAL_MAX`. ``None`` is off.
-                Measured on a 4K production set: ORM packs -30% at 1.0 (PSNR
-                50/44/48 dB), a noisy normal map -3.5%, encode 3-4x slower.
-            uastc_rdo_dictionary: KTX2 mode with *uastc_rdo* only. The RDO
-                dictionary size (``toktx --uastc_rdo_d``); the default is the
-                web-delivery policy (:attr:`WEB_DELIVERY_UASTC_RDO_DICTIONARY`),
-                ``None`` toktx's own.
-
-        Returns:
-            Summary dict: ``images`` (converted count), ``bytes_before`` /
-            ``bytes_after`` (image payload totals), and ``resized`` -- how many
-            of those images were actually RESAMPLED. *max_size* is a ceiling,
-            never a target: a source already within it keeps its pixels, so
-            ``resized`` is 0 for a whole asset authored at the ceiling and a
-            caller reporting the mode ("resized") rather than this count tells
-            its user their textures were rescaled when nothing was. Empty when
-            Pillow is unavailable or there is nothing to do.
-        """
         try:
             from PIL import Image
         except ImportError:
@@ -680,7 +395,9 @@ class _TexturesMixin:
         from pythontk.img_utils._img_utils import ImgUtils
 
         # An extension ("jpg") becomes Pillow's id; an empty one is the policy's.
-        image_format = cls._image_format_id(image_format) or cls.WEB_DELIVERY_FORMAT
+        image_format = (
+            self._image_format_id(image_format) or self._mc.WEB_DELIVERY_FORMAT
+        )
         is_ktx2 = image_format == "KTX2"
         mime = f"image/{image_format.lower()}"
         encoder = None
@@ -697,7 +414,7 @@ class _TexturesMixin:
             # image, each shipping its original bytes.
             Ktx2Encoder.rdo_for(uastc_rdo)
             uastc_rdo_dictionary = Ktx2Encoder.rdo_dictionary(uastc_rdo_dictionary)
-        with cls.open_glb(glb) as edit:
+        with self._mc.open_glb(glb) as edit:
             gltf = edit.gltf
             images = gltf.get("images") or []
             if not images:
@@ -726,7 +443,7 @@ class _TexturesMixin:
             # rasterizer, and the viewer's shim samples them by rect.
             kept: Set[int] = set()
             shadows = SceneRecords.glb_block(gltf, SceneRecords.SHADOWS)
-            for t_index in cls._shadow_texture_indices(shadows):
+            for t_index in self._mc._shadow_rigs._shadow_texture_indices(shadows):
                 src = edit.image_for_texture(t_index)
                 if src is not None:
                     kept.add(src)
@@ -735,7 +452,7 @@ class _TexturesMixin:
             # structure is in hand: KTX2 picks the codec and transfer by it,
             # WebP lossy or lossless, and every container resamples a normal
             # map as one (ImgUtils.resize_image says why).
-            semantic_by_image = cls._image_semantics(edit)
+            semantic_by_image = self._image_semantics(edit)
             #: Whether this pass hands a non-exempt image a container glTF core
             #: cannot read. Both are legal only through a TEXTURE-level
             #: extension (``KHR_texture_basisu`` / ``EXT_texture_webp``), which
@@ -825,7 +542,7 @@ class _TexturesMixin:
                 # (the primary still bounds it); color and normals keep the
                 # primary -- SECONDARY_SEMANTICS says why.
                 ceiling = max_size
-                if secondary_max_size and semantic in cls.SECONDARY_SEMANTICS:
+                if secondary_max_size and semantic in self._mc.SECONDARY_SEMANTICS:
                     ceiling = (
                         min(secondary_max_size, max_size)
                         if max_size
@@ -842,12 +559,12 @@ class _TexturesMixin:
                 # never resampled, so only POT edges meet the snap below.
                 basis = None
                 if is_ktx2 and not is_exempt:
-                    basis = cls.BASIS_BY_SEMANTIC.get(
-                        semantic, cls.BASIS_BY_SEMANTIC[None]
+                    basis = self._mc.BASIS_BY_SEMANTIC.get(
+                        semantic, self._mc.BASIS_BY_SEMANTIC[None]
                     )
-                elif is_ktx2 and cls.LIGHTMAP_BASIS:
+                elif is_ktx2 and self._mc.LIGHTMAP_BASIS:
                     if all(edge >= 4 and not edge & (edge - 1) for edge in pil.size):
-                        basis = cls.LIGHTMAP_BASIS
+                        basis = self._mc.LIGHTMAP_BASIS
                 if is_ktx2 and not is_exempt:
                     # KHR_texture_basisu requires multiple-of-4 dimensions and
                     # a full mip pyramid (generated at encode time); POT
@@ -877,7 +594,7 @@ class _TexturesMixin:
                             # a registered encoder need not model it), and it
                             # is a UASTC-only stage a lightmap never takes.
                             rdo = (
-                                cls._uastc_rdo_for(semantic, uastc_rdo)
+                                self._mc._uastc_rdo_for(semantic, uastc_rdo)
                                 if codec == "UASTC" and not is_exempt
                                 else None
                             )
@@ -958,7 +675,7 @@ class _TexturesMixin:
                 if pil_format == "PNG":
                     save_kwargs = {}
                 elif pil_format == "WEBP" and (
-                    is_exempt or semantic not in cls.LOSSY_SAFE_SEMANTICS
+                    is_exempt or semantic not in self._mc.LOSSY_SAFE_SEMANTICS
                 ):
                     # Lossy WebP is YUV 4:2:0 -- chroma at half resolution,
                     # quantized -- so it is only safe where the channels ARE
@@ -977,7 +694,7 @@ class _TexturesMixin:
                     # 30.8 dB. That reads as smeared normals and flat, uniform
                     # roughness -- the deliverable looking like it shipped
                     # without those maps rather than with damaged ones.
-                    save_kwargs = dict(cls.LOSSLESS_WEBP)
+                    save_kwargs = dict(self._mc.LOSSLESS_WEBP)
                 else:
                     save_kwargs = {"quality": quality}
                 buffer = io.BytesIO()
@@ -1004,7 +721,7 @@ class _TexturesMixin:
             # to workers would cost more than the encode saves. The count is
             # the shared encode policy (memory-capped: ImgUtils.encode_workers).
             count = max(1, min(ImgUtils.encode_workers(workers), len(jobs)))
-            order = cls._largest_first(jobs)
+            order = self._mc._largest_first(jobs)
             if count > 1:
                 with ThreadPoolExecutor(
                     max_workers=count, thread_name_prefix="ptk-glb-optimize"
@@ -1205,7 +922,7 @@ class _TexturesMixin:
             # Declarations are DERIVED from the bindings above rather than
             # accumulated by whichever branch ran, which is what kept a
             # superseded pass's claim alive (see the method's own docstring).
-            cls._reconcile_texture_extensions(gltf)
+            self._reconcile_texture_extensions(gltf)
 
             edit.replace_rest(new_bin)
 
