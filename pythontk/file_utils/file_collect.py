@@ -514,6 +514,50 @@ class FileCollect(LoggingMixin):
             )
         return out
 
+    @classmethod
+    def finish_move(
+        cls, pairs: Iterable[Tuple[str, str]], keep: Iterable[str] = ()
+    ) -> Tuple[List[str], List[str]]:
+        """A move's last step, for a host that placed its copies itself (the
+        Texture Path Editor's Normalize Paths stages under ``_N`` variants, not
+        a Collect's folders): take each source of *pairs* away -- once its
+        destination holds its whole bytes, never when the source IS its
+        destination however spelled, and never a file in *keep*.
+
+        Call it after the readers are repointed, with *keep* every file a
+        reader still reads (the scene's readers, a repointed one now reading
+        its copy -- :meth:`CollectHost.read_elsewhere` over none): a reader
+        outside the move, or one whose repath failed, keeps its file. Kept by
+        file identity, however its readers spell it.
+
+        Parameters:
+            pairs: ``[(source, destination)]``; a tile set's pattern stands for
+                its tiles. One source twice (two readers of one file) is
+                taken once.
+            keep: Files readers still read; a set by its pattern or a tile.
+
+        Returns:
+            ``(taken, kept)`` -- the sources removed, and the ones left because
+            a reader still reads them.
+        """
+        stay = {cls._identity(f) for path in keep for f in cls.source_files(path)}
+        files: Dict[str, Tuple[str, str]] = {}
+        for src, dst in pairs:
+            for s, d in cls._files({"source": src, "destination": dst}):
+                files.setdefault(os.path.normcase(os.path.abspath(s)), (s, d))
+        # Judged before anything goes: an identity read after a removal is a
+        # spelling, and the kept file would be taken through its other name.
+        kept, drop = [], []
+        for src, dst in files.values():
+            if cls._identity(src) in stay:
+                kept.append(src)
+            elif os.path.exists(src) and not FileUtils.is_same_file(src, dst):
+                if cls._holds(src, dst):
+                    drop.append((src, dst))
+        cls._drop_sources(drop)
+        taken = [src for src, _dst in drop if not os.path.exists(src)]
+        return taken, kept
+
     @staticmethod
     def _take_back(failed, landed_files, written, key) -> None:
         """Remove what this apply wrote for the rows that did not land: a set

@@ -700,3 +700,46 @@ class TestSetDirectory(_CollectCase):
     def test_an_unknown_mode_raises(self):
         with self.assertRaises(ValueError):
             FileCollect().set_directory([], self.dest, "bogus")
+
+
+class TestFinishMove(_CollectCase):
+    """``FileCollect.finish_move``: the take-away of a move whose copies a host
+    placed itself."""
+
+    def test_a_source_goes_once_its_copy_holds_it(self):
+        src = self._file("ext", "a.png", data=b"A")
+        dst = self._file("dest", "a.png", data=b"A")
+        taken, kept = FileCollect.finish_move([(src, dst), (src, dst)])
+        self.assertEqual((len(taken), kept), (1, []))
+        self.assertFalse(os.path.exists(src))
+
+    def test_a_file_a_reader_still_reads_stays_however_spelled(self):
+        real = os.path.join(self.tmp, "real")
+        src = self._file("real", "a.png", data=b"A")
+        dst = self._file("dest", "a.png", data=b"A")
+        alias = self._junction(os.path.join(self.tmp, "alias"), real)
+        taken, kept = FileCollect.finish_move([(src, dst)], keep=[os.path.join(alias, "a.png")])
+        self.assertEqual((taken, len(kept)), ([], 1))
+        self.assertTrue(os.path.exists(src))
+
+    def test_never_a_source_whose_copy_differs_or_is_itself(self):
+        src = self._file("ext", "a.png", data=b"OURS")
+        theirs = self._file("dest", "a.png", data=b"THEM")
+        real = os.path.join(self.tmp, "real")
+        only = self._file("real", "b.png", data=b"ONLY")
+        alias = self._junction(os.path.join(self.tmp, "alias"), real)
+        taken, _kept = FileCollect.finish_move(
+            [(src, theirs), (only, os.path.join(alias, "b.png"))]
+        )
+        self.assertEqual(taken, [])
+        self.assertTrue(os.path.exists(src) and os.path.exists(only))
+
+    def test_a_tile_set_goes_by_its_tiles(self):
+        for tile in ("1001", "1002"):
+            self._file("ext", f"rock.{tile}.png", data=tile.encode())
+            self._file("dest", f"rock.{tile}.png", data=tile.encode())
+        taken, _kept = FileCollect.finish_move(
+            [(os.path.join(self.tmp, "ext", "rock.<UDIM>.png"), self._at("rock.<UDIM>.png"))]
+        )
+        self.assertEqual(len(taken), 2)
+        self.assertEqual(os.listdir(os.path.join(self.tmp, "ext")), [])
