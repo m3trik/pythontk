@@ -700,6 +700,36 @@ class MeshConvert(HelpMixin):
         """
         return cls._fbx2gltf.restore_glb_skin_weights(glb, fbx)
 
+    @classmethod
+    def restore_glb_rotations(
+        cls, glb: GlbTarget, fbx: str, fps: Optional[float] = None
+    ) -> Dict[str, int]:
+        """Give each node scaled flat on an axis the rotation FBX2glTF dropped.
+
+        A zero scale leaves the converter's matrix decomposition no rotation to
+        recover, and it drops what it cannot say: the node's rest rotation
+        and every rotation channel compared against it, or a take's channel
+        when every frame of it is flat -- so the node plays unrotated while its
+        FBX twin keeps the tilt. The FBX's own ``Lcl Rotation`` curves are read
+        back and composed as the converter composes them (rotation order,
+        pre/post rotation, the axis turn of a root child), on the time input
+        the converter wrote for each take -- see
+        :class:`~pythontk.file_utils.mesh_convert.glb.rotations.GlbRotations`.
+        :meth:`fbx_to_glb` runs it on the converter's own output.
+
+        Parameters:
+            glb: Path to a ``.glb``, modified in place, or an open session.
+            fbx: The FBX the GLB was converted from.
+            fps: The rate the converter baked at; :attr:`CONVERSION_BAKE_FPS`
+                when not given.
+
+        Returns:
+            ``{"nodes": n, "channels": n}`` -- rest rotations and rotation
+            channels written. Its FBX is read only when a node is flat at rest
+            or at every key of a take, and lacks a rotation.
+        """
+        return cls._fbx2gltf.restore_glb_rotations(glb, fbx, fps)
+
     # Read beyond the facade (its tests, sibling modules): the part's own.
     @classmethod
     def _platform_exe_name(cls) -> str:

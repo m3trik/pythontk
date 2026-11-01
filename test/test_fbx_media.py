@@ -599,6 +599,9 @@ def build_curve_fbx(
     layers=None,
     base_layer=lambda take: "BaseLayer",
     user=(),
+    poses=None,
+    parents=None,
+    axes=None,
 ) -> str:
     """An FBX whose takes animate real curves, written by :class:`FbxWriter`.
 
@@ -615,7 +618,14 @@ def build_curve_fbx(
     gives a take extra, empty layers; *base_layer* names a take's first layer
     (Maya's ``BaseLayer``; Blender names it after the take); *user* names
     the user properties (``A+U``, a DCC's custom attributes) every model
-    declares. 30 fps (``TimeMode`` 6).
+    declares. *poses* ``{model: {property: value}}`` gives a model its own
+    transform properties (``Lcl Scaling``, ``RotationOrder``,
+    ``PreRotation`` ...), a model no take keys among them -- the FBX SDK
+    reads no model without one, so a file FBX2glTF converts poses each;
+    *parents* ``{model: parent model}`` parents one under another (the root,
+    by default); *axes*
+    ``{property: int}`` declares the axis system (``UpAxis``, ``UpAxisSign``
+    ...). 30 fps (``TimeMode`` 6).
     """
     from pythontk.file_utils.mesh_convert._fbx_writer import FbxNode, FbxWriter
 
@@ -634,17 +644,26 @@ def build_curve_fbx(
         row = ["OO" if prop is None else "OP", w.i64(child), w.i64(parent)]
         connections.add("C", *row, *([] if prop is None else [prop]))
 
-    for channels in takes.values():
-        for model, *_rest in channels:
-            if model not in models:
-                models[model] = next(uid)
-                record = obj("Model", models[model], model, "Model")
-                record.props[2] = "Null"
-                link(models[model], 0)
-                if user:
-                    declared = record.add("Properties70")
-                    for prop in user:
-                        declared.p(prop, "Number", "", "A+U", 0.0)
+    kinds = {"RotationOrder": "enum", "RotationActive": "bool"}
+    named = [model for channels in takes.values() for model, *_rest in channels]
+    for model in dict.fromkeys([*named, *(poses or {}), *(parents or {})]):
+        models[model] = next(uid)
+        record = obj("Model", models[model], model, "Model")
+        record.props[2] = "Null"
+        own = (poses or {}).get(model, {})
+        if user or own:
+            declared = record.add("Properties70")
+            for prop, value in own.items():
+                if prop in kinds:
+                    declared.p(prop, kinds[prop], "", "", value)
+                elif prop.startswith("Lcl "):
+                    declared.p(prop, prop, "", "A", *map(float, value))
+                else:
+                    declared.p(prop, "Vector3D", "Vector", "", *map(float, value))
+            for prop in user:
+                declared.p(prop, "Number", "", "A+U", 0.0)
+    for model, oid in models.items():
+        link(oid, models[parents[model]] if model in (parents or {}) else 0)
 
     spans = {}
     for take, channels in takes.items():
@@ -710,6 +729,8 @@ def build_curve_fbx(
     settings = FbxNode("GlobalSettings")
     settings.add("Version", 1000)
     grid = settings.add("Properties70")
+    for prop, value in (axes or {}).items():
+        grid.p(prop, "int", "Integer", "", value)
     grid.p("TimeMode", "enum", "", "", 6)
     grid.p("CustomFrameRate", "double", "Number", "", -1.0)
     definitions = FbxNode("Definitions")

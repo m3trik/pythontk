@@ -2313,15 +2313,16 @@ class TestGlbEditSession(unittest.TestCase):
         from pythontk.file_utils.mesh_convert.fbx_file import FbxFile
 
         ticks = FbxFile.TICKS_PER_SECOND
-        # 2000 nodes over a 100 s take at 24 fps = 4.8M node-frames.
+        # 2000 nodes over a 100 s take at the 30 fps bake = 6M node-frames.
         animated = build_fbx(
             os.path.join(self.tmp, "animated.fbx"),
             {},
             models=2000,
             takes={"Take 001": (0, 100 * ticks)},
         )
-        self.assertEqual(MeshConvert.bake_node_frames(animated), 2000 * 100 * 24)
-        expected = 2000 * 100 * 24 * MeshConvert.TIMEOUT_SECONDS_PER_NODE_FRAME
+        self.assertEqual(MeshConvert.CONVERSION_BAKE_FPS, 30.0)
+        self.assertEqual(MeshConvert.bake_node_frames(animated), 2000 * 100 * 30)
+        expected = 2000 * 100 * 30 * MeshConvert.TIMEOUT_SECONDS_PER_NODE_FRAME
         self.assertGreater(
             expected, MeshConvert.DEFAULT_TIMEOUT, "fixture too small to test"
         )
@@ -14577,11 +14578,21 @@ class TestNonFiniteKeys(unittest.TestCase):
     @unittest.skipUnless(
         _FBX2GLTF, "FBX2glTF is not installed; this test downloads nothing"
     )
-    @unittest.expectedFailure  # BACKLOG 2026-10-31: FBX2glTF drops the channel
     def test_a_flat_nodes_tilt_survives_the_converter(self):
         """A node scaled flat on one axis for the whole clip decomposes to a
         NaN rotation on every key, and FBX2glTF drops that channel itself:
-        the node plays unrotated before any repair here can run."""
+        the node played unrotated before any repair here could run. The tilt
+        is read back from the FBX (``MeshConvert.restore_glb_rotations``) --
+        here on a take the converter left with no channel, so no time input
+        either: one is minted on its bake grid."""
+        for args, fps in (
+            (None, MeshConvert.CONVERSION_BAKE_FPS),
+            (["--anim-framerate", "bake60"], 60.0),
+        ):
+            with self.subTest(fps=fps):
+                self._assert_flat_tilt(args, fps)
+
+    def _assert_flat_tilt(self, args, fps):
         from test_gltf2fbx import GltfBuilder
 
         b = GltfBuilder()
@@ -14602,18 +14613,269 @@ class TestNonFiniteKeys(unittest.TestCase):
                 }
             ],
         )
-        authored = b.write_glb(os.path.join(self.tmp, "flat.glb"))
-        fbx = MeshConvert.gltf_to_fbx(authored, os.path.join(self.tmp, "flat.fbx"))
-        glb = MeshConvert.fbx_to_glb(fbx, os.path.join(self.tmp, "flat_rt.glb"))
+        stem = os.path.join(self.tmp, f"flat_{fps:g}")
+        authored = b.write_glb(stem + ".glb")
+        fbx = MeshConvert.gltf_to_fbx(authored, stem + ".fbx")
+        glb = MeshConvert.fbx_to_glb(fbx, stem + "_rt.glb", extra_args=args)
         reader = GlbReader.load(glb)
         node = reader.node_index("flat")
         rotations = [
-            c
+            (a, c)
             for a in reader.gltf.get("animations") or []
             for c in a["channels"]
             if c["target"] == {"node": node, "path": "rotation"}
         ]
         self.assertTrue(rotations, "the flat node's tilt did not survive")
+        ((animation, channel),) = rotations
+        sampler = animation["samplers"][channel["sampler"]]
+        times = [t[0] for t in reader.accessor(sampler["input"])]
+        # The converter's grid: the take's 5/24 s, a frame of the bake rate.
+        count = int(5 / 24.0 * fps) + 1
+        self.assertEqual(len(times), count)
+        for k, t in enumerate(times):
+            self.assertAlmostEqual(t, k / fps, places=6)
+        self.assertAlmostEqual(
+            reader.gltf["accessors"][sampler["input"]]["max"][0], times[-1], places=6
+        )
+        # The authored tilt wherever it is read: 18 degrees a 1/24 s key.
+        for t, (x, y, z, w) in zip(times, reader.accessor(sampler["output"])):
+            half = math.radians(18 * 24 * t) / 2
+            self.assertAlmostEqual(
+                abs(x * math.sin(half) + w * math.cos(half)), 1.0, places=6
+            )
+        self.assertEqual(reader.nan_findings(deep=True), [])
+
+
+@unittest.skipUnless(
+    _FBX2GLTF, "FBX2glTF is not installed; this test downloads nothing"
+)
+class TestFlatNodeRotations(unittest.TestCase):
+    """The rotation FBX2glTF drops from a node scaled flat on one axis is read
+    back from its FBX, composed as the converter composes it.
+
+    Each fixture pairs a flat node with a ROUND twin keyed alike: the
+    converter writes the twin's rotation itself, so the twin is the reference
+    for every convention at once -- rotation order, pre/post rotation, the axis
+    turn of a root child, each take's time input and t = 0.
+    """
+
+    #: Two unit quaternions this close (``1 - |dot|``) are one rotation, to
+    #: the float32 the converter writes.
+    CLOSE = 1e-6
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="meshconvert_flat_")
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def _converted(self, fbx):
+        """FBX2glTF's own output for *fbx*, as :meth:`MeshConvert.fbx_to_glb`
+        runs it, before any pass."""
+        base = os.path.join(self.tmp, "raw")
+        subprocess.run(
+            [_FBX2GLTF, "-i", fbx, "-o", base, "--binary", "--user-properties"],
+            check=True,
+            capture_output=True,
+        )
+        return base + ".glb"
+
+    @staticmethod
+    def _channels(glb):
+        """``{(animation, node name, path): (input, output, values)}``."""
+        reader = GlbReader.load(glb)
+        names = [node.get("name") for node in reader.gltf["nodes"]]
+        found = {}
+        for animation in reader.gltf.get("animations") or []:
+            for channel in animation["channels"]:
+                sampler = animation["samplers"][channel["sampler"]]
+                key = (
+                    animation["name"],
+                    names[channel["target"]["node"]],
+                    channel["target"]["path"],
+                )
+                found.setdefault(key, []).append(
+                    (
+                        sampler["input"],
+                        sampler["output"],
+                        reader.accessor(sampler["output"]),
+                    )
+                )
+        return found
+
+    @staticmethod
+    def _rest(glb, name):
+        reader = GlbReader.load(glb)
+        return reader.gltf["nodes"][reader.node_index(name)].get("rotation")
+
+    def assertSameRotations(self, got, want):
+        self.assertEqual(len(got), len(want))
+        for a, b in zip(got, want):
+            self.assertLess(1 - abs(sum(x * y for x, y in zip(a, b))), self.CLOSE)
+
+    def assertTwins(self, before, after, take, flat, twin):
+        """*flat* gained one rotation channel in *take*, on the input its
+        *twin*'s shares, turning as the converter turned the twin."""
+        self.assertNotIn((take, flat, "rotation"), before)
+        ((source, _output, values),) = after[(take, flat, "rotation")]
+        ((twin_source, _twin_output, twin_values),) = after[(take, twin, "rotation")]
+        self.assertEqual(source, twin_source)
+        self.assertSameRotations(values, twin_values)
+
+    def test_each_take_gets_the_channel_the_converter_dropped_and_no_other(self):
+        """A node flat at rest loses every rotation (its rest too); one flat at
+        every key of take A only that take's. Take B starts off the bake grid
+        (frame 10.5), where the converter's t = 0 is the frame it truncates to.
+        Every channel the converter wrote stays as it wrote it, and a second
+        run changes nothing."""
+        from test_fbx_media import build_curve_fbx
+
+        def ramp(first, step):
+            return [(first + f, step * f) for f in range(8)]
+
+        takes = {
+            "A": {
+                ("round", "Lcl Rotation", "d|X"): ramp(0, 18.0),
+                ("flat", "Lcl Rotation", "d|X"): ramp(0, 18.0),
+                ("squash_round", "Lcl Rotation", "d|Z"): ramp(0, -11.0),
+                ("squash", "Lcl Rotation", "d|Z"): ramp(0, -11.0),
+                ("squash", "Lcl Scaling", "d|X"): [(f, 0.0) for f in range(8)],
+                ("squash", "Lcl Scaling", "d|Y"): [(f, 1.0) for f in range(8)],
+                ("squash", "Lcl Scaling", "d|Z"): [(f, 1.0) for f in range(8)],
+            },
+            "B": {
+                ("round", "Lcl Rotation", "d|X"): ramp(10.5, 5.0),
+                ("flat", "Lcl Rotation", "d|X"): ramp(10.5, 5.0),
+                ("squash", "Lcl Rotation", "d|Z"): ramp(10.5, 7.0),
+            },
+        }
+        tilt = {"Lcl Rotation": (12.0, 0.0, 0.0)}
+        fbx = build_curve_fbx(
+            os.path.join(self.tmp, "takes.fbx"),
+            takes,
+            poses={
+                "round": tilt,
+                "flat": {**tilt, "Lcl Scaling": (1.0, 0.0, 1.0)},
+                "squash_round": {"Lcl Scaling": (1.0, 1.0, 1.0)},
+                "squash": {"Lcl Scaling": (1.0, 1.0, 1.0)},
+            },
+        )
+        glb = self._converted(fbx)
+        before = self._channels(glb)
+        self.assertIsNone(self._rest(glb, "flat"))  # the defect, as shipped
+
+        report = MeshConvert.restore_glb_rotations(glb, fbx)
+
+        self.assertEqual(report, {"nodes": 1, "channels": 3})
+        after = self._channels(glb)
+        for key, written in before.items():
+            self.assertEqual(after[key], written, key)  # never rewritten
+        for key in set(after) - set(before):
+            self.assertEqual(len(after[key]), 1, key)  # never doubled
+        self.assertTwins(before, after, "A", "flat", "round")
+        self.assertTwins(before, after, "B", "flat", "round")
+        self.assertTwins(before, after, "A", "squash", "squash_round")
+        # Not flat in B: the converter's own channel, the only one.
+        self.assertIn(("B", "squash", "rotation"), before)
+        self.assertSameRotations(
+            [self._rest(glb, "flat")], [self._rest(glb, "round")]
+        )
+        with open(glb, "rb") as fh:
+            restored = fh.read()
+        self.assertEqual(
+            MeshConvert.restore_glb_rotations(glb, fbx), {"nodes": 0, "channels": 0}
+        )
+        with open(glb, "rb") as fh:
+            self.assertEqual(fh.read(), restored)
+
+    def test_order_pre_post_rotation_and_the_axis_turn_compose_as_converted(self):
+        """In a Z-up file: a root child with a ZXY order and pre/post rotation
+        (both in XYZ order), its child in YZX, and a model whose order and
+        pre/post rotation RotationActive switches off."""
+        from test_fbx_media import build_curve_fbx
+
+        posed = {
+            "RotationOrder": 4,
+            "PreRotation": (10.0, 20.0, 30.0),
+            "PostRotation": (5.0, -15.0, 25.0),
+            "Lcl Rotation": (30.0, 5.0, 0.0),
+        }
+        poses = {
+            "root": {**posed, "RotationActive": 1},
+            "kid": {"RotationOrder": 2, "RotationActive": 1},
+            "idle": {**posed, "RotationActive": 0},
+        }
+        flat = {"Lcl Scaling": (1.0, 0.0, 1.0)}
+        keys = {
+            axis: [(f, step * f) for f in range(6)]
+            for axis, step in (("d|X", 18.0), ("d|Y", -7.0), ("d|Z", 11.0))
+        }
+        takes = {
+            "Take": {
+                (f"{model}{suffix}", "Lcl Rotation", axis): curve
+                for model in poses
+                for suffix in ("_round", "_flat")
+                for axis, curve in keys.items()
+            }
+        }
+        fbx = build_curve_fbx(
+            os.path.join(self.tmp, "posed.fbx"),
+            takes,
+            poses={
+                f"{model}{suffix}": {**pose, **(flat if suffix == "_flat" else {})}
+                for model, pose in poses.items()
+                for suffix in ("_round", "_flat")
+            },
+            parents={"kid_round": "root_round", "kid_flat": "root_round"},
+            axes={"UpAxis": 2, "UpAxisSign": 1, "FrontAxis": 1, "FrontAxisSign": -1},
+        )
+        glb = self._converted(fbx)
+        before = self._channels(glb)
+
+        report = MeshConvert.restore_glb_rotations(glb, fbx)
+
+        self.assertEqual(report, {"nodes": 2, "channels": 3})
+        after = self._channels(glb)
+        for model in poses:
+            with self.subTest(model=model):
+                self.assertTwins(
+                    before, after, "Take", f"{model}_flat", f"{model}_round"
+                )
+                twin = self._rest(glb, f"{model}_round")
+                rest = self._rest(glb, f"{model}_flat")
+                if twin is None or abs(twin[3]) == 1.0:
+                    self.assertIsNone(rest)  # nothing to restore: no tilt at rest
+                else:
+                    self.assertSameRotations([rest], [twin])
+
+    def test_a_file_with_no_flat_node_lacking_a_rotation_never_reads_its_fbx(self):
+        """A flat node that states its rotation lost nothing, and a curve
+        proxy -- FBX-only transport carrying a ramp on ``scale.x`` -- is flat
+        wherever the ramp reads 0: neither costs the FBX's curves a read."""
+        from test_gltf2fbx import GltfBuilder
+
+        b = GltfBuilder()
+        marker = {MeshConvert.CURVE_PROXY_MARKER: {"type": "Bool", "value": True}}
+        proxy = {"fromFBX": {"userProperties": marker}}
+        b.gltf.update(
+            scenes=[{"nodes": [0, 1, 2]}],
+            nodes=[
+                {"name": "round"},
+                {
+                    "name": "tilted",
+                    "scale": [1.0, 0.0, 1.0],
+                    "rotation": [0.0, 0.0, 0.0, 1.0],
+                },
+                {"name": "fade__opacity", "scale": [0.0, 1.0, 1.0], "extras": proxy},
+            ],
+        )
+        glb = b.write_glb(os.path.join(self.tmp, "round.glb"))
+        with open(glb, "rb") as fh:
+            before = fh.read()
+        missing = os.path.join(self.tmp, "no_such.fbx")
+        self.assertEqual(
+            MeshConvert.restore_glb_rotations(glb, missing), {"nodes": 0, "channels": 0}
+        )
+        with open(glb, "rb") as fh:
+            self.assertEqual(fh.read(), before)
 
 
 if __name__ == "__main__":

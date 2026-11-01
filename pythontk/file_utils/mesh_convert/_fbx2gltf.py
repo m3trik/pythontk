@@ -93,16 +93,18 @@ class _Fbx2Gltf:
     TIMEOUT_SECONDS_PER_MB = 10.0
     #: Seconds of budget per node-frame FBX2glTF bakes. Size is a WEAK proxy
     #: for its cost: the converter evaluates every node at every frame of
-    #: every take (``--anim-framerate bake24``) whether or not the node is
+    #: every take (:attr:`CONVERSION_BAKE_FPS`) whether or not the node is
     #: animated, so a scene's bake cost is nodes x frames. Measured on a
-    #: production assembly: 2485 nodes x 1591 frames (3.95M node-frames)
-    #: took ~250 s of a ~400 s conversion -- and a 12 MB TEXTURELESS export
-    #: of the same scene, budgeted 300 s by size alone, timed out and lost
-    #: the push. ~63 us per node-frame measured; this is that with the same
-    #: ~5x margin the per-MB term carries.
+    #: production assembly: 2485 nodes x 1591 frames (3.95M node-frames,
+    #: counted at 24 fps) took ~250 s of a ~400 s conversion -- and a 12 MB
+    #: TEXTURELESS export of the same scene, budgeted 300 s by size alone,
+    #: timed out and lost the push. ~63 us per node-frame measured; this is
+    #: that with the same ~5x margin the per-MB term carries (~6x at the real
+    #: 30 fps bake).
     TIMEOUT_SECONDS_PER_NODE_FRAME = 3e-4
-    #: The converter's default bake rate (``bake24``).
-    CONVERSION_BAKE_FPS = 24.0
+    #: The converter's default bake rate (``bake30``): measured 2026-10-31, a
+    #: 24 fps file and a 30 fps file both bake at 1/30 s.
+    CONVERSION_BAKE_FPS = 30.0
     #: ``timeout=AUTO_TIMEOUT`` (the default) derives the budget from the input.
     #: Negative because no real timeout can be, so it cannot collide with a
     #: caller's value -- and unlike ``None`` it is not already meaningful to
@@ -468,6 +470,20 @@ class _Fbx2Gltf:
                     self._mc.restore_glb_skin_weights(edit, src_abs)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("GLB skin weight restore skipped: %s", exc)
+                # On the converter's own output too, and before the key repair:
+                # a node scaled flat on an axis has no rotation to decompose,
+                # and the converter DROPS it -- the rest rotation and each
+                # channel -- so only the FBX still holds it. It reads the
+                # converter's key times (finite: frame indices) and needs the
+                # animation the converter wrote for each take, which the repair
+                # prunes once it drops that animation's last channel.
+                # Self-gating: the FBX is read only when a node is flat.
+                try:
+                    self._mc.restore_glb_rotations(
+                        edit, src_abs, fps=self._bake_fps(cmd)
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("GLB rotation restore skipped: %s", exc)
                 # Ahead of every pass that reads a key: the converter bakes
                 # each node's local matrix and decomposes it, and a degenerate
                 # one (a zero scale) comes out a NaN rotation glTF forbids.
@@ -1372,3 +1388,34 @@ class _Fbx2Gltf:
         from pythontk.file_utils.mesh_convert.glb.skin_weights import GlbSkinWeights
 
         return GlbSkinWeights.restore(glb, fbx)
+
+    def restore_glb_rotations(
+        self, glb: GlbTarget, fbx: str, fps: Optional[float] = None
+    ) -> Dict[str, int]:
+        from pythontk.file_utils.mesh_convert.glb.rotations import GlbRotations
+
+        with self._mc.open_glb(glb) as edit:
+            # Curve proxies are FBX-only transport (stripped before the
+            # animation passes): a ramp at 0 reads as a flat node.
+            proxies = {
+                index
+                for index, node in enumerate(edit.gltf.get("nodes") or [])
+                if self._node_user_property(node, self._mc.CURVE_PROXY_MARKER)
+            }
+            return GlbRotations.restore(
+                edit, fbx, fps or self._mc.CONVERSION_BAKE_FPS, skip=proxies
+            )
+
+    def _bake_fps(self, args: Sequence[str]) -> float:
+        """The rate FBX2glTF bakes at, run with *args*: their
+        ``--anim-framerate`` (``bake24`` / ``bake30`` / ``bake60``), else
+        :attr:`CONVERSION_BAKE_FPS`."""
+        for position, arg in enumerate(args):
+            name, _, value = arg.partition("=")
+            if name != "--anim-framerate":
+                continue
+            if not value and position + 1 < len(args):
+                value = args[position + 1]
+            if value.startswith("bake") and value[4:].isdigit():
+                return float(value[4:])
+        return float(self._mc.CONVERSION_BAKE_FPS)

@@ -1471,6 +1471,34 @@ class FbxFile(_FbxFileInternal):
         Raises:
             ValueError: A curve whose key times and values differ in count.
         """
+        return {
+            take: {
+                key: [
+                    [
+                        time,
+                        value,
+                        self.KEY_INTERPOLATIONS.get(
+                            self._key_attr(curve, i)[0] & self._INTERPOLATION,
+                            "linear",
+                        ),
+                    ]
+                    for i, (time, value) in enumerate(zip(curve.times, curve.values))
+                ]
+                for key, curve in channels.items()
+            }
+            for take, channels in self._take_key_curves(properties, user, kind).items()
+        }
+
+    def _take_key_curves(
+        self,
+        properties: Collection[str] = (),
+        user: bool = False,
+        kind: str = "Model",
+    ) -> Dict[str, Dict[Tuple[str, str, str], _FbxCurve]]:
+        """:meth:`take_keys`' channels as the curves they are -- tangents and
+        all, each with its property's clamp step -- for
+        :meth:`_evaluate_curve` to read between keys: the same takes, labels
+        and base layer."""
         wanted = set(properties)
         source = self
         if not self._curves_decoded():
@@ -1527,7 +1555,7 @@ class FbxFile(_FbxFileInternal):
                 if prop in wanted or prop in users.get(parent, ()):
                     driven.setdefault(child, []).append((parent, prop))
 
-        takes: Dict[str, Dict[Tuple[str, str, str], List[List[Any]]]] = {}
+        takes: Dict[str, Dict[Tuple[str, str, str], _FbxCurve]] = {}
         for stack in stacks:
             channels = takes.setdefault(names[stack], {})
             layer = next(
@@ -1546,20 +1574,9 @@ class FbxFile(_FbxFileInternal):
                         key = (label(target), prop, component)
                         if key in channels:
                             continue  # FBX plays the first curve on a channel
-                        parsed = self._key_curve(arrays[curve])
-                        channels[key] = [
-                            [
-                                time,
-                                value,
-                                self.KEY_INTERPOLATIONS.get(
-                                    self._key_attr(parsed, i)[0] & self._INTERPOLATION,
-                                    "linear",
-                                ),
-                            ]
-                            for i, (time, value) in enumerate(
-                                zip(parsed.times, parsed.values)
-                            )
-                        ]
+                        channels[key] = self._key_curve(
+                            arrays[curve], self._clamp_threshold(prop)
+                        )
         return takes
 
     def take_layout(self, tolerance: float = 1e-4) -> Dict[str, Any]:
