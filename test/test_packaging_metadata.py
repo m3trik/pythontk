@@ -383,7 +383,7 @@ class TestNoDccImports(unittest.TestCase):
 
 
 class TestNoPlaceholderDocstrings(unittest.TestCase):
-    """A published class's docstring is what ``help()`` and ``API_REGISTRY.md``
+    """A published class's docstring is what ``help()`` and ``api.describe``
     show, so a stub is worse than none: it looks answered.
 
     Eleven classes read ``"<Name> — module namespace."`` — a refactor's

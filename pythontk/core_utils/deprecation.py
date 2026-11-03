@@ -18,8 +18,8 @@ is ``remove_in``: every deprecation names the version it stops working in, that
 version is parsed (a typo raises at import, because a ``remove_in`` that cannot
 be compared is an alias that never expires), and the resulting records are
 readable both at runtime (:meth:`Deprecation.registered`) and statically, by
-``generate_api_registry.py``, which walks the decorators with ``ast`` and fails
-``--check`` once a removal version has passed.
+m3trik's ``check_api_surface.py``, which walks the decorators with ``ast`` and
+fails ``--check`` once a removal version has passed.
 
 Five shapes, matching what the ecosystem actually retires:
 
@@ -395,7 +395,7 @@ class _DeprecationInternal:
         ``__deprecated__`` is set to the message string rather than ``True``
         because that is what :func:`warnings.deprecated` does on 3.13+, so
         anything that already understands the stdlib marker -- including
-        ``HelpMixin._is_deprecated`` -- understands this one, and the eventual
+        ``ApiSurface``'s live read -- understands this one, and the eventual
         migration is a deletion rather than a rewrite.
         """
         try:
@@ -548,7 +548,7 @@ class Deprecation(_DeprecationInternal):
         Due once *version* has reached *remove_in* AND, when the notice names
         the date it first shipped (*since*), :attr:`MIN_WINDOW_DAYS` have
         passed; a notice naming no date keeps the version rule alone. Public
-        for the reason :meth:`version_key` is: ``generate_api_registry.py``
+        for the reason :meth:`version_key` is: ``check_api_surface.py``
         loads this module off disk and judges ``--check`` with this function,
         so the static gate and the runtime roster cannot disagree.
 
@@ -568,8 +568,8 @@ class Deprecation(_DeprecationInternal):
         """Comparable key for a ``MAJOR.MINOR[.PATCH]`` release version.
 
         Public because the expiry rule has to be one implementation: this
-        module compares versions at runtime, and ``generate_api_registry.py``
-        compares them statically for the CI gate. That generator loads this
+        module compares versions at runtime, and ``check_api_surface.py``
+        compares them statically for the CI gate. That script loads this
         module straight off disk (it must run with nothing installed), so the
         alternative is a second copy of "what counts as a version" in a file
         that cannot import the first.
@@ -831,7 +831,7 @@ class Deprecation(_DeprecationInternal):
         Returns:
             (dict) Attribute name -> its registered record.
         """
-        # Not at module level: generate_api_registry.py loads this file off
+        # Not at module level: check_api_surface.py loads this file off
         # disk with nothing installed, so the module imports the stdlib only.
         from pythontk.core_utils.module_resolver import _ModuleHook
 
@@ -1039,8 +1039,8 @@ class Deprecation(_DeprecationInternal):
     ) -> Tuple[DeprecationRecord, ...]:
         """Every deprecation registered so far, sorted by removal version.
 
-        Complete only for modules that have been imported. The static walk in
-        ``generate_api_registry.py`` is the complete view of decorated symbols;
+        Complete only for modules that have been imported. The static walk
+        (:meth:`ApiSurface.read`) is the complete view of decorated symbols;
         this is the live one, and the only view that sees the shapes a static
         walk cannot resolve (module attributes, value vocabularies).
 

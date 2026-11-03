@@ -365,33 +365,6 @@ class SceneExporterBase(LoggingMixin):
         )
         return "".join(parts)
 
-    @ptk.Deprecation.symbol(
-        "SceneExporterBase.decide_check_failure",
-        remove_in="0.14.0",
-        since="2026-10-04",
-        reason="A failed check is decided where it fails, one check at a time.",
-    )
-    def confirm_check_override(self) -> bool:
-        """Ask whether to export despite the failed checks of the last run.
-
-        Retired: a run asks :meth:`decide_check_failure` the moment each check
-        fails. Kept for callers that still ask once, after the run.
-        """
-        failed = list(getattr(self.task_manager, "_last_failed_checks", ()) or ())
-        listed = ", ".join(failed[:10]) + (" \u2026" if len(failed) > 10 else "")
-        headline = (
-            f"{len(failed)} validation check(s) failed: {listed}."
-            if failed
-            else "A validation check failed."
-        )
-        return self.confirm(
-            f"{headline}\n\n"
-            "The export tasks have already run, so overriding now finishes THIS "
-            "run instead of re-running the whole pipeline over an already-"
-            "mutated scene.\n\n"
-            "Override the checks and export anyway?"
-        )
-
     def _warn_stopped_before_write(self, verdict: str) -> None:
         """Warn that the run stopped before its write, naming what it left behind.
 

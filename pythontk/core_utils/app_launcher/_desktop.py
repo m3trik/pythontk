@@ -6,7 +6,8 @@ Windows sessions (``current_session_id``, ``active_console_session_id``,
 ``is_interactive_session``; ``launch_in_session`` puts a GUI app on the
 logged-in desktop from the services session 0, through a discovered PsExec)
 and window lookup (``wait_for_ready``, ``get_window_titles``: ``EnumWindows``
-on Windows, the X11 client over the process tree on Linux).
+on Windows, plus the private desktop a hidden launch runs on; the X11 client
+over the process tree on Linux).
 
 One job of :class:`AppLauncher`, composed in ``_app_launcher.py``. A cross-call
 goes through the facade (imported on use: that module imports this one for its
@@ -236,34 +237,7 @@ class _DesktopMixin:
         system = platform.system().lower()
 
         if system == "windows":
-            import ctypes
-
-            # Callback function type for EnumWindows
-            WNDENUMPROC = ctypes.WINFUNCTYPE(
-                ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p
-            )
-            user32 = ctypes.windll.user32
-
-            found_windows = []
-
-            def enum_windows_callback(hwnd, _):
-                # Get the Process ID for this window handle
-                lpdw_process_id = ctypes.c_ulong()
-                user32.GetWindowThreadProcessId(hwnd, ctypes.byref(lpdw_process_id))
-
-                if lpdw_process_id.value == pid:
-                    # Check if window is visible (ignore background/hidden helper windows)
-                    if user32.IsWindowVisible(hwnd):
-                        # Ensure the window has a title (filters out unnamed tooltips/overlays)
-                        if user32.GetWindowTextLengthW(hwnd) > 0:
-                            found_windows.append(hwnd)
-                            return False  # Stop enumeration
-                return True  # Continue enumeration
-
-            # Trigger the enumeration
-            user32.EnumWindows(WNDENUMPROC(enum_windows_callback), 0)
-
-            return len(found_windows) > 0
+            return bool(AppLauncher.get_window_titles(pid))
 
         elif system == "linux":
             # X11/XWayland windows of the process or its descendants (a Linux
@@ -286,6 +260,9 @@ class _DesktopMixin:
     def get_window_titles(pid):
         """
         Returns a list of window titles owned by the given PID.
+
+        Its visible, titled windows: on Windows on this desktop and on the
+        private one a hidden :meth:`launch` or :meth:`run` of this process uses.
         """
         from pythontk.core_utils.app_launcher._app_launcher import AppLauncher
 
@@ -299,8 +276,13 @@ class _DesktopMixin:
                 ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p
             )
             user32 = ctypes.windll.user32
+            # A caller on the private desktop sees it twice: count each once.
+            seen = set()
 
             def enum_windows_callback(hwnd, _):
+                if hwnd in seen:
+                    return True
+                seen.add(hwnd)
                 lpdw_process_id = ctypes.c_ulong()
                 user32.GetWindowThreadProcessId(hwnd, ctypes.byref(lpdw_process_id))
 
@@ -313,7 +295,9 @@ class _DesktopMixin:
                             titles.append(buff.value)
                 return True
 
-            user32.EnumWindows(WNDENUMPROC(enum_windows_callback), 0)
+            callback = WNDENUMPROC(enum_windows_callback)
+            user32.EnumWindows(callback, 0)
+            AppLauncher._enum_hidden_windows(callback)
 
         elif system == "linux":
             titles = AppLauncher._x11_titles(pid) or []

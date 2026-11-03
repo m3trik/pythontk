@@ -5,13 +5,20 @@
 This module provides a mixin class that enhances class introspection by wrapping
 and extending Python's built-in help() functionality with filtering, sorting,
 and targeted output options.
+
+It renders; :class:`~pythontk.ApiSurface` reads. What a member is (its kind,
+signature, summary, flags, where it is defined) comes from the engine every
+reader of the public API shares -- the registries, the ``api.*`` operations,
+the drift gate -- so ``.help()`` and those readers can never describe one
+member two ways.
 """
 
 import json
 import inspect
 import pydoc
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
+from pythontk.core_utils.api_surface.api_surface import ApiSurface
 from pythontk.core_utils.symbol_record import SymbolRecord
 
 
@@ -147,14 +154,14 @@ class HelpMixin:
         """Get help for a specific member by name."""
         member = getattr(cls, name, None)
         if member is None:
-            msg = f"'{cls.__name__}' has no member '{name}'"
+            msg = cls._missing(name)
             if returns:
                 return msg
             print(msg)
             return None
 
         if brief:
-            output = cls._format_member_brief(name, member)
+            output = cls._format_member_brief(ApiSurface.record(cls, name))
         else:
             # Use built-in help for full documentation
             if returns:
@@ -185,28 +192,21 @@ class HelpMixin:
 
         # Get docstring
         if cls.__doc__:
-            doc_summary = cls._get_summary(cls.__doc__)
-            lines.append(f"    {doc_summary}")
+            lines.append(f"    {ApiSurface.summary(cls.__doc__)}")
             lines.append("")
 
-        # Collect members
-        collected = cls._collect_members(
-            members=members,
-            inherited=inherited,
-            private=private,
-        )
-
+        records = ApiSurface.members(cls, members, inherited=inherited, private=private)
         if sort:
-            collected = sorted(collected, key=lambda x: x[0])
+            records = sorted(records, key=lambda r: r.name)
 
         # Format output
-        if collected:
+        if records:
             lines.append("Members:")
-            for name, member, member_type in collected:
+            for record in records:
                 if brief:
-                    lines.append(cls._format_member_brief(name, member, member_type))
+                    lines.append(cls._format_member_brief(record))
                 else:
-                    lines.append(cls._format_member_full(name, member, member_type))
+                    lines.append(cls._format_member_full(record))
 
         output = "\n".join(lines)
         if returns:
@@ -215,144 +215,29 @@ class HelpMixin:
         return None
 
     @classmethod
-    def _collect_members(
-        cls,
-        members: Optional[str],
-        inherited: bool,
-        private: bool,
-    ) -> List[tuple]:
-        """Collect class members based on filters.
-
-        Returns:
-            List of (name, member, member_type) tuples.
-        """
-        result = []
-        own_attrs = set(cls.__dict__.keys()) if not inherited else None
-
-        for name in dir(cls):
-            # Skip private unless requested
-            if not private and name.startswith("_"):
-                continue
-
-            # Skip if not inherited and not defined in this class
-            if own_attrs is not None and name not in own_attrs:
-                continue
-
-            try:
-                member = getattr(cls, name)
-            except AttributeError:
-                continue
-
-            member_type = cls._get_member_type(cls, name, member)
-
-            # Filter by member type
-            if members is not None and members != "all":
-                if members == "methods" and member_type not in (
-                    "method",
-                    "classmethod",
-                    "staticmethod",
-                ):
-                    continue
-                elif members == "properties" and member_type != "property":
-                    continue
-                elif members == "classmethods" and member_type != "classmethod":
-                    continue
-                elif members == "staticmethods" and member_type != "staticmethod":
-                    continue
-
-            result.append((name, member, member_type))
-
-        return result
+    def _missing(cls, name: str) -> str:
+        """What every accessor says for a name the class does not have."""
+        return f"'{cls.__name__}' has no member '{name}'"
 
     @classmethod
-    def _get_member_type(cls, klass: type, name: str, member: Any) -> str:
-        """Determine the type of a class member."""
-        # Find the raw descriptor on whichever class in the MRO defines it.
-        # Looking only at ``klass.__dict__`` misclassified every INHERITED
-        # descriptor: the lookup missed, so a property fell through to the
-        # ``callable`` test and reported as "attribute", and an inherited
-        # static/classmethod reported as a plain "method". Classes here are
-        # routinely composed from capability mixins, so most descriptors are
-        # inherited.
-        raw = next(
-            (k.__dict__[name] for k in inspect.getmro(klass) if name in k.__dict__),
-            None,
-        )
-
-        if isinstance(raw, classmethod):
-            return "classmethod"
-        elif isinstance(raw, staticmethod):
-            return "staticmethod"
-        elif isinstance(raw, property):
-            return "property"
-        elif callable(member):
-            return "method"
-        else:
-            return "attribute"
+    def _type_label(cls, record: SymbolRecord) -> str:
+        """``[kind, flags]`` for one member's line."""
+        parts = [record.kind] + ApiSurface.flags(getattr(cls, record.name, None))
+        return f"[{', '.join(parts)}]"
 
     @classmethod
-    def _format_member_brief(
-        cls,
-        name: str,
-        member: Any,
-        member_type: Optional[str] = None,
-    ) -> str:
+    def _format_member_brief(cls, record: SymbolRecord) -> str:
         """Format a single member as a brief one-liner."""
-        if member_type is None:
-            member_type = cls._get_member_type(cls, name, member)
-
-        sig = cls._safe_signature(member, member_type)
-
-        # Get first line of docstring using inspect.getdoc for cleaner output
-        doc = ""
-        doc_str = inspect.getdoc(member)
-        if doc_str:
-            doc = cls._get_summary(doc_str)
-
-        # Build type label with flags
-        flags = cls._get_member_flags(member)
-        type_parts = [member_type] if member_type else []
-        if flags:
-            type_parts.append(flags)
-        type_label = f"[{', '.join(type_parts)}]" if type_parts else ""
-
-        return (
-            f"    {name}{sig}  {type_label}\n        {doc}"
-            if doc
-            else f"    {name}{sig}  {type_label}"
-        )
+        head = f"    {record.name}{record.signature}  {cls._type_label(record)}"
+        return f"{head}\n        {record.summary}" if record.summary else head
 
     @classmethod
-    def _format_member_full(
-        cls,
-        name: str,
-        member: Any,
-        member_type: Optional[str] = None,
-    ) -> str:
+    def _format_member_full(cls, record: SymbolRecord) -> str:
         """Format a single member with full documentation."""
-        if member_type is None:
-            member_type = cls._get_member_type(cls, name, member)
-
-        lines = []
-
-        sig = cls._safe_signature(member, member_type)
-
-        # Build type label with flags
-        flags = cls._get_member_flags(member)
-        type_parts = [member_type] if member_type else []
-        if flags:
-            type_parts.append(flags)
-        type_label = f"[{', '.join(type_parts)}]" if type_parts else ""
-
-        lines.append(f"\n    {name}{sig}  {type_label}")
-
-        # Full docstring using inspect.getdoc for cleaner output
-        doc_str = inspect.getdoc(member)
+        lines = [f"\n    {record.name}{record.signature}  {cls._type_label(record)}"]
+        doc_str = inspect.getdoc(getattr(cls, record.name, None))
         if doc_str:
-            doc_lines = doc_str.split("\n")
-            for line in doc_lines:
-                lines.append(f"        {line}")
-
+            lines += [f"        {line}" for line in doc_str.split("\n")]
         return "\n".join(lines)
 
     @staticmethod
@@ -366,22 +251,6 @@ class HelpMixin:
         escapes would surface as doubled-letter garbage.
         """
         return pydoc.plain(pydoc.render_doc(target, title="%s"))
-
-    @staticmethod
-    def _get_summary(docstring: str) -> str:
-        """Extract the first line/sentence from a docstring."""
-        if not docstring:
-            return ""
-        # Clean and get first non-empty line
-        lines = inspect.cleandoc(docstring).split("\n")
-        for line in lines:
-            line = line.strip()
-            if line:
-                # Truncate at first period if reasonable
-                if ". " in line:
-                    return line.split(". ")[0] + "."
-                return line
-        return ""
 
     # -------------------------------------------------------------------------
     # Structured Output (SymbolRecord)
@@ -400,19 +269,20 @@ class HelpMixin:
     ) -> Any:
         """Build the structured payload for ``help(as_dict=...)``.
 
-        A single member yields one enriched record dict; the whole class yields
-        ``{class, bases, mro, doc, members:[...]}``. This is the shape the
-        live-DCC RPC and any agent tooling consume.
+        A single member yields one enriched record dict
+        (:meth:`ApiSurface.enrich`); the whole class yields ``{class, bases,
+        mro, doc, members:[...]}``, the shape agent tooling consumes.
         """
         if name is not None:
-            member = getattr(cls, name, None)
-            if member is None:
-                payload: Any = {"error": f"'{cls.__name__}' has no member '{name}'"}
-            else:
-                payload = cls._enrich(cls._record_for(name, member))
+            record = ApiSurface.record(cls, name)
+            payload: Any = (
+                {"error": cls._missing(name)}
+                if record is None
+                else ApiSurface.enrich(cls, record)
+            )
         else:
-            records = cls._collect_records(
-                members=members, inherited=inherited, private=private
+            records = ApiSurface.members(
+                cls, members, inherited=inherited, private=private
             )
             if sort:
                 records = sorted(records, key=lambda r: r.name)
@@ -420,139 +290,10 @@ class HelpMixin:
                 "class": cls.__name__,
                 "bases": [b.__name__ for b in cls.__bases__],
                 "mro": [k.__name__ for k in inspect.getmro(cls)],
-                "doc": cls._get_summary(cls.__doc__) if cls.__doc__ else "",
-                "members": [cls._enrich(r) for r in records],
+                "doc": ApiSurface.summary(cls.__doc__),
+                "members": [ApiSurface.enrich(cls, r) for r in records],
             }
         return json.dumps(payload, indent=2) if as_json else payload
-
-    @classmethod
-    def _collect_records(
-        cls,
-        *,
-        members: Optional[str] = None,
-        inherited: bool = True,
-        private: bool = False,
-    ) -> List[SymbolRecord]:
-        """Collect members as bare :class:`SymbolRecord`s.
-
-        The core, un-enriched shape - shared with the static API registry, so
-        the runtime-vs-static drift gate can compare the two producers directly.
-        """
-        return [
-            cls._record_for(name, member, member_type)
-            for name, member, member_type in cls._collect_members(
-                members=members, inherited=inherited, private=private
-            )
-        ]
-
-    @classmethod
-    def _record_for(
-        cls, name: str, member: Any, member_type: Optional[str] = None
-    ) -> SymbolRecord:
-        """Build one :class:`SymbolRecord` for a resolved member."""
-        if member_type is None:
-            member_type = cls._get_member_type(cls, name, member)
-        doc = inspect.getdoc(member)
-        return SymbolRecord(
-            name=name,
-            qualname=f"{cls.__name__}.{name}",
-            kind=member_type,
-            signature=cls._safe_signature(member, member_type),
-            summary=cls._get_summary(doc) if doc else "",
-            line=cls._safe_line(member),
-            deprecated=cls._is_deprecated(member),
-            remove_in=cls._deprecation_remove_in(member),
-        )
-
-    @classmethod
-    def _enrich(cls, record: SymbolRecord) -> Dict[str, Any]:
-        """Layer runtime-only fields onto a record's dict.
-
-        Kept off :class:`SymbolRecord` itself so the static registry sidecar
-        (which serialises the bare record) is unaffected: ``flags`` (async /
-        generator / abstract), ``defined_in`` (the MRO class that owns it), and
-        a resolved ``source`` (file:line).
-        """
-        member = getattr(cls, record.name, None)
-        data = record.as_dict()
-        flags = cls._get_member_flags(member) if member is not None else ""
-        data["flags"] = flags.split(", ") if flags else []
-        data["defined_in"] = cls._defining_class_name(record.name)
-        data["source"] = cls.where(record.name, returns=True)
-        return data
-
-    @classmethod
-    def _defining_class_name(cls, name: str) -> Optional[str]:
-        """Name of the first MRO class whose ``__dict__`` defines ``name``."""
-        for klass in inspect.getmro(cls):
-            if name in klass.__dict__:
-                return klass.__name__
-        return None
-
-    @staticmethod
-    def _safe_signature(member: Any, member_type: str) -> str:
-        """Rendered signature, or ``''`` for non-callables/properties."""
-        if not callable(member) or member_type == "property":
-            return ""
-        try:
-            return str(inspect.signature(inspect.unwrap(member)))
-        except (ValueError, TypeError):
-            return "(...)"
-
-    @staticmethod
-    def _safe_line(member: Any) -> int:
-        """1-based definition line, or ``0`` if unavailable (builtin/C)."""
-        try:
-            return inspect.getsourcelines(inspect.unwrap(member))[1]
-        except (OSError, TypeError, ValueError):
-            return 0
-
-    @staticmethod
-    def _deprecation_marker(member: Any) -> Any:
-        """The member itself, or what it unwraps to, whichever carries a marker.
-
-        ``Deprecation`` stamps both the wrapper and the function it wraps, but
-        a member may be wrapped again by something else (``CoreUtils.undoable``
-        and friends), so try the outer object first and fall back to the
-        unwrapped one rather than assuming either.
-        """
-        if getattr(member, "__deprecated__", False):
-            return member
-        if isinstance(member, property):
-            # The descriptor takes no attributes, so the marker lives on
-            # whichever accessor was decorated.
-            for accessor in (member.fget, member.fset, member.fdel):
-                if accessor is not None and getattr(accessor, "__deprecated__", False):
-                    return accessor
-            return member
-        try:
-            return inspect.unwrap(member) if callable(member) else member
-        except Exception:
-            return member
-
-    @classmethod
-    def _is_deprecated(cls, member: Any) -> bool:
-        """True if the callable carries a ``__deprecated__`` marker.
-
-        The marker is PEP 702's: ``pythontk.Deprecation`` sets it to the warning
-        message, and :func:`warnings.deprecated` on 3.13+ sets the same thing,
-        so both read as deprecated here without a second code path.
-        """
-        target = cls._deprecation_marker(member)
-        return bool(getattr(target, "__deprecated__", False))
-
-    @classmethod
-    def _deprecation_remove_in(cls, member: Any) -> str:
-        """Release the member stops working in, or ``""`` if it names none.
-
-        Read off the ``DeprecationRecord`` that ``Deprecation`` stamps
-        alongside the PEP 702 marker, duck-typed rather than imported: this
-        module is below ``deprecation`` in the import order, and a bare
-        ``__deprecated__`` (the stdlib's, or a hand-written one) legitimately
-        carries no version.
-        """
-        record = getattr(cls._deprecation_marker(member), "__deprecated_record__", None)
-        return str(getattr(record, "remove_in", "") or "")
 
     # -------------------------------------------------------------------------
     # Source Code Methods
@@ -583,16 +324,14 @@ class HelpMixin:
         target = cls if name is None else getattr(cls, name, None)
 
         if target is None:
-            msg = f"'{cls.__name__}' has no member '{name}'"
+            msg = cls._missing(name)
             if returns:
                 return msg
             print(msg)
             return None
 
         try:
-            # Unwrap decorated functions to get actual source
-            unwrapped = inspect.unwrap(target) if callable(target) else target
-            source = inspect.getsource(unwrapped)
+            source = ApiSurface.source_of(target)
         except (OSError, TypeError) as e:
             msg = f"Cannot retrieve source: {e}"
             if returns:
@@ -629,25 +368,13 @@ class HelpMixin:
         target = cls if name is None else getattr(cls, name, None)
 
         if target is None:
-            msg = f"'{cls.__name__}' has no member '{name}'"
+            msg = cls._missing(name)
             if returns:
                 return msg
             print(msg)
             return None
 
-        try:
-            # Unwrap to get actual location for decorated functions
-            unwrapped = inspect.unwrap(target) if callable(target) else target
-            source_file = inspect.getsourcefile(unwrapped)
-            _, line_no = inspect.getsourcelines(unwrapped)
-            location = f"{source_file}:{line_no}" if source_file else "Built-in"
-        except (OSError, TypeError):
-            # Fall back to just file if lines unavailable
-            try:
-                source_file = inspect.getfile(target)
-                location = source_file
-            except (OSError, TypeError):
-                location = "Unknown location (built-in or C extension)"
+        location = ApiSurface.location(target) or ApiSurface.NO_LOCATION
 
         if returns:
             return location
@@ -722,7 +449,7 @@ class HelpMixin:
         """
         member = getattr(cls, name, None)
         if member is None:
-            msg = f"'{cls.__name__}' has no member '{name}'"
+            msg = cls._missing(name)
             if returns:
                 return msg
             print(msg)
@@ -840,21 +567,21 @@ class HelpMixin:
         """
         if as_dict or as_json:
             if name is not None:
-                member = getattr(cls, name, None)
+                record = ApiSurface.record(cls, name)
                 payload: Any = (
-                    {"error": f"'{cls.__name__}' has no member '{name}'"}
-                    if member is None
-                    else cls._enrich(cls._record_for(name, member))
+                    {"error": cls._missing(name)}
+                    if record is None
+                    else ApiSurface.enrich(cls, record)
                 )
             else:
-                payload = [cls._enrich(r) for r in cls._collect_records()]
+                payload = [ApiSurface.enrich(cls, r) for r in ApiSurface.members(cls)]
             return json.dumps(payload, indent=2) if as_json else payload
 
         if name is not None:
             # Classify single member
             member = getattr(cls, name, None)
             if member is None:
-                msg = f"'{cls.__name__}' has no member '{name}'"
+                msg = cls._missing(name)
                 if returns:
                     return msg
                 print(msg)
@@ -883,7 +610,7 @@ class HelpMixin:
         for kind in sorted(by_kind.keys()):
             lines.append(f"{kind.upper()}:")
             for attr in sorted(by_kind[kind], key=lambda a: a.name):
-                flags = cls._get_member_flags(attr.object)
+                flags = ", ".join(ApiSurface.flags(attr.object))
                 flag_str = f" {flags}" if flags else ""
                 lines.append(
                     f"    {attr.name}{flag_str} (from {attr.defining_class.__name__})"
@@ -899,62 +626,19 @@ class HelpMixin:
     @classmethod
     def _classify_member(cls, name: str, member: Any) -> str:
         """Get detailed classification for a single member."""
-        lines = [f"Member: {name}", ""]
-
-        # Find defining class
-        defining_class = None
-        for klass in inspect.getmro(cls):
-            if name in klass.__dict__:
-                defining_class = klass
-                break
-
-        member_type = cls._get_member_type(cls, name, member)
-        lines.append(f"Type: {member_type}")
-
-        if defining_class:
-            lines.append(f"Defined in: {defining_class.__name__}")
-
-        # Flags
-        flags = cls._get_member_flags(member)
+        record = ApiSurface.record(cls, name)
+        lines = [f"Member: {name}", "", f"Type: {record.kind}"]
+        defined_in = ApiSurface.defined_in(cls, name)
+        if defined_in:
+            lines.append(f"Defined in: {defined_in}")
+        flags = ApiSurface.flags(member)
         if flags:
-            lines.append(f"Flags: {flags}")
-
-        # Signature if callable
-        if callable(member) and member_type != "property":
-            try:
-                sig = inspect.signature(member)
-                lines.append(f"Signature: {name}{sig}")
-            except (ValueError, TypeError):
-                pass
-
-        # Docstring summary
-        doc = inspect.getdoc(member)
-        if doc:
-            lines.append(f"Summary: {cls._get_summary(doc)}")
-
+            lines.append(f"Flags: {', '.join(flags)}")
+        if record.signature:
+            lines.append(f"Signature: {name}{record.signature}")
+        if record.summary:
+            lines.append(f"Summary: {record.summary}")
         return "\n".join(lines)
-
-    @staticmethod
-    def _get_member_flags(member: Any) -> str:
-        """Get flags describing special member characteristics."""
-        flags = []
-
-        # Unwrap to check underlying function
-        try:
-            unwrapped = inspect.unwrap(member) if callable(member) else member
-        except Exception:
-            unwrapped = member
-
-        if inspect.iscoroutinefunction(unwrapped):
-            flags.append("async")
-        if inspect.isgeneratorfunction(unwrapped):
-            flags.append("generator")
-        if inspect.isasyncgenfunction(unwrapped):
-            flags.append("async-generator")
-        if getattr(unwrapped, "__isabstractmethod__", False):
-            flags.append("abstract")
-
-        return ", ".join(flags) if flags else ""
 
     # -------------------------------------------------------------------------
     # Listing Methods
@@ -991,24 +675,14 @@ class HelpMixin:
             >>> names = MyClass.list_members(returns=True)
             >>> MyClass.list_members(as_dict=True)         # Enriched member records
         """
+        records = ApiSurface.members(cls, members, inherited=inherited, private=private)
+        if sort:
+            records = sorted(records, key=lambda r: r.name)
         if as_dict or as_json:
-            records = cls._collect_records(
-                members=members, inherited=inherited, private=private
-            )
-            if sort:
-                records = sorted(records, key=lambda r: r.name)
-            payload = [cls._enrich(r) for r in records]
+            payload = [ApiSurface.enrich(cls, r) for r in records]
             return json.dumps(payload, indent=2) if as_json else payload
 
-        collected = cls._collect_members(
-            members=members,
-            inherited=inherited,
-            private=private,
-        )
-
-        names = [name for name, _, _ in collected]
-        if sort:
-            names.sort()
+        names = [r.name for r in records]
 
         if returns:
             return names
@@ -1021,6 +695,7 @@ class HelpMixin:
         name=None,
         *,
         brief=False,
+        signature=False,
         returns=False,
         as_dict=False,
         as_json=False,
@@ -1034,12 +709,15 @@ class HelpMixin:
             target: Any Python object to inspect (class, function, module, etc.)
             name: Name of a specific member to get help for (if target is a class/module).
             brief: If True, show one-line summary instead of full docstring.
+            signature: If True, show its parameter breakdown instead (as
+                :meth:`signature` does for a member).
             returns: If True, return the help string instead of printing.
 
         Returns:
             Help string if returns=True, otherwise None.
 
         Examples:
+            >>> HelpMixin.about(some_function, signature=True)
             >>> HelpMixin.about(some_function)           # Help for a function
             >>> HelpMixin.about(SomeClass)               # Help for any class
             >>> HelpMixin.about(SomeClass, "method")     # Help for a method
@@ -1066,39 +744,23 @@ class HelpMixin:
             display_name = str(target)
 
         try:
-            # Get signature if callable
-            sig = ""
-            if callable(target):
-                try:
-                    unwrapped = inspect.unwrap(target)
-                    sig = str(inspect.signature(unwrapped))
-                except (ValueError, TypeError):
-                    pass
-
-            # Get docstring
+            sig = ApiSurface.signature_of(target)
             doc = inspect.getdoc(target) or "No documentation available."
 
             if as_dict or as_json:
-                try:
-                    unwrapped_target = inspect.unwrap(target)
-                    src_file = inspect.getsourcefile(unwrapped_target)
-                    src_line = inspect.getsourcelines(unwrapped_target)[1]
-                    source = f"{src_file}:{src_line}" if src_file else None
-                except (OSError, TypeError, ValueError):
-                    source = None
                 info = {
                     "name": display_name,
                     "signature": sig,
                     "module": getattr(target, "__module__", None),
                     "doc": inspect.getdoc(target) or "",
-                    "source": source,
+                    "source": ApiSurface.location(target),
                 }
                 return json.dumps(info, indent=2) if as_json else info
 
-            if brief:
-                # Just first line
-                first_line = doc.split("\n")[0].strip()
-                output = f"{display_name}{sig}: {first_line}"
+            if signature:
+                output = HelpMixin._signature_detail(display_name, target)
+            elif brief:
+                output = f"{display_name}{sig}: {ApiSurface.summary(doc)}"
             else:
                 # Full output
                 header = f"{display_name}{sig}"

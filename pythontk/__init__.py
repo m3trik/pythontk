@@ -453,6 +453,14 @@ DEFAULT_INCLUDE = {
     "core_utils._core_utils": "*",
     "core_utils.help_mixin": "HelpMixin",
     "core_utils.symbol_record": "SymbolRecord",
+    # The one engine every reader of the public API goes through: the
+    # registries, HelpMixin, the api.* operations, the drift gate.
+    "core_utils.api_surface.api_surface": "ApiSurface",
+    "core_utils.api_surface.package_surface": [
+        "PackageSurface",
+        "ModuleSurface",
+        "ClassSurface",
+    ],
     # One mechanism for retiring public surface, and the only thing in the
     # ecosystem that records WHICH release an alias stops working in.
     "core_utils.deprecation": ["Deprecation", "DeprecationRecord"],
@@ -490,6 +498,29 @@ DEFAULT_INCLUDE = {
     "core_utils.module_reloader": ["ModuleReloader", "ReloadReport"],
     "core_utils.execution_monitor._execution_monitor": "ExecutionMonitor",
     "core_utils.cancel_scope": ["CancelScope", "OperationCancelled"],
+    # The named, typed actions every front end calls alike (the ops CLI, MCP,
+    # panels): a declaration and its published forms, its run context and
+    # result payloads, the host seam, and the catalog that discovers,
+    # validates and runs them.
+    "core_utils.agent_instructions": "AgentInstructions",
+    "core_utils.operation_catalog.operation": [
+        "Operation",
+        "OperationEntry",
+        "OperationCatalogDocument",
+    ],
+    "core_utils.operation_catalog.op_context": ["OpContext"],
+    "core_utils.operation_catalog.outcome": ["Outcome", "Issue", "Change", "OpCall", "OpRequest"],
+    "core_utils.operation_catalog.batch_operation_host": [
+        "BatchOperationHost",
+        "SceneFiles",
+        "PureSceneFiles",
+    ],
+    "core_utils.operation_catalog.session_operation_host": "SessionOperationHost",
+    "core_utils.python_console": "PythonConsole",
+    "core_utils.operation_catalog.operation_host": ["OperationHost", "PureOperationHost"],
+    "core_utils.operation_catalog.operation_server": "OperationServer",
+    "core_utils.operation_catalog._operation_catalog": "OperationCatalog",
+    "core_utils.operation_catalog.operation_provider": "OperationProvider",
     "core_utils.qc_log": ["QcLog", "QcGate", "GateError"],
     "core_utils.status_badge": ["StatusBadge"],
     "core_utils.test_sandbox": ["TestSandbox"],

@@ -4,7 +4,7 @@ Shared infrastructure — the non-data-type half of pythontk. Where the `*_utils
 
 Flat by default, never re-nested for cosmetics: a module moves into a subpackage only when a CODE_STANDARD §3 trigger fires (a second cohesive module, private internals, an owned asset directory). Downstream packages still import many of these module paths directly, so every move follows CODE_STANDARD §14: grep the workspace, and alias an externally imported path for one release.
 
-Everything here is reachable from the package root (`import pythontk as ptk; ptk.LoggingMixin`) unless marked otherwise below. Full signatures: [`API_INDEX.md`](../../API_INDEX.md) / [`API_REGISTRY.md`](../../API_REGISTRY.md).
+Everything here is reachable from the package root (`import pythontk as ptk; ptk.LoggingMixin`) unless marked otherwise below. Full signatures: `python -m pythontk ops run api.search "query=<words>"`.
 
 ## Class infrastructure
 
@@ -12,7 +12,7 @@ Everything here is reachable from the package root (`import pythontk as ptk; ptk
 |---|---|---|
 | `_core_utils` | `CoreUtils` | Decorators and reflection helpers: `cached_property`, `listify` (broadcast a function over list-like args, optionally threaded), attribute get/set, `format_return`. |
 | `logging_mixin/` | `LoggingMixin`, `LoggerExt`, `TableMixin` | Class-scoped logging: extra levels (SUCCESS/RESULT/NOTICE/PROGRESS), spam-guarded `*_once` variants, boxes/groups/tables, managed file tee, capped ring buffer. The column math of every block (display widths, wrapping, box and table geometry) is one internal `TextLayout` (`_text_layout.py`). |
-| `help_mixin` | `HelpMixin` | `.help()` / `.source()` / `.signature()` introspection on any class; the *dynamic* producer of `SymbolRecord`s (the registry generator is the static one). |
+| `help_mixin` | `HelpMixin` | `.help()` / `.source()` / `.signature()` on any class: the rendering, over `ApiSurface`'s live reading. |
 | `class_property` | `ClassProperty` | Class-level properties (replacement for the removed `@classmethod @property` stacking). |
 | `singleton_mixin` | `SingletonMixin` | Singletons keyed per `(class, singleton_key)` — subclasses sharing a key never collide. |
 | `namedtuple_container` | `NamedTupleContainer` | Generic named-tuple collection with querying, dynamic field access, and CSV round-trip. |
@@ -33,6 +33,9 @@ Everything here is reachable from the package root (`import pythontk as ptk; ptk
 | `handoff/script_template` | `ScriptTemplate`, `SEND_TO` / `SAVE_AS` / `ROUND_TRIP` | On-disk script-template discovery + `__KEY__` rendering; declares the ecosystem-wide hand-off mode vocabulary (`SEND_TO`, `SAVE_AS`, `ROUND_TRIP`) that every bridge imports — it is an on-disk contract, so there is exactly one copy. |
 | `process_stream` | `OutputStream`, `ProcessReader`, `LogTailer` | Composable line-stream primitives: thread-safe multi-consumer pub/sub with replayable history + `wait_for`, subprocess PIPE reader, rotation-aware log tailer. |
 | `execution_monitor` | `ExecutionMonitor` | Wraps long-running operations with threshold-escalated dialogs, spinner/task indicators, and an external watchdog; cancellation is delegated to a `CancelScope`. |
+| `agent_instructions` | `AgentInstructions` | A codebase's agent instructions as a checked tree: `AGENTS.md` rules with a `CLAUDE.md` stub at every level, shared packs vendored under a drift check, a SessionStart hook for a repo cloned alone; `check`, `sync`, `measure` (what a session loads), `duplicates` -- also pythontk's `instructions.*` operations. |
+| `operation_catalog/` | `Operation`, `OperationEntry`, `OperationCatalogDocument`, `OpContext`, `OpRequest`, `Outcome`, `Issue`, `Change`, `OpCall`, `OperationHost`, `PureOperationHost`, `BatchOperationHost`, `SceneFiles`, `PureSceneFiles`, `SessionOperationHost`, `OperationServer`, `OperationProvider`, `OperationCatalog` | Named, typed actions every front end calls alike (the `python -m pythontk ops` CLI, MCP, panels), whatever language declares them: a declaration and its published forms (`operation`), the run context with its dry run (`op_context`), the request and result payloads (`outcome`), the host seam with this process as its default (`operation_host`), the runner a host library configures to give each call a fresh instance of its application, request file in and outcome file out (`batch_operation_host`), the runner that keeps one instance per session instead and serves the same run folders from a `JobQueue`, for a front end that lives long (`session_operation_host`), the catalog as an MCP server (`operation_server`, `python -m pythontk ops mcp`), one package's declarations, committed catalog and upkeep, onboarding and checks included (`operation_provider`), and the facade (`_operation_catalog`) that discovers providers through the `pythontk.operations` entry points (or a catalog file named by `--provider`), validates a call against its JSON Schema and runs it. |
+| `python_console` | `PythonConsole` | Code run a snippet at a time in one namespace that lasts, as in a console: the last expression's value and what it printed come back; a dry run lists the code. Behind the `python.exec` (a plain Python, the `python` host) / `maya.python.exec` / `blender.python.exec` operations. |
 | `cancel_scope` | `CancelScope`, `OperationCancelled` | One cooperative cancellation object shared by every cancel affordance: *push* (`cancel()` from any thread) + *pull* (sources polled at the operation's own checkpoints), consumable bool-style (`tick()`) or ambient exception-style (`CancelScope.check()` via `ContextVar`). |
 
 **The three hand-off shapes.** `HandoffBridge` owns one invariant flow — `resolve → preflight → produce → deliver → ingest` — with the delivery step a per-mode `Deliverer` strategy, so three hand-off shapes come off one export pipeline: `send()` (`SEND_TO`, detached launch), `save_as()` (`SAVE_AS`, blocking run that keeps a native file of the target's format), and `round_trip()` (`ROUND_TRIP`, blocking run whose intermediate artifact is folded back onto the host's own objects — the target either edits the payload in place, as RizomUV does, or writes a new artifact, as mayatk's Blender lightmap bake does). The mode strings are declared once, in `handoff/script_template.py`, and every bridge imports them from the root: they are an on-disk contract (each template's `BRIDGE_MODES` tuple), and a local copy would be a second dialect of a file format.
@@ -55,7 +58,8 @@ Everything here is reachable from the package root (`import pythontk as ptk; ptk
 | `module_reloader` | `ModuleReloader` | Hot-reload a package and its submodules in dependency order; returns a `ReloadReport`. |
 | `package_manager` | `PackageManager` | pip wrapper: install/uninstall/list/update, version checks, concurrent latest-index lookups. |
 | `cli` | `CLI` | Consistent `argparse` builders shared across scripts (e.g. the standard SSH connection argument group). |
-| `symbol_record` | `SymbolRecord` | The shared public-API symbol shape produced by both the static registry generator and the dynamic `HelpMixin`; compared in the runtime-vs-static drift gate. |
+| `api_surface/` | `ApiSurface`, `PackageSurface`, `ModuleSurface`, `ClassSurface` | The one reader of a package's public API: from source with `ast` (no import; what the API registries are written from), from live objects (what `HelpMixin` renders and the runtime drift gate compares), one docstring-summary rule, and `search` / `describe` over every registered package (pythontk's `api.search` / `api.describe` operations); a package read once is kept in the per-user cache until its source or the reader changes. Standard library only, so the registry generator runs on a bare CI box. |
+| `symbol_record` | `SymbolRecord` | The shared public-API symbol shape `ApiSurface` produces from source and from live objects; compared in the runtime-vs-static drift gate. |
 | `doc_audit` | `DocAudit` | Markdown-example rot gate: extracts fenced code blocks and validates attribute chains + keyword arguments against the live package. Backs the README gates in `test/test_doc_audit.py`; downstream repos can gate their own docs with it. |
 | `status_badge` | `StatusBadge` | Shields.io badges embedded in a markdown file; sole writer of the ecosystem's README test badges (see `m3trik/docs/TEST_BADGE_STANDARD.md`). |
 | `test_sandbox` | `TestSandbox` | Process-level test isolation, activated once from a conftest/runner: refuses every real browser launch (loudly, and records it) and routes the process temp dir into one throwaway root that waited children inherit (a detached `AppLauncher.launch` gets the host's environment instead, `host_environ`, since it outlives the root). `uitk.testing.TestSandbox` extends it with the Qt-side stores. |
@@ -74,7 +78,7 @@ DCC-agnostic delimited-path hierarchy comparison. `HierarchyPath` is the single 
 
 ## Domain engines (`engines/`)
 
-A chartered namespace for **host-agnostic domain engines** — complete application cores (model + planner + DI seams) that downstream packages which cannot import each other (mayatk, blendertk) must share. Same hard rules as the rest of pythontk (no DCC imports, zero-dep preferred); the *generality* requirement is relaxed by charter. Placement rules live in [`CLAUDE.md`](../../CLAUDE.md).
+A chartered namespace for **host-agnostic domain engines** — complete application cores (model + planner + DI seams) that downstream packages which cannot import each other (mayatk, blendertk) must share. Same hard rules as the rest of pythontk (no DCC imports, zero-dep preferred); the *generality* requirement is relaxed by charter. Placement rules live in [`AGENTS.md`](../../AGENTS.md).
 
 ### `engines/shots/` — shot timeline engine
 
@@ -137,5 +141,5 @@ The Qt panels driving the texture engine interactively (Map Converter / Packer /
 ## Links
 
 - Package overview: [`docs/README.md`](../../docs/README.md)
-- Full API: [`API_REGISTRY.md`](../../API_REGISTRY.md)
-- Placement charter (`*_utils` vs engines): [`CLAUDE.md`](../../CLAUDE.md)
+- Full API: `python -m pythontk ops run api.search "query=<words>"`
+- Placement charter (`*_utils` vs engines): [`AGENTS.md`](../../AGENTS.md)

@@ -171,7 +171,7 @@ class DeprecationCalendarWindowTest(BaseTestCase):
         self.assertNotIn("EXPIRED", report)
 
     def test_the_static_gate_and_the_roster_share_one_rule(self):
-        """``window_expired`` is what ``generate_api_registry.py`` loads off
+        """``window_expired`` is what ``check_api_surface.py`` loads off
         disk, the way it loads ``version_key``: one rule, two gates."""
         early, late = datetime.date(2026, 9, 19), datetime.date(2026, 10, 4)
         self.assertFalse(
@@ -222,10 +222,10 @@ class DeprecationCalendarWindowTest(BaseTestCase):
 
 
 class DeprecationStandaloneLoadTest(BaseTestCase):
-    """``generate_api_registry.py`` loads this module off disk, on a CI box with
+    """``check_api_surface.py`` loads this module off disk, on a CI box with
     no pythontk installed, for ``version_key`` and ``window_expired`` -- so it
     imports nothing but the stdlib at module level. A module-level
-    ``_ModuleHook`` import failed pythontk's registry check (2026-09-27).
+    ``_ModuleHook`` import failed pythontk's CI check (2026-09-27).
     """
 
     def test_it_loads_without_the_package(self):

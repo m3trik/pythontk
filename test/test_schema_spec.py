@@ -519,6 +519,24 @@ class PruneTest(unittest.TestCase):
 class JsonSchemaTest(unittest.TestCase):
     """``json_schema`` -- the declaration as the document other languages read."""
 
+    def test_annotation_schema_reads_a_plain_annotation_by_the_same_rules(self):
+        from typing import List, Optional
+
+        self.assertEqual(
+            SchemaSpec.annotation_schema(Optional[int]),
+            {"anyOf": [{"type": "integer"}, {"type": "null"}]},
+        )
+        self.assertEqual(SchemaSpec.annotation_schema(object), {})
+        # JSON carries a path as its text.
+        from pathlib import Path
+
+        self.assertEqual(SchemaSpec.annotation_schema(Path), {"type": "string"})
+        legs = SchemaSpec.annotation_schema(List[Leg])
+        self.assertEqual(legs["items"], {"$ref": "#/$defs/Leg"})
+        self.assertEqual(legs["$defs"]["Leg"], Body.json_schema()["$defs"]["Leg"])
+        # The spec's class claim stays inside the generator: the result is JSON.
+        json.dumps(legs)
+
     def test_the_document_names_its_dialect_title_and_first_paragraph(self):
         doc = Body.json_schema()
         self.assertEqual(doc["$schema"], SchemaSpec.JSON_SCHEMA_DIALECT)

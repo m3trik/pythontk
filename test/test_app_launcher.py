@@ -27,9 +27,20 @@ def _has_interactive_display():
         import ctypes
 
         # GetDesktopWindow returns 0 when there is no interactive desktop
-        hwnd = ctypes.windll.user32.GetDesktopWindow()
+        user32 = ctypes.windll.user32
+        hwnd = user32.GetDesktopWindow()
         if not hwnd:
             return False
+        # A hidden test run (affected_tests.py) is on pythontk's private desktop,
+        # in the user's interactive window station: it shows and finds windows
+        # there, though a fresh one may hold none yet for the check below.
+        from pythontk.core_utils.app_launcher import _hidden
+
+        name = ctypes.create_unicode_buffer(256)
+        here = user32.GetThreadDesktop(ctypes.windll.kernel32.GetCurrentThreadId())
+        user32.GetUserObjectInformationW(here, 2, name, 512, None)  # UOI_NAME
+        if name.value == _hidden._DESKTOP_NAME:
+            return True
         # Also verify EnumWindows works (fails in some CI containers)
         results = []
         WNDENUMPROC = ctypes.WINFUNCTYPE(
@@ -122,7 +133,9 @@ class TestAppLauncher(unittest.TestCase):
             # Launch python pointing to the fixture
             # We don't use AppLauncher.launch("python", ...) directly here because we need to ensure
             # we run the SAME python that is running this test to avoid environment mismatches.
-            python_exe = sys.executable
+            # Its base interpreter: a venv python.exe is a launcher whose child,
+            # not the PID returned, owns the window.
+            python_exe = _PY
 
             # Use launch via the helper, but pass absolute path to python as identifier
             # We must use detached=False so that the PID we get is definitely the process running the window,
@@ -166,7 +179,7 @@ class TestAppLauncher(unittest.TestCase):
             os.path.join(os.path.dirname(__file__), "fixtures", "ui_app_fixture.py")
         )
 
-        python_exe = sys.executable
+        python_exe = _PY  # not a venv launcher: the PID must own the window
         process = AppLauncher.launch(python_exe, args=[fixture_path], detached=False)
         self.assertIsNotNone(process)
 
@@ -1613,12 +1626,8 @@ class TestRunStreaming(_ChildScripts):
         self.assertEnds(int(self._wait_for(pid_file)), "the child outlived the error")
 
 
-@unittest.skipUnless(sys.platform == "win32", "a hidden run is a Windows desktop")
-class TestRunHidden(_ChildScripts):
-    """``run(hidden=True)``: an app with no headless mode (RizomUV, Toolbag) runs
-    where no one sees it -- its window on a private desktop with the user's own
-    monitors, so where it opens and saves itself is unchanged -- and nothing it
-    started outlives the run, however the run ends."""
+class _HiddenChildren(_ChildScripts):
+    """Child scripts a hidden app runs, and where its windows are."""
 
     TITLE = "pythontk hidden-run test"
 
@@ -1636,28 +1645,22 @@ class TestRunHidden(_ChildScripts):
         )
         self.pids = os.path.join(self.root, "grandchild.pid")
 
-    def _run_in_thread(self, *args, **kwargs):
-        import threading
-
-        outcome = {}
-
-        def target():
-            try:
-                outcome["result"] = AppLauncher.run(*args, hidden=True, **kwargs)
-            except BaseException as error:  # reported by the test that joins
-                outcome["error"] = error
-
-        thread = threading.Thread(target=target, daemon=True)
-        thread.start()
-        return thread, outcome
-
     @staticmethod
     def _titles(desktop=None):
-        """Visible top-level window titles on *desktop* (None: this process's)."""
+        """Visible top-level window titles on *desktop* (None: the user's -- the
+        input desktop, not this process's, which a hidden test run is not)."""
         import ctypes
         from ctypes import wintypes
 
         user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.EnumDesktopWindows.argtypes = (
+            wintypes.HANDLE,
+            ctypes.c_void_p,
+            wintypes.LPARAM,
+        )
+        user32.OpenInputDesktop.restype = wintypes.HANDLE
+        user32.OpenInputDesktop.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+        user32.CloseDesktop.argtypes = (wintypes.HANDLE,)
         found = []
 
         @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
@@ -1668,15 +1671,14 @@ class TestRunHidden(_ChildScripts):
                 found.append(buffer.value)
             return True
 
-        if desktop is None:
+        # DESKTOP_READOBJECTS | DESKTOP_ENUMERATE
+        opened = None if desktop else user32.OpenInputDesktop(0, False, 0x0001 | 0x0040)
+        if desktop or opened:
+            user32.EnumDesktopWindows(desktop or opened, each, 0)
+        else:  # no input desktop to open (a locked workstation): this one
             user32.EnumWindows(each, 0)
-        else:
-            user32.EnumDesktopWindows.argtypes = (
-                wintypes.HANDLE,
-                ctypes.c_void_p,
-                wintypes.LPARAM,
-            )
-            user32.EnumDesktopWindows(desktop, each, 0)
+        if opened:
+            user32.CloseDesktop(opened)
         return found
 
     def _report(self):
@@ -1695,6 +1697,43 @@ class TestRunHidden(_ChildScripts):
             sys.exit(3)
             """,
         )
+
+    def _window(self, seconds):
+        """A child whose one window, titled ``TITLE``, stays up *seconds*."""
+        return self._script(
+            "window.py",
+            f"""
+            import tkinter
+            root = tkinter.Tk()
+            root.title({self.TITLE!r})
+            root.geometry("400x300+200+200")
+            root.after({int(seconds * 1000)}, root.destroy)
+            root.mainloop()
+            """,
+        )
+
+
+@unittest.skipUnless(sys.platform == "win32", "a hidden run is a Windows desktop")
+class TestRunHidden(_HiddenChildren):
+    """``run(hidden=True)``: an app with no headless mode (RizomUV, Toolbag) runs
+    where no one sees it -- its window on a private desktop with the user's own
+    monitors, so where it opens and saves itself is unchanged -- and nothing it
+    started outlives the run, however the run ends."""
+
+    def _run_in_thread(self, *args, **kwargs):
+        import threading
+
+        outcome = {}
+
+        def target():
+            try:
+                outcome["result"] = AppLauncher.run(*args, hidden=True, **kwargs)
+            except BaseException as error:  # reported by the test that joins
+                outcome["error"] = error
+
+        thread = threading.Thread(target=target, daemon=True)
+        thread.start()
+        return thread, outcome
 
     def test_it_runs_on_its_own_desktop_with_its_pipes_env_cwd_and_exit_code(self):
         """Every shape of ``run``: captured, to a file, and streamed."""
@@ -1754,17 +1793,7 @@ class TestRunHidden(_ChildScripts):
 
         from pythontk.core_utils.app_launcher import _hidden
 
-        child = self._script(
-            "window.py",
-            f"""
-            import tkinter
-            root = tkinter.Tk()
-            root.title({self.TITLE!r})
-            root.geometry("400x300+200+200")
-            root.after(4000, root.destroy)
-            root.mainloop()
-            """,
-        )
+        child = self._window(4)
         user32 = ctypes.WinDLL("user32", use_last_error=True)
         user32.OpenDesktopW.restype = wintypes.HANDLE
         user32.OpenDesktopW.argtypes = (
@@ -1984,6 +2013,84 @@ class TestRunHidden(_ChildScripts):
         with mock.patch.object(AppLauncher, "can_hide", staticmethod(lambda: False)):
             result = AppLauncher.run(_PY, [child], timeout=60, hidden=True)
         self.assertEqual(result.stdout.split("|")[0], here)
+
+
+@unittest.skipUnless(sys.platform == "win32", "a hidden launch is a Windows desktop")
+class TestLaunchHidden(_HiddenChildren):
+    """``launch(hidden=True)``: a GUI a caller drives through its own channel (a
+    GUI Maya's command port) starts on the private desktop, where it can take
+    neither the user's focus nor their input, and -- one no one can see could
+    never be closed once its launcher is gone -- ends with its caller, whatever
+    ``detached`` says."""
+
+    def _desktop_of(self, **kwargs):
+        """The desktop ``_report`` names, launched with *kwargs*."""
+        log = os.path.join(self.root, "launch.log")
+        if os.path.exists(log):
+            os.remove(log)
+        process = AppLauncher.launch(_PY, [self._report()], log=log, **kwargs)
+        self.assertEqual(process.wait(60), 3)
+        with open(log, encoding="utf-8") as f:
+            return f.read().split("|")[0]
+
+    def test_it_starts_on_its_own_desktop(self):
+        """A plain launch starts on the caller's desktop -- the private one too
+        when the test run itself is hidden (``affected_tests.py``)."""
+        import ctypes
+
+        from pythontk.core_utils.app_launcher import _hidden
+
+        user32 = ctypes.windll.user32
+        here = user32.GetThreadDesktop(ctypes.windll.kernel32.GetCurrentThreadId())
+        name = ctypes.create_unicode_buffer(256)
+        user32.GetUserObjectInformationW(here, 2, name, 512, None)  # UOI_NAME
+        self.assertEqual(self._desktop_of(hidden=True), _hidden._DESKTOP_NAME)
+        self.assertEqual(self._desktop_of(), name.value)
+
+    def test_it_ends_with_its_caller_though_detached(self):
+        import subprocess
+
+        root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        caller = self._script(
+            "caller.py",
+            f"""
+            import sys, time
+            sys.path.insert(0, {root!r})
+            from pythontk.core_utils.app_launcher import AppLauncher
+            AppLauncher.launch({_PY!r}, [{self.tree!r}, {self.pids!r}], hidden=True)
+            time.sleep(120)
+            """,
+        )
+        outer = subprocess.Popen([_PY, caller])
+        self.addCleanup(lambda: outer.poll() is None and outer.kill())
+        grandchild = int(self._wait_for(self.pids))
+        self.assertTrue(self._alive(grandchild))
+        outer.kill()  # TerminateProcess: none of the caller's own cleanup runs
+        outer.wait(10)
+        self.assertEnds(grandchild, "the hidden app outlived its caller")
+
+    @unittest.skipUnless(_INTERACTIVE, "needs an interactive desktop")
+    def test_its_launcher_finds_its_window_by_pid_and_the_user_never_sees_it(self):
+        """A launcher reads its app's state from the window title (MayaConnection
+        reads the port its Maya bound there); ``EnumWindows`` sees only the
+        caller's desktop, so the titles look on the private one too."""
+        process = AppLauncher.launch(_PY, [self._window(30)], hidden=True)
+        self.addCleanup(process.kill)
+        end, titles, on_user = time.monotonic() + 30, [], set()
+        while self.TITLE not in titles and time.monotonic() < end:
+            titles = AppLauncher.get_window_titles(process.pid)
+            on_user.update(t for t in self._titles() if t == self.TITLE)
+            time.sleep(0.1)
+        self.assertIn(self.TITLE, titles)
+        self.assertTrue(AppLauncher._has_window(process.pid))
+        self.assertEqual(on_user, set(), "its window showed on the user's desktop")
+
+    def test_where_it_cannot_hide_it_launches_as_it_always_has(self):
+        from unittest import mock
+
+        here = self._desktop_of()
+        with mock.patch.object(AppLauncher, "can_hide", staticmethod(lambda: False)):
+            self.assertEqual(self._desktop_of(hidden=True), here)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
 import argparse
 import getpass
 import os
+import sys
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Mapping, Optional, Sequence, Tuple, Union
 
@@ -56,11 +57,12 @@ class CLI(_CLIInternal):
     """
 
     @staticmethod
-    def get_parser(description: str = None) -> argparse.ArgumentParser:
+    def get_parser(description: str = None, prog: str = None) -> argparse.ArgumentParser:
         """
-        Create a standard ArgumentParser.
+        Create a standard ArgumentParser (*prog*: the program name usage lines
+        show; default: the script's file name).
         """
-        return argparse.ArgumentParser(description=description)
+        return argparse.ArgumentParser(description=description, prog=prog)
 
     #: One argument of a command: ``(flags, add_argument keywords)`` -- ``"--out"``,
     #: ``("-o", "--out")`` or a positional name.
@@ -88,30 +90,43 @@ class CLI(_CLIInternal):
         commands: Mapping[str, "CLI.Command"],
         argv: Optional[Sequence[str]] = None,
         common: Sequence["CLI.Argument"] = (),
+        prog: Optional[str] = None,
     ) -> int:
         """Parse *argv* against a table of subcommands and run the one named.
 
         A command line is data: a new subcommand is one more entry, never one
-        more branch in a dispatcher.
+        more branch in a dispatcher. Options may sit anywhere among a
+        command's positionals.
 
         Parameters:
             description: The program's ``--help`` line.
             commands: ``{name: Command}``, listed in this order.
             argv: The arguments (default: ``sys.argv[1:]``).
             common: Arguments every subcommand takes, before its own.
+            prog: The program name usage lines show (``python -m pkg tool``);
+                default: the script's file name.
 
         Returns:
             The command's exit code.
         """
-        parser = cls.get_parser(description)
+        parser = cls.get_parser(description, prog)
         sub = parser.add_subparsers(dest="command", required=True)
+        parsers = {}
         for name, command in commands.items():
-            p = sub.add_parser(name, help=command.help)
+            p = parsers[name] = sub.add_parser(name, help=command.help)
             for flags, options in tuple(common) + tuple(command.arguments):
                 p.add_argument(
                     *([flags] if isinstance(flags, str) else flags), **options
                 )
-        args = parser.parse_args(argv)
+        argv = list(sys.argv[1:] if argv is None else argv)
+        if argv[:1] and argv[0] in parsers:
+            # The command's own parser, intermixed: argparse's subcommand parse
+            # gives a "*" positional nothing once an option interrupts
+            # (``run ID --provider M NAME=VALUE``) and refuses what follows.
+            args = parsers[argv[0]].parse_intermixed_args(argv[1:])
+            args.command = argv[0]
+        else:  # --help, or no or an unknown command: the program's own usage
+            args = parser.parse_args(argv)
         code = commands[args.command].run(args)
         return 0 if code is None else int(code)
 

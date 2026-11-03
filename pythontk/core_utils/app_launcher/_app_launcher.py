@@ -2,9 +2,10 @@
 # coding=utf-8
 """The :class:`AppLauncher` facade: the three launch shapes, over its job mixins.
 
-``launch`` (detached: it outlives this process), ``run`` (blocking, with a
-timeout, optional line streaming, and optionally hidden) and ``spawn`` (a helper
-that runs beside this process and dies with it), plus ``write_batch_script``.
+``launch`` (detached: it outlives this process, unless hidden), ``run``
+(blocking, with a timeout, optional line streaming, and optionally hidden) and
+``spawn`` (a helper that runs beside this process and dies with it), plus
+``write_batch_script``.
 Install discovery, the process environment, desktop sessions and windows, the
 process table and hidden runs are private mixins in sibling modules; every
 member resolves on this class, and
@@ -162,7 +163,15 @@ class AppLauncher(
     """
 
     @staticmethod
-    def launch(app_identifier, args=None, cwd=None, detached=True, env=None, log=None):
+    def launch(
+        app_identifier,
+        args=None,
+        cwd=None,
+        detached=True,
+        env=None,
+        log=None,
+        hidden=False,
+    ):
         """
         Launches an application.
 
@@ -177,6 +186,14 @@ class AppLauncher(
         :param log: A file the child's output (stdout and stderr) is appended to -- a
                     detached worker's only record of what it did. None: it inherits
                     this process's.
+        :param hidden: Windows only -- start a GUI the caller drives through its own
+                    channel (a GUI Maya's command port) on the private desktop a
+                    hidden :meth:`run` uses: it runs as usual, but its windows can
+                    take neither the user's focus nor their input, and they open
+                    and save where they always do. :meth:`get_window_titles` finds
+                    them. It ends with this process, however that ends, whatever
+                    *detached* says: an app no one can see could never be closed
+                    once its launcher is gone. Elsewhere a no-op (:meth:`can_hide`).
         :return: The subprocess.Popen object or None if launch failed.
         """
         system = platform.system().lower()
@@ -189,7 +206,7 @@ class AppLauncher(
         cmd = AppLauncher._command(executable_path, args)
 
         try:
-            logger.debug(f"Launching: {cmd} (Detached: {detached})")
+            logger.debug(f"Launching: {cmd} (Detached: {detached}, Hidden: {hidden})")
 
             kwargs = {"cwd": cwd, "shell": False}
 
@@ -215,11 +232,12 @@ class AppLauncher(
                     # Linux/Unix
                     kwargs["start_new_session"] = True
 
+            popen = AppLauncher._popen(hidden)
             if log is None:
-                return subprocess.Popen(cmd, **kwargs)
+                return popen(cmd, **kwargs)
             os.makedirs(os.path.dirname(os.path.abspath(log)), exist_ok=True)
             with open(log, "a", encoding="utf-8") as handle:  # the child keeps its own
-                return subprocess.Popen(
+                return popen(
                     cmd,
                     stdin=subprocess.DEVNULL,
                     stdout=handle,

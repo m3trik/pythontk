@@ -46,6 +46,15 @@ dependencies = ["numpy>=1.24", "Pillow>=9.1"]
 # Install with the extra when you want it:  pip install pythontk[mesh]
 [project.optional-dependencies]
 mesh = ["pymeshlab>=2023.12"]
+# The MCP server for the operation catalog (python -m pythontk ops mcp).
+mcp = ["mcp>=2.3,<3; python_version >= '3.10'"]
+
+# Operations (python -m pythontk ops): pythontk's own declarations.
+[project.entry-points."pythontk.operations"]
+pythontk = "pythontk.operations"
+
+[project.entry-points."pythontk.operation_hosts"]
+python = "pythontk:PureSceneFiles.operation_host"
 
 [project.urls]
 Homepage = "https://github.com/m3trik/pythontk"
@@ -98,6 +107,7 @@ order = [
     "net_utils/preview",
     "file_utils/mesh_convert",
     "core_utils/engines",
+    "core_utils/operation_catalog",
     "core_utils/handoff",
     "audio_utils",
     "net_utils",

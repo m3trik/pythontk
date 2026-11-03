@@ -1,7 +1,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![PyPI](https://img.shields.io/pypi/v/pythontk.svg)](https://pypi.org/project/pythontk/)
 [![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/Tests-8092%20passed-brightgreen.svg)](../test/)
+[![Tests](https://img.shields.io/badge/Tests-8887%20passed-brightgreen.svg)](../test/)
 ![Platform](https://img.shields.io/badge/Platform-Windows%2C%20Linux-lightgrey.svg)
 
 # pythontk
@@ -54,7 +54,7 @@ ptk.ImgUtils.pack_channels(...)     # class-qualified — explicit, collision-pr
 | Package | What it covers |
 |---|---|
 | `audio_utils` | FFmpeg-backed conversion, composite WAV building, silence trimming, waveform envelopes |
-| [`core_utils`](../pythontk/core_utils/README.md) | The infrastructure layer: mixins (`LoggingMixin`, `HelpMixin`, `SingletonMixin`), `listify`, package bootstrap, hot-reload, app orchestration (`AppLauncher`, `HandoffBridge`), cooperative cancellation (`CancelScope`), task pipeline, process output streaming, config/template stores, QC gates, `ExecutionMonitor`, hierarchy diffing, color primitives — plus the shared domain engines (`shots`, `scene_export`, `instancing`, `textures`, `rig_graph`, `key_stash`, `lighting`) |
+| [`core_utils`](../pythontk/core_utils/README.md) | The infrastructure layer: mixins (`LoggingMixin`, `HelpMixin`, `SingletonMixin`), the one public-API reader (`ApiSurface`), operations and their command-line and MCP front ends (`operation_catalog`), `PythonConsole`, `listify`, package bootstrap, hot-reload, app orchestration (`AppLauncher`, `HandoffBridge`), cooperative cancellation (`CancelScope`), task pipeline, process output streaming, config/template stores, QC gates, `ExecutionMonitor`, hierarchy diffing, color primitives — plus the shared domain engines (`shots`, `scene_export`, `instancing`, `textures`, `rig_graph`, `key_stash`, `lighting`) |
 | [`file_utils`](../pythontk/file_utils/README.md) | Filtered directory traversal, atomic writes, policy-scoped temp artifacts (`TempArtifacts`), cloud-placeholder detection, FBX→GLB conversion + glTF repair (`MeshConvert`), zero-dependency USD/USDZ authoring, UV unwrapping, project workspaces, embedded metadata |
 | `geo_utils` | Pure geometry — `Polyline` (order/resample/smooth/simplify, arc-length sampling), `PointCloud` (PCA, clustering), `RailSurface` (line-pair framing), `PlateEmitter`, and the UV-layout family in `geo_utils/uv/` (`UvPack` island packing, `UvBudget` map-count planning, `UvCombine` several texture sets' islands packed into one atlas, `UvTransfer` texel remap, `TransferRun` the UV-or-texture transfer run both hosts share, `CylinderSeams` tube / turned-part seam placement) |
 | `img_utils` | Pillow-backed image ops, channel packing, atlas layout/assembly, KTX2 encoding (`Ktx2Encoder`), exposure equalization, image curation, mask generation |
@@ -64,7 +64,7 @@ ptk.ImgUtils.pack_channels(...)     # class-qualified — explicit, collision-pr
 | `str_utils` | Sanitizing, batch rename, affix handling, `FuzzyMatcher`, hotkey-token parsing |
 | `vid_utils` | Frame rate probing, compression, sharpest-frame extraction |
 
-The three linked packages carry their own READMEs — a table row can't hold their surface. Full public surface (every class, method, signature — auto-generated): [`API_REGISTRY.md`](../API_REGISTRY.md); compact index: [`API_INDEX.md`](../API_INDEX.md).
+The three linked packages carry their own READMEs — a table row can't hold their surface. Full public surface (every class, method, signature), read from the installed source: `python -m pythontk ops run api.search "query=<words>"`, or `python -m pythontk --index`.
 
 ---
 
@@ -231,7 +231,9 @@ Beyond the data-type utilities, `core_utils` supplies the machinery the layers a
 - **`RpcClient` + `RpcPlugin`** — both ends of the plugin-hosted JSON-RPC protocol, shipped together so the wire format cannot drift; the in-app half is stdlib-only so installed plugin payloads can carry a verbatim copy ([`net_utils/README.md`](../pythontk/net_utils/README.md)).
 - **`QcLog` / `QcGate`** — structured run logs and threshold-based acceptance gates for batch pipelines.
 - **Hierarchy toolkit** — delimited-path indexing, exact / tail-path / fuzzy matching, moved-item detection, and JSON-serializable diffs.
-- **`HelpMixin`** — `.help()`, `.source()`, `.signature()` introspection on any class that mixes it in. Reachable from a shell (or an agent) without a REPL snippet via `python -m pythontk <dotted.path> [member] [--json|--source|--where|--signature|--brief|--members]`; it reads the *live* object, so it answers what the static [`API_REGISTRY.md`](../API_REGISTRY.md) cannot. `python -m pythontk --index` lists the whole resolved surface — both the `__all__` tier and the bare wildcard aliases — with each row a valid target to feed back in; it's the live twin of [`API_INDEX.md`](../API_INDEX.md), available wherever the wheel is installed.
+- **`ApiSurface` / `HelpMixin`** — `ApiSurface` reads a package's public API once for every reader: from source with `ast`, importing nothing (`search` / `describe` back the `api.search` / `api.describe` operations), and from live objects, which `HelpMixin` renders as `.help()`, `.source()`, `.signature()` on any class that mixes it in. Reachable from a shell (or an agent) without a REPL snippet via `python -m pythontk <dotted.path> [member] [--json|--source|--where|--signature|--brief|--members]`; it reads the *live* object, so it answers what the static read cannot. `python -m pythontk --index` lists the whole resolved surface — both the `__all__` tier and the bare wildcard aliases — with each row a valid target to feed back in, wherever the wheel is installed.
+- **`Operation` / `OperationCatalog`** — named, typed actions that people and agents call alike, whatever language declares them: an id (`mesh.mirror`), an effect (`read`; `state`: what the running application holds, one undo step; `files`) and a dry run (`OpContext.should_change` / `should_write`), returning an `Outcome`. A package declares its operations in one module, registers it under the `pythontk.operations` entry points and commits the catalog built from them, which every front end reads. `OperationProvider` keeps that cycle as operations of its own: `operations.init` onboards a package (the module, the entry point, the first catalog), `operations.catalog` rewrites a catalog and `operations.check` holds every package to the rules (current catalogs, changes that plan, typed arguments, agreeing twins). `--provider` adds one more: a declaration module, built live, or a catalog file (`--provider path/to/operations.json`) that another language's tool writes outside any package, read as it stands. `python -m pythontk ops list | describe | search | run | apply` is the command line: `run` only plans an operation that changes anything, `apply` makes the changes. An operation that names a `host` (its id then starts with it: `maya.material.rename`) runs through the runner that application's library registers under `pythontk.operation_hosts`: a `BatchOperationHost`, which gives each call a FRESH instance of the application, opens the scenes named with `--scene`, and saves the ones a finished live run changed (a dry run lists those saves). `python -m pythontk ops mcp` serves the same operations to an agent over MCP (`--apply`: the tools that make changes; extra `pythontk[mcp]`); there a host's calls run in one instance kept per client session instead (`SessionOperationHost`), shared by both servers and restarted when code it loaded changes, and a result that is an image the run made comes back as the image. `PythonConsole` runs code in a namespace that lasts (the hosts' `python.exec` operations; pythontk registers a plain Python as the `python` host, so `python.exec` runs a function no application owns).
+- **`AgentInstructions`** — a codebase's agent instructions as a checked tree: `AGENTS.md` rules with a `CLAUDE.md` stub, shared packs vendored and drift-checked, a SessionStart hook for a repo cloned alone; `check`, `sync`, `measure`, `duplicates` (also `python -m pythontk ops run instructions.check root=.`).
 - **`DocAudit`** — the documentation rot gate: extracts fenced code blocks from markdown and validates every attribute chain and keyword argument against the live package. This README's own examples are gated by it (`test/test_doc_audit.py`), which also pins the literal outputs shown above — an API rename or a stale doc claim fails the suite, not a user's session.
 
 ## Guides
@@ -241,9 +243,9 @@ Beyond the data-type utilities, `core_utils` supplies the machinery the layers a
 
 ## Links
 
-- **Full API:** [`API_REGISTRY.md`](../API_REGISTRY.md) · [`API_CHANGES.md`](../API_CHANGES.md)
+- **Full API:** `python -m pythontk ops run api.search "query=<words>"` (the installed source, searched)
 - **Changelog:** [`CHANGELOG.md`](../CHANGELOG.md)
-- **Contributor / AI-agent guide:** [`CLAUDE.md`](../CLAUDE.md)
+- **Contributor / AI-agent guide:** [`AGENTS.md`](../AGENTS.md)
 - **PyPI:** https://pypi.org/project/pythontk/
 - **Issues:** https://github.com/m3trik/pythontk/issues
 

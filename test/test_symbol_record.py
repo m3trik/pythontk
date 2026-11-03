@@ -15,9 +15,9 @@ from pythontk.core_utils.symbol_record import SymbolRecord
 
 from conftest import BaseTestCase
 
-# The field order is a hard contract: the static registry sidecar
-# (API_REGISTRY.json) is json.dumps(asdict(...)), so a reordering would churn
-# every committed registry. Freeze it here.
+# The field order is a hard contract: the static read's mapping
+# (PackageSurface.to_dict) is asdict(...), kept in the user cache and diffed
+# against a release's. Freeze it here.
 EXPECTED_FIELDS = [
     "name",
     "qualname",
@@ -48,11 +48,12 @@ class SymbolRecordTest(BaseTestCase):
         return SymbolRecord(**base)
 
     def test_it_loads_without_the_package(self):
-        """``generate_api_registry.py`` loads this file off disk, nothing installed."""
+        """It stays stdlib-only: ``ApiSurface`` and ``HelpMixin``, which nearly
+        every class mixes in, import it at module level."""
         self.assertLoadsStandalone(inspect.getsourcefile(SymbolRecord))
 
     def test_field_order_is_frozen(self):
-        """asdict() key order must match the registry sidecar contract."""
+        """asdict() key order must match the static read's mapping."""
         self.assertEqual(list(self._rec().as_dict().keys()), EXPECTED_FIELDS)
 
     def test_as_dict_values(self):
@@ -71,7 +72,7 @@ class SymbolRecordTest(BaseTestCase):
         rec = SymbolRecord("f", "C.f", "method", "()", "", 1)
         self.assertFalse(rec.deprecated)
 
-    # -- to_registry_row: must reproduce the generator's member-row format -----
+    # -- to_registry_row: the member's markdown bullet ---------------------------
 
     def test_registry_row_plain_method(self):
         row = self._rec(summary="Return x as a list.").to_registry_row()

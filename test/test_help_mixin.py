@@ -13,6 +13,7 @@ import unittest
 from io import StringIO
 import sys
 
+from pythontk.core_utils.api_surface.api_surface import ApiSurface
 from pythontk.core_utils.help_mixin import HelpMixin
 from pythontk.core_utils.symbol_record import SymbolRecord
 
@@ -109,12 +110,10 @@ class ComposedClass(_CapabilityMixin, HelpMixin):
 
 
 class InheritedDescriptorKindTest(BaseTestCase):
-    """``_get_member_type`` must classify INHERITED descriptors correctly."""
+    """The live read (``ApiSurface.members``) must classify INHERITED descriptors correctly."""
 
     def _kinds(self, cls):
-        return {
-            r.name: r.kind for r in cls._collect_records(inherited=True, private=False)
-        }
+        return {r.name: r.kind for r in ApiSurface.members(cls, inherited=True, private=False)}
 
     def test_inherited_descriptors_keep_their_kind(self):
         """Regression: the raw descriptor was looked up in the immediate
@@ -256,24 +255,12 @@ class HelpMixinTest(BaseTestCase):
         self.assertIn("public_method", result)
         self.assertIn("processes input", result)
 
-    def test_get_summary_extracts_first_line(self):
-        """Test _get_summary extracts first line of docstring."""
-        docstring = """First line of docstring.
-
-        More details here.
-        """
-        result = HelpMixin._get_summary(docstring)
-        self.assertEqual(result, "First line of docstring.")
-
-    def test_get_summary_handles_empty(self):
-        """Test _get_summary handles empty docstring."""
-        result = HelpMixin._get_summary("")
-        self.assertEqual(result, "")
-
-    def test_get_summary_handles_none(self):
-        """Test _get_summary handles None."""
-        result = HelpMixin._get_summary(None)
-        self.assertEqual(result, "")
+    def test_summary_is_the_engines(self):
+        """The class line and each brief row read ``ApiSurface.summary``: one
+        rule for help, the registries and the catalogs."""
+        result = SampleClass.help(brief=True, returns=True)
+        self.assertIn(ApiSurface.summary(SampleClass.__doc__), result)
+        self.assertIn(ApiSurface.summary(SampleClass.public_method.__doc__), result)
 
     def test_help_shows_signatures(self):
         """Test that help output includes method signatures."""
@@ -527,23 +514,17 @@ class HelpMixinTest(BaseTestCase):
         self.assertIn("generator", result.lower())
 
     # =========================================================================
-    # Tests for _get_member_flags
+    # Tests for the member flags (ApiSurface.flags)
     # =========================================================================
 
-    def test_get_member_flags_async(self):
-        """Test _get_member_flags detects async."""
-        flags = HelpMixin._get_member_flags(SampleClass.async_method)
-        self.assertIn("async", flags)
+    def test_member_flags_async(self):
+        self.assertIn("async", ApiSurface.flags(SampleClass.async_method))
 
-    def test_get_member_flags_generator(self):
-        """Test _get_member_flags detects generator."""
-        flags = HelpMixin._get_member_flags(SampleClass.generator_method)
-        self.assertIn("generator", flags)
+    def test_member_flags_generator(self):
+        self.assertIn("generator", ApiSurface.flags(SampleClass.generator_method))
 
-    def test_get_member_flags_normal(self):
-        """Test _get_member_flags returns empty for normal methods."""
-        flags = HelpMixin._get_member_flags(SampleClass.public_method)
-        self.assertEqual(flags, "")
+    def test_member_flags_normal(self):
+        self.assertEqual(ApiSurface.flags(SampleClass.public_method), [])
 
     # =========================================================================
     # Tests for _format_annotation
@@ -614,9 +595,9 @@ class HelpMixinTest(BaseTestCase):
         self.assertEqual(members["public_method"]["defined_in"], "SampleClass")
         self.assertEqual(members["child_method"]["defined_in"], "ChildClass")
 
-    def test_collect_records_returns_symbolrecords(self):
-        """_collect_records yields bare SymbolRecords (drift-gate shape)."""
-        records = SampleClass._collect_records(inherited=False)
+    def test_live_members_are_symbolrecords(self):
+        """``ApiSurface.members`` yields bare SymbolRecords (drift-gate shape)."""
+        records = ApiSurface.members(SampleClass, inherited=False)
         self.assertTrue(all(isinstance(r, SymbolRecord) for r in records))
         by_name = {r.name: r for r in records}
         self.assertEqual(by_name["public_method"].qualname, "SampleClass.public_method")

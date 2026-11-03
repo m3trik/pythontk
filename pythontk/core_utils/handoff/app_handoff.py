@@ -702,6 +702,24 @@ class HandoffBridge(LoggingMixin):
         return roots
 
     @staticmethod
+    def own_python_folders() -> List[str]:
+        """The folders that belong to this process's own Python: its prefixes
+        and its per-user site-packages, each ``normcase``-d and ending in a
+        separator, so ``normcase(abspath(path)).startswith(folder)`` tests a
+        path. What :meth:`child_sys_path` drops."""
+        import os
+        import site
+        import sys
+
+        roots = [sys.prefix, getattr(sys, "base_prefix", sys.prefix)]
+        try:  # an embedded Python's `site` may not implement it
+            roots.append(site.getusersitepackages())
+        except (AttributeError, OSError):
+            pass
+        folders = [os.path.normcase(os.path.abspath(p)) + os.sep for p in roots if p]
+        return list(dict.fromkeys(folders))
+
+    @staticmethod
     def child_sys_path(entries: Optional[Sequence[str]] = None) -> List[str]:
         """The parent's importable set, minus what belongs to the parent's OWN Python.
 
@@ -742,15 +760,9 @@ class HandoffBridge(LoggingMixin):
             list: Absolute, de-duplicated entries, in the order given.
         """
         import os
-        import site
         import sys
 
-        roots = [sys.prefix, getattr(sys, "base_prefix", sys.prefix)]
-        try:  # an embedded Python's `site` may not implement it
-            roots.append(site.getusersitepackages())
-        except (AttributeError, OSError):
-            pass
-        prefixes = {os.path.normcase(os.path.abspath(p)) + os.sep for p in roots if p}
+        prefixes = HandoffBridge.own_python_folders()
         kept: List[str] = []
         for entry in sys.path if entries is None else entries:
             if not entry or not os.path.isabs(entry):

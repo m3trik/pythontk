@@ -3,30 +3,32 @@
 """SymbolRecord - the shared public-API symbol shape.
 
 A single, minimal data record describing one public symbol (a top-level function
-or a class member). It is produced by two independent introspection engines and
-consumed by several tools, so it lives here at the bottom of the dependency
+or a class member). Both halves of :class:`~pythontk.ApiSurface` produce it and
+several tools consume it, so it lives here at the bottom of the dependency
 stack (zero non-stdlib imports) as the single source of truth for that shape.
 
-Producers
-    * ``m3trik/scripts/generate_api_registry.py`` - *static*, via ``ast``. Runs
-      anywhere (no package import, no DCC/Qt) and owns the committed
-      ``API_REGISTRY`` artifacts.
-    * ``pythontk.HelpMixin`` - *dynamic*, via ``inspect`` on a live class. Sees
-      the resolved MRO, metaclass/mixin-injected members, and unwrapped
-      signatures the static walker cannot.
+Producers (both :class:`~pythontk.ApiSurface`)
+    * *static* -- :meth:`~pythontk.ApiSurface.read`, via ``ast``. Runs
+      anywhere (no package import, no DCC/Qt); a read is kept in the
+      per-user cache.
+    * *live* -- :meth:`~pythontk.ApiSurface.members`, via ``inspect`` on a
+      loaded class. Sees the resolved MRO, metaclass/mixin-injected members,
+      and unwrapped signatures the static read cannot.
 
 Consumers
-    * the ``API_INDEX`` / ``API_REGISTRY`` markdown (static producer),
-    * ``HelpMixin.help(as_dict=...)`` structured output / live-DCC RPC,
+    * the ``api.search`` / ``api.describe`` operations and m3trik's release
+      checks (static),
+    * ``HelpMixin.help(as_dict=...)`` structured output (live),
     * the runtime-vs-static drift gate, which compares the two producers'
-      records by :meth:`key` - ``(qualname, kind)``, deliberately NOT the
+      records by ``(qualname, kind)``, deliberately NOT the
       signature string, which the two engines render differently.
 
 The field set is deliberately minimal and its ORDER is a hard contract: the
-static registry sidecar (``API_REGISTRY.json``) is ``json.dumps(asdict(...))``,
-so reordering churns every committed registry in the ecosystem. Runtime-only
+static read's mapping (``PackageSurface.to_dict``) is ``asdict`` of it, kept
+in the per-user cache and diffed against a release's. Runtime-only
 enrichments (async/abstract flags, the defining class, a resolved source
-location) are layered on by ``HelpMixin`` at the dict level, not added here.
+location) are layered on by :meth:`~pythontk.ApiSurface.enrich` at the dict
+level, not added here.
 
 ``remove_in`` is the one field added since the set was first frozen, and it
 pays for its churn: ``deprecated`` alone records THAT a name is retired, which
@@ -48,8 +50,8 @@ from typing import Any, Dict
 class SymbolRecord:
     """One public symbol: a top-level function or a class member.
 
-    Field names and order mirror the static registry sidecar so this type is a
-    drop-in for the generator's serialisation (see the module docstring).
+    Field names and order are the static read's mapping (see the module
+    docstring).
     """
 
     name: str
@@ -73,12 +75,9 @@ class SymbolRecord:
         return json.dumps(self.as_dict(), indent=indent)
 
     def to_registry_row(self) -> str:
-        """Render the full-registry class-member bullet.
-
-        Single source of the member-row markdown that
-        ``generate_api_registry.py`` emits for class members. No source link is
-        included - top-level functions and class headers carry module context
-        this record does not, so their links are added by the generator.
+        """The member as a markdown bullet: ```Owner.name(sig)``` with its kind,
+        a **DEPRECATED** marker (and its removal version) and its summary. No
+        source link: the record carries no module context.
         """
         decoration = {
             "staticmethod": " *(static)*",
@@ -86,8 +85,8 @@ class SymbolRecord:
             "property": " *(property)*",
         }.get(self.kind, "")
         if self.deprecated:
-            # The removal version rides in the row itself so a reviewer reading
-            # the registry sees the deadline without opening the source.
+            # The removal version rides in the row itself so a reviewer sees
+            # the deadline without opening the source.
             due = f" (remove in {self.remove_in})" if self.remove_in else ""
             decoration += f" **DEPRECATED{due}**"
         summary = f" — {self.summary}" if self.summary else ""

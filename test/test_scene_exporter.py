@@ -700,14 +700,10 @@ class TestCheckFailure(unittest.TestCase):
         self.assertIn("repaired names", log.output[-1])
         self.assertEqual(exporter._overridden_checks, [])
 
-    def test_the_retired_after_the_run_consent_still_answers(self):
-        exporter = _Exporter()
-        exporter.task_manager._last_failed_checks = ["check_a", "check_b"]
-        asked = []
-        exporter.confirm = lambda question: asked.append(question) or True
-        with self.assertWarns(DeprecationWarning):
-            self.assertTrue(exporter.confirm_check_override())
-        self.assertIn("2 validation check(s) failed: check_a, check_b.", asked[0])
+    def test_the_after_the_run_consent_is_gone(self):
+        """``confirm_check_override`` outlived its window (0.14.0): a run asks
+        ``decide_check_failure`` as each check fails."""
+        self.assertFalse(hasattr(_Exporter(), "confirm_check_override"))
 
 
 class TestRunConfigFromValues(unittest.TestCase):

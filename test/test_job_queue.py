@@ -9,6 +9,7 @@ import tempfile
 import threading
 import time
 import unittest
+import unittest.mock
 
 from pythontk.file_utils.job_queue import JobQueue
 
@@ -43,6 +44,24 @@ class TestJobQueue(unittest.TestCase):
         self.serve(lambda j: {"twice": j["n"] * 2})
         self.assertEqual(self.queue.wait(job, timeout=10), {"twice": 4})
         self.assertEqual(self.queue.status(job), "done")
+
+    def test_discard_forgets_a_finished_job_and_withdraws_a_queued_one(self):
+        withdrawn = self.queue.submit({"n": 1})
+        self.queue.discard(withdrawn)
+        self.assertIsNone(self.queue.status(withdrawn))
+        self.serve(lambda j: {"n": j["n"]})
+        done = self.queue.submit({"n": 2})
+        self.assertEqual(self.queue.wait(done, timeout=10, poll=0.02), {"n": 2})
+        self.queue.discard(done)
+        self.assertIsNone(self.queue.status(done))
+        self.queue.discard(done)  # nothing left: no error
+        self.assertFalse([n for n in os.listdir(self.root) if n.startswith(done)])
+
+    def test_discard_is_best_effort_when_a_record_is_held(self):
+        job = self.queue.submit({"n": 1})
+        with unittest.mock.patch("os.remove", side_effect=PermissionError("held by a scanner")):
+            self.queue.discard(job)  # never raises: the next discard or a sweep gets it
+        self.assertEqual(self.queue.status(job), "queued")
 
     def test_jobs_run_in_the_order_they_were_submitted(self):
         ran = []

@@ -199,6 +199,16 @@ class JobQueue:
         lease = self._read(os.path.join(self.root, self.LEASE))
         return None if lease is None else float(lease.get("until", 0)) - time.time()
 
+    def discard(self, job_id: str) -> None:
+        """Forget a job: its record goes, so a queue that serves for long stays
+        small; a queued one is withdrawn (a worker taking it meanwhile skips
+        it). A running job is the worker's: its record is left alone."""
+        for state in ("queued", "done", "failed"):
+            try:
+                os.remove(self._path(job_id, state))
+            except OSError:  # gone already, or held a moment (Windows): best effort
+                pass
+
     def stop(self) -> None:
         """Ask the worker to end once its current job is done."""
         os.makedirs(self.root, exist_ok=True)
