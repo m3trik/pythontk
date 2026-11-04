@@ -3,7 +3,7 @@
 """The golden cases every port of :class:`ArticulationModel` is held to.
 
 The model runs in three places besides Python -- unitytk's C#
-(``ArticulatedRigController.cs``), the WebXR preview's JavaScript
+(``Features/ArticulatedRig/Model/ArticulationModel.cs``), the WebXR preview's JavaScript
 (``articulated_rig.js``) and whatever production app vendors that script --
 and a port is only as good as the cases that pin it. These are generated
 from the Python reference at test time, so they can never drift from it: a
