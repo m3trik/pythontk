@@ -399,7 +399,15 @@ class ShadowConformance:
     :meth:`ShadowProjection.far_point`, which a port derives the same way);
     the model the reference makes of it; and where a plane carrying the
     case's canvas lands (:meth:`ShadowModel.placement`). The named cases come
-    first -- each clamp and fallback the model has -- then random ones.
+    first -- each clamp and fallback the model has -- then random ones, then
+    the guards: the model scales with its lengths but for its guard constants
+    (the overhead ``EPS``, the factors' 1e-4 floors, the far point's 1e-3
+    scale floor), so each guard case sits at the tiny scale where one binds,
+    and a port that changes a constant fails it.
+
+    No case has a zero direction: :meth:`case` normalizes each one, and the
+    reference raises on a zero one, so what a port does there is its own
+    choice (unitytk's ``FarPoint`` reads it as noon, straight down).
     """
 
     #: Per quantity, the largest difference a port may show, in the cases'
@@ -508,7 +516,8 @@ class ShadowConformance:
         Parameters:
             seed: The random stream's seed -- the same seed, the same cases.
             per_kind: Random cases of each kind (a point source, a sun) after
-                the named ones.
+                the named ones. The guard cases come last, after them, so
+                every earlier case keeps its place.
         """
         contact = (0.2, 0.0, 0.3)
         named = [
@@ -565,4 +574,44 @@ class ShadowConformance:
                         rng.uniform(-1, 1),
                     ]
                     randoms.append(cls.case(foot, direction=shine, **shape))
-        return {"tolerance": dict(cls.TOLERANCE), "cases": named + randoms}
+        # Each guard where it binds: a source within a few EPS of overhead,
+        # and a target a few 1e-4 units tall under a source close over it,
+        # where the floors decide the factors. Fixed, not drawn, so
+        # each binds at every seed and the random stream above is unchanged.
+        tiny = {"radius": 1e-4, "height": 3e-4}
+        guards = [
+            # 5 EPS off overhead: the bearing is still the light's.
+            cls.case(contact, (0.2 + 5e-6, 3.0, 0.3), name="near_overhead"),
+            # Half an EPS off: the bearing falls back.
+            cls.case(contact, (0.2 + 5e-7, 3.0, 0.3), name="overhead_within_eps"),
+            # 2 EPS off overhead: the top factor meets the reach cap, which
+            # divides by ``max(dist, EPS)``. The floors bound how fast a
+            # factor grows, so the cap binds this close only for a reach cap
+            # under dist / 1e-4 heights.
+            cls.case(
+                contact,
+                (0.2 + 2e-6, 1.51e-4, 0.3),
+                radius=5e-7,
+                height=1e-6,
+                max_stretch=0.01,
+                name="tiny_near_overhead",
+            ),
+            # 5e-5 over the top: the top factor's 1e-4 floor, under the cap.
+            cls.case(contact, (0.2 + 1e-4, 3.5e-4, 0.3), **tiny, name="tiny_over_top"),
+            # 5e-5 over a floating target's underside: the base factor's floor.
+            cls.case(
+                (0.2, 2e-4, 0.3),
+                (0.2 + 1e-4, 2.5e-4, 0.3),
+                **tiny,
+                name="tiny_over_contact",
+            ),
+            # Under 1e-3 across: the far point's scale floor.
+            cls.case(
+                contact,
+                direction=(-0.4, -0.8, 0.3),
+                radius=1e-4,
+                height=4e-4,
+                name="tiny_sun",
+            ),
+        ]
+        return {"tolerance": dict(cls.TOLERANCE), "cases": named + randoms + guards}

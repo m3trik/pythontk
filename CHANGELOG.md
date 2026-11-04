@@ -1,6 +1,14 @@
 # pythontk — Changelog
 
 ## 2026
+- **2026-11-04 -- `ShadowConformance.cases` pins the model's guard constants: six guard cases after the random ones (`geo_utils/shadow_projection.py`).** A review changed the C# port's guards one at a time and every case still passed. The guards are the overhead `EPS`, used both as the bearing's threshold and in the reach cap's `max(dist, EPS)`, the factors' 1e-4 floors and the far point's 1e-3 scale floor. No case put a source within 1e-3 of overhead or a target small enough for a floor to decide a factor. The new cases:
+  - `near_overhead` and `overhead_within_eps` put the source 5e-6 and 5e-7 off overhead, one each side of the bearing's `EPS`.
+  - `tiny_near_overhead` meets the reach cap 2e-6 off overhead. The floors bound how fast a factor grows, so the cap binds that close only when the reach cap is under dist / 1e-4 heights; the case uses a reach cap of 0.01.
+  - `tiny_over_top` and `tiny_over_contact` put a source 5e-5 over a 3e-4 target's top and over its underside.
+  - `tiny_sun` is a sun on a target under 1e-3 across.
+
+  They are fixed values and come last, so every earlier case keeps its index and its bytes at any seed. The docstring adds that no case has a zero direction, so each port chooses what it does with one. Measured: 11 mutants, each changing one constant, fail at least one case in both the C# port and the JS port; the review's 4 passed every old case. The real ports pass all 31 cases of their draws: the C# port passes its 9 of 9 dotnet tests, and the JS port's worst gaps are source 4.7e-10, model 7.1e-15 and placement 1.4e-14.
+  - Test(s): `test_shadow_projection.TestShadowConformance` new `test_each_guard_case_sits_where_its_guard_binds` and `test_the_guard_cases_come_last_whatever_the_draw`; `test_the_random_cases_cover_both_kinds` counts them.
 - **2026-11-04 -- Fixed (review): `AppLauncher` masks a secret's value in the command it logs (`core_utils/app_launcher/_app_launcher.py`).**
   - `launch`, `run` and `spawn` logged their whole command at DEBUG, so a licence passed on the command line (unitytk's Unity batch launches: `-username`, `-password`, `-serial`) sat in every DEBUG log. unitytk's own mask never reached this logger.
   - The value after a flag naming a secret (password, token, serial, API key, username), and `--flag=value`, now logs as `***`.

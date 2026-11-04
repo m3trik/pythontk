@@ -422,9 +422,63 @@ class TestShadowConformance(unittest.TestCase):
         self.assertAlmostEqual(named["low_sun"]["reach"], 4.0)
 
     def test_the_random_cases_cover_both_kinds(self):
-        kinds = {c["name"].rsplit("_", 1)[0] for c in self.doc["cases"][9:]}
+        randoms = self.doc["cases"][9 : 9 + 2 * 4]
+        kinds = {c["name"].rsplit("_", 1)[0] for c in randoms}
         self.assertEqual(kinds, {"point", "sun"})
-        self.assertEqual(len(self.doc["cases"]), 9 + 2 * 4)
+        self.assertEqual(len(self.doc["cases"]), 9 + 2 * 4 + 6)
+
+    def test_the_guard_cases_come_last_whatever_the_draw(self):
+        """Appended after the random ones, fixed: every earlier case keeps its
+        index, and each guard case binds at any seed."""
+        names = [c["name"] for c in self.doc["cases"][-6:]]
+        other = ShadowConformance.cases(seed=11, per_kind=1)["cases"]
+        self.assertEqual(names, [c["name"] for c in other[-6:]])
+        self.assertEqual(self.doc["cases"][-6:], other[-6:])
+
+    def test_each_guard_case_sits_where_its_guard_binds(self):
+        """The model scales with its lengths but for its guard constants, so
+        each guard case is built where one decides the answer: change the
+        constant (in a port) and that case's model changes."""
+        eps = ShadowProjection.EPS
+        guard = {c["name"]: c for c in self.doc["cases"][-6:]}
+
+        def given(name):
+            case = guard[name]
+            g = case["input"]
+            (cx, cy, cz), (lx, ly, lz) = g["contact"], case["source"]
+            return case["model"], g, math.hypot(cx - lx, cz - lz), ly - cy, ly
+
+        # The bearing's EPS, from both sides.
+        model, _, dist, _, _ = given("near_overhead")
+        self.assertTrue(eps < dist < 10 * eps, dist)
+        self.assertFalse(model["overhead"])
+        model, _, dist, _, _ = given("overhead_within_eps")
+        self.assertTrue(0.1 * eps < dist <= eps, dist)
+        self.assertTrue(model["overhead"])
+        # The reach cap's max(dist, EPS): the top factor is the cap through dist.
+        model, g, dist, rise, ly = given("tiny_near_overhead")
+        self.assertTrue(eps < dist < 10 * eps, dist)
+        cap = model["k_base"] + g["max_stretch"] * g["height"] / dist
+        self.assertAlmostEqual(model["k_top"], cap, places=12)
+        self.assertGreater(rise - g["height"], 1e-4)  # clear of the top's floor
+        self.assertLess(cap, (ly - g["ground"]) / (rise - g["height"]))
+        self.assertLess(cap, 1.0 + g["max_stretch"])
+        # The top factor's 1e-4 floor, under the cap.
+        model, g, _, rise, ly = given("tiny_over_top")
+        self.assertLess(rise - g["height"], 1e-4)
+        self.assertAlmostEqual(model["k_top"], (ly - g["ground"]) / 1e-4, places=9)
+        self.assertLess(model["k_top"], 1.0 + g["max_stretch"])
+        # The base factor's 1e-4 floor, under 1 + max_stretch.
+        model, g, _, rise, ly = given("tiny_over_contact")
+        self.assertLess(rise, 1e-4)
+        self.assertAlmostEqual(model["k_base"], (ly - g["ground"]) / 1e-4, places=9)
+        self.assertLess(model["k_base"], 1.0 + g["max_stretch"])
+        # The far point's 1e-3 scale floor.
+        sun = guard["tiny_sun"]
+        g = sun["input"]
+        self.assertLess(max(g["height"], 2 * g["radius"]), 1e-3)
+        far = math.dist(sun["source"], g["contact"])
+        self.assertAlmostEqual(far, ShadowProjection.FAR_FACTOR * 1e-3, places=9)
 
 
 if __name__ == "__main__":
