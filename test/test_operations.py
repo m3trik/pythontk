@@ -322,10 +322,12 @@ class TestOperation(unittest.TestCase):
         # Python before 3.11 reads `name: str = None` as Optional[str] (and
         # Union[int, str] = None as one flat Union), later ones as written.
         properties = _op("demo.tag", "tag").describe()["args"]["properties"]
-        null_or = lambda *kinds: {
-            "anyOf": [{"type": k} for k in kinds] + [{"type": "null"}],
-            "default": None,
-        }
+        def null_or(*kinds):
+            return {
+                "anyOf": [{"type": k} for k in kinds] + [{"type": "null"}],
+                "default": None,
+            }
+
         self.assertEqual(properties["name"], null_or("string"))
         self.assertEqual(properties["count"], null_or("integer"))
         self.assertEqual(properties["pick"], null_or("integer", "string"))
@@ -1006,7 +1008,9 @@ class TestBatchOperationHost(unittest.TestCase):
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
-        root = Path(self._tmp.name)
+        # Resolved: the host reports the scenes it saved resolved, and a TEMP
+        # spelled with 8.3 short names (a Windows runner's RUNNER~1) differs.
+        root = Path(self._tmp.name).resolve()
         (root / _BATCH_PACKAGE).mkdir()
         (root / _BATCH_PACKAGE / "__init__.py").write_text("", encoding="utf-8")
         (root / _BATCH_PACKAGE / "scene.py").write_text(_BATCH_SCENE, encoding="utf-8")

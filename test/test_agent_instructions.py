@@ -58,7 +58,9 @@ class _Tree(unittest.TestCase):
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
-        self.base = Path(self._tmp.name)
+        # Resolved: the plan names every file resolved, and a TEMP spelled
+        # with 8.3 short names (a Windows runner's RUNNER~1) differs.
+        self.base = Path(self._tmp.name).resolve()
         self.source = self.base / "packs_source"
         self.source.mkdir()
         (self.source / "principles.md").write_text(
