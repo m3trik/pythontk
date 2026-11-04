@@ -1118,7 +1118,7 @@ keep direct lighting dynamic, or vertex-bake the low-frequency term.
   as irradiance); its reflections play whole. The studio is freed while the probe lights the model.
   The Environment menu switches it off and on -- off is the same file shipped without one -- and
   draws where it was captured; Unity gets it too, as a box-projected Reflection Probe (unitytk's
-  `LightmapMetadataApplier`, intensity 1 there: Unity's lightmaps carry no 1/pi). Measured on a production soldering table against
+  `Lightmaps.Apply`, intensity 1 there: Unity's lightmaps carry no 1/pi). Measured on a production soldering table against
   Arnold's render of the same room, through the bake, its GLB and this page: a metal housing from
   0.12 of Arnold's luminance to 0.62, its trays from 0.4 to 0.89-1.07, the unbaked magnifier's
   parts from up to 2.8x too bright to 0.65-1.45x. The HUD adds "probe" when it is up.
