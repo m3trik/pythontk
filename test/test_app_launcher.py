@@ -2093,5 +2093,24 @@ class TestLaunchHidden(_HiddenChildren):
             self.assertEqual(self._desktop_of(hidden=True), here)
 
 
+
+class TestSecretArgsStayOutOfTheLog(unittest.TestCase):
+    """A launcher passing a licence on the command line (unitytk's Unity batch
+    launches: -username, -password, -serial) left it in every DEBUG log line
+    (2026-11-04 review): the logged command masks each secret's value."""
+
+    def test_the_debug_log_masks_secret_values(self):
+        from pythontk.core_utils.app_launcher import _app_launcher
+
+        args = ["-c", "pass", "-username", "dev@example.com", "-password", "fake-pass-1", "--token=abc", "-serial", "S-1", "-keep", "shown"]
+        with self.assertLogs(_app_launcher.logger, level="DEBUG") as logs:
+            AppLauncher.run(sys.executable, args=args, timeout=60)
+        text = " ".join(logs.output)
+        for secret in ("dev@example.com", "fake-pass-1", "abc", "S-1"):
+            self.assertNotIn(secret, text)
+        self.assertIn("'-password', '***'", text)
+        self.assertIn("--token=***", text)
+        self.assertIn("'-keep', 'shown'", text, "an ordinary flag's value is still shown")
+
 if __name__ == "__main__":
     unittest.main()

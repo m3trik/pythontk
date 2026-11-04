@@ -46,6 +46,32 @@ class _AppLauncherInternal(object):
         except OSError:
             return []
 
+    #: Words that make a flag's value a secret (or personal) the log must not hold.
+    _SECRET_WORDS = ("password", "passwd", "secret", "token", "serial", "apikey", "api-key", "api_key", "username")
+
+    @classmethod
+    def _loggable(cls, cmd) -> list:
+        """*cmd* as a log may show it: the value after a flag that names a secret
+        (``-password x``, ``--token=x``; :attr:`_SECRET_WORDS`) masked as ``***``.
+        A launcher passing a licence on the command line (Unity's batch mode)
+        would otherwise leave it in every DEBUG log."""
+        def secret(flag: str) -> bool:
+            name = flag.lstrip("-").lower()
+            return flag.startswith("-") and any(word in name for word in cls._SECRET_WORDS)
+
+        shown, mask_next = [], False
+        for part in cmd:
+            text = str(part)
+            if mask_next:
+                shown.append("***")
+                mask_next = False
+            elif "=" in text and secret(text.split("=", 1)[0]):
+                shown.append(text.split("=", 1)[0] + "=***")
+            else:
+                shown.append(text)
+                mask_next = secret(text)
+        return shown
+
     @staticmethod
     def _command(executable_path, args) -> list:
         """``[executable, *args]``; *args* may be one string or a sequence."""
@@ -206,7 +232,7 @@ class AppLauncher(
         cmd = AppLauncher._command(executable_path, args)
 
         try:
-            logger.debug(f"Launching: {cmd} (Detached: {detached}, Hidden: {hidden})")
+            logger.debug(f"Launching: {AppLauncher._loggable(cmd)} (Detached: {detached}, Hidden: {hidden})")
 
             kwargs = {"cwd": cwd, "shell": False}
 
@@ -332,7 +358,7 @@ class AppLauncher(
         creationflags = (
             subprocess.CREATE_NO_WINDOW if hide_window and os.name == "nt" else 0
         )
-        logger.debug(f"Running (blocking{', hidden' if hidden else ''}): {cmd}")
+        logger.debug(f"Running (blocking{', hidden' if hidden else ''}): {AppLauncher._loggable(cmd)}")
         popen = AppLauncher._popen(hidden)
         if on_output is not None:
             return AppLauncher._run_streaming(
@@ -418,7 +444,7 @@ class AppLauncher(
         creationflags = (
             subprocess.CREATE_NO_WINDOW if hide_window and os.name == "nt" else 0
         )
-        logger.debug(f"Spawning: {cmd}")
+        logger.debug(f"Spawning: {AppLauncher._loggable(cmd)}")
         proc = subprocess.Popen(
             cmd,
             cwd=cwd,
