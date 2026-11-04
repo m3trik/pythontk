@@ -14,7 +14,7 @@
         "properties": {
           "target": {
             "type": "string",
-            "description": "A public symbol as `search` lists it (`\"mayatk.mat_utils._mat_utils:MatUtils.get_mat_info\"`)."
+            "description": "A public symbol as `search` lists it (`\"mayatk.mat_utils._mat_utils:MatUtils.get_mat_info\"`; a C# one by its full name, `\"M3trik.Unitytk.Core.Json.Parse\"`)."
           }
         },
         "additionalProperties": false,

@@ -56,7 +56,9 @@ class SymbolRecord:
 
     name: str
     qualname: str
-    kind: str  # function|method|staticmethod|classmethod|property|class|attribute
+    #: function|method|staticmethod|classmethod|property|class|attribute|constant;
+    #: a C# read's also constructor|field|indexer|event|operator|delegate.
+    kind: str
     signature: str
     summary: str
     line: int

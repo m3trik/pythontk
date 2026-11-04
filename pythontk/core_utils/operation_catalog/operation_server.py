@@ -443,6 +443,8 @@ class OperationServer(_OperationServerInternal):
             for package in ApiSurface.registered():
                 try:
                     ApiSurface.read(package)
+                    if ApiSurface.csharp_root(package) is not None:
+                        ApiSurface.read_csharp(package)
                 except Exception:  # a search that names it says why
                     pass
 
