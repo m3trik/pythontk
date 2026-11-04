@@ -387,7 +387,7 @@ class ShadowConformance:
     """The golden cases every port of :meth:`ShadowProjection.model` is held to.
 
     The model runs outside Python twice -- the WebXR runtime's ``shadow_rig``
-    feature (JavaScript) and unitytk's ``ShadowPlaneController.cs`` (C#) --
+    feature (JavaScript) and unitytk's ``ShadowPlaneModel`` (C#, ``Features/ShadowPlane/Model/``) --
     each placing a plane from it every frame. A port runs every case through
     its own model and compares within :attr:`TOLERANCE`; the cases are
     generated from this reference at test time
