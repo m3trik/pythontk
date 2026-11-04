@@ -793,6 +793,33 @@ class TestStore(SceneRecordsCase):
         self.assertFalse(SR.SHOTS.is_present(DictStore))
         self.assertFalse(DictStore.remove(Scope.DELIVERABLE, SR.SHOTS.key))
 
+    def test_a_carrier_is_named_as_every_host_numbers_a_copy(self):
+        """An import beside the scene's own carrier numbers the copy as its
+        host does: Maya ``data_export1``, Blender ``data_export.001``. Both
+        ride a written file, so a reader and the verifier both know them; the
+        verifier was blind to Blender's. Added: 2026-10-28"""
+        for name in (
+            "data_export",
+            "data_export1",
+            "data_export.001",
+            "|GRP|MOD:data_export",
+            "MOD:data_export.002",
+        ):
+            with self.subTest(name=name):
+                self.assertTrue(SceneStoreBase.is_carrier(name))
+        for name in (
+            "data_exportShape",
+            "data_export_old",
+            "data_export.",
+            "data_export..1",
+            "data_export.1a",
+            "",
+            None,
+        ):
+            with self.subTest(name=name):
+                self.assertFalse(SceneStoreBase.is_carrier(name))
+        self.assertTrue(SceneStoreBase.is_carrier("data_internal.001", Scope.PRIVATE))
+
 
 class TestMigrate(SceneRecordsCase):
     """``SceneStoreBase.migrate``: a scene's records brought to their current
@@ -886,6 +913,149 @@ class TestMigrate(SceneRecordsCase):
         ):
             ExportSnapshot.assemble({SR.SHOTS: _shots}).commit(Unmigratable)
         self.assertTrue(SR.SHOTS.is_present(DictStore))
+
+
+class _LeftoverStore(DictStore):
+    """A scene holding carriers an import left beside its own: plain
+    ``{key: value}`` dicts by name, each removal recorded."""
+
+    leftovers: Dict[str, Any] = {}
+    deleted: list = []
+
+    @classmethod
+    def reset(cls):
+        cls.data = {}
+        cls.leftovers = {}
+        cls.deleted = []
+
+    @classmethod
+    def _leftover_carriers(cls):
+        return dict(cls.leftovers)
+
+    @classmethod
+    def _carrier_values(cls, carrier):
+        return dict(carrier)
+
+    @classmethod
+    def _delete_carrier(cls, carrier):
+        cls.deleted.append(carrier)
+
+
+class TestLeftoverCarriers(unittest.TestCase):
+    """``SceneStoreBase.migrate`` settles a carrier an import left beside the
+    scene's own -- a plain import never merges it, so nothing reads or
+    refreshes it again, and only the written file still carries it.
+
+    REGRESSION (2026-10-28): a production assembly imported a module whose
+    ``data_export`` landed as ``data_export1`` holding a pre-rename
+    ``lightmap_metadata`` and a version-1 handoff; every export since shipped
+    both, and the deliverable verifier failed the file on them. Added:
+    2026-10-28"""
+
+    def setUp(self):
+        _LeftoverStore.reset()
+
+    @staticmethod
+    def _carrier(**records):
+        return {key: json.dumps(payload) for key, payload in records.items()}
+
+    def test_one_holding_only_records_the_scene_derives_is_removed(self):
+        stale = self._carrier(
+            lightmap_metadata={"version": 1, "objects": [{"name": "A"}]},
+            handoff={"version": 1, "reads": {}},
+        )
+        _LeftoverStore.leftovers = {
+            "data_export1": (Scope.DELIVERABLE, stale)
+        }
+        SR.LIGHTMAPS.save(_LeftoverStore, {"objects": ["current"]})
+        with self.assertLogs(
+            "pythontk.core_utils.engines.scene_export", level="INFO"
+        ) as logs:
+            _LeftoverStore.migrate()
+        self.assertEqual(_LeftoverStore.deleted, [stale])
+        self.assertTrue(any("data_export1" in line for line in logs.output), logs)
+        self.assertEqual(
+            SR.LIGHTMAPS.load(_LeftoverStore)["objects"],
+            ["current"],
+            "the scene's own records are untouched",
+        )
+
+    def test_one_holding_a_current_record_the_scenes_own_lacks_stays(self):
+        """A reader takes a module carrier's record where the scene's own has
+        none: removed, a raw-imported module's lightmaps would leave the
+        deliverable unlit, though a merge re-derives them. The bridge test
+        that shipped such a carrier failed on the first rule (2026-10-28)."""
+        current = self._carrier(lightmaps={"version": SR.LIGHTMAPS.version, "objects": []})
+        _LeftoverStore.leftovers = {"MOD:data_export": (Scope.DELIVERABLE, current)}
+        with self.assertLogs(
+            "pythontk.core_utils.engines.scene_export", level="WARNING"
+        ) as logs:
+            _LeftoverStore.migrate()
+        self.assertEqual(_LeftoverStore.deleted, [])
+        self.assertIn(SR.LIGHTMAPS.owner, "".join(logs.output))
+
+    def test_a_current_record_the_scenes_own_shadows_is_none_read(self):
+        current = self._carrier(lightmaps={"version": SR.LIGHTMAPS.version, "objects": []})
+        _LeftoverStore.leftovers = {"data_export1": (Scope.DELIVERABLE, current)}
+        SR.LIGHTMAPS.save(_LeftoverStore, {"objects": ["own"]})
+        _LeftoverStore.migrate()
+        self.assertEqual(_LeftoverStore.deleted, [current])
+
+    def test_one_holding_what_a_merge_keeps_stays_and_is_named(self):
+        """Shots, a file map, a channel no record declares: what a merge
+        would bring in is the user's call (``merge_carriers`` /
+        ``discard_carriers``), never removed on its own."""
+        kept = self._carrier(audio_file_map={"2": "b.wav"})
+        _LeftoverStore.leftovers = {"data_internal1": (Scope.PRIVATE, kept)}
+        with self.assertLogs(
+            "pythontk.core_utils.engines.scene_export", level="WARNING"
+        ) as logs:
+            _LeftoverStore.migrate()
+        self.assertEqual(_LeftoverStore.deleted, [])
+        (line,) = [line for line in logs.output if "data_internal1" in line]
+        self.assertIn("merge", line)
+
+    def test_one_holding_a_value_beside_its_records_stays(self):
+        """A keyed weight drives the deliverable's animation: no record
+        restates it, so the carrier is not the scene's to drop."""
+        weighted = {**self._carrier(handoff={"version": 1}), "emissive_glow": 0.5}
+        _LeftoverStore.leftovers = {"data_export1": (Scope.DELIVERABLE, weighted)}
+        with self.assertLogs(
+            "pythontk.core_utils.engines.scene_export", level="WARNING"
+        ):
+            _LeftoverStore.migrate()
+        self.assertEqual(_LeftoverStore.deleted, [])
+
+    def test_a_removal_the_host_refuses_costs_the_migration_nothing(self):
+        class Locked(_LeftoverStore):
+            @classmethod
+            def _delete_carrier(cls, carrier):
+                raise RuntimeError("locked")
+
+        Locked.leftovers = {
+            "data_export1": (Scope.DELIVERABLE, self._carrier(handoff={"version": 1}))
+        }
+        Locked.data = {Scope.DELIVERABLE: {"fbx_takes": "[]"}}
+        with self.assertLogs(
+            "pythontk.core_utils.engines.scene_export", level="WARNING"
+        ):
+            self.assertEqual(Locked.migrate(), ["fbx_takes"])
+
+    def test_a_host_that_cannot_list_its_copies_still_moves_the_keys(self):
+        class Unlistable(_LeftoverStore):
+            @classmethod
+            def _leftover_carriers(cls):
+                raise RuntimeError("no scene")
+
+        Unlistable.data = {Scope.DELIVERABLE: {"fbx_takes": "[]"}}
+        with self.assertLogs(
+            "pythontk.core_utils.engines.scene_export", level="WARNING"
+        ):
+            self.assertEqual(Unlistable.migrate(), ["fbx_takes"])
+
+    def test_a_store_with_no_copies_has_nothing_to_settle(self):
+        self.assertEqual(DictStore._leftover_carriers(), {})
+        self.assertEqual(DictStore.migrate(), [])
 
 
 # -- the handoff --------------------------------------------------------------------

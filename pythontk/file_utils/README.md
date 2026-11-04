@@ -2,7 +2,7 @@
 
 Filesystem primitives plus the file-*format* utilities built on them: atomic writes, policy-scoped temp artifacts, mesh conversion and processing, zero-dependency USD authoring, UV unwrapping, project workspaces, and embedded metadata.
 
-Everything is reachable from the package root (`import pythontk as ptk`). Full signatures: [`API_INDEX.md`](../../API_INDEX.md) / [`API_REGISTRY.md`](../../API_REGISTRY.md).
+Everything is reachable from the package root (`import pythontk as ptk`). Full signatures: `python -m pythontk ops run api.search "query=<words>"`.
 
 ## `FileUtils` (`_file_utils.py`)
 

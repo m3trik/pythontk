@@ -3,7 +3,9 @@
 """Hidden runs: an app with no headless mode, run where no one sees it, and never left behind.
 
 For a GUI app a script drives (RizomUV ``-cfi``, Marmoset Toolbag ``-run``):
-:meth:`AppLauncher.run` with ``hidden=True``. Windows only. The child is created
+:meth:`AppLauncher.run` with ``hidden=True``; for one the caller drives through a
+channel of its own while it runs (a GUI Maya's command port):
+:meth:`AppLauncher.launch` with ``hidden=True``. Windows only. The child is created
 on a private desktop of this window station -- the user's own monitors, so the
 app opens, and saves, its windows exactly where it always does (measured: a Qt
 window's saved geometry byte-identical after a hidden run; RizomUV's frame and
@@ -12,7 +14,9 @@ reaches the user's desktop. It is created inside a kill-on-close job of its own,
 from its first instruction (``PROC_THREAD_ATTRIBUTE_JOB_LIST``; suspended, then
 assigned, before Windows 10 1607), so nothing it starts escapes: the app's exit,
 a timeout, an error, an interrupt or a cancel ends the whole tree, and so does
-this process ending, however it ends (the job's one handle is this process's).
+this process ending, however it ends (the job's one handle is this process's) --
+a hidden launch included, ``detached`` or not: an app that outlived this process
+on a desktop no one can see could never be closed.
 A dialog the app opens there can't be answered, so the run is cancellable while
 it waits: the ambient :class:`~pythontk.CancelScope` is polled at every step.
 
@@ -20,9 +24,10 @@ Not elsewhere (``hidden`` is a no-op there, as ``hide_window`` is;
 :meth:`AppLauncher.can_hide` says which): a virtual X
 display is not the user's -- measured, Qt refuses to restore a geometry saved
 on a screen more than 25% wider or narrower, the app falls back to its defaults
-and saves them, and its next normal launch opens small in a corner. Not for
-:meth:`AppLauncher.launch` either: an app that outlives this process on a
-desktop no one can see could never be closed.
+and saves them, and its next normal launch opens small in a corner.
+
+Its windows are where ``EnumWindows`` (the caller's desktop) never looks, so
+:meth:`AppLauncher.get_window_titles` reads the private desktop too.
 
 One job of :class:`AppLauncher`, composed in ``_app_launcher.py``.
 """
@@ -92,6 +97,7 @@ if os.name == "nt":
     _kernel32.TerminateProcess.argtypes = (_wt.HANDLE, _wt.UINT)
     _kernel32.ResumeThread.argtypes = (_wt.HANDLE,)
     _kernel32.CloseHandle.argtypes = (_wt.HANDLE,)
+    _user32.EnumDesktopWindows.argtypes = (_wt.HANDLE, ctypes.c_void_p, _wt.LPARAM)
 
     _GENERIC_ALL = 0x10000000
     _JOB_LIST = 0x2000D  # PROC_THREAD_ATTRIBUTE_JOB_LIST
@@ -339,6 +345,13 @@ class _HiddenMixin:
             True on Windows.
         """
         return os.name == "nt"
+
+    @staticmethod
+    def _enum_hidden_windows(callback) -> None:
+        """Call *callback* (a ``WNDENUMPROC``) for each top-level window on the
+        private desktop, once a hidden child of this process has opened it."""
+        if os.name == "nt" and _desktop_handle:
+            _user32.EnumDesktopWindows(_desktop_handle, callback, 0)
 
     @staticmethod
     def _popen(hidden: bool):

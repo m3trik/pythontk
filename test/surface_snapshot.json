@@ -2024,6 +2024,13 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.core_utils.agent_instructions",
+    "name": "AgentInstructions",
+    "qualname": "AgentInstructions",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.core_utils.engines.shots.animation_record",
     "name": "AnimationBlock",
     "qualname": "AnimationBlock",
@@ -2034,6 +2041,13 @@
     "module": "pythontk.core_utils.engines.shots.animation_record",
     "name": "AnimationRecord",
     "qualname": "AnimationRecord",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.api_surface.api_surface",
+    "name": "ApiSurface",
+    "qualname": "ApiSurface",
     "tier": "root"
   },
   {
@@ -2157,6 +2171,13 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.core_utils.operation_catalog.batch_operation_host",
+    "name": "BatchOperationHost",
+    "qualname": "BatchOperationHost",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.core_utils.engines.textures.map_compositor",
     "name": "BatchResult",
     "qualname": "BatchResult",
@@ -2255,9 +2276,23 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.core_utils.operation_catalog.outcome",
+    "name": "Change",
+    "qualname": "Change",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.core_utils.class_property",
     "name": "ClassProperty",
     "qualname": "ClassProperty",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.api_surface.package_surface",
+    "name": "ClassSurface",
+    "qualname": "ClassSurface",
     "tier": "root"
   },
   {
@@ -2822,6 +2857,13 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.core_utils.operation_catalog.outcome",
+    "name": "Issue",
+    "qualname": "Issue",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.iter_utils._iter_utils",
     "name": "IterUtils",
     "qualname": "IterUtils",
@@ -3193,6 +3235,13 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.core_utils.api_surface.package_surface",
+    "name": "ModuleSurface",
+    "qualname": "ModuleSurface",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.core_utils.engines.shots.shot_plan",
     "name": "MovePlan",
     "qualname": "MovePlan",
@@ -3249,6 +3298,20 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.core_utils.operation_catalog.outcome",
+    "name": "OpCall",
+    "qualname": "OpCall",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.operation_catalog.op_context",
+    "name": "OpContext",
+    "qualname": "OpContext",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.net_utils.rpc.plugin_core",
     "name": "OpRegistry",
     "qualname": "OpRegistry",
@@ -3256,9 +3319,72 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.core_utils.operation_catalog.outcome",
+    "name": "OpRequest",
+    "qualname": "OpRequest",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.operation_catalog.operation",
+    "name": "Operation",
+    "qualname": "Operation",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.core_utils.cancel_scope",
     "name": "OperationCancelled",
     "qualname": "OperationCancelled",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.operation_catalog._operation_catalog",
+    "name": "OperationCatalog",
+    "qualname": "OperationCatalog",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.operation_catalog.operation",
+    "name": "OperationCatalogDocument",
+    "qualname": "OperationCatalogDocument",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.operation_catalog.operation",
+    "name": "OperationEntry",
+    "qualname": "OperationEntry",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.operation_catalog.operation_host",
+    "name": "OperationHost",
+    "qualname": "OperationHost",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.operation_catalog.operation_provider",
+    "name": "OperationProvider",
+    "qualname": "OperationProvider",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.operation_catalog.operation_server",
+    "name": "OperationServer",
+    "qualname": "OperationServer",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.operation_catalog.outcome",
+    "name": "Outcome",
+    "qualname": "Outcome",
     "tier": "root"
   },
   {
@@ -3308,6 +3434,13 @@
     "module": "pythontk.core_utils.package_requirement",
     "name": "PackageRequirement",
     "qualname": "PackageRequirement",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.api_surface.package_surface",
+    "name": "PackageSurface",
+    "qualname": "PackageSurface",
     "tier": "root"
   },
   {
@@ -3522,6 +3655,20 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.core_utils.operation_catalog.operation_host",
+    "name": "PureOperationHost",
+    "qualname": "PureOperationHost",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.operation_catalog.batch_operation_host",
+    "name": "PureSceneFiles",
+    "qualname": "PureSceneFiles",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.vid_utils.sequence_exporter",
     "name": "PureSequenceHost",
     "qualname": "PureSequenceHost",
@@ -3553,6 +3700,13 @@
     "module": "pythontk.file_utils.workspace_map",
     "name": "PureWorkspaceMapHost",
     "qualname": "PureWorkspaceMapHost",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.python_console",
+    "name": "PythonConsole",
+    "qualname": "PythonConsole",
     "tier": "root"
   },
   {
@@ -3900,6 +4054,13 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.core_utils.operation_catalog.batch_operation_host",
+    "name": "SceneFiles",
+    "qualname": "SceneFiles",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.file_utils.scene_listing",
     "name": "SceneListing",
     "qualname": "SceneListing",
@@ -4036,6 +4197,13 @@
     "module": "pythontk.vid_utils.sequence_exporter",
     "name": "SequenceHost",
     "qualname": "SequenceHost",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.operation_catalog.session_operation_host",
+    "name": "SessionOperationHost",
+    "qualname": "SessionOperationHost",
     "tier": "root"
   },
   {

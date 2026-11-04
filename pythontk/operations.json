@@ -1,0 +1,393 @@
+{
+  "format": 1,
+  "provider": "pythontk",
+  "operations": [
+    {
+      "id": "api.describe",
+      "title": "Read a public symbol",
+      "summary": "What *target* is and how to use it, read from its source (nothing is imported).",
+      "effect": "read",
+      "target": "pythontk:ApiSurface.describe",
+      "dry_run": true,
+      "args": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "string",
+            "description": "A public symbol as `search` lists it (`\"mayatk.mat_utils._mat_utils:MatUtils.get_mat_info\"`)."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "target"
+        ]
+      },
+      "result": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "api.search",
+      "title": "Find a public symbol",
+      "summary": "The public symbols whose target or summary names every word of *query*.",
+      "effect": "read",
+      "target": "pythontk:ApiSurface.search",
+      "dry_run": true,
+      "args": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Words to match, in any case: a name, part of one, a topic (`\"material texture path\"`). Empty lists every one."
+          },
+          "packages": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The packages to search; default: every one registered with pythontk (`registered`), but any of those that is no package here (logged, then passed over).",
+            "default": null
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The most to return (`None`: all); those whose name holds every word come first.",
+            "default": 25
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "query"
+        ]
+      },
+      "result": {
+        "type": "array",
+        "items": {
+          "type": "object"
+        }
+      }
+    },
+    {
+      "id": "instructions.check",
+      "title": "Check agent instructions",
+      "summary": "Report every way the instruction tree under *root* breaks the layout.",
+      "effect": "read",
+      "target": "pythontk:AgentInstructions.check",
+      "dry_run": true,
+      "args": {
+        "type": "object",
+        "properties": {
+          "root": {
+            "type": "string",
+            "description": "The codebase's root folder."
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The packs' source folder, to check the vendored copies against.",
+            "default": null
+          },
+          "standard": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A standards document whose `## N.` sections the instructions cite as `\u00a7N`; each citation must resolve.",
+            "default": null
+          },
+          "mode": {
+            "type": "string",
+            "description": "How the root's packs reach Claude Code: `\"hook\"` (a repo) or `\"import\"` (a workspace root).",
+            "default": "hook"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "root"
+        ]
+      },
+      "result": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "instructions.duplicates",
+      "title": "Find duplicated rules",
+      "summary": "Rules written more than once across the instruction files under *root*.",
+      "effect": "read",
+      "target": "pythontk:AgentInstructions.duplicates",
+      "dry_run": true,
+      "args": {
+        "type": "object",
+        "properties": {
+          "root": {
+            "type": "string",
+            "description": "The folder to read (its `AGENTS.md`, `CLAUDE.md` with rules, vendored packs and `.claude/rules`)."
+          },
+          "threshold": {
+            "type": "number",
+            "description": "The share of words two rules must have in common (Jaccard, words of three letters or more).",
+            "default": 0.6
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "root"
+        ]
+      },
+      "result": {
+        "type": "array",
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "instructions.measure",
+      "title": "Measure what a session loads",
+      "summary": "What a Claude Code session rooted at *root* loads from instruction files.",
+      "effect": "read",
+      "target": "pythontk:AgentInstructions.measure",
+      "dry_run": true,
+      "args": {
+        "type": "object",
+        "properties": {
+          "root": {
+            "type": "string",
+            "description": "The session's root folder."
+          },
+          "touched": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Paths the session reads or edits, in order.",
+            "default": null
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "root"
+        ]
+      },
+      "result": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "instructions.sync",
+      "title": "Sync agent instructions",
+      "summary": "Bring the instruction tree under *root* in line with the layout.",
+      "effect": "files",
+      "target": "pythontk:AgentInstructions.sync",
+      "dry_run": true,
+      "args": {
+        "type": "object",
+        "properties": {
+          "root": {
+            "type": "string",
+            "description": "The codebase's root folder."
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The packs' source folder (needed to add or refresh packs).",
+            "default": null
+          },
+          "packs": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Pack names to add to the ones already vendored.",
+            "default": null
+          },
+          "mode": {
+            "type": "string",
+            "description": "`\"hook\"` for a repo, `\"import\"` for a workspace root.",
+            "default": "hook"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "root"
+        ]
+      },
+      "result": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "operations.catalog",
+      "title": "Rewrite a package's catalog",
+      "summary": "Rewrite *module*'s committed catalog from its declarations, when it changed; returns its path.",
+      "effect": "files",
+      "target": "pythontk:OperationProvider.write_catalog",
+      "dry_run": true,
+      "args": {
+        "type": "object",
+        "properties": {
+          "module": {
+            "type": "string",
+            "description": "The declaration module (`mayatk.operations`)."
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The provider's name in the catalog; default: the module's top package.",
+            "default": null
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "module"
+        ]
+      },
+      "result": {
+        "type": "string"
+      }
+    },
+    {
+      "id": "operations.check",
+      "title": "Check every package's operations",
+      "summary": "Check providers: each catalog current and within the rules, and twins across them agreeing.",
+      "effect": "read",
+      "target": "pythontk:OperationProvider.check",
+      "dry_run": true,
+      "args": {
+        "type": "object",
+        "properties": {
+          "modules": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The providers to check: declaration modules, or catalog files another language writes; default: every provider registered under the `pythontk.operations` entry points.",
+            "default": null
+          }
+        },
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    {
+      "id": "operations.init",
+      "title": "Onboard a package",
+      "summary": "Onboard *package*: its declaration module, its entry point and its first catalog, each made only where it is missing (running it again changes nothing).",
+      "effect": "files",
+      "target": "pythontk:OperationProvider.init",
+      "dry_run": true,
+      "args": {
+        "type": "object",
+        "properties": {
+          "package": {
+            "type": "string",
+            "description": "The top-level package (`mypkg`)."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "package"
+        ]
+      },
+      "result": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "string"
+        }
+      }
+    },
+    {
+      "id": "python.exec",
+      "title": "Run Python",
+      "summary": "Run *code* in the console namespace, as the next snippet typed into a console.",
+      "effect": "code",
+      "host": "python",
+      "target": "pythontk:PythonConsole.run",
+      "dry_run": false,
+      "args": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "Python source: statements, then optionally an expression whose value comes back. Names it defines stay for later calls."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "code"
+        ]
+      },
+      "result": {
+        "type": "object"
+      }
+    }
+  ]
+}

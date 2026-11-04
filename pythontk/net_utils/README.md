@@ -2,7 +2,7 @@
 
 Networking primitives and the transports built on them: credentials, SSH, the live WebXR preview server, and both halves of the ecosystem's plugin-hosted JSON-RPC protocol.
 
-Everything is reachable from the package root (`import pythontk as ptk`). Full signatures: [`API_INDEX.md`](../../API_INDEX.md) / [`API_REGISTRY.md`](../../API_REGISTRY.md).
+Everything is reachable from the package root (`import pythontk as ptk`). Full signatures: `python -m pythontk ops run api.search "query=<words>"`.
 
 ## Small helpers
 

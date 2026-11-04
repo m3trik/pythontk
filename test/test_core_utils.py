@@ -221,7 +221,7 @@ class TestListifyAnnotations(unittest.TestCase):
 
     Given a list the wrapper returns a list, so ``-> str`` on a listified
     function is simply false -- and ``inspect.signature``, ``help()`` and
-    ``API_REGISTRY.md`` all republish it. ``format_path`` had the right shape
+    ``api.search`` all republish it. ``format_path`` had the right shape
     (``Union[str, List[str]]``) the whole time, so this is drift, not an
     unsolved question.
     """

@@ -1122,10 +1122,6 @@ class ExportRun:
     #: removed by ``FbxMedia.drop_apparatus``). FBX only: a USD layer is
     #: written as the scene samples.
     drop_rig_apparatus: bool = False
-    #: Retired 2026-10-05 (removed in 0.15.0; setting it warns): every FBX
-    #: deliverable embeds its media -- the exporters pin Embed Media over any
-    #: preset -- so nothing reads it.
-    fbx_media_selfcontained: bool = False
     #: Secondary Map Size: a lower pixel ceiling for a GLB's packed data maps
     #: (:attr:`ExportProfile.SECONDARY_MAX_SIZE_OPTIONS`); None is "the same
     #: as Optimize Textures".
@@ -1204,15 +1200,6 @@ class ExportRun:
     )
 
     def __post_init__(self) -> None:
-        if self.fbx_media_selfcontained:
-            Deprecation.warn(
-                "ExportRun(fbx_media_selfcontained=...)",
-                "nothing: every FBX deliverable embeds its media",
-                remove_in="0.15.0",
-                kind="parameter",
-                since="2026-10-05",
-                stacklevel=3,
-            )
         if self.baked_reflections is not None:
             Deprecation.warn(
                 "ExportRun(baked_reflections=...)",

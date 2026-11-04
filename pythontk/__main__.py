@@ -7,12 +7,16 @@
 Resolve a class or object by dotted path and print its help, source, location,
 or signature - the same introspection ``HelpMixin`` exposes in-process, made
 reachable from a shell or an agent without writing a REPL snippet. Unlike the
-static API registry it reads the *live* object, so ``--source``/``--where``
-report what is actually loaded.
+static read (``api.search``) it reads the *live* object, so ``--source``/``--where``
+report what is actually loaded. ``--index`` lists what pythontk's root
+publishes (``ApiSurface.exports``), one valid target per row.
 
 Everything in this module is private on purpose: it is a CLI shell, not public
-API. ``__main__.py`` is also skipped outright by the registry walker, so the
+API. ``__main__.py`` is also skipped outright by the static read, so the
 public surface is unaffected.
+
+``python -m pythontk ops <command>`` is the operations front end instead
+(``OperationCatalog.cli``): list, describe, search, run, apply, mcp.
 
 Examples:
     python -m pythontk --index
@@ -23,10 +27,10 @@ Examples:
 """
 
 import importlib
-import inspect
 import json
 import sys
 
+from pythontk.core_utils.api_surface.api_surface import ApiSurface
 from pythontk.core_utils.cli import CLI
 from pythontk.core_utils.help_mixin import HelpMixin
 
@@ -66,52 +70,19 @@ def _resolve(dotted: str):
 
 
 def _print_index(as_json: bool = False) -> int:
-    """List the resolved public surface — the live twin of ``API_INDEX.md``.
+    """List what pythontk's root publishes, resolved live.
 
-    Two tiers, both resolved from the live package so the listing exists
-    wherever the wheel is installed and can never drift from what actually
-    imports: the advertised ``__all__`` symbols (tier ``root``), and the
-    wildcard-exposed bare aliases like ``filter_list`` (tier ``bare``,
-    deliberately excluded from ``__all__`` by the resolver). Each row's
-    location is itself a valid ``python -m pythontk`` target.
+    Two tiers, resolved from the live package by :meth:`ApiSurface.exports`, so
+    the listing exists wherever the wheel is installed and can never drift from
+    what actually imports: the advertised ``__all__`` symbols (tier ``root``),
+    and the wildcard-exposed bare aliases like ``filter_list`` (tier ``bare``).
+    Each row's location is itself a valid ``python -m pythontk`` target.
     """
-    pkg = importlib.import_module("pythontk")
-    root_names = set(pkg.__all__)
-    bare_names = set(getattr(pkg, "METHOD_TO_MODULE", {})) - root_names
-    # The resolver's owner maps say where each name is *registered*. For a
-    # constant that is the authoritative location — an instance's __module__
-    # reports its class's home ("builtins" for a plain dict), not its own.
-    owners = {
-        **getattr(pkg, "METHOD_TO_MODULE", {}),
-        **getattr(pkg, "CLASS_TO_MODULE", {}),
-    }
-    rows = []
-    for name in sorted(root_names | bare_names, key=str.lower):
-        row = {"name": name, "tier": "root" if name in root_names else "bare"}
-        try:
-            obj = getattr(pkg, name)
-        except Exception as exc:  # an optional dep must not kill the listing
-            row.update(module=None, qualname=None, kind=f"unresolvable ({exc})")
-            rows.append(row)
-            continue
-        if isinstance(obj, type) or callable(obj):
-            module = getattr(obj, "__module__", None) or owners.get(name)
-        else:
-            module = owners.get(name) or getattr(obj, "__module__", None)
-        row["module"] = module
-        row["qualname"] = getattr(obj, "__qualname__", None)
-        row["kind"] = (
-            "class"
-            if isinstance(obj, type)
-            else "function"
-            if callable(obj)
-            else type(obj).__name__
-        )
-        rows.append(row)
+    rows = ApiSurface.exports("pythontk")
     if as_json:
         print(json.dumps(rows, indent=2))
         return 0
-    width = max(len(r["name"]) for r in rows)
+    width = max((len(r["name"]) for r in rows), default=0)
     for r in rows:
         location = (
             f"{r['module']}.{r['qualname']}"
@@ -123,6 +94,14 @@ def _print_index(as_json: bool = False) -> int:
 
 
 def _main(argv=None) -> int:
+    argv = sys.argv[1:] if argv is None else list(argv)
+    if argv[:1] == ["ops"]:
+        # The operations front end (OperationCatalog.cli): list, describe,
+        # search, run, apply, mcp. Routed before the introspection parser,
+        # whose positional target would read "ops" as a dotted path.
+        from pythontk import OperationCatalog
+
+        return OperationCatalog.cli(argv[1:])
     parser = CLI.get_parser("Introspect a pythontk/ecosystem class or object.")
     parser.add_argument(
         "target", nargs="?", help="dotted path, e.g. pythontk.CoreUtils"
@@ -207,25 +186,17 @@ def _main(argv=None) -> int:
         return 0
 
     # Any other object (module, function, non-HelpMixin class).
-    name = args.member or getattr(obj, "__name__", str(obj))
     if args.member:
         obj = getattr(obj, args.member)
-    target = inspect.unwrap(obj) if callable(obj) else obj
     if args.signature:
-        # Reuses HelpMixin's renderer rather than reimplementing it here.
-        print(HelpMixin._signature_detail(name, obj))
+        print(HelpMixin.about(obj, signature=True, returns=True))
     elif args.source:
         try:
-            print(inspect.getsource(target))
+            print(ApiSurface.source_of(obj))
         except (OSError, TypeError):
             print("no source available")
     elif args.where:
-        try:
-            src_file = inspect.getsourcefile(target)
-            _, line = inspect.getsourcelines(target)
-            print(f"{src_file}:{line}" if src_file else "built-in")
-        except (OSError, TypeError):
-            print("unknown location")
+        print(ApiSurface.location(obj) or "unknown location")
     elif args.json:
         print(HelpMixin.about(obj, as_json=True))
     else:

@@ -36,7 +36,7 @@ clusters, for navigation:
   package or inventing a ``ColorUtils`` facade would be nesting-for-cosmetics.
   So it lodges here beside the other cross-cutting shared code — the same reason
   ``file_utils`` hosts the ``Metadata`` primitive.
-- **Domain engines** — :mod:`.engines` (placement charter: ``pythontk/CLAUDE.md``).
+- **Domain engines** — :mod:`.engines` (placement charter: ``pythontk/AGENTS.md``).
 
 All classes are lazy-loaded via the pythontk root package.
 Import from pythontk directly: ``from pythontk import CoreUtils``.

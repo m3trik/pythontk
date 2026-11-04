@@ -11,7 +11,7 @@ from pythontk.__main__ import _main
 
 
 class TestIndexFlag(unittest.TestCase):
-    """`--index` — the live twin of the generated API_INDEX.md."""
+    """`--index` — the root's published names, resolved live."""
 
     def run_cli(self, argv):
         out = io.StringIO()

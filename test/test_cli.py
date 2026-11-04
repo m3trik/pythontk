@@ -91,6 +91,20 @@ class TestDispatch(unittest.TestCase):
         with self.assertRaises(SystemExit):  # an unknown command is argparse's usage error
             CLI.dispatch("t", commands, ["nope", "s.json"], common)
 
+    def test_an_option_may_sit_between_positionals(self):
+        # argparse's subcommand parse gives a "*" positional nothing once an
+        # option interrupts, then refuses the rest as unrecognized.
+        seen = []
+        commands = {
+            "sum": CLI.Command(
+                "add numbers",
+                lambda args: seen.append(sum(args.more, args.first) + args.b),
+                [("first", {"type": int}), ("more", {"nargs": "*", "type": int}), ("--b", {"type": int, "default": 0})],
+            ),
+        }
+        self.assertEqual(CLI.dispatch("t", commands, ["sum", "1", "--b", "5", "2", "3"]), 0)
+        self.assertEqual(seen, [11])
+
 
 class TestConnectionDefaultResolution(unittest.TestCase):
     """The default host/user/target resolve explicit -> environment -> neutral.

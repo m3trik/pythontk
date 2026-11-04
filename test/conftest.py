@@ -231,7 +231,7 @@ class BaseTestCase(unittest.TestCase):
         """Assert that a file or directory exists."""
         self.assertTrue(os.path.exists(path), msg or f"Path does not exist: {path}")
 
-    #: Executes a file the way ``m3trik/scripts/generate_api_registry.py`` does
+    #: Executes a file the way ``m3trik/scripts/check_api_surface.py`` does
     #: (off disk, registered before exec), with ``import pythontk`` failing, and
     #: reports the top-level modules the exec pulled in beyond the stdlib (the
     #: list needs ``sys.stdlib_module_names``, 3.10+).
@@ -256,7 +256,7 @@ print(json.dumps({"error": None, "foreign": foreign}))
     def assertLoadsStandalone(self, path: str):
         """Assert that *path* imports with the stdlib alone, pythontk absent.
 
-        For a module ``generate_api_registry.py`` loads off disk, on a CI box
+        For a module ``check_api_surface.py`` loads off disk, on a CI box
         with nothing installed: executed in a fresh interpreter where
         ``import pythontk`` fails.
         """

@@ -393,16 +393,14 @@ class TestExportRun(unittest.TestCase):
         self.assertFalse(hasattr(run, "version_format"))
         self.assertEqual(ExportRun.from_tasks({"version": ""})[2], [])
 
-    def test_the_self_contained_flag_is_retired_and_warns_only_when_set(self):
-        """Retired 2026-10-05: every FBX embeds its media, so nothing reads
-        ``fbx_media_selfcontained``; a caller setting it is told (removed in
-        0.15.0) and still gets a run, and a run that never names it is quiet."""
+    def test_the_self_contained_flag_is_removed(self):
+        """Retired 2026-10-05 (every FBX embeds its media, so nothing read it)
+        and removed once its window closed: a caller still setting it is refused
+        by name, and a run that never names it is quiet."""
         import warnings
 
-        with self.assertWarns(DeprecationWarning) as retired:
+        with self.assertRaisesRegex(TypeError, "fbx_media_selfcontained"):
             ExportRun(fbx_media_selfcontained=True)
-        self.assertIn("fbx_media_selfcontained", str(retired.warning))
-        self.assertIn("0.15.0", str(retired.warning))
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             ExportRun()

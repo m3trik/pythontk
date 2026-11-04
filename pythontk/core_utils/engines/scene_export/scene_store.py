@@ -75,11 +75,17 @@ class SceneStoreBase:
     def is_carrier(cls, node_name: Any, scope: Scope = Scope.DELIVERABLE) -> bool:
         """Whether a node named *node_name* is a carrier of *scope* in a
         written file: the scene's own (:meth:`name`), a referenced module's
-        (``NS:data_export``), or a numbered copy an import made
-        (``data_export1``) -- a DAG path and a namespace aside."""
+        (``NS:data_export``), or a copy an import numbered as its host does
+        (Maya ``data_export1``, Blender ``data_export.001``) -- a DAG path and
+        a namespace aside."""
         base = str(node_name or "").rsplit("|", 1)[-1].rsplit(":", 1)[-1]
         own = cls.name(scope)
-        return base == own or (base.startswith(own) and base[len(own) :].isdigit())
+        if not base.startswith(own):
+            return False
+        number = base[len(own) :]
+        return not number or number.isdigit() or (
+            number[:1] == "." and number[1:].isdigit()
+        )
 
     @classmethod
     def read(cls, scope: Scope, key: str) -> Optional[str]:
@@ -111,8 +117,10 @@ class SceneStoreBase:
         scene stored under a key it has since been renamed from
         (:attr:`RecordSpec.renamed_from`) is moved to its key -- a value
         already under the key wins -- and a record retired whole
-        (:attr:`SceneRecords.RETIRED`) is removed. Run when a scene is opened
-        and before every export commit; a migrated scene has nothing to move.
+        (:attr:`SceneRecords.RETIRED`) is removed; so is a carrier an import
+        left beside the scene's own holding nothing a merge would keep
+        (:meth:`_drop_leftover_carriers`). Run when a scene is opened and
+        before every export commit; a migrated scene has nothing to move.
 
         Returns:
             The retired keys this scene held, in the order handled.
@@ -134,7 +142,89 @@ class SceneStoreBase:
             logger.info(
                 "Scene records moved to their current keys: %s.", ", ".join(found)
             )
+        try:
+            cls._drop_leftover_carriers()
+        except Exception:  # noqa: BLE001 - the keys above are moved either way
+            logger.warning("Leftover carriers were not settled.", exc_info=True)
         return found
+
+    @classmethod
+    def _drop_leftover_carriers(cls) -> List[str]:
+        """Remove each carrier an import left beside the scene's own
+        (:meth:`_leftover_carriers`) that holds nothing anyone takes from it,
+        and name the rest.
+
+        An import that does not settle the other scene's carriers (a plain
+        file import; the Reference Manager's import merges them) leaves a copy
+        no tool reads or refreshes: only the written file carries it, and its
+        readers take it for a referenced module's, as stale as the day it
+        landed (a pre-rename ``lightmap_metadata`` and a version-1 handoff
+        failed a production assembly's verification, 2026-10-28). It goes when
+        a merge would bring nothing in (:attr:`RecordTransfer.is_empty`) and
+        a reader takes none of its records (:meth:`_records_read_from`): each
+        one the scene's own carrier shadows, or one under an old key or in a
+        version no reader reads. Removed, it changes nothing either reads.
+        One holding more -- shots, a channel no record declares, a current
+        record the scene's own lacks, a keyed weight beside its records -- is
+        the user's to merge or discard (:meth:`merge_carriers`), so it stays,
+        named. A copy the host will not remove costs the migration nothing.
+
+        Returns:
+            The names of the carriers removed.
+        """
+        dropped: List[str] = []
+        for name, (scope, carrier) in cls._leftover_carriers().items():
+            values = cls._carrier_values(carrier)
+            held = RecordTransfer.between(cls, {scope: values}).summary()
+            if scope is Scope.DELIVERABLE:
+                held += cls._records_read_from(values)
+            if any(not isinstance(v, str) for v in values.values()):
+                held.append("values beside its records")
+            if held:
+                logger.warning(
+                    "%s: a carrier an import left holds what a merge or a reader "
+                    "would keep (%s); left as it is -- merge or discard it "
+                    "(merge_carriers / discard_carriers).",
+                    name,
+                    "; ".join(held),
+                )
+                continue
+            try:
+                cls._delete_carrier(carrier)
+            except Exception:  # noqa: BLE001 - a leftover never costs the migration
+                logger.warning("%s: the leftover carrier was not removed.", name)
+                continue
+            dropped.append(name)
+        if dropped:
+            logger.info(
+                "Removed %s: carrier(s) an import left beside the scene's own, "
+                "holding no record a reader takes from them.",
+                ", ".join(dropped),
+            )
+        return dropped
+
+    @classmethod
+    def _records_read_from(cls, values: Mapping[str, Any]) -> List[str]:
+        """The records a reader of the written file takes from another
+        deliverable carrier holding *values*, by owner: each under its
+        declared key, in the version and shape a reader reads
+        (:meth:`SceneRecords.problems`, the verifier's test), that the
+        scene's own carrier does not hold -- where it does, the scene's own
+        wins. The handoff describes the carrier it rides, so it goes with the
+        rest."""
+        own = cls.channels(Scope.DELIVERABLE)
+        read: List[str] = []
+        for key, text in values.items():
+            spec = SceneRecords.by_key(key, Scope.DELIVERABLE)
+            if spec is None or spec is SceneRecords.HANDOFF or key in own:
+                continue
+            try:
+                payload = json.loads(text)
+            except (TypeError, ValueError):
+                continue  # no record's text: nothing a reader takes
+            if not SceneRecords.problems(spec, payload):
+                read.append(spec.owner or key)
+        return read
 
     @classmethod
     def values(cls, scope: Scope) -> Dict[str, Any]:
@@ -672,6 +762,14 @@ class SceneStoreBase:
         its scope -- one an import adopted because the scene had none
         (default: none is)."""
         return cls._live_carriers(carriers)
+
+    @classmethod
+    def _leftover_carriers(cls) -> Dict[str, Tuple[Scope, Any]]:
+        """The carriers this scene holds beside its own that no reference or
+        library owns -- what an import left unsettled -- as ``{name: (scope,
+        carrier)}`` (default: none; a store whose carriers are not nodes of
+        their own makes no copies)."""
+        return {}
 
     @classmethod
     def _carrier_values(cls, carrier: Any) -> Dict[str, Any]:

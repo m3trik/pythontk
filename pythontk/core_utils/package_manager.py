@@ -592,6 +592,51 @@ class PackageManager(
         self.python_path = python_path
 
     @staticmethod
+    def editable_packages() -> List[str]:
+        """The top-level packages of each distribution installed editable for
+        the running interpreter: the code being worked on here, read from the
+        install metadata (PEP 610's ``direct_url.json``); nothing is imported.
+
+        Returns:
+            Each public top-level package once (from ``top_level.txt``, else
+            the distribution's name as an import spells it), in install order;
+            a name that is no package here (a single module, a distribution
+            that imports by another name) is left out.
+        """
+        import importlib.util
+        from importlib.metadata import distributions
+
+        def is_package(name: str) -> bool:
+            try:
+                spec = importlib.util.find_spec(name)
+            except (ImportError, ValueError):
+                return False
+            return bool(spec is not None and spec.submodule_search_locations)
+
+        found: List[str] = []
+        for dist in distributions():
+            try:
+                url = json.loads(dist.read_text("direct_url.json") or "{}")
+            except ValueError:
+                continue
+            info = url.get("dir_info") if isinstance(url, dict) else None
+            if not isinstance(info, dict) or not info.get("editable"):
+                continue
+            names = (dist.read_text("top_level.txt") or "").split()
+            if not names:
+                try:
+                    name = dist.metadata["Name"]
+                except (KeyError, TypeError, AttributeError):
+                    name = None
+                names = [re.sub(r"[-.]+", "_", name).lower()] if name else []
+            found += [
+                n
+                for n in names
+                if not n.startswith("_") and n not in found and is_package(n)
+            ]
+        return found
+
+    @staticmethod
     def entry_points(group: str) -> list:
         """The entry points installed distributions declare in *group*, for the
         running interpreter, read from their metadata: nothing is imported.

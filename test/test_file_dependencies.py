@@ -636,6 +636,15 @@ class TestResolve(_FilesCase):
         self.assertTrue(self._same(dep["path"], first))
         self.assertEqual(dep["candidates"], [])
 
+    def test_the_walk_lists_in_name_order_whatever_the_file_system_gives(self):
+        """ext4 lists a folder in no set order (NTFS sorts), so the first of two
+        identical copies was ``b``'s on a Linux runner and ``a``'s on Windows."""
+        listing = [("pool", ["b", "A"], ["Z.exr", "a.exr", "B.exr"])]
+        with unittest.mock.patch("os.walk", return_value=iter(listing)):
+            ((_folder, dirs, files),) = FileDependencies.walk("pool")
+        self.assertEqual(dirs, ["A", "b"])
+        self.assertEqual(files, ["a.exr", "B.exr", "Z.exr"])
+
     def test_a_key_keeps_two_same_named_readers_apart(self):
         """A texture node names its file by PATH: ``wood/diffuse.png`` and
         ``metal/diffuse.png`` must not share a record."""

@@ -50,10 +50,12 @@ import copy
 import dataclasses
 import enum
 import logging
+import os
 import types
 import typing
 import weakref
 from dataclasses import dataclass, field, fields
+from pathlib import PurePath
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Type
 
 # Metadata namespace key — keeps schema metadata from colliding with any other
@@ -270,6 +272,12 @@ class _SchemaSpecInternal(object):
             return "array"
         return type(value).__name__
 
+    @staticmethod
+    def _is_path_type(tp: Any) -> bool:
+        """Whether *tp* is a path class (``pathlib.Path``, ``os.PathLike``):
+        JSON carries a path as its text."""
+        return isinstance(tp, type) and issubclass(tp, (os.PathLike, PurePath))
+
     @classmethod
     def _type_schema(cls, tp: Any, defs: Dict[str, Any]) -> Dict[str, Any]:
         """The JSON Schema of the annotation *tp*. A :class:`SchemaSpec` it
@@ -296,6 +304,8 @@ class _SchemaSpecInternal(object):
         for kind, py in _SCALARS:
             if tp is py:
                 return {"type": kind}
+        if cls._is_path_type(tp):
+            return {"type": "string"}
         if origin is tuple or tp is tuple:
             if len(args) == 2 and args[1] is Ellipsis:
                 return cls._array_schema(args[0], defs)
@@ -500,6 +510,12 @@ class _SchemaSpecInternal(object):
                         f"{path}: expected {kind}, got {cls._json_kind(value)}"
                     )
                 return
+        if cls._is_path_type(tp):
+            if not isinstance(value, str):
+                res.errors.append(
+                    f"{path}: expected string (a path), got {cls._json_kind(value)}"
+                )
+            return
         fixed = (origin is tuple or tp is tuple) and args and args[-1] is not Ellipsis
         if (
             origin is tuple
@@ -828,6 +844,30 @@ class SchemaSpec(_SchemaSpecInternal):
         if defs:
             document["$defs"] = defs
         return _SchemaSpecInternal._strip_specs(document)
+
+    @staticmethod
+    def annotation_schema(tp: Any) -> Dict[str, Any]:
+        """The JSON Schema of one Python annotation, by the rules
+        :meth:`json_schema` reads a field's type with.
+
+        For a reader that types values with plain annotations rather than a
+        spec: an operation's arguments are its function's signature. A
+        :class:`SchemaSpec` the annotation names (at any depth) is defined
+        under ``"$defs"`` and referenced, as in :meth:`json_schema`; an
+        annotation it cannot read is ``{}`` (anything).
+
+        Parameters:
+            tp: The annotation (``Optional[List[str]]``, ``Literal["x", "y"]``,
+                a :class:`SchemaSpec` subclass, ...).
+
+        Returns:
+            dict: The schema, with ``"$defs"`` when a spec is named.
+        """
+        defs: Dict[str, Any] = {}
+        schema = dict(_SchemaSpecInternal._type_schema(tp, defs))
+        if defs:
+            schema["$defs"] = defs
+        return _SchemaSpecInternal._strip_specs(schema)
 
     @staticmethod
     def spec_field(

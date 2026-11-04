@@ -522,11 +522,14 @@ class FileDependencies(LoggingMixin):
     @classmethod
     def walk(cls, root: str) -> Iterator[Tuple[str, List[str], List[str]]]:
         """``os.walk(root)``, top-down, that never enters a folder of stale
-        copies (:attr:`WALK_SKIP_DIRS`).
+        copies (:attr:`WALK_SKIP_DIRS`), in name order.
 
         The one pruning every search for files by name shares: :meth:`find_files`,
         and each DCC's texture walks (resolve a missing texture, find and copy),
-        so a folder one of them skips is one all of them skip.
+        so a folder one of them skips is one all of them skip. Subfolders and
+        files come case-folded name first, so the first of several hits is the
+        same on every file system (``os.walk`` lists in the file system's own
+        order: NTFS sorts, ext4 does not).
 
         Parameters:
             root: The folder to walk.
@@ -534,9 +537,12 @@ class FileDependencies(LoggingMixin):
         Yields:
             ``(folder, subfolders, files)``, as ``os.walk`` does.
         """
+        def order(name: str) -> Tuple[str, str]:
+            return name.casefold(), name
+
         for folder, dirs, files in os.walk(root):
-            dirs[:] = [d for d in dirs if not cls._skips_dir(d)]
-            yield folder, dirs, files
+            dirs[:] = sorted((d for d in dirs if not cls._skips_dir(d)), key=order)
+            yield folder, dirs, sorted(files, key=order)
 
     @classmethod
     def _skips_dir(cls, name: str) -> bool:

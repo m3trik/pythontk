@@ -6,9 +6,9 @@ pythontk sits at the bottom of the ecosystem chain, and every name it exports
 is a contract: ``pythontk -> uitk -> {mayatk, blendertk} -> tentacle``, plus
 ``unitytk`` and ``extapps``. A break cascades upward.
 
-Three gates look like they cover this and none of them does. The API registry
-gate hashes generated documents, so it reports a *diff* rather than failing on
-a removal. ``test_all_packages_namespace_aliases`` checks alias mechanics, not
+Three gates looked like they covered this and none of them did. The API
+registry gate (since retired) hashed generated documents, so it reported a *diff* rather
+than failing on a removal. ``test_all_packages_namespace_aliases`` checks alias mechanics, not
 membership. Nothing at all watched where a name RESOLVES -- so moving a class
 between modules, which is exactly what a base-class extraction does, changed
 the public surface silently.

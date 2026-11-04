@@ -49,7 +49,7 @@ class MovedNameError(AttributeError):
     An ``AttributeError``, so ``hasattr`` and ``getattr(..., default)`` behave
     as for any missing name. Only root names are served: a table key such as
     ``Class.member`` accounts for a member's move at release
-    (``generate_api_registry.py``) but cannot answer at runtime.
+    (m3trik's ``check_api_surface.py``) but cannot answer at runtime.
     """
 
     def __init__(self, package: str, name: str, new_home: str, version: str):
