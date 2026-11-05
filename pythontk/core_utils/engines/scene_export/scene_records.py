@@ -53,7 +53,7 @@ import json
 import logging
 import re
 import sys
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from enum import Enum
 from typing import (
     Any,
@@ -471,6 +471,9 @@ class RecordSpec:
             (:meth:`SceneStoreBase.migrate`). No reader reads them.
         clauses: The :class:`Clause` s of the assembly that only some
             payloads need: a file carries the ones its record calls for.
+        in_frame: Whether this version states its values in
+            :attr:`SceneRecords.FRAME`; a record moves into it with a
+            version of its own, and until then its assembly states its units.
     """
 
     key: str
@@ -497,6 +500,7 @@ class RecordSpec:
     renamed_from: Tuple[str, ...] = ()
     clauses: Tuple[Clause, ...] = ()
     nodes: Optional[Tuple[str, Union[str, Tuple[str, ...]]]] = None
+    in_frame: bool = False
 
     def narrowed(self, payload: Any, nodes: Iterable[str]) -> Any:
         """*payload* with only the entries (:attr:`nodes`) describing a node
@@ -811,6 +815,74 @@ def _shadow_clauses(projected_map: str, horizon_map: str, origin: str):
     )
 
 
+@dataclass(frozen=True)
+class Frame:
+    """The frame every record value is stated in: glTF 2.0's, so a reader in
+    any engine converts from one frame, in one place, and never learns which
+    producer wrote a file (:attr:`SceneRecords.FRAME`).
+
+    A record moves into it with a version of its own and says so
+    (:attr:`RecordSpec.in_frame`); until then its assembly states its own
+    units.
+    """
+
+    length: str = "metre"
+    up: str = "+Y"
+    forward: str = "+Z"
+    handedness: str = "right"
+    rotation: str = "unit quaternion (x, y, z, w)"
+    time: str = "second"
+
+    @property
+    def text(self) -> str:
+        """The frame in one phrase, for the generated references."""
+        return (
+            f"{self.length}s, {self.handedness}-handed with {self.up} up and "
+            f"{self.forward} forward, rotations as a {self.rotation} and times "
+            f"in {self.time}s (glTF 2.0's frame)"
+        )
+
+
+@dataclass(frozen=True)
+class Transport:
+    """How a value animated over time rides a file, one way for every record
+    (:attr:`SceneRecords.TRANSPORT`).
+
+    Unity's FBX import flattens every animated custom property onto the root,
+    so objects sharing a property's name collapse into one curve, while a
+    transform's own animation keeps its node. So in an FBX a curve rides a
+    child transform of the object it animates, named
+    ``<object><separator><channel>`` and carrying the :attr:`marker` user
+    property, its :attr:`curve` holding the values; a reader rebinds it and
+    drops the node. A GLB states the same curve on the property itself,
+    through :attr:`glb`.
+
+    It carries the :attr:`channels` named here, a material's animated values;
+    a record that animates anything else states its own carrier in its
+    assembly (the emissive groups' weights, until that record retires).
+    """
+
+    marker: str = "curveProxy"
+    separator: str = "__"
+    curve: str = "scale.x"
+    glb: str = "KHR_animation_pointer"
+    #: The channels that ride it (``render_effects``' material values).
+    channels: Tuple[str, ...] = ("opacity", "highlight")
+
+    @property
+    def text(self) -> str:
+        """The transport in one phrase, for the generated references."""
+        return (
+            f"An animated material value ({', '.join(self.channels)}) rides "
+            f"on a child transform of the animated object in an FBX, named "
+            f"`<object>{self.separator}<channel>` and carrying the "
+            f"`{self.marker}` user property, whose `{self.curve}` holds the "
+            f"curve, and on the property itself in a GLB, through "
+            f"`{self.glb}` channels. A record animating anything else states "
+            f"its own carrier in its assembly"
+        )
+
+
 class SceneRecords:
     """The registry: every record, declared once, and what derives from it.
 
@@ -825,6 +897,11 @@ class SceneRecords:
     #: since their bare names are too generic for the package root.
     Kind = Kind
     Merge = Merge
+
+    #: The frame every record value is stated in (:class:`Frame`).
+    FRAME = Frame()
+    #: How a value animated over time rides a file (:class:`Transport`).
+    TRANSPORT = Transport()
 
     # -- deliverable ---------------------------------------------------------
     #: Produced from the scene as staged for each write (the hosts'
@@ -2188,6 +2265,90 @@ class SceneRecords:
     @classmethod
     def deliverable(cls) -> List[RecordSpec]:
         return [s for s in cls.all() if s.scope is Scope.DELIVERABLE]
+
+    @classmethod
+    def json_schema(cls) -> Dict[str, Any]:
+        """The contract as one JSON Schema (draft 2020-12) document.
+
+        Its root is what a file's ``data_export`` node holds: every
+        deliverable record under its key, a ``$ref`` to its declared shape,
+        with its version (``x-version``) and readers (``x-readers``).
+        ``$defs`` holds every shape, and ``GlbExtras`` the blocks a GLB's
+        root ``extras`` holds, by the same keys. ``x-frame`` and
+        ``x-transport`` state :attr:`FRAME` and :attr:`TRANSPORT`, and each
+        record's ``x-in-frame`` whether its version is in the frame. A
+        reader in any language validates a delivery against it or generates
+        its types from it (``m3trik/scripts/sync_scene_records.py`` publishes
+        it). A shape one record holds whole and another nests is defined once.
+
+        Returns:
+            dict: The document, plain JSON values.
+
+        Raises:
+            ValueError: Two shapes define one name differently.
+        """
+        from pythontk.core_utils.schema_spec import SchemaSpec
+
+        defs: Dict[str, Any] = {}
+
+        def define(shape) -> str:
+            schema = shape.json_schema()
+            nested = schema.pop("$defs", {})
+            # What only a document's root carries: a nested copy of the same
+            # shape has neither, and must compare equal to this one.
+            schema.pop("$schema", None)
+            schema.pop("title", None)
+            for name, body in list(nested.items()) + [(shape.__name__, schema)]:
+                if defs.setdefault(name, body) != body:
+                    raise ValueError(
+                        "SceneRecords.json_schema: two shapes define "
+                        f"{name!r} differently"
+                    )
+            return f"#/$defs/{shape.__name__}"
+
+        def entry(spec, shape, version) -> Dict[str, Any]:
+            out: Dict[str, Any] = {"description": spec.description}
+            if shape is not None:
+                out["$ref"] = define(shape)
+            out["x-version"] = version
+            if spec.consumers:
+                out["x-readers"] = list(spec.consumers)
+            return out
+
+        records = {}
+        for spec in cls.deliverable():
+            records[spec.key] = entry(spec, cls.shape(spec), spec.version)
+            records[spec.key]["x-in-frame"] = spec.in_frame
+        blocks = {
+            spec.key: entry(spec, cls.glb_shape(spec), spec.glb.version)
+            for spec in cls.glb_records()
+        }
+        handoff = cls.HANDOFF
+        blocks[handoff.key] = entry(handoff, cls.shape(handoff), handoff.version)
+        defs["GlbExtras"] = {
+            "type": "object",
+            "description": (
+                "A GLB's root extras: each record's block under the record's key."
+            ),
+            "properties": blocks,
+        }
+        return {
+            "$schema": SchemaSpec.JSON_SCHEMA_DIALECT,
+            "title": "SceneRecords",
+            "description": (
+                "What a deliverable's data_export node holds: each record's "
+                "JSON under its key. A record whose x-in-frame is true "
+                f"states its values in {cls.FRAME.text}; any other states its "
+                f"units in its assembly. {cls.TRANSPORT.text}. A field naming "
+                "its readers (x-readers) is an optional extension the others "
+                "ignore."
+            ),
+            "x-frame": asdict(cls.FRAME),
+            "x-transport": asdict(cls.TRANSPORT),
+            "type": "object",
+            "properties": records,
+            "$defs": defs,
+        }
 
     @classmethod
     def private(cls) -> List[RecordSpec]:

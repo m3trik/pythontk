@@ -7,6 +7,10 @@ Every FBX and GLB a scene exports states itself in-band: the scene's records rid
 - **One shape per block.** `version`, its fundamentals, and anything else under `extras`; a reader ignores an extra it does not know.
 - **One key per record, in every file.** The FBX holds a record as a JSON string user property on a node named `data_export`; the GLB holds its block -- bound to the file's node, texture and buffer indices -- as an object in the root `extras`, under the same key.
 - **One version a reader reads.** A record or block of another version is refused, with a warning, and the file is re-exported; no reader keeps a branch for an older shape.
+- **One frame.** A record whose version is in the frame (`x-in-frame` in the schema) states its values in metres, right-handed with +Y up and +Z forward, rotations as a unit quaternion (x, y, z, w) and times in seconds (glTF 2.0's frame); any other states its units in its assembly.
+- **One transport.** An animated material value (opacity, highlight) rides on a child transform of the animated object in an FBX, named `<object>__<channel>` and carrying the `curveProxy` user property, whose `scale.x` holds the curve, and on the property itself in a GLB, through `KHR_animation_pointer` channels. A record animating anything else states its own carrier in its assembly.
+- **Extensions name their readers.** A field only some readers use is optional and names them ("Read only by ..."; `x-readers` in the schema); every other reader ignores it, and its generated types leave it out.
+- **One published schema.** `scene_records.schema.json`, beside this file, states all of it as JSON Schema (draft 2020-12).
 
 | Record | In the FBX | In the GLB | Read by | Holds |
 |---|---|---|---|---|

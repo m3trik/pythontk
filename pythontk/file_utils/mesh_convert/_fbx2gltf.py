@@ -825,11 +825,11 @@ class _Fbx2Gltf:
         return dst_abs
 
     #: FBX user property that marks a transient curve-proxy node: the per-object
-    #: float transport for engines that flatten custom-property curves (a child
-    #: transform named ``<node>__<attr>`` whose ``scale.x`` carries the curve).
-    #: Both DCC producers stamp it; :meth:`strip_glb_curve_proxies` removes the
-    #: node from the GLB, where the ramp already rides ``render_effects``.
-    CURVE_PROXY_MARKER = "curveProxy"
+    #: float transport for engines that flatten custom-property curves, as
+    #: ``SceneRecords.TRANSPORT`` declares it. Both DCC producers stamp it;
+    #: :meth:`strip_glb_curve_proxies` removes the node from the GLB, where the
+    #: ramp already rides ``render_effects``.
+    CURVE_PROXY_MARKER = SceneRecords.TRANSPORT.marker
 
     @staticmethod
     def _renumber_block_nodes(

@@ -3205,5 +3205,152 @@ class TestShadowsText(unittest.TestCase):
                     self.assertAlmostEqual(got, float(expected), places=4)
 
 
+class TestPublishedContract(SceneRecordsCase):
+    """``SceneRecords.json_schema``: the contract published as one JSON Schema
+    document, which a reader in any language validates against or generates
+    its types from. Added: 2026-11-04"""
+
+    def test_every_deliverable_record_is_a_property_by_its_key(self):
+        doc = SR.json_schema()
+        for spec in SR.deliverable():
+            with self.subTest(record=spec.key):
+                prop = doc["properties"][spec.key]
+                self.assertEqual(prop["x-version"], spec.version)
+                shape = SR.shape(spec)
+                if shape is not None:
+                    self.assertEqual(prop["$ref"], f"#/$defs/{shape.__name__}")
+
+    def test_every_glb_block_is_a_property_of_the_glb_extras(self):
+        extras = SR.json_schema()["$defs"]["GlbExtras"]["properties"]
+        for spec in SR.glb_records():
+            with self.subTest(record=spec.key):
+                self.assertEqual(extras[spec.key]["x-version"], spec.glb.version)
+
+    def test_every_reference_resolves(self):
+        doc = SR.json_schema()
+
+        def refs(node):
+            if isinstance(node, dict):
+                if "$ref" in node:
+                    yield node["$ref"]
+                for value in node.values():
+                    yield from refs(value)
+            elif isinstance(node, list):
+                for value in node:
+                    yield from refs(value)
+
+        found = list(refs(doc))
+        self.assertTrue(found)
+        for ref in found:
+            self.assertTrue(ref.startswith("#/$defs/"), ref)
+            self.assertIn(ref[len("#/$defs/"):], doc["$defs"])
+
+    def test_it_states_the_frame_and_the_transport(self):
+        doc = SR.json_schema()
+        self.assertEqual(doc["x-frame"]["length"], "metre")
+        self.assertEqual(doc["x-frame"]["up"], "+Y")
+        self.assertEqual(doc["x-frame"]["time"], "second")
+        self.assertEqual(doc["x-transport"]["marker"], "curveProxy")
+        json.dumps(doc)
+
+    def test_the_handoff_is_a_glb_extras_property(self):
+        extras = SR.json_schema()["$defs"]["GlbExtras"]["properties"]
+        self.assertEqual(extras[SR.HANDOFF.key]["x-version"], SR.HANDOFF.version)
+
+    def test_each_record_says_whether_its_values_are_in_the_frame(self):
+        props = SR.json_schema()["properties"]
+        for spec in SR.deliverable():
+            with self.subTest(record=spec.key):
+                self.assertIs(props[spec.key]["x-in-frame"], spec.in_frame)
+
+    def test_an_extension_names_only_readers_of_its_record(self):
+        def readers(node):
+            if isinstance(node, dict):
+                for prop in (node.get("properties") or {}).values():
+                    if isinstance(prop, dict) and "x-readers" in prop:
+                        yield from prop["x-readers"]
+                for value in node.values():
+                    yield from readers(value)
+            elif isinstance(node, list):
+                for value in node:
+                    yield from readers(value)
+
+        for spec in SR.deliverable():
+            shapes = [SR.shape(spec)] + ([SR.glb_shape(spec)] if spec.glb else [])
+            for shape in filter(None, shapes):
+                with self.subTest(record=spec.key, shape=shape.__name__):
+                    self.assertLessEqual(set(readers(shape.json_schema())), set(spec.consumers))
+
+    def _contract_of(self, shapes):
+        """SR.json_schema over records whose shapes are *shapes*, by key."""
+        specs = [
+            RecordSpec(key, Scope.DELIVERABLE, 1, owner="Test", description=key)
+            for key in shapes
+        ]
+        real_shape = SR.shape.__func__
+
+        def shape(cls, item):
+            spec = cls.resolve(item) if not isinstance(item, RecordSpec) else item
+            return shapes.get(spec.key) or real_shape(cls, item)
+
+        with mock.patch.object(SR, "deliverable", classmethod(lambda cls: specs)), \
+                mock.patch.object(SR, "glb_records", classmethod(lambda cls: [])), \
+                mock.patch.object(SR, "shape", classmethod(shape)):
+            return SR.json_schema()
+
+    def test_a_shape_that_is_one_records_whole_and_nested_in_anothers_is_defined_once(self):
+        from dataclasses import dataclass
+        from typing import Optional
+
+        from pythontk.core_utils.schema_spec import SchemaSpec
+
+        @dataclass
+        class Inner(SchemaSpec):
+            """Inner."""
+
+            TYPED = True
+            n: Optional[int] = SchemaSpec.spec_field(help="A number.")
+
+        @dataclass
+        class Outer(SchemaSpec):
+            """Outer."""
+
+            TYPED = True
+            inner: Optional[Inner] = SchemaSpec.spec_field(help="The inner.")
+
+        doc = self._contract_of({"a": Inner, "b": Outer})
+        self.assertEqual(doc["properties"]["a"]["$ref"], "#/$defs/Inner")
+        self.assertIn("Inner", doc["$defs"])
+
+    def test_two_shapes_defining_one_name_differently_are_refused(self):
+        from dataclasses import dataclass
+        from typing import Optional
+
+        from pythontk.core_utils.schema_spec import SchemaSpec
+
+        @dataclass
+        class One(SchemaSpec):
+            """One."""
+
+            TYPED = True
+            n: Optional[int] = SchemaSpec.spec_field(help="A number.")
+
+        @dataclass
+        class Two(SchemaSpec):
+            """Two."""
+
+            TYPED = True
+            s: Optional[str] = SchemaSpec.spec_field(help="A word.")
+
+        Two.__name__ = "One"
+        with self.assertRaises(ValueError):
+            self._contract_of({"a": One, "b": Two})
+
+    def test_the_producers_and_the_converter_mark_proxies_by_the_declared_transport(self):
+        from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
+
+        self.assertEqual(MeshConvert.CURVE_PROXY_MARKER, SR.TRANSPORT.marker)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
