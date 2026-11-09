@@ -50,7 +50,12 @@ from typing import (
 )
 
 from pythontk.geo_utils.articulation.analysis import ArticulationAnalysis
-from pythontk.geo_utils.articulation.model import _ArticulationModelInternal
+from pythontk.geo_utils.articulation.model import (
+    TRANSLATE_CHANNELS,
+    ArticulationModel,
+    _ArticulationModelInternal,
+)
+from pythontk.geo_utils.articulation.record import ArticulationAnchor
 from pythontk.math_utils.quaternion import Quaternion
 
 Vec = Tuple[float, float, float]
@@ -266,32 +271,53 @@ class ArticulationPlan(_ArticulationPlanInternal):
 
     # ================================================================ record
     @classmethod
-    def joint_records(cls, spec: Mapping[str, Any]) -> List[Dict[str, Any]]:
+    def joint_records(
+        cls, spec: Mapping[str, Any], unit_scale: float = 1.0
+    ) -> List[Dict[str, Any]]:
         """The record's joints: each one's rest (translate and rotation in its
-        parent's space), rotate order and channels with their limits and
+        parent's space), its anchor -- the identity: a DCC rig nests each
+        joint on its pivot -- rotate order and channels with their limits and
         weights, in plan order; ``parent`` an index into them. Named
-        ``<rig>_<id>_jnt``, the node a host builds for it."""
+        ``<rig>_<id>_jnt``, the node a host builds for it. Every length (a
+        rest translate, a slide's limits) is the plan's times *unit_scale*.
+
+        Raises:
+            ValueError: A plan joint stating an ``anchor`` that is not the
+                identity (:meth:`refuse_plan_anchors`): the record would
+                otherwise drop it, silently.
+        """
+        cls.refuse_plan_anchors(spec)
+
+        def length(value: Optional[float]) -> Optional[float]:
+            return None if value is None else value * unit_scale
+
         joints = []
         for joint, pose in zip(spec.get("joints", []), cls.rest(spec)):
             channels, order = cls.JOINT_TYPES[joint["type"]]
             limits = joint.get("limits") or {}
             weights = joint.get("weights") or {}
+            entries = []
+            for channel in channels:
+                lo, hi = limits.get(channel) or (None, None)
+                if channel in TRANSLATE_CHANNELS:
+                    lo, hi = length(lo), length(hi)
+                entries.append(
+                    {
+                        "channel": channel,
+                        "min": lo,
+                        "max": hi,
+                        "weight": float(weights.get(channel, 1.0)),
+                    }
+                )
             joints.append(
                 {
                     "name": f"{spec['name']}_{joint['id']}_jnt",
                     "parent": pose["parent"],
-                    "t": pose["t"],
+                    "t": [v * unit_scale for v in pose["t"]],
                     "q": pose["q"],
+                    "anchor": ArticulationAnchor.identity(),
                     "rotate_order": order,
-                    "channels": [
-                        {
-                            "channel": channel,
-                            "min": (limits.get(channel) or (None, None))[0],
-                            "max": (limits.get(channel) or (None, None))[1],
-                            "weight": float(weights.get(channel, 1.0)),
-                        }
-                        for channel in channels
-                    ],
+                    "channels": entries,
                 }
             )
         return joints
@@ -301,9 +327,11 @@ class ArticulationPlan(_ArticulationPlanInternal):
         cls,
         spec: Mapping[str, Any],
         name_of: Optional[Callable[[Mapping[str, Any]], str]] = None,
+        unit_scale: float = 1.0,
     ) -> Dict[str, Any]:
         """The rig's entry in the ``articulation`` record: its joints
-        (:meth:`joint_records`) and the parts a hand grabs.
+        (:meth:`joint_records`, each on the identity anchor) and the parts a
+        hand grabs.
 
         Parameters:
             spec: The plan.
@@ -311,6 +339,10 @@ class ArticulationPlan(_ArticulationPlanInternal):
                 member (``{"uuid", "name"}``) -- a runtime binds a grab by
                 name, so a part renamed after the build must ship its new
                 one. Default: the name the plan stamped.
+            unit_scale: Metres per plan unit, as the file the record rides
+                holds them: the record is in metres (glTF's frame,
+                ``SceneRecords.FRAME``). 1 (the default) keeps the plan's own
+                units -- the ones a host's own solver poses its rig in.
         """
         name_of = name_of or (lambda member: member["name"])
         grab = []
@@ -319,7 +351,65 @@ class ArticulationPlan(_ArticulationPlanInternal):
                 {"node": name_of(m), "joint": index}
                 for m in spec["links"][joint["link"]]
             ]
-        return {"name": spec["name"], "joints": cls.joint_records(spec), "grab": grab}
+        return {
+            "name": spec["name"],
+            "joints": cls.joint_records(spec, unit_scale),
+            "grab": grab,
+        }
+
+    @classmethod
+    def refuse_plan_anchors(cls, spec: Mapping[str, Any]) -> None:
+        """Refuse a plan whose joint states an ``anchor`` that is not the
+        identity (:meth:`ArticulationModel.is_identity`; a joint stating none
+        nests on its pivot): a DCC rig nests each joint on its pivot, and its
+        build, solver and record (:meth:`joint_records`) know no other
+        anchor, so one stated here would be dropped from what ships.
+
+        Raises:
+            ValueError: Each such joint named, with the fix: an anchored rig is
+                a runtime's (a flat model rigged in an engine); in the DCC,
+                place the joint on the pivot instead.
+        """
+        anchored = [
+            str(joint.get("id"))
+            for joint in spec.get("joints") or []
+            if joint.get("anchor") is not None
+            and not ArticulationModel.is_identity(joint.get("anchor"))
+        ]
+        if anchored:
+            raise ValueError(
+                f"Articulated rig {spec.get('name')!r}: joint(s) "
+                f"{', '.join(anchored)} state an anchor that is not the "
+                "identity, which a DCC rig cannot pose (it nests each joint on "
+                "its pivot) -- move the joint to the pivot instead."
+            )
+
+    @classmethod
+    def refuse_anchors(cls, entry: Mapping[str, Any]) -> Mapping[str, Any]:
+        """*entry* (one rig of the record), when every joint's anchor is the
+        identity: a DCC rig nests each joint on its pivot, and its solver (a
+        host's IK, its record's producer) turns each joint about its own
+        origin, so it can never pose an anchor that is not the identity.
+
+        Raises:
+            ValueError: A joint whose anchor is not the identity (each one
+                named), with the fix: such a rig is a runtime's (a flat model
+                rigged in an engine), never a DCC rig's -- rebuild the rig in
+                the DCC, which nests every joint on its pivot.
+        """
+        anchored = [
+            str(joint.get("name"))
+            for joint in entry.get("joints") or []
+            if not ArticulationModel.is_identity(joint.get("anchor"))
+        ]
+        if anchored:
+            raise ValueError(
+                f"Articulated rig {entry.get('name')!r}: the anchor of "
+                f"{', '.join(anchored)} is not the identity, and a DCC rig's "
+                "solver turns each joint about its own pivot -- rebuild the "
+                "rig, which nests every joint on its pivot."
+            )
+        return entry
 
     @staticmethod
     def riders(spec: Mapping[str, Any]) -> Dict[str, int]:
@@ -445,9 +535,10 @@ class ArticulationPlan(_ArticulationPlanInternal):
         spec: Dict[str, Any],
         parts: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> None:
-        """Refuse a plan the build cannot keep: a part named twice, a link
-        without exactly one joint, a joint the root does not reach, a
-        degenerate frame. Orders the joints parent first and numbers a
+        """Refuse a plan the build cannot keep: a part named twice, a joint
+        stating an anchor that is not the identity
+        (:meth:`refuse_plan_anchors`), a link without exactly one joint, a
+        joint the root does not reach, a degenerate frame. Orders the joints parent first and numbers a
         repeated id, in place.
 
         Parameters:
@@ -462,6 +553,7 @@ class ArticulationPlan(_ArticulationPlanInternal):
         uuids = [m["uuid"] for link in spec["links"] for m in link]
         if len(set(uuids)) != len(uuids):
             raise ValueError("A part is named in two links.")
+        cls.refuse_plan_anchors(spec)
         if parts is not None:
             parts(spec)
         # Ids unique in the caller's order: a joint already stamped (listed

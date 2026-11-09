@@ -42,15 +42,28 @@ class RpcClient:
     intentionally usable on its own for tests and bespoke pipelines.
     """
 
+    #: Command-line arguments a :meth:`connect` launch passes the DCC: for a
+    #: host that runs the plugin only when its file is named on the command line.
+    LAUNCH_ARGS: tuple = ()
+
     def __init__(
         self,
         host: str = "127.0.0.1",
         port: int = 0,
         app_label: str = "DCC plugin",
         find_exe: Optional[Callable[[], Optional[str]]] = None,
+        token: Optional[str] = None,
+        label: Optional[str] = None,
     ):
         self.host = host
         self.port = port
+        #: An announced plugin's token (its instance record's), sent on every call.
+        self.token = token
+        #: An announced plugin's label (:meth:`instances`): :meth:`connect` then
+        #: finds it by its record, never by a fixed port.
+        self.label = label
+        #: The instance record this client is bound to (``None`` until it is).
+        self.record: Optional[dict] = None
         self.app_label = app_label
         self._find_exe = find_exe
         self._launched_process = None
@@ -59,6 +72,49 @@ class RpcClient:
     @property
     def url(self) -> str:
         return f"http://{self.host}:{self.port}/"
+
+    @staticmethod
+    def instances(label: str) -> list:
+        """The running plugins announced under *label* (their instance records,
+        oldest first): what each is and has open (``state``), and how to reach
+        it (:meth:`for_instance`). A record whose process is gone is pruned."""
+        from .plugin_core import RpcInstances
+
+        return RpcInstances.read(label)
+
+    @classmethod
+    def for_instance(cls, record: dict, **kwargs: Any) -> "RpcClient":
+        """A client of the instance *record* names (:meth:`instances`), carrying
+        its token; *kwargs* as the constructor's."""
+        kwargs.setdefault("app_label", record.get("label") or "DCC plugin")
+        client = cls(host=record.get("host") or "127.0.0.1", port=record["port"], token=record.get("token"), **kwargs)
+        client.record = record
+        return client
+
+    def bind(self, record: dict) -> "RpcClient":
+        """Reach the instance *record* names from now on: its host, port and token."""
+        self.host = record.get("host") or "127.0.0.1"
+        self.port = record["port"]
+        self.token = record.get("token")
+        self.record = record
+        return self
+
+    def attach(self, pid: Optional[int] = None) -> bool:
+        """Bind the first instance announced under :attr:`label` (*pid*'s,
+        when given) that answers; False when none does. Nothing is launched."""
+        for record in self.instances(self.label):
+            if pid is not None and record.get("pid") != pid:
+                continue
+            self.bind(record)
+            if self.ping(timeout=1.0):
+                return True
+        return False
+
+    def _headers(self) -> dict:
+        headers = {"Content-Type": "application/json"}
+        if self.token:
+            headers["Authorization"] = f"Bearer {self.token}"
+        return headers
 
     @classmethod
     def for_url(cls, url: str, **kwargs: Any) -> "RpcClient":
@@ -95,7 +151,7 @@ class RpcClient:
         req = urllib.request.Request(
             self.url,
             data=payload,
-            headers={"Content-Type": "application/json"},
+            headers=self._headers(),
             method="POST",
         )
         try:
@@ -140,7 +196,7 @@ class RpcClient:
         req = urllib.request.Request(
             f"{self.url}describe",
             data=payload,
-            headers={"Content-Type": "application/json"},
+            headers=self._headers(),
             method="POST",
         )
         try:
@@ -184,6 +240,11 @@ class RpcClient:
                 calls :meth:`shutdown` on interpreter exit. Idempotent
                 across repeated connect() calls.
 
+        With :attr:`label` (an announced plugin), the instance is found by its
+        record (:meth:`instances`), never by a fixed port: an existing one is
+        the first announced that answers, and a launch waits for the record
+        whose PID is the process it started (:meth:`bind`).
+
         Returns:
             True if the plugin is reachable (existing or newly launched),
             False if the launch timed out.
@@ -192,7 +253,8 @@ class RpcClient:
             FileNotFoundError: no exe path and no find_exe callable.
             RuntimeError: AppLauncher.launch returned None.
         """
-        if not force_new and self.ping(timeout=1.0):
+        reachable = (lambda: self.attach()) if self.label else (lambda: self.ping(timeout=1.0))
+        if not force_new and reachable():
             if auto_cleanup:
                 self._register_atexit_cleanup()
             return True
@@ -206,7 +268,7 @@ class RpcClient:
                 "executable to PATH."
             )
 
-        self._launched_process = AppLauncher.launch(resolved_exe, detached=True)
+        self._launched_process = AppLauncher.launch(resolved_exe, args=list(self.LAUNCH_ARGS) or None, detached=True)
         if self._launched_process is None:
             raise RuntimeError(f"AppLauncher could not launch {resolved_exe!r}")
 
@@ -218,7 +280,7 @@ class RpcClient:
             if self._launched_process.poll() is not None:
                 # DCC died before the plugin came up.
                 return False
-            if self.ping(timeout=1.0):
+            if self.attach(self._launched_process.pid) if self.label else self.ping(timeout=1.0):
                 return True
             time.sleep(poll_interval)
         return False

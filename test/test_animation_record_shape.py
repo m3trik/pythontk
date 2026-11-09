@@ -1,15 +1,16 @@
 # !/usr/bin/python
 # coding=utf-8
-"""The ``animation`` record's and its GLB block's declared shapes against what
-their producers write.
+"""The ``animation`` record's declared shape against what its producers write.
 
 :class:`AnimationRecord` is held to ``ShotStore.export_records`` -- the one
 producer: mayatk's and blendertk's stores publish through it and override
-scene lookups only -- and :class:`AnimationBlock` to
-``MeshConvert.apply_glb_animations``, run on a real store's export and on the
-converter shapes ``test_mesh_convert`` measured (Maya 2025 -> FBX2glTF
-0.13.1). Exact both ways: every payload validates with no unknown-key
-warning, and every declared key is one a producer writes. Added: 2026-10-20
+scene lookups only -- and to what ``MeshConvert.apply_glb_animations`` carries
+into a GLB, which is the record itself, run on a real store's export and on
+the converter shapes ``test_mesh_convert`` builds (one take per shot, each one
+clip). Exact both ways: every payload validates with no unknown-key warning,
+and every declared key is one a producer writes. Added: 2026-10-20; record v3
+(one take per shot): 2026-11-05; the GLB carries the record itself (its block
+retired): 2026-11-05.
 """
 
 import copy
@@ -22,12 +23,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pythontk as ptk
 from pythontk import MeshConvert
-from pythontk.core_utils.engines.scene_export.export_profile import ExportProfile
 from pythontk.core_utils.engines.scene_export.export_snapshot import ExportContext
 from pythontk.core_utils.engines.scene_export.scene_records import SceneRecords
 from pythontk.core_utils.engines.shots.animation_record import (
-    AnimationBlock,
-    AnimationBlockClip,
     AnimationRecord,
     AnimationShot,
 )
@@ -39,10 +37,8 @@ ptk.TestSandbox.activate()
 import test_mesh_convert as measured
 
 #: The rate the measured shapes are built at, and the stores here too, so a
-#: store's takes and the fixture's clip spans count alike.
+#: store's takes and the fixture's clips count alike.
 FPS = measured.TestApplyGlbAnimations.FPS
-#: The exporter's Animation Clips modes, from the table that declares them.
-CLIP_MODES = tuple(ExportProfile.ANIMATION_CLIPS_OPTIONS.values())
 
 
 # ============================================================================
@@ -113,8 +109,8 @@ def _edited(payload, path, value=None, drop=False):
 
 def _store(host=None, fps=FPS):
     """A store holding each kind of shot the record carries, made active: a
-    built step's shot (members, a description, a section), a tail split off
-    it (no members; its step's section, by its name) and a hold.
+    built step's shot (members, a description, metadata -- a tuple among it),
+    a tail split off it (no members, nothing a clip cannot hold) and a hold.
 
     Parameters:
         host: The store's host -- the pure one (``None``), or a DCC's
@@ -126,13 +122,20 @@ def _store(host=None, fps=FPS):
     """
     store = ShotStore([], host=host)
     store.scene_fps = fps
+    # The keys its author (a manifest's Build) ships; the rest is bookkeeping.
+    store.set_shipped_metadata(["step", "section", "behaviors", "odd"])
     store.define_shot(
         "A01_1",
         1,
         40,
         objects=["|set|door_geo", "|set|NS:handle_geo"],
         description="The door swings open.",
-        metadata={"step": "A01", "section": "A"},
+        metadata={
+            "step": "A01",
+            "section": "A",
+            "behaviors": ("open", "hold"),
+            "object_status": {"door_geo": "valid"},
+        },
     )
     store.define_shot("A01_2", 41, 80)
     store.define_shot("Hold", 81, 100, objects=["|set|lamp_geo"])
@@ -177,58 +180,96 @@ class TestTheRecordIsWhatTheStorePublishes(_ShotsCase):
         self.assertIs(record.spec, SceneRecords.SHOTS)
         return record.payload
 
-    def test_every_clip_mode_and_an_undeclared_one_write_the_declared_shape(self):
-        store = _store()
-        for mode in (None,) + CLIP_MODES:
-            with self.subTest(clip_mode=mode):
-                payload = self._produced(store, clip_mode=mode)
-                _assert_exact(self, AnimationRecord, payload)
-                self.assertEqual(payload.get("clip_mode"), mode)
+    def test_the_store_writes_the_declared_shape_and_nothing_else(self):
+        """Per shot its clip, and its description and metadata only where it
+        has them: the frames are the take's, the members the scene's -- and
+        the scene's rate, which a GLB cannot hold."""
+        payload = self._produced(_store())
+        _assert_exact(self, AnimationRecord, payload)
+        self.assertEqual(set(payload), {"version", "shots", "fps"})
+        self.assertEqual(payload["fps"], FPS)
+        self.assertEqual(payload["version"], SceneRecords.SHOTS.version)
+        self.assertEqual(
+            [set(shot) for shot in payload["shots"]],
+            [{"clip", "description", "metadata"}, {"clip"}, {"clip"}],
+        )
 
-    def test_the_producer_both_dccs_name_writes_it_with_no_mode_unless_given(self):
+    def test_the_metadata_ships_as_json(self):
+        """The scene's dict, JSON whole: a tuple is a list, as JSON spells it,
+        and a value JSON cannot hold ships as its string form, warned."""
+        store = _store()
+        payload = self._produced(store)
+        self.assertEqual(
+            payload["shots"][0]["metadata"],
+            {"step": "A01", "section": "A", "behaviors": ["open", "hold"]},
+        )
+        store.update_shot(store.sorted_shots()[1].shot_id, metadata={"odd": {1, 2}})
+        with self.assertLogs("pythontk", level="WARNING") as caught:
+            odd = self._produced(store)
+        self.assertIsInstance(odd["shots"][1]["metadata"]["odd"], str)
+        self.assertTrue(any("A01_2" in m for m in caught.output), caught.output)
+        _assert_exact(self, AnimationRecord, odd)
+
+    def test_the_producer_both_dccs_name_writes_it(self):
         """``produce_export_records`` -- what both DCCs' ``FbxUtils.PRODUCERS``
-        name -- with no context and with an authoring one: no exporter
-        decided a mode, so none is declared."""
+        name -- with no context and with an authoring one."""
         _store()
         for ctx in (None, ExportContext(mode=ExportContext.AUTHORING)):
             with self.subTest(ctx=ctx and ctx.mode):
                 (record,) = ShotStore.produce_export_records(ctx)
                 _assert_exact(self, AnimationRecord, record.payload)
-                self.assertNotIn("clip_mode", record.payload)
 
     def test_a_dcc_stores_lookups_change_its_values_never_its_shape(self):
         """A renamed member, a deleted one, a stale shot, an NTSC rate and an
         export set narrower than the scene: the payload a DCC store
         publishes, through the same producer."""
         store = _store(_HostScene(), fps=30000 / 1001)
-        payload = self._produced(store, clip_mode="shots", scope=("|set|door_geo",))
+        payload = self._produced(store, scope=("|set|door_geo",))
         _assert_exact(self, AnimationRecord, payload)
+        self.assertAlmostEqual(payload["fps"], 30000 / 1001, places=5)
         # The stale "Hold" ships unless the store leaves stale shots out.
         self.assertEqual(
             [s["clip"] for s in payload["shots"]], ["A01_1", "A01_2", "Hold"]
         )
         store.drop_stale_shots = True
-        dropped = self._produced(store, clip_mode="shots", scope=("|set|door_geo",))
+        dropped = self._produced(store, scope=("|set|door_geo",))
         _assert_exact(self, AnimationRecord, dropped)
         self.assertEqual([s["clip"] for s in dropped["shots"]], ["A01_1", "A01_2"])
         # A shot ships no members (2026-10-20): the export set narrows nothing.
         self.assertNotIn("objects", payload["shots"][0])
 
-    def test_every_declared_key_is_one_the_store_writes(self):
+    def test_the_takes_are_the_stores_and_name_the_records_clips(self):
+        """The ranges the record no longer states: ``ShotStore.declared_takes``,
+        one per shot the record names, in its order."""
         store = _store()
-        payloads = [self._produced(store, clip_mode=m) for m in (None,) + CLIP_MODES]
-        self.assertEqual(set().union(*payloads), _declared(AnimationRecord))
-        shots = [shot for payload in payloads for shot in payload["shots"]]
-        self.assertEqual(set().union(*shots), _declared(AnimationShot))
+        payload = self._produced(store)
+        self.assertEqual(
+            ShotStore.declared_takes(),
+            [
+                {"name": "A01_1", "start": 1, "end": 40},
+                {"name": "A01_2", "start": 41, "end": 80},
+                {"name": "Hold", "start": 81, "end": 100},
+            ],
+        )
+        self.assertEqual(
+            [t["name"] for t in ShotStore.declared_takes()],
+            [s["clip"] for s in payload["shots"]],
+        )
+
+    def test_every_declared_key_is_one_the_store_writes(self):
+        payload = self._produced(_store())
+        self.assertEqual(set(payload), _declared(AnimationRecord))
+        self.assertEqual(set().union(*payload["shots"]), _declared(AnimationShot))
 
 
 # ============================================================================
-# The GLB block
+# The record in a GLB
 # ============================================================================
 
 
-class TestTheBlockIsWhatTheConversionWrites(_ShotsCase):
-    """``MeshConvert.apply_glb_animations`` -- the block's one producer."""
+class TestTheGlbCarriesTheRecordItself(_ShotsCase):
+    """``MeshConvert.apply_glb_animations`` carries the FBX's ``animation``
+    record into the GLB as it stands: one layout, two containers."""
 
     def setUp(self):
         super().setUp()
@@ -239,23 +280,26 @@ class TestTheBlockIsWhatTheConversionWrites(_ShotsCase):
         self.shapes.tmp = self.temp.dir_path()
 
     def _block(self, path):
-        """The block the pass writes into *path*, checked to be the one it
-        returns."""
+        """The record the pass writes into *path*'s root ``extras``, checked
+        to be the one it returns and the carrier's own, verbatim."""
+        with MeshConvert.open_glb(path) as edit:
+            carried = MeshConvert.data_export_channel(edit.gltf, SceneRecords.SHOTS.key)
         returned = MeshConvert.apply_glb_animations(path)
         with MeshConvert.open_glb(path) as edit:
             written = SceneRecords.glb_block(edit.gltf, SceneRecords.SHOTS)
         self.assertEqual(written, returned)
+        self.assertEqual(written, carried, "the record, as the FBX carries it")
         return returned
 
     def _from_store(self):
         """The GLB of a real store's export: its record on the carrier and,
-        as FBX2glTF writes them, the whole-timeline take first, then one clip
-        per shot, each rebased to t=0."""
+        as FBX2glTF writes them, one clip per take -- one per shot, each
+        rebased to t=0."""
         _store()
-        (record,) = ShotStore.produce_export_records(ExportContext(clip_mode="both"))
-        takes = [(s["clip"], s["start"], s["end"]) for s in record.payload["shots"]]
+        (record,) = ShotStore.produce_export_records(ExportContext())
+        takes = [(t["name"], t["start"], t["end"]) for t in ShotStore.declared_takes()]
         return self.shapes._glb(
-            [("Take 001", 1, 100)] + takes,
+            takes,
             channels={SceneRecords.SHOTS.key: record.payload},
             name="store.glb",
         )
@@ -264,28 +308,22 @@ class TestTheBlockIsWhatTheConversionWrites(_ShotsCase):
         """``{fixture: block}`` for every shape the pass meets."""
         return {
             "a real store's export": self._block(self._from_store()),
-            "Maya's split, whole-timeline take first": self._block(
-                self.shapes._maya_shape()
-            ),
-            "a take with a lead-in, spans published": self._block(
-                self.shapes._lead_in_shape()
-            ),
+            "one take per shot, with notes": self._block(self.shapes._shot_shape()),
             "a declared take with no keys": self._block(self.shapes._with_empty_shot()),
-            "no shots, no rate": self._block(
-                self.shapes._glb([("Take 001", 1, 30)], name="unsplit.glb")
-            ),
         }
 
-    def test_every_shape_the_pass_meets_writes_the_declared_block(self):
+    def test_every_shape_the_pass_meets_carries_the_declared_record(self):
         for fixture, block in self._blocks().items():
             with self.subTest(fixture):
-                _assert_exact(self, AnimationBlock, block)
+                _assert_exact(self, AnimationRecord, block)
 
-    def test_every_declared_key_is_one_the_pass_writes(self):
-        blocks = list(self._blocks().values())
-        self.assertEqual(set().union(*blocks), _declared(AnimationBlock))
-        clips = [clip for block in blocks for clip in block["clips"]]
-        self.assertEqual(set().union(*clips), _declared(AnimationBlockClip))
+    def test_a_file_with_no_record_carries_none(self):
+        """A scene with no shots ships one whole-timeline take and no record:
+        the GLB carries none either -- nothing is made up for it."""
+        path = self.shapes._glb([("Take 001", 1, 30)], name="unsplit.glb")
+        self.assertIsNone(MeshConvert.apply_glb_animations(path))
+        with MeshConvert.open_glb(path) as edit:
+            self.assertIsNone(SceneRecords.glb_block(edit.gltf, SceneRecords.SHOTS))
 
 
 # ============================================================================
@@ -297,34 +335,16 @@ class TestWhatNoProducerWritesIsRefused(unittest.TestCase):
     """Each refusal named where it is, so a reader's validator can say so."""
 
     RECORD = {
-        "version": 1,
+        "version": 3,
         "fps": 30.0,
         "shots": [
             {
                 "clip": "Intro",
-                "start": 1,
-                "end": 40,
                 "description": "The door swings open.",
+                "metadata": {"section": "A"},
             }
         ],
-        "clip_mode": "shots",
     }
-    BLOCK = {
-        "version": 2,
-        "shots": [
-            {
-                "clip": "Intro",
-                "start": 1,
-                "end": 40,
-                "description": "The door swings open.",
-            }
-        ],
-        "clips": [{"name": "Intro", "animation": 0, "zero_frame": 1.0}],
-        "default_clip": "Intro",
-        "fps": 30.0,
-        "clip_mode": "shots",
-    }
-
     def _assert_refused(self, spec, valid, cases):
         """Assert *valid* passes and each case fails with its message.
 
@@ -345,52 +365,54 @@ class TestWhatNoProducerWritesIsRefused(unittest.TestCase):
             AnimationRecord,
             r,
             {
-                "missing required key 'fps'": _edited(r, ["fps"], drop=True),
+                "missing required key 'shots'": _edited(r, ["shots"], drop=True),
                 "shots[0].missing required key 'clip'": _edited(
                     r, ["shots", 0, "clip"], drop=True
-                ),
-                "shots[0].start: expected integer, got number": _edited(
-                    r, ["shots", 0, "start"], 1.5
-                ),
-                "shots[0].end: expected integer, got string": _edited(
-                    r, ["shots", 0, "end"], "40"
                 ),
                 "shots[0].description: expected string, got null": _edited(
                     r, ["shots", 0, "description"], None
                 ),
-                "clip_mode: 'all' is not one of": _edited(r, ["clip_mode"], "all"),
+                "shots[0].metadata: expected object, got array": _edited(
+                    r, ["shots", 0, "metadata"], ["section", "A"]
+                ),
                 "shots: expected a list": _edited(r, ["shots"], {}),
+                "version: expected integer, got string": _edited(r, ["version"], "2"),
                 "fps: expected number, got string": _edited(r, ["fps"], "30"),
-                "version: expected integer, got string": _edited(r, ["version"], "1"),
             },
         )
 
-    def test_the_block_refuses_what_no_producer_writes(self):
-        b = self.BLOCK
-        self._assert_refused(
-            AnimationBlock,
-            b,
-            {
-                "missing required key 'shots'": _edited(b, ["shots"], drop=True),
-                "shots[0].missing required key 'clip'": _edited(
-                    b, ["shots", 0, "clip"], drop=True
-                ),
-                "shots[0].start: expected integer, got number": _edited(
-                    b, ["shots", 0, "start"], 1.5
-                ),
-                "clips[0].missing required key 'animation'": _edited(
-                    b, ["clips", 0, "animation"], drop=True
-                ),
-                "clips[0].animation: expected integer, got string": _edited(
-                    b, ["clips", 0, "animation"], "0"
-                ),
-                "clips[0].zero_frame: expected number, got string": _edited(
-                    b, ["clips", 0, "zero_frame"], "1"
-                ),
-                "clips[0].expected a mapping": _edited(b, ["clips"], ["Intro"]),
-                "clip_mode: 'all' is not one of": _edited(b, ["clip_mode"], "all"),
-            },
-        )
+    def test_a_version_1_record_is_no_current_record(self):
+        """A file written before one take per shot -- each shot a window of a
+        whole-timeline take -- is not read as v2: its readers refuse it and
+        name the cure, re-export (``RecordSpec.is_current``,
+        ``SceneRecords.problems``)."""
+        old = {
+            "version": 1,
+            "fps": 30.0,
+            "clip_mode": "both",
+            "shots": [{"clip": "Intro", "start": 1, "end": 40}],
+        }
+        self.assertFalse(SceneRecords.SHOTS.is_current(old))
+        self.assertTrue(SceneRecords.SHOTS.is_current(self.RECORD))
+        (problem,) = SceneRecords.problems(SceneRecords.SHOTS, old)
+        self.assertIn("v1 is not the v3", problem)
+
+    def test_the_retired_keys_are_none_the_shapes_declare(self):
+        """Record v2 retires every frame field: the takes are the timing, and
+        no reader needs a frame number. A payload still carrying one is an
+        unknown key, warned. (``fps`` is no frame number: the rate glTF
+        cannot hold.)"""
+        for spec, payload, path in (
+            (AnimationRecord, self.RECORD, ["clip_mode"]),
+            (AnimationRecord, self.RECORD, ["default_clip"]),
+            (AnimationRecord, self.RECORD, ["shots", 0, "start"]),
+            (AnimationRecord, self.RECORD, ["shots", 0, "end"]),
+            (AnimationRecord, self.RECORD, ["shots", 0, "start_frame"]),
+        ):
+            with self.subTest(spec=spec.__name__, key=".".join(map(str, path))):
+                result = spec.validate(_edited(payload, path, 1))
+                self.assertEqual(result.errors, [])
+                self.assertTrue(result.warnings, "a retired key read as declared")
 
 
 # ============================================================================
@@ -402,17 +424,13 @@ class TestThePublishedForms(unittest.TestCase):
     """The JSON Schema the other languages' types are generated from, and the
     reference and skeleton an external reader is handed."""
 
-    #: Each root and the types it nests: the block inherits the record's
-    #: shot as it is, beside its own clip.
-    SHAPES = (
-        (AnimationRecord, (AnimationShot,)),
-        (AnimationBlock, (AnimationBlockClip, AnimationShot)),
-    )
+    #: Each root and the types it nests.
+    SHAPES = ((AnimationRecord, (AnimationShot,)),)
 
     def test_each_json_schema_builds_with_its_nested_types(self):
-        """``AnimationShot`` and ``AnimationBlockClip``: the C# generator
-        strips the root's family, so they read ``AnimationRecord.Shot`` and
-        ``AnimationBlock.Clip`` -- no UnityEngine or System type's name."""
+        """``AnimationShot``: the C# generator strips the root's family, so it
+        reads ``AnimationRecord.Shot`` -- no UnityEngine or System type's
+        name."""
         for spec, nested in self.SHAPES:
             with self.subTest(spec.__name__):
                 doc = spec.json_schema()
@@ -422,15 +440,12 @@ class TestThePublishedForms(unittest.TestCase):
                 self.assertEqual(sorted(doc["$defs"]), [n.__name__ for n in nested])
 
     def test_the_required_keys_are_the_ones_every_producer_always_writes(self):
-        self.assertEqual(_required(AnimationRecord), ["version", "fps", "shots"])
-        self.assertEqual(_required(AnimationShot), ["clip", "start", "end"])
-        self.assertEqual(_required(AnimationBlock), ["version", "shots", "clips"])
-        self.assertEqual(_required(AnimationBlockClip), ["name", "animation"])
+        self.assertEqual(_required(AnimationRecord), ["version", "shots", "fps"])
+        self.assertEqual(_required(AnimationShot), ["clip"])
 
-    def test_the_clip_mode_is_the_exporters_own_enumeration(self):
-        clip_mode = AnimationRecord.json_schema()["properties"]["clip_mode"]
-        self.assertEqual(clip_mode["type"], "string")
-        self.assertEqual(clip_mode["enum"], list(CLIP_MODES))
+    def test_the_metadata_is_a_json_object(self):
+        metadata = AnimationShot.json_schema()["properties"]["metadata"]
+        self.assertEqual(metadata["type"], "object")
 
     def test_the_skeleton_is_a_valid_payload_and_the_reference_names_every_key(self):
         for spec, nested in self.SHAPES:

@@ -2125,6 +2125,112 @@ class TestReconcileMembership(_EngineCase):
         )
 
 
+class TestTheExportShipsWhatTheManifestAuthors(_EngineCase):
+    """A shot's ``animation`` record entry ships the metadata the manifest
+    writes from what its user wrote in the sheet (its section, objects,
+    behaviors, voice, step and the template's own columns), and nothing the
+    tools keep on the shot for themselves (Assess's ``object_status``, the
+    split's ``step_link``, the build's records): those stay in the scene's
+    ``shot_store``.  The user's call (2026-11-05): "Manifest only: we should
+    be exporting only what is useful.  Everything else stays in the scene
+    data only." """
+
+    COLUMNS = ColumnMap(metadata_pass={"hint": ("Hint",)})
+    BOOKKEEPING = {
+        "object_status": {"door": "valid"},
+        ShotStore.STEP_LINK: "A00",
+        ShotStore.SYSTEM_MEMBERS: ["door"],
+    }
+
+    def _steps(self, voice="Open the door."):
+        path = _write_csv(
+            "SECTION A: DOORS\n"
+            "Step,Step Contents,Asset Names,Voice Support,Hint\n"
+            f"A01.),Door fades in,door,{voice},Press the red button\n"
+        )
+        try:
+            return ManifestModel.parse_csv(path, columns=self.COLUMNS)
+        finally:
+            os.remove(path)
+
+    def _entries(self):
+        view = self.store.to_export_view()
+        return {e["clip"]: e for e in view["animation"]["shots"]}
+
+    def _built(self):
+        ShotManifest(self.store).update(self._steps(), initial_shot_length=50)
+        shot = self.store.shot_by_name("A01")
+        self.store.update_shot(
+            shot.shot_id, metadata={**shot.metadata, **self.BOOKKEEPING}
+        )
+        return shot
+
+    def test_a_built_shot_ships_the_manifests_keys_alone(self):
+        shot = self._built()
+        shipped = self._entries()["A01"]["metadata"]
+        self.assertEqual(
+            set(shipped),
+            {
+                "section",
+                "section_title",
+                "csv_objects",
+                "behaviors",
+                "voice_text",
+                "step",
+                "hint",
+            },
+        )
+        self.assertEqual(shipped["hint"], "Press the red button")
+        self.assertEqual(shipped["section_title"], "DOORS")
+        # The rest stays in the scene's own record, whole.
+        held = self.store.to_dict()["shots"][0]["metadata"]
+        for key in (*self.BOOKKEEPING, ShotManifest.BUILT, ShotManifest.BUILD_NAME):
+            self.assertIn(key, held)
+            self.assertNotIn(key, shipped)
+        self.assertEqual(held, shot.metadata)
+
+    def test_a_shot_with_only_bookkeeping_ships_no_metadata(self):
+        self._built()
+        self.store.define_shot("Extra", 60, 90, metadata=dict(self.BOOKKEEPING))
+        self.assertEqual(self._entries()["Extra"], {"clip": "Extra"})
+
+    def test_a_shot_the_build_keeps_still_ships_its_keys(self):
+        """A shot edited by hand is left as it is by a rebuild, and still
+        ships what the manifest wrote on it: the keys are the manifest's,
+        not each shot's last build's."""
+        shot = self._built()
+        self.store.update_shot(shot.shot_id, description="the artist's note")
+        actions = ShotManifest(self.store).update(self._steps(), remove_missing=False)
+        self.assertEqual(actions, {"A01": "kept"})
+        self.assertEqual(self._entries()["A01"]["metadata"]["step"], "A01")
+
+    def test_the_keys_travel_with_the_saved_scene(self):
+        self._built()
+        reopened = ShotStore.from_dict(self.store.to_dict())
+        self.assertEqual(reopened.shipped_metadata, self.store.shipped_metadata)
+        self.assertIn("hint", reopened.shipped_metadata)
+
+    def test_the_manifests_keys_are_what_a_step_writes(self):
+        """:attr:`ShotManifest.MANIFEST_METADATA` is derived from the one
+        table a step's metadata is written from, never kept beside it."""
+        (step,) = self._steps()
+        self.assertEqual(
+            set(ShotManifest._step_metadata(step)), ShotManifest.MANIFEST_METADATA
+        )
+        (silent,) = self._steps(voice="N/A")
+        self.assertEqual(
+            set(ShotManifest._step_metadata(silent)),
+            ShotManifest.MANIFEST_METADATA - {"voice_text"},
+        )
+
+    def test_the_manifests_fields_are_the_stores_one_declaration(self):
+        """The names a step writes (:attr:`ShotManifest._STEP_FIELDS`) are the
+        ones the store declares (``ShotStore.MANIFEST_FIELDS``: what a scene
+        saved before ``shipped_metadata`` ships), never a second list."""
+        self.assertEqual(frozenset(ShotManifest._STEP_FIELDS), ShotStore.MANIFEST_FIELDS)
+        self.assertIs(ShotManifest.MANIFEST_METADATA, ShotStore.MANIFEST_FIELDS)
+
+
 class TestReconcileStatuses(_EngineCase):
     """Assess reports; it never writes the store."""
 
@@ -3390,6 +3496,78 @@ class TestContentEndPlacesLikeTheBuild(unittest.TestCase):
         )
         self.assertEqual(last, 100.0)  # the second fade-in keys at the end
         self.assertEqual(end, last)
+
+    def test_an_animated_object_with_a_behavior_ends_the_content_at_its_keys(self):
+        """A drain pan that fades in AND slides until frame 130 of a 200-frame
+        shot leaves a 70-frame tail. Assess queried the animator's keys only
+        for an object with no behavior, so the tail read as 185 frames (all
+        but the fade). Fixed: 2026-11-08"""
+        store = ShotStore()
+        store.define_shot("A02", 0, 200, objects=["pan"])
+        step = BuilderStep(
+            "A02", "A", "t", "", [BuilderObject("pan", behaviors=["fade_in"])]
+        )
+        [status] = ShotManifest(store).assess(
+            [step],
+            exists_fn=lambda name: True,
+            verify_fn=lambda *args, **kwargs: True,
+            keyframe_range_fn=lambda name: (30.0, 130.0),
+            skip_scene_discovery=True,
+        )
+        self.assertEqual(status.shrinkable_frames, 70.0)
+
+    def test_the_hosts_sequencer_ends_the_content_where_a_trim_would(self):
+        """With a scene, the unused tail is what Trim Trailing Space would cut
+        (``ShotSequencer.content_end``, through the host's ``_sequencer``):
+        an object's whole-timeline key extent runs into a later shot (its
+        keys to 900), which read as no tail at all. Added: 2026-11-08"""
+
+        class _Scanned(ShotSequencer):
+            def content_end(self, shot_id):
+                return 150.0
+
+        class _Hosted(ShotManifest):
+            def _sequencer(self):
+                return _Scanned(store=self.store)
+
+        store = ShotStore()
+        store.define_shot("A02", 0, 200, objects=["pan"])
+        step = BuilderStep(
+            "A02", "A", "t", "", [BuilderObject("pan", behaviors=["fade_in"])]
+        )
+        [status] = _Hosted(store).assess(
+            [step],
+            exists_fn=lambda name: True,
+            verify_fn=lambda *args, **kwargs: True,
+            keyframe_range_fn=lambda name: (30.0, 900.0),
+            skip_scene_discovery=True,
+        )
+        self.assertEqual(status.shrinkable_frames, 50.0)
+
+    def test_content_end_is_where_a_trailing_trim_puts_the_end(self):
+        """``ShotSequencer.content_end``: the shot's sequences and its keys
+        inside it, snapped up as the trim snaps, changing nothing; ``None``
+        for a shot holding nothing the sequencer reads. Added: 2026-11-08"""
+
+        class _Keys(ShotSequencer):
+            inner_end = 120.4
+            segments = [{"kind": "anim", "obj": "pan", "start": 10.0, "end": 90.0}]
+
+            def collect_shot_sequences(self, shot_id, include_audio=True):
+                return list(self.segments)
+
+            def _key_extent(self, shot, probe_outside, reach=None):
+                return 10.0, self.inner_end, None, None, []
+
+        store = ShotStore()
+        store.define_shot("A02", 0, 200, objects=["pan"])
+        seq = _Keys(store=store)
+        shot_id = store.shots[0].shot_id
+        self.assertEqual(seq.content_end(shot_id), store.snap(120.4, "up"))
+        self.assertEqual((store.shots[0].start, store.shots[0].end), (0, 200))
+        seq.inner_end, seq.segments = None, []
+        self.assertIsNone(seq.content_end(shot_id))
+        self.assertIsNone(ShotSequencer(store=store).content_end(shot_id))
 
 
 class TestInsertInSheetOrder(unittest.TestCase):

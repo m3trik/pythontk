@@ -9,10 +9,15 @@ inherited from private bases included) and ALL_CAPS constants, every symbol a
 ``asdict`` of these classes) is what a read keeps in the per-user cache and
 what m3trik's release checks diff, so the field ORDER below is a contract.
 
-Two values ride a record or a class as plain attributes, never fields, so the
+Values ride a record or a class as plain attributes, never fields, so the
 mapping never carries them: ``since`` (the date a retirement's notice first
-shipped, read by the expiry gate) and ``doc`` / ``path`` (the whole docstring
-and the defining file, read by :meth:`~pythontk.ApiSurface.describe`).
+shipped, read by the expiry gate), ``doc`` / ``path`` (the whole docstring
+and the defining file, read by :meth:`~pythontk.ApiSurface.describe`), and a
+C# read's ``declaration`` (a type's) and ``call`` (the C# that calls a static
+member).
+
+A C# read (:meth:`~pythontk.ApiSurface.read_csharp`) has the same shape: a
+module per namespace, a class per type, its ``kind`` the keyword.
 """
 
 from __future__ import annotations
@@ -25,7 +30,7 @@ from pythontk.core_utils.symbol_record import SymbolRecord
 
 @dataclass
 class ClassSurface:
-    """One public class: its bases as written and its public members."""
+    """One public class (in C#, any type): its bases as written and its public members."""
 
     name: str
     summary: str
@@ -35,13 +40,16 @@ class ClassSurface:
     #: A retired class (``ptk.Git``): read off its own decorator.
     deprecated: bool = False
     remove_in: str = ""
+    #: ``class``; a C# type's keyword (``struct``, ``interface``, ``enum``, ``record``).
+    kind: str = "class"
 
 
 @dataclass
 class ModuleSurface:
     """One module's public surface."""
 
-    #: The module's path inside the package source folder, POSIX style.
+    #: The module's path inside the package source folder, POSIX style; a C#
+    #: read's namespace (``global`` for the global one).
     relpath: str
     summary: str
     functions: List[SymbolRecord] = field(default_factory=list)
@@ -97,6 +105,7 @@ class PackageSurface:
                     members=[SymbolRecord(**r) for r in c.get("members", [])],
                     deprecated=c.get("deprecated", False),
                     remove_in=c.get("remove_in", ""),
+                    kind=c.get("kind", "class"),
                 )
                 for c in m.get("classes", [])
             ]
@@ -132,15 +141,17 @@ class PackageSurface:
     @classmethod
     def _prune(cls, node: Any) -> Any:
         """*node* without ``remove_in`` keys that are empty, nor ``deprecated``
-        keys on classes that are false: ``asdict`` would write them against
-        every symbol in the ecosystem, saying nothing. ``deprecated`` stays on
-        every symbol row, which has carried it since the mapping was first
-        written."""
+        keys on classes that are false, nor a class's ``kind`` that is
+        ``class``: ``asdict`` would write them against every symbol in the
+        ecosystem, saying nothing. ``deprecated`` stays on every symbol row,
+        which has carried it since the mapping was first written."""
         if isinstance(node, dict):
             if not node.get("remove_in", None):
                 node.pop("remove_in", None)
             if "members" in node and not node.get("deprecated", False):
                 node.pop("deprecated", None)
+            if "members" in node and node.get("kind") == "class":
+                node.pop("kind", None)
             for value in node.values():
                 cls._prune(value)
         elif isinstance(node, list):

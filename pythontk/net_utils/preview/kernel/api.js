@@ -101,11 +101,13 @@ export const viewer = {
   /**
    * Relighting the model in place (relight.js), for lighting work that tries a
    * bake in seconds: `relight({maps, images, probe, highlights})` swaps the
-   * bake -- `maps` names each lightmapped material's image, `images` holds
-   * them as `{width, height, data}` linear RGBA half floats, `probe` an
-   * equirect the same way plus its `position` and `box`, `highlights` the
-   * probe's highlight layers the same way plus the `materials` each copy is
-   * for -- and returns how many materials took a map; `restore()` brings back
+   * bake -- `maps` names each lightmap's image, by the `lightmaps` record's
+   * file name for it (a material's name still answers), `images` holds them
+   * as `{width, height, data}` linear RGBA half floats, `probe` an equirect
+   * the same way plus its `position` and `box`, `highlights` the probe's
+   * copies the same way: complete ones plus the `objects` (record nodes)
+   * that read each, or layers added to the probe plus the `materials` each
+   * is for -- and returns how many materials took a map; `restore()` brings back
    * the file's own bake; `renderLinear({camera, width, height})` reads a view
    * as linear light (no tone map, no background), RGBA floats, rows bottom-up.
    */
@@ -178,11 +180,12 @@ export const viewer = {
    * `triangles`, `vertices`; `size` `{x, y, z}` in metres; `materials`
    * `{file, instances}` (the file's, and the three.js copies made of them);
    * `lightmaps` -- null when nothing is baked -- `{lit, objects, baked,
-   * unlit, maps, probe}`: objects lit by a lightmap, of all objects; objects
-   * the file's bake lit -- wearing a material its lightmaps block names --
-   * (null when it names none the model wears), and those of them with no
-   * lightmap bound, by name; the distinct lightmap images; and whether the
-   * bake's reflection probe is the environment; `animation` `{clips,
+   * unlit, maps, probe, views}`: objects lit by a lightmap, of all objects;
+   * objects the file's bake lit -- an entry of its `lightmaps` record
+   * resolved to them, their map riding the file -- (null when none is), and
+   * those of them with no lightmap bound, by name; the distinct lightmap
+   * images; whether the bake's reflection probe is the environment; and the
+   * bufferViews the bound maps ride in the primary file; `animation` `{clips,
    * materials, tracks}`; and `issues` `[{level, text, names?}]` -- what the
    * load found wrong, as the HUD's warning line reports the first;
    * `probe` -- null without one -- the bake's reflection probe `{on, width,
@@ -212,10 +215,14 @@ export const viewer = {
   get mixer() { return mixer; },
   /**
    * The clip the transport is on, or null when the model has none:
-   * `{name, duration, fps, startFrame, endFrame, sequence}`. `sequence` marks
-   * the synthetic whole-timeline entry — every declared shot laid back onto
-   * the timeline it was cut from — which is a set of clips rather than one,
-   * and is exactly as recordable as a single shot.
+   * `{name, duration, fps, sequence}`, `duration` in seconds (glTF's unit) and
+   * `fps` the scene's frame rate as the file's `animation` record states it --
+   * 0 on a file that states none (an older or a foreign GLB): the page
+   * guesses none, and a script stepping frames then brings its own. No frame
+   * numbers: a shot is named, and need not start at any frame. `sequence`
+   * marks the whole-sequence entry -- the shots' clips played in turn, each
+   * cut holding the clip's last frame for one frame -- which is a set of
+   * clips rather than one, and is exactly as recordable as a single shot.
    */
   get clip() { return clipInfo(); },
   /** Whether the transport is playing. */
@@ -243,11 +250,9 @@ export const viewer = {
     return true;
   },
   /**
-   * The shot the playhead stands in at `seconds` — on the sequence, or on the
-   * file's own whole-timeline clip, where each shot is its window — the same
-   * name the transport readout shows, `'<name> (hold)'` inside a gap; null on
-   * a shot's own clip (the picker names it), before the first shot starts,
-   * or on a clip the deliverable does not place.
+   * The shot the playhead stands in at `seconds` on the sequence -- the shot
+   * whose clip plays there, the name the transport readout shows; null on a
+   * single clip (the picker names it).
    *
    * Reads the segment the last pose resolved to, so it answers for wherever the
    * model is NOW: call it after `poseAt(seconds)` with the same `seconds`, not
@@ -268,8 +273,8 @@ export const viewer = {
    * DCC's shot names on a shot-split deliverable). Returns whether it matched.
    */
   playClip(name) {
-    // `entry.clip` is null on the synthetic whole-timeline entry, which is a
-    // set of shots rather than one clip -- reading `.name` off it threw on
+    // `entry.clip` is null on the whole-sequence entry, which is a set of
+    // shots rather than one clip -- reading `.name` off it threw on
     // every shots-only deliverable. Addressable by its own name too, so a
     // consumer can ask for the sequence the way it asks for a shot.
     const index = clips.findIndex((entry) => (

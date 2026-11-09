@@ -176,9 +176,10 @@ class HandoffCarrier:
     Parameters:
         prefix: What the ``data`` address of a record in this carrier is its
             key after.
-        blocks: Whether a record rides as its GLB block
-            (:attr:`RecordSpec.glb`, whose ``assembly`` its row states) or as
-            itself (:attr:`RecordSpec.assembly`) -- one key either way.
+        blocks: Whether the carrier holds only the records a GLB carries
+            (:attr:`RecordSpec.glb_verbatim`), each in its root ``extras``
+            as itself -- its row the record's own assembly, as in the FBX --
+            and states no other; one key either way.
         intro: The instructions' opening: what the block describes and where
             the records ride.
         addresses: How this carrier's ``data`` addresses read.
@@ -189,8 +190,6 @@ class HandoffCarrier:
         intensity: A lightmapped material's level in this carrier; ``{at}``
             is where the carrier holds the lightmaps.
         rules: The carrier's own reading rules, after the shared ones.
-        highlights: What the lighting rows say of the probe's highlight
-            copies -- empty where the lightmaps' own row says it.
     """
 
     prefix: str
@@ -203,7 +202,6 @@ class HandoffCarrier:
     probe_units: str
     intensity: str
     rules: str = ""
-    highlights: str = ""
 
     def address(self, key: str) -> str:
         """Where this carrier holds the record *key*: the same key on every
@@ -263,7 +261,7 @@ class HandoffRecord:
             "prefilter": "PMREM",
             "prefilterBlur": 0.04,
             "intensity": 1.0,
-            "probeIntensity": 0.3183099,
+            "probeIntensity": 1.0,
         },
         "keyLight": {
             "type": "directional",
@@ -313,28 +311,27 @@ class HandoffRecord:
 
     #: Where the probe is and what its texels mean, whichever carrier holds
     #: it; :attr:`HandoffCarrier` fills in the storage, the axes and the units.
-    #: The level is stated for both lightmap conventions, not as a bare
-    #: ``probeIntensity``: that number is three.js', whose lightmapped diffuse
-    #: is pi below a renderer that composites the texel as ``albedo x
-    #: texel``. Such a renderer keeps the balance with the probe at 1 --
-    #: unitytk's native path does (``LightmapMetadataController.ApplyProbes``),
-    #: where 1/pi alone would reflect a third of the approved room -- but
-    #: matches the approved brightness only with its lightmaps AND the probe
-    #: at 1/pi, which a cold read of the files found unstated (2026-10-20).
+    #: The one statement of the lightmap convention every reader draws by:
+    #: a texel is a white card's radiance, drawn as stored (texel x albedo,
+    #: as an engine's lightmap path and the baking renderer draw it), and the
+    #: probe plays as captured
+    #: (``probeIntensity`` 1). The approved look is drawn so too: the WebXR
+    #: viewer binds a lightmap at pi times its scale, since three.js reads one
+    #: as irradiance (``kernel/lightmaps.js`` ``LIGHTMAP_AS_STORED``). Until
+    #: 2026-11-07 it drew the texel as irradiance, pi below, and played the
+    #: probe at 1/pi; a reader then had to scale both by 1/pi to match it.
     _PROBE = (
         "{at}.probe: {image}, an equirectangular map in {axes} (u = 0.5 + "
         "atan2(z, x) / 2pi, v = 0.5 + asin(y) / pi, its top row +Y); "
         "'position' is where it was captured and 'box' ({{min, max}}, or null "
         "for an open scene) the box its reflections project onto, both in "
-        "{units}. It holds radiance, and a lightmap texel is a white card's "
-        "radiance (irradiance / pi): the approved look takes the texel as "
-        "irradiance -- three.js, whose baked diffuse is texel x albedo / pi -- "
-        "and plays the probe at the same scale, 'probeIntensity' (1/pi). A "
-        "renderer that composites the texel as texel x albedo (Unity's "
-        "Standard and URP Lit) matches it with its lightmaps scaled by 1/pi "
-        "and the probe at 'probeIntensity' too; left at 1, the two keep their "
-        "balance but light the scene pi times brighter than approved. Every "
-        "lookup is made in those axes. "
+        "{units}. It holds radiance and plays as captured ('probeIntensity', "
+        "1). A lightmap texel is a white card's radiance (irradiance / pi), "
+        "drawn as stored: a surface's baked diffuse is texel x albedo, as an "
+        "engine's lightmap path and the renderer that baked it draw it and as "
+        "the approved look does (three.js, which reads a lightmap as "
+        "irradiance, binds it at pi times its scale). Every lookup is made in "
+        "those axes. "
         "A reflection is box-projected: followed from the shaded point to "
         "where it leaves the box, and the probe read toward that point from "
         "'position'; diffuse irradiance is read along the normal."
@@ -350,9 +347,9 @@ class HandoffRecord:
     #: scene HAS, because the failure they exist for is a reader treating the
     #: policy as background: building the geometry faithfully and lighting it
     #: with whatever its engine defaults to. What only a lightmapped file needs
-    #: -- a probe, its highlight copies, the lightmapped materials' rule -- is
-    #: a :class:`Clause` over the file's records, so a file without them is
-    #: told none of it.
+    #: -- a probe, the lightmapped materials' rule -- is a :class:`Clause` over
+    #: the file's records, so a file without them is told none of it; the
+    #: probe's highlight copies are the lightmaps record's own row's.
     _LIGHTING_ROWS: Tuple[Dict[str, Any], ...] = (
         {
             "part": "environment",
@@ -382,10 +379,6 @@ class HandoffRecord:
                     "and every unbaked object stands in that room's light "
                     "rather than the studio's.",
                     (SceneRecords.LIGHTMAPS.key, "probe"),
-                ),
-                Clause(
-                    "{highlights}",
-                    (SceneRecords.LIGHTMAPS.key, "probe", "highlights"),
                 ),
             ),
         },
@@ -419,9 +412,8 @@ class HandoffRecord:
                     "A lightmapped surface's diffuse light is its lightmap alone, "
                     "at {intensity}: no environment diffuse -- the bake already "
                     "holds every light and the sky, and adding it double-counts "
-                    "them and reads as a washed-out bake -- no realtime light, and "
-                    "not its material's own ambient-occlusion map, the bake "
-                    "already holding the occlusion. It keeps the environment's "
+                    "them and reads as a washed-out bake -- and no realtime "
+                    "light. It keeps the environment's "
                     "specular ('envMapTerms'), the reflection-probe role a native "
                     "lightmap path such as Unity's gives a lightmapped renderer, "
                     "at 'envMapIntensity' times the environment's own intensity -- "
@@ -429,8 +421,8 @@ class HandoffRecord:
                     "reflects at its own level, 'probeIntensity', undimmed -- "
                     "scaled per texel as "
                     "'reflectionNormalization' names: lightmapLuma is clamp(luma("
-                    "E_bake) / luma(E_env), 0, 1), E_bake the texel's lightmap "
-                    "irradiance (map times its intensity), E_env the environment's "
+                    "E_bake) / luma(E_env), 0, 1), E_bake the irradiance the "
+                    "texel stands for (pi times the map at its intensity), E_env the environment's "
                     "diffuse irradiance about the surface's own normal (both in "
                     "the approved model's units), luma the Rec. 709 weights, so a "
                     "shadow reflects next to nothing and a "
@@ -505,10 +497,11 @@ class HandoffRecord:
                 "beginning 'rendering.' a field of this block"
             ),
             rules=(
-                f"Per record, the node named exactly '{_NODE}' is the "
-                "scene's own and wins; the same record on any other such node "
-                f"('{_NODE}1', a namespaced 'NS:{_NODE}') is a "
-                "referenced module's, as that module was last exported alone, "
+                f"Per record, the node named exactly '{_NODE}' at the root of "
+                "the file is the scene's own and wins; the same record on any "
+                f"other such node ('{_NODE}1', a namespaced 'NS:{_NODE}', one "
+                "under a group) is a module's, as that module was last "
+                "exported alone, "
                 "and counts only where the scene's own node has none -- a "
                 f"'{SceneRecords.HANDOFF.key}' there describes that module, not "
                 "this file. Records name files by FILE NAME, never by folder: "
@@ -534,8 +527,9 @@ class HandoffRecord:
                 },
             ),
             probe=(
-                "'map' names a linear OpenEXR image by FILE NAME, which a "
-                "delivered file embeds as media no material uses"
+                "'map' names a linear HDR image (OpenEXR, or Radiance once the "
+                "bake's lights are drawn in) by FILE NAME, which a delivered "
+                "file embeds as media no material uses"
             ),
             probe_axes="the scene's own Y-up axes",
             probe_units=(
@@ -570,41 +564,49 @@ class HandoffRecord:
                     "part": SceneRecords.MATERIALS.key,
                     "data": [],
                     "spec": "Every material complete in glTF 2.0's own terms, as approved.",
-                    "clauses": (
-                        Clause(
-                            "A lightmapped one's occlusionTexture is the exception: "
-                            "it carries the lightmap ('lightmaps'), not ambient "
-                            "occlusion.",
-                            (SceneRecords.LIGHTMAPS.key,),
-                        ),
+                },
+                # The keyed render effects in glTF's own animation terms: the
+                # one part of the shared layout the format forces apart (an
+                # FBX keys them on proxy nodes, its 'render_effects' row says).
+                {
+                    "part": SceneRecords.VISIBILITY.key,
+                    "data": [],
+                    "spec": (
+                        "A STEP 'scale' channel driving a node to zero is its "
+                        "presence -- its keyed visibility, or its opacity at 0 "
+                        "-- not authored scale: glTF has no visibility channel. "
+                        "KHR_animation_pointer channels on a material are its "
+                        "opacity (baseColorFactor alpha: the material keeps its "
+                        "authored alpha mode, blended only while its alpha is "
+                        "below 1), its highlight (emissiveFactor, added to the "
+                        "material's uniform emission; while it is above 0 -- "
+                        "the spans the channel's extras.render_effects.active "
+                        "states -- a mapped emission is set aside and the glow "
+                        "is the highlight, at rest the map is back) and its "
+                        "animated emission (emissiveFactor, its map kept); each "
+                        "channel's extras.render_effects names the record's "
+                        "channel and target. A runtime without the extension "
+                        "plays them by binding each channel to that material's "
+                        "property."
                     ),
                 },
             ),
+            # The record rides as it stands (lightmaps v3), its files as the
+            # bufferViews named by them (``SceneRecords.GLB_MEDIA``), so the
+            # probe's highlight copies are its own row's, as on an FBX.
             probe=(
-                "Radiance bytes (mimeType image/vnd.radiance) in bufferView "
-                "'bufferView'"
+                "'map' names a linear HDR image by FILE NAME, which the file "
+                "carries as the bufferView named by that file name (Radiance "
+                f"RGBE, mimeType {SceneRecords.GLB_MEDIA.radiance})"
             ),
             probe_axes="the asset's own axes",
-            probe_units="the asset's metres",
-            intensity=(
-                "that material's 'intensity' in {at}, the scalar that restores "
-                "the bake's range"
+            probe_units=(
+                "the record's units, 'unit_scale' metres per unit -- times it, "
+                "the asset's metres"
             ),
-            # The copies are a GLB build's (``_Highlights._embed_highlight_
-            # probes``); a finished FBX carries the same copies as media its
-            # lightmap record's ``probe.highlights`` names, and that record's
-            # own row says so.
-            highlights=(
-                "'highlights', when present, holds the bake's lights as COPIES "
-                "of the probe for groups of receivers: each is a layer "
-                "(Radiance in its 'bufferView', the probe's layout and units) "
-                "to add to the probe, box-filtered down to the layer's size, "
-                "and prefilter as the probe is; the 'materials' it names take "
-                "that copy in the probe's place, for their diffuse irradiance "
-                "and reflections alike, box-projected from the same 'position' "
-                "and 'box'. A copy draws each light where that projection shows "
-                "it true for the surfaces it serves, so the lights themselves "
-                "never ship -- lighting them as well lights the scene twice."
+            intensity=(
+                "1, the map applied as stored (an 8-bit web encoding's decoded "
+                "linear texels times its bufferView's extras.scale)"
             ),
         ),
     }
@@ -661,7 +663,6 @@ class HandoffRecord:
             cls._LIGHTING_ROWS,
             {
                 "{probe}": probe,
-                "{highlights}": found.highlights,
                 "{intensity}": found.intensity.format(at=at),
                 "{lightmaps}": at if scope is not None and lightmaps in scope else None,
             },
@@ -702,13 +703,26 @@ class HandoffRecord:
         for key, spec in declared.items():
             if key not in scope:
                 continue
+            # A GLB states each record it carries (``RecordSpec.glb_verbatim``)
+            # in the record's own terms, as the FBX does, and no other.
             text = (
-                (spec.glb.assembly_for(scope[key]) if spec.glb else "")
-                if found.blocks
-                else spec.assembly_for(scope[key])
+                spec.assembly_for(scope[key])
+                if not found.blocks or spec.glb_verbatim
+                else ""
             )
-            if text:
+            if not text:
+                continue
+            own = next((row for row in rows if row["part"] == key), None)
+            if own is None:
                 rows.append({"part": key, "data": [found.address(key)], "spec": text})
+                continue
+            # The carrier's own row for the part (a GLB's ``render_effects``:
+            # the transport the format forces apart) and the record it holds
+            # are one part, so one row: the record's contract, then how this
+            # file carries it.
+            own["spec"] = f"{text} {own['spec']}"
+            if found.address(key) not in own["data"]:
+                own["data"] = [*own["data"], found.address(key)]
         for key in sorted(set(scope) - set(declared)):
             rows.append(
                 {"part": key, "data": [found.address(key)], "spec": cls.UNDECLARED}

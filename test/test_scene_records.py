@@ -29,13 +29,11 @@ from pythontk.core_utils.engines.scene_export.record_transfer import (
 )
 from pythontk.core_utils.engines.scene_export.scene_records import (
     Clause,
-    GlbBlock,
     Kind,
     Merge,
     RecordSpec,
     SceneRecords as SR,
     Scope,
-    WebProjection,
 )
 from pythontk.core_utils.engines.scene_export.scene_store import SceneStoreBase
 
@@ -101,7 +99,6 @@ class TestRegistry(SceneRecordsCase):
         with mock.patch.object(SR, "all", return_value=[private, shipped]):
             self.assertIs(SR.by_key("k"), shipped)
             self.assertIs(SR.by_key("k", Scope.PRIVATE), private)
-        self.assertIs(SR.by_key(SR.EMISSIVE_GROUPS.key), SR.EMISSIVE_GROUPS)
         self.assertIs(SR.by_key(SR.EMISSIVE_REGISTRY.key), SR.EMISSIVE_REGISTRY)
         self.assertIsNone(SR.by_key("nope"))
         with self.assertRaises(KeyError):
@@ -120,18 +117,73 @@ class TestRegistry(SceneRecordsCase):
         r = RecordSpec("r", Scope.DELIVERABLE, 1, "t", "d", after=("d",))
         self.assertEqual(SR.ordered([r, d]), [d, r])
 
-    def test_declared_takes_come_from_the_clips_alone(self):
-        """Each clip carries its range (every file since 0.11.0). The take
-        list an older file carried (``fbx_takes``) is no record a reader reads
-        (:attr:`SceneRecords.RETIRED`): such a file is re-exported."""
-        legacy = [{"name": "old", "start": 1, "end": 2}]
-        clips = {"shots": [{"clip": "A", "start": 1, "end": 2, "objects": []}]}
-        read = {SR.SHOTS.key: clips, "fbx_takes": legacy}.get
-        self.assertEqual(SR.declared_takes(read), [{"name": "A", "start": 1, "end": 2}])
-        read = {SR.SHOTS.key: {"shots": [{"clip": "A"}]}, "fbx_takes": legacy}.get
-        self.assertEqual(SR.declared_takes(read), [], "a clip with no range")
-        self.assertEqual(SR.declared_takes({"fbx_takes": legacy}.get), [])
-        self.assertEqual(SR.declared_takes({}.get), [])
+    def test_the_shot_record_states_no_range_and_a_version_1_is_refused(self):
+        """One take per shot (version 3, 2026-11-05; 2 is skipped): the takes are the
+        timing, so the record keeps what a clip cannot hold, and no reader
+        reads take ranges from it -- they are the store's at export time
+        (``ShotStore.declared_takes``) and the file's own after it. A version-1
+        record, which stated ranges, is no current record: its reader refuses
+        it, and the cure is a re-export."""
+        import pythontk
+
+        self.assertEqual(SR.SHOTS.version, 3)
+        v1 = {"version": 1, "fps": 24.0, "shots": [{"clip": "A", "start": 1, "end": 2}]}
+        self.assertFalse(SR.SHOTS.is_current(v1))
+        self.assertTrue(
+            SR.SHOTS.is_current({"version": 3, "fps": 24.0, "shots": [{"clip": "A"}]})
+        )
+        self.assertNotIn("declared_takes", vars(SR))
+        self.assertEqual(
+            pythontk.MOVED_NAMES["SceneRecords.declared_takes"][0],
+            "pythontk.ShotStore.declared_takes",
+        )
+        self.assertIn("takes, one per shot", SR.SHOTS.assembly)
+        for retired in ("'start'", "'end'", "clip_mode", "zero_frame", "default_clip"):
+            self.assertNotIn(retired, SR.SHOTS.assembly)
+
+    def test_the_shot_record_is_version_3_and_2_is_refused(self):
+        """The record rides a GLB under the key HEAD's published GLB block
+        rode (``extras.animation``), and that block was version 2: two shapes
+        under one key and version would be read half-way. So the record is
+        version 3 in both containers; version 1 (HEAD's FBX record) and
+        version 2 (HEAD's GLB block, or this record before it took the rate)
+        are no current record, and a reader refuses them -- the cure, a
+        re-export. Added: 2026-11-05."""
+        self.assertEqual(SR.SHOTS.version, 3)
+        head_block = {
+            "version": 2,
+            "fps": 24.0,
+            "shots": [{"clip": "A", "start": 1, "end": 10}],
+            "clips": [{"name": "A", "animation": 0, "zero_frame": 1}],
+            "default_clip": "A",
+        }
+        for old in (head_block, {"version": 2, "fps": 24.0, "shots": [{"clip": "A"}]}):
+            with self.subTest(old=sorted(old)):
+                self.assertFalse(SR.SHOTS.is_current(old))
+                (problem,) = SR.problems(SR.SHOTS, old)
+                self.assertIn("v2 is not the v3", problem)
+                self.assertIsNone(SR.glb_block({"extras": {SR.SHOTS.key: old}}, SR.SHOTS))
+        self.assertIn("2", SR.shape(SR.SHOTS).describe()[0].help)
+
+    def test_the_shot_record_rides_a_glb_as_it_stands(self):
+        """One layout, two containers (2026-11-05): the GLB carries the
+        ``animation`` record itself -- its version and shape the FBX's, under
+        its key in the root ``extras`` -- rather than a block bound to the
+        file's animation indices, and states the frame rate glTF cannot hold
+        (``fps``), which a reader with a native rate (Unity, off the FBX)
+        passes over. The retired block's types are moved names."""
+        import pythontk
+
+        self.assertTrue(SR.SHOTS.glb_verbatim)
+        self.assertIn(SR.SHOTS, SR.glb_records())
+        self.assertIn("'fps'", SR.SHOTS.assembly)
+        record = {"version": 3, "fps": 24.0, "shots": [{"clip": "A"}]}
+        gltf = {"extras": {SR.SHOTS.key: record}}
+        self.assertIs(SR.glb_block(gltf, SR.SHOTS), record)
+        self.assertEqual(SR.problems(SR.SHOTS, record), [])
+        self.assertEqual(SR.put_glb_block({}, SR.SHOTS, record), record)
+        for name in ("AnimationBlock", "AnimationBlockClip"):
+            self.assertEqual(pythontk.MOVED_NAMES[name][0], "pythontk.AnimationRecord")
 
     def test_ordered_does_not_wait_for_a_record_that_is_not_in_the_set(self):
         self.assertEqual(SR.ordered([SR.VISIBILITY]), [SR.VISIBILITY])
@@ -182,7 +234,9 @@ class TestRegistry(SceneRecordsCase):
         for scope, old in renamed:
             with self.subTest(key=old, scope=scope.value):
                 self.assertIsNone(SR.by_key(old, scope))
-        self.assertEqual(SR.RETIRED, ("fbx_takes",))
+        self.assertEqual(SR.RETIRED, ("fbx_takes", "emissive_groups"))
+        # A retired record a reader still meets names its fix.
+        self.assertLessEqual(set(SR.RETIRED_FIXES), set(SR.RETIRED))
         current = {spec.key for spec in SR.all()}
         for old in SR.RETIRED:
             with self.subTest(key=old):
@@ -195,12 +249,13 @@ class TestRegistry(SceneRecordsCase):
         self.assertEqual(rows[0]["key"], SR.MATERIALS.key)
         self.assertIn("description", rows[0])
         self.assertNotIn("fbx_takes", [r["key"] for r in rows], "retired, no record")
-        emissive = next(r for r in rows if r["key"] == SR.EMISSIVE_GROUPS.key)
-        self.assertEqual(emissive["version"], SR.EMISSIVE_GROUPS.version)
-        self.assertNotIn("version_key", emissive, "every record versions alike")
+        self.assertNotIn("emissive_groups", [r["key"] for r in rows], "retired, no record")
+        plain = next(r for r in rows if r["key"] == SR.LIGHTMAP_PROBE.key)
+        self.assertEqual(plain["version"], SR.LIGHTMAP_PROBE.version)
+        self.assertNotIn("version_key", plain, "every record versions alike")
         shots = next(r for r in rows if r["key"] == SR.SHOTS.key)
-        self.assertEqual(shots["glb"], SR.SHOTS.glb.version)
-        self.assertIsNone(emissive["glb"])
+        self.assertEqual(shots["glb"], SR.SHOTS.version, "the record itself")
+        self.assertIsNone(plain["glb"])
 
 
 # -- the contracts other languages read ------------------------------------------
@@ -362,43 +417,157 @@ class TestRegisteredHooks(SceneRecordsCase):
 
 
 class TestContracts(SceneRecordsCase):
-    """Shapes and GLB blocks: what another language reads is declared here
-    and everything that spelled it reads the declaration."""
+    """Shapes and the records a GLB carries: what another language reads is
+    declared here and everything that spelled it reads the declaration."""
 
     def test_a_glb_carries_a_records_block_under_the_records_key(self):
         """One name per record in every file (2026-10-20): the block a GLB
-        carries is the record's, under its key."""
+        carries is the record's, under its key -- ``render_effects`` among them
+        since its v2 (2026-11-05), the record itself."""
         records = SR.glb_records()
         self.assertEqual(
             [s.key for s in records],
-            ["animation", "lightmaps", "shadows", "articulation"],
+            ["animation", "audio", "lightmaps", "shadows", "articulation", "render_effects"],
         )
-        self.assertEqual(records, [SR.SHOTS, SR.LIGHTMAPS, SR.SHADOWS, SR.ARTICULATION])
+        self.assertEqual(
+            records,
+            [SR.SHOTS, SR.AUDIO, SR.LIGHTMAPS, SR.SHADOWS, SR.ARTICULATION, SR.VISIBILITY],
+        )
         self.assertTrue(all(s.scope is Scope.DELIVERABLE for s in records))
-        self.assertTrue(all(isinstance(s.glb, GlbBlock) for s in records))
+        # Each as it stands (``glb_verbatim``): the one way a GLB carries one.
+        self.assertTrue(all(s.glb_verbatim for s in records))
+
+    def test_the_glb_block_machinery_is_retired_whole(self):
+        """Articulation v2 (2026-11-08) was the last record a GLB carried as a
+        block bound to its indices, so the machinery goes whole: no record
+        declares a block (``RecordSpec.glb``, ``GlbBlock``, ``WebProjection``),
+        a block version or shape of its own (``SceneRecords.glb_version``,
+        ``glb_shape``) or problems apart from its record's
+        (``block_problems``). Each is a moved name, its home one that
+        resolves; ``glb_verbatim`` stays, since a record a GLB does not carry
+        opts out: the deliverables it states otherwise -- ``materials`` (a
+        GLB's own materials), the ``handoff`` (the GLB's own) -- and every
+        private record. Added: 2026-11-08"""
+        import dataclasses
+
+        import pythontk
+
+        self.assertNotIn("glb", {f.name for f in dataclasses.fields(RecordSpec)})
+        for name in ("glb_shape", "glb_version", "block_problems"):
+            with self.subTest(name=name):
+                self.assertFalse(hasattr(SR, name))
+                self.assertIn(f"SceneRecords.{name}", pythontk.MOVED_NAMES)
         self.assertEqual(
-            SR.SHADOWS.glb.node_fields,
-            (("planes", "node"), ("planes", "source_node"), ("planes", "contact_node")),
+            pythontk.MOVED_NAMES["RecordSpec.glb"], ("pythontk.RecordSpec.glb_verbatim", "0.21.0")
         )
+        # The names v0.20.0 noticed for 0.18.0 stay, deprecated, until their
+        # window closes (TestRetiredUntil022): held, then moved at 0.22.0.
+        for name in ("GlbBlock", "WebProjection", "RecordSpec.web"):
+            with self.subTest(held=name):
+                self.assertNotIn(name, pythontk.MOVED_NAMES)
+                home, version = pythontk.HELD_UNTIL_0_22[name]
+                self.assertEqual((home, version), ("pythontk.RecordSpec.glb_verbatim", "0.22.0"))
         self.assertEqual(
-            SR.ARTICULATION.glb.node_fields,
-            (("rigs", "joints", "node"), ("rigs", "grab", "node")),
+            pythontk.HELD_UNTIL_0_22["SceneRecords.web_shape"][0], "pythontk.SceneRecords.shape"
         )
+        with self.assertRaises(TypeError):
+            RecordSpec("x", Scope.DELIVERABLE, 1, "t", "d", glb=object())
+        self.assertFalse(SR.MATERIALS.glb_verbatim, "a deliverable a GLB does not carry")
+        self.assertIn(SR.MATERIALS, SR.deliverable())
+        self.assertNotIn(SR.MATERIALS, SR.glb_records())
+        self.assertFalse(SR.HANDOFF.glb_verbatim, "the GLB states its own handoff")
+        self.assertTrue(
+            all(not s.glb_verbatim for s in SR.all() if s.scope is Scope.PRIVATE)
+        )
+        # Each moved name's home resolves (glb_version's: SceneRecords.resolve,
+        # whose spec's version a block's version is).
+        import importlib
+
+        moved = {**pythontk.MOVED_NAMES, **pythontk.HELD_UNTIL_0_22}
+        for name in ("GlbBlock", "WebProjection", "RecordSpec.glb", "RecordSpec.web") + tuple(
+            f"SceneRecords.{n}" for n in ("glb_shape", "glb_version", "block_problems", "web_shape")
+        ):
+            with self.subTest(home_of=name):
+                parts = moved[name][0].split(".")
+                obj = importlib.import_module(parts[0])
+                for part in parts[1:]:
+                    obj = getattr(obj, part)
+
+    def test_a_glb_carries_the_articulation_record_itself_and_a_v1_is_refused(self):
+        """Articulation v2 (2026-11-08): one layout, two containers -- a GLB
+        carries the record as it stands, in glTF's frame (metres), its
+        joints and grabbed parts bound by name; the index-bound block
+        retired. A v1 record or block is no current record: a reader refuses
+        it, and its version's help names the fix, a re-export."""
+        spec = SR.ARTICULATION
+        self.assertTrue(spec.glb_verbatim)
+        self.assertTrue(spec.in_frame)
+        self.assertEqual(spec.version, 2)
+        self.assertEqual(SR.shape(spec).__name__, "ArticulationRecord")
+        self.assertIn("anchor", spec.assembly)
+        self.assertIn("metres", spec.assembly)
+        self.assertNotIn("unit the ratio", spec.assembly)
+        v1_record = {"version": 1, "rigs": [{"name": "a", "joints": [], "grab": []}]}
+        v1_block = {"version": 1, "rigs": [{"name": "a", "joints": [{"node": 0}]}]}
+        for old in (v1_record, v1_block):
+            with self.subTest(old=sorted(old["rigs"][0])):
+                self.assertFalse(spec.is_current(old))
+                (problem,) = SR.problems(spec, old)
+                self.assertIn("v1 is not the v2", problem)
+                self.assertIsNone(SR.glb_block({"extras": {spec.key: old}}, spec))
+        (version,) = [f for f in SR.shape(spec).describe() if f.name == "version"]
+        self.assertIn("version 1 record", version.help)
+        self.assertIn("re-exported", version.help)
+
+    def test_a_glb_carries_the_lightmaps_record_itself(self):
+        """Lightmaps v3 (2026-11-07): one layout, two containers -- a GLB
+        carries the record as it stands, under its key in the root extras,
+        its version and shape the record's own; the index-bound block (a
+        carrier slot, materials by name, the probe by bufferView) retired.
+        The files it names ride the media transport (``GLB_MEDIA``)."""
+        spec = SR.LIGHTMAPS
+        self.assertTrue(spec.glb_verbatim)
+        self.assertEqual(spec.version, 3)
+        self.assertEqual(SR.shape(spec).__name__, "LightmapRecord")
+        self.assertNotIn("uvIndex", spec.description)
+
+    def test_a_glb_carries_the_shadows_record_itself_and_a_v2_is_refused(self):
+        """Shadows v3 (2026-11-07): one layout, two containers -- a GLB carries
+        the record as it stands, its version and shape the record's own, the
+        index-bound block (planes, sources, contacts and maps by index)
+        retired, and the files it names ride the media transport. A v2
+        record or block is no current record: a reader refuses it, and its
+        version's help names the fix, a re-export."""
+        spec = SR.SHADOWS
+        self.assertTrue(spec.glb_verbatim)
+        self.assertEqual(spec.version, 3)
+        self.assertEqual(SR.shape(spec).__name__, "ShadowRecord")
+        self.assertIn("shadows record names", SR.GLB_MEDIA.text)
+        v2_record = {"version": 2, "unit_scale": 0.01, "planes": [{"type": "projected"}]}
+        v2_block = {"version": 2, "unit_scale": 0.01, "planes": [{"node": 0}]}
+        for old in (v2_record, v2_block):
+            with self.subTest(old=sorted(old["planes"][0])):
+                self.assertFalse(spec.is_current(old))
+                (problem,) = SR.problems(spec, old)
+                self.assertIn("v2 is not the v3", problem)
+                self.assertIsNone(SR.glb_block({"extras": {spec.key: old}}, spec))
+        (version,) = [f for f in SR.shape(spec).describe() if f.name == "version"]
+        self.assertIn("version 2 record", version.help)
+        self.assertIn("re-exported", version.help)
 
     def test_glb_block_reads_the_current_block_alone(self):
-        """``glb_block``: a record's block in a document's root ``extras``,
-        under the record's key, at its block's version -- the block itself,
-        so a pass editing it edits the document. Another version, an older
-        one too, is none: a reader refuses rather than guesses, and the cure
-        is a re-export. Added: 2026-10-20"""
-        spec = SR.LIGHTMAPS
-        block = {"version": spec.glb.version, "materials": {}}
+        """``glb_block``: a record a GLB carries, in a document's root
+        ``extras``, under the record's key, at the record's version -- the
+        block itself, so a pass editing it edits the document. Another
+        version, an older one too, is none: a reader refuses rather than
+        guesses, and the cure is a re-export. Added: 2026-10-20"""
+        spec = SR.ARTICULATION
+        block = {"version": spec.version, "rigs": []}
         gltf = {"extras": {spec.key: block}}
         self.assertIs(SR.glb_block(gltf, spec), block)
-        self.assertIs(SR.glb_block(gltf, spec.key), block)
-        for version in (spec.glb.version - 1, spec.glb.version + 1, "2", None):
+        for version in (spec.version - 1, spec.version + 1, "2", None):
             with self.subTest(version=version):
-                stale = {"extras": {spec.key: {"version": version, "materials": {}}}}
+                stale = {"extras": {spec.key: {"version": version, "rigs": []}}}
                 self.assertIsNone(SR.glb_block(stale, spec))
         for elsewhere in (
             {"extras": {spec.key: json.dumps(block)}},
@@ -411,16 +580,21 @@ class TestContracts(SceneRecordsCase):
                 self.assertIsNone(SR.glb_block(elsewhere, spec))
         self.assertIsNone(
             SR.glb_block({"extras": {SR.HANDOFF.key: {"version": 3}}}, SR.HANDOFF),
-            "no GLB block of its own",
+            "no record a GLB carries as it stands",
+        )
+        materials = {"version": SR.MATERIALS.version, "materials": []}
+        self.assertIsNone(
+            SR.glb_block({"extras": {SR.MATERIALS.key: materials}}, SR.MATERIALS),
+            "a GLB states its materials as glTF's own",
         )
 
     def test_put_glb_block_writes_what_glb_block_reads(self):
-        """``put_glb_block``: a record's block written where ``glb_block``
-        reads it -- the document's root ``extras``, under the record's key
-        -- its block's version stamped (a writer's own wins) and pruned to
-        its declared shape as ``make`` prunes a record, each field it cut
-        warned at the address the file holds it. Added: 2026-10-20"""
-        spec = SR.LIGHTMAPS
+        """``put_glb_block``: a record written where ``glb_block`` reads it --
+        the document's root ``extras``, under the record's key -- its
+        record's version stamped (a writer's own wins) and pruned to its
+        declared shape as ``make`` prunes a record, each field it cut warned
+        at the address the file holds it. Added: 2026-10-20"""
+        spec = SR.ARTICULATION
         gltf = {"extras": None}
         with self.assertLogs(
             "pythontk.core_utils.engines.scene_export", level="WARNING"
@@ -429,110 +603,46 @@ class TestContracts(SceneRecordsCase):
                 gltf,
                 spec,
                 {
-                    "carrier": "occlusion",
                     "encoding": "srgb",
-                    "materials": {"m": {"intensity": 2.0, "stray": True}},
+                    "rigs": [{"name": "Arm", "stray": True}],
                 },
             )
         self.assertEqual(
             written,
-            {
-                "version": spec.glb.version,
-                "carrier": "occlusion",
-                "materials": {"m": {"intensity": 2.0}},
-            },
+            {"version": spec.version, "rigs": [{"name": "Arm"}]},
         )
         self.assertIs(SR.glb_block(gltf, spec), written)
         (line,) = logs.output
         self.assertIn(
             f"extras.{spec.key}: left out what its shape does not declare "
-            "(encoding, materials.m.stray).",
+            "(encoding, rigs[].stray).",
             line,
         )
         # A writer's own version wins -- and its reader reads none of another.
         older = SR.put_glb_block(
-            gltf, spec.key, {"version": spec.glb.version - 1, "materials": {}}
+            gltf, spec, {"version": spec.version - 1, "rigs": []}
         )
-        self.assertEqual(older["version"], spec.glb.version - 1)
+        self.assertEqual(older["version"], spec.version - 1)
         self.assertIsNone(SR.glb_block(gltf, spec))
 
     def test_the_retired_web_names_still_serve(self):
-        """``RecordSpec.web``, ``GlbBlock.key``, ``SceneRecords.web_projected``
-        and ``web_shape``, ``WebProjection`` and ``SceneRecords.FBX_TAKES``
+        """``SceneRecords.web_projected`` and ``SceneRecords.FBX_TAKES``
         (retired 2026-10-20, removed in 0.18.0) warn, and serve what replaced
-        them."""
-        with self.assertWarns(DeprecationWarning):
-            self.assertIs(SR.SHADOWS.web, SR.SHADOWS.glb)
-        with self.assertWarns(DeprecationWarning):
-            self.assertEqual(SR.SHADOWS.glb.key, SR.SHADOWS.key)
+        them; the block names beside them retired whole with the GLB block
+        machinery (2026-11-08, ``test_the_glb_block_machinery_is_retired_whole``)."""
         with self.assertWarns(DeprecationWarning):
             self.assertEqual(SR.web_projected(), SR.glb_records())
-        with self.assertWarns(DeprecationWarning):
-            self.assertIs(SR.web_shape(SR.ARTICULATION), SR.glb_shape(SR.ARTICULATION))
-        with self.assertWarns(DeprecationWarning):
-            block = WebProjection("k", version=3)
-        self.assertIsInstance(block, GlbBlock)
-        self.assertEqual(block.version, 3)
         with self.assertWarns(DeprecationWarning):
             takes = SR.FBX_TAKES
         self.assertIsInstance(takes, RecordSpec)
         self.assertIn(takes.key, SR.RETIRED)
         self.assertNotIn(takes, SR.all(), "no record of the registry's")
 
-    def test_the_retired_web_projection_builds_as_it_did(self):
-        """REGRESSION (2026-10-24): ``WebProjection(key, version=1,
-        shape=None)`` -- its 0.16.1 signature -- bound the key to
-        ``version``, refused ``version=`` beside it and ``key=`` at all. It
-        builds as it did, warning, its key the one it was given."""
-        with self.assertWarns(DeprecationWarning):
-            block = WebProjection("animation_web")
-        self.assertEqual((block.version, block.shape), (1, None))
-        with self.assertWarns(DeprecationWarning):
-            self.assertEqual(block.key, "animation_web")
-        with self.assertWarns(DeprecationWarning):
-            block = WebProjection("x", version=2, shape=("m", "C"))
-        self.assertEqual((block.version, block.shape), (2, ("m", "C")))
-        with self.assertWarns(DeprecationWarning):
-            block = WebProjection(key="x", version=2)
-        self.assertEqual(block.version, 2)
-        with self.assertWarns(DeprecationWarning):
-            self.assertEqual(block.key, "x")
-
-    def test_a_block_of_no_record_has_no_key(self):
-        """REGRESSION (2026-10-24): the retired ``GlbBlock.key`` raised
-        KeyError on a block no :class:`RecordSpec` holds; it reads empty."""
-        with self.assertWarns(DeprecationWarning):
-            self.assertEqual(GlbBlock().key, "")
-
-    def test_a_replaced_record_keys_its_own_block(self):
-        """REGRESSION (2026-10-24): a :class:`RecordSpec` stamped its key on
-        the block it was handed, so ``dataclasses.replace(SHOTS, key="x")``
-        re-keyed the registry's own ``SHOTS.glb``. Each record holds a block
-        of its own."""
-        import dataclasses
-
-        original = SR.SHOTS.glb
-        replaced = dataclasses.replace(SR.SHOTS, key="x")
-        self.assertIsNot(replaced.glb, original)
-        self.assertEqual(replaced.glb, original, "the same declaration")
-        with self.assertWarns(DeprecationWarning):
-            self.assertEqual(replaced.glb.key, "x")
-        with self.assertWarns(DeprecationWarning):
-            self.assertEqual(SR.SHOTS.glb.key, SR.SHOTS.key)
-        self.assertIs(SR.SHOTS.glb, original)
-        shared = GlbBlock(version=4)
-        first = RecordSpec("a", Scope.DELIVERABLE, 1, "t", "d", glb=shared)
-        second = RecordSpec("b", Scope.DELIVERABLE, 1, "t", "d", glb=shared)
-        with self.assertWarns(DeprecationWarning):
-            self.assertEqual((first.glb.key, second.glb.key), ("a", "b"))
-        with self.assertWarns(DeprecationWarning):
-            self.assertEqual(shared.key, "", "the block handed over is untouched")
-
     def test_every_declared_shape_resolves_to_a_typed_schema(self):
         from pythontk import SchemaSpec
 
         for spec in SR.all():
-            for shape in (SR.shape(spec), SR.glb_shape(spec)):
+            for shape in (SR.shape(spec),):
                 if shape is None:
                     continue
                 self.assertTrue(issubclass(shape, SchemaSpec), spec.key)
@@ -541,17 +651,13 @@ class TestContracts(SceneRecordsCase):
         from pythontk.core_utils.engines.scene_export.handoff_record import (
             HandoffBlock,
         )
-        from pythontk.core_utils.engines.textures.region_masks import (
-            EmissiveGroupsRecord,
-        )
         from pythontk.file_utils.mesh_convert.render_effects_record import (
             RenderEffectsRecord,
         )
 
         self.assertIsNotNone(SR.shape(SR.ARTICULATION))
-        self.assertIsNotNone(SR.glb_shape("articulation"))
+        self.assertIs(SR.shape("articulation"), SR.shape(SR.ARTICULATION))
         self.assertIs(SR.shape(SR.HANDOFF), HandoffBlock)
-        self.assertIs(SR.shape(SR.EMISSIVE_GROUPS), EmissiveGroupsRecord)
         self.assertIs(SR.shape(SR.VISIBILITY), RenderEffectsRecord)
         undeclared = RecordSpec("x", Scope.DELIVERABLE, 1, "t", "d")
         self.assertIsNone(SR.shape(undeclared))
@@ -562,7 +668,7 @@ class TestContracts(SceneRecordsCase):
         a line each, and nothing when a reader reads it. A payload no shape
         declares is held to its version alone. Added: 2026-10-20"""
         spec = SR.VISIBILITY
-        current = {"version": spec.version, "tracks": [{"node": "a"}]}
+        current = {"version": spec.version, "tracks": [{"node": "a", "channels": ["opacity"]}]}
         self.assertEqual(SR.problems(spec, current), [])
         self.assertEqual(SR.problems(spec.key, current), [], "a key reads as its spec")
         self.assertEqual(SR.problems(spec, ["a"]), [f"{spec.key}: not an object"])
@@ -576,7 +682,7 @@ class TestContracts(SceneRecordsCase):
                 )
         # A line names where the problem is, then what it is, behind a colon.
         self.assertEqual(
-            SR.problems(spec, dict(current, tracks=[{"visibility": []}])),
+            SR.problems(spec, dict(current, tracks=[{"channels": ["visibility"]}])),
             [f"{spec.key}.tracks[0]: missing required key 'node'"],
         )
         self.assertEqual(
@@ -589,28 +695,6 @@ class TestContracts(SceneRecordsCase):
         )
         undeclared = RecordSpec("x", Scope.DELIVERABLE, 1, "t", "d")
         self.assertEqual(SR.problems(undeclared, {"version": 1, "any": [1]}), [])
-
-    def test_block_problems_hold_a_glb_block_to_its_declaration(self):
-        """``SceneRecords.block_problems`` holds a GLB block as ``problems``
-        holds a record -- to its block's version and shape -- and says each
-        problem where the file holds it (``extras.<key>``); of a record that
-        declares no block, it says so. Added: 2026-10-20"""
-        spec, version = SR.ARTICULATION, SR.ARTICULATION.glb.version
-        where = f"extras.{spec.key}"
-        current = {"version": version, "rigs": []}
-        self.assertEqual(SR.block_problems(spec, current), [])
-        self.assertEqual(SR.block_problems(spec, ["a"]), [f"{where}: not an object"])
-        self.assertEqual(
-            SR.block_problems(spec, dict(current, version=version + 1)),
-            [f"{where}: v{version + 1} is not the v{version} a reader reads"],
-        )
-        (listless,) = SR.block_problems(spec, dict(current, rigs="none"))
-        self.assertTrue(listless.startswith(f"{where}.rigs"), listless)
-        emissive = SR.EMISSIVE_GROUPS
-        self.assertEqual(
-            SR.block_problems(emissive, {"version": emissive.version}),
-            [f"extras.{emissive.key}: {emissive.key!r} declares no GLB block"],
-        )
 
     def test_the_preview_activates_its_scripts_on_record_keys(self):
         """Every key a packaged script is activated on is a record's key, the
@@ -648,7 +732,6 @@ class TestCodec(SceneRecordsCase):
         entry = {
             "name": "a",
             "map": "a.exr",
-            "uvIndex": 1,
             "scaleOffset": [1, 1, 0, 0],
             "hierarchy": ["a"],
         }
@@ -679,33 +762,26 @@ class TestCodec(SceneRecordsCase):
         self.assertEqual(rec.payload, {"version": 1, "any": [1]})
 
     def test_every_record_versions_under_version(self):
-        """Every enveloped record states its version under ``version`` -- the
-        emissive manifest too, which versioned itself under ``schema`` until
-        2026-10-20, at its document's own (``RegionMaskManifest.VERSION``) --
-        so no record carries two versions."""
-        from pythontk.core_utils.engines.textures.region_masks import (
-            RegionMaskManifest,
-        )
-
+        """Every enveloped record states its version under ``version``, so no
+        record carries two versions; a newer one is refused."""
         for spec in SR.all():
             if spec.envelope:
                 with self.subTest(record=spec.key):
                     self.assertEqual(spec.make({}).payload, {"version": spec.version})
-        emissive = SR.EMISSIVE_GROUPS
-        self.assertEqual(emissive.version, RegionMaskManifest.VERSION)
-        rec = emissive.make({"groups": []})
-        self.assertEqual(rec.payload, {"version": emissive.version, "groups": []})
-        newer = json.dumps({"version": emissive.version + 1, "groups": []})
+        effects = SR.VISIBILITY
+        rec = effects.make({"tracks": []})
+        self.assertEqual(rec.payload, {"version": effects.version, "tracks": []})
+        newer = json.dumps({"version": effects.version + 1, "tracks": []})
         with self.assertLogs(
             "pythontk.core_utils.engines.scene_export", level="WARNING"
         ):
-            self.assertIsNone(emissive.decode(newer))
+            self.assertIsNone(effects.decode(newer))
 
     def test_the_retired_version_key_is_version(self):
         """``RecordSpec.version_key`` (retired 2026-10-20, removed in 0.18.0)
         warns, and answers the one key every record versions under."""
         with self.assertWarns(DeprecationWarning):
-            self.assertEqual(SR.EMISSIVE_GROUPS.version_key, "version")
+            self.assertEqual(SR.VISIBILITY.version_key, "version")
 
     def test_a_record_without_an_envelope_is_stored_as_given(self):
         rec = SR.SHOT_STORE.make([{"name": "a", "start": 1, "end": 2}])
@@ -748,7 +824,7 @@ class TestStore(SceneRecordsCase):
 
     def test_scopes_do_not_mix(self):
         SR.EMISSIVE_REGISTRY.save(DictStore, {"slots": {}})
-        self.assertIsNone(SR.EMISSIVE_GROUPS.load(DictStore))
+        self.assertIsNone(DictStore.read(Scope.DELIVERABLE, SR.EMISSIVE_REGISTRY.key))
         self.assertEqual(SR.EMISSIVE_REGISTRY.load(DictStore), {"slots": {}})
 
     def test_dump_groups_by_carrier_name_and_decodes(self):
@@ -820,6 +896,57 @@ class TestStore(SceneRecordsCase):
                 self.assertFalse(SceneStoreBase.is_carrier(name))
         self.assertTrue(SceneStoreBase.is_carrier("data_internal.001", Scope.PRIVATE))
 
+    def test_the_scenes_carrier_is_the_root_level_data_export(self):
+        """``SceneStoreBase.is_scene_carrier``: named exactly ``data_export``
+        and at the root of the file -- a path through a parent, a namespace, a
+        number, or a node its reader knows is not root level is a module's.
+        Under the old rule (the name alone) a grouped module's
+        ``Module|data_export`` read as the scene's. Added: 2026-11-08"""
+        self.assertTrue(SceneStoreBase.is_scene_carrier("data_export"))
+        self.assertTrue(SceneStoreBase.is_scene_carrier("|data_export"))
+        for name, root_level in (
+            ("Module|data_export", True),
+            ("|GRP|data_export", True),
+            ("data_export", False),
+            ("MOD:data_export", True),
+            ("data_export1", True),
+            ("data_export.001", True),
+            ("", True),
+            (None, True),
+        ):
+            with self.subTest(name=name, root_level=root_level):
+                self.assertFalse(SceneStoreBase.is_scene_carrier(name, root_level))
+        self.assertTrue(SceneStoreBase.is_scene_carrier("data_internal", scope=Scope.PRIVATE))
+
+    def test_a_reader_takes_the_scenes_own_else_the_first_modules(self):
+        """``SceneStoreBase.reader_values``: the reader's precedence, once --
+        each channel from the scene's own carrier, else the first module's in
+        file order, a module's ``handoff`` never, a node no carrier never.
+        Added: 2026-11-08"""
+        handoff = SR.HANDOFF.key
+        rows = [
+            ("Module|data_export", True, "lightmaps", "module"),
+            ("Module|data_export", True, handoff, "module"),
+            ("Module|data_export", True, "audio", "module"),
+            ("MOD:data_export", True, "audio", "second module"),
+            ("MOD:data_export", True, "shadows", "second module"),
+            ("Lamp_geo", True, "materials", "an artist's"),
+            ("data_export", False, "animation", "under the converter's group"),
+            ("data_export", True, "lightmaps", "scene"),
+            ("data_export", True, "lightmaps", "scene, again"),
+        ]
+        self.assertEqual(
+            SceneStoreBase.reader_values(rows),
+            {
+                "lightmaps": ("scene", True),
+                "audio": ("module", False),
+                "shadows": ("second module", False),
+                "animation": ("under the converter's group", False),
+            },
+        )
+        own = SceneStoreBase.reader_values(rows + [("data_export", True, handoff, "own")])
+        self.assertEqual(own[handoff], ("own", True))
+
 
 class TestMigrate(SceneRecordsCase):
     """``SceneStoreBase.migrate``: a scene's records brought to their current
@@ -835,29 +962,31 @@ class TestMigrate(SceneRecordsCase):
         for old, spec in renamed.items():
             self._stored(spec.scope, old, {"version": spec.version, "was": old})
         self._stored(Scope.DELIVERABLE, "fbx_takes", [{"name": "A", "start": 1}])
+        self._stored(Scope.DELIVERABLE, "emissive_groups", {"version": 2, "groups": []})
         self.assertEqual(sorted(DictStore.migrate()), sorted([*renamed, *SR.RETIRED]))
         for old, spec in renamed.items():
             with self.subTest(key=old):
                 self.assertIsNone(DictStore.read(spec.scope, old))
                 self.assertEqual(spec.load(DictStore)["was"], old)
         self.assertIsNone(DictStore.read(Scope.DELIVERABLE, "fbx_takes"), "retired")
+        self.assertIsNone(DictStore.read(Scope.DELIVERABLE, "emissive_groups"), "retired")
         self.assertEqual(
             DictStore.migrate(), [], "a migrated scene has nothing to move"
         )
 
     def test_a_key_renamed_in_one_scope_moves_there_alone(self):
-        """The scene's emissive registry took a key of its own (2026-10-20):
-        the private ``emissive_groups`` it was stored under is the shipped
-        manifest's key still. The registry moves; the manifest stays where
-        every reader reads it."""
-        registry, manifest = SR.EMISSIVE_REGISTRY, SR.EMISSIVE_GROUPS
-        self.assertIn(manifest.key, registry.renamed_from)
-        self._stored(Scope.PRIVATE, manifest.key, {"groups": {"glow": {"slot": 0}}})
-        manifest.save(DictStore, {"encoding": "vertex-color", "groups": []})
-        self.assertEqual(DictStore.migrate(), [manifest.key])
+        """The scene's emissive registry took a key of its own (2026-10-20)
+        from the private ``emissive_groups``, which the shipped record kept
+        until it retired (2026-11-07): the private one moves to the
+        registry's key, the deliverable one is cleared."""
+        registry = SR.EMISSIVE_REGISTRY
+        self.assertIn("emissive_groups", registry.renamed_from)
+        self._stored(Scope.PRIVATE, "emissive_groups", {"groups": {"glow": {"slot": 0}}})
+        self._stored(Scope.DELIVERABLE, "emissive_groups", {"version": 2, "groups": []})
+        self.assertEqual(DictStore.migrate(), ["emissive_groups", "emissive_groups"])
         self.assertEqual(registry.load(DictStore), {"groups": {"glow": {"slot": 0}}})
-        self.assertIsNone(DictStore.read(Scope.PRIVATE, manifest.key))
-        self.assertEqual(manifest.load(DictStore)["groups"], [])
+        self.assertIsNone(DictStore.read(Scope.PRIVATE, "emissive_groups"))
+        self.assertIsNone(DictStore.read(Scope.DELIVERABLE, "emissive_groups"))
 
     def test_an_emptied_old_channel_is_removed_too(self):
         """REGRESSION (2026-10-24): an old key whose channel a clear emptied
@@ -1107,13 +1236,29 @@ class TestHandoff(SceneRecordsCase):
         reader only to light the record's 'lights' itself: following it beside
         the copies, the highlights count twice. Every field an entry carries
         is named, and so is the rule -- for a record that holds them. Added:
-        2026-10-19"""
+        2026-10-19. Version 3 (2026-11-07): each copy is COMPLETE, used in the
+        probe's place at its own size, and the probe's own map holds the
+        lights as its capture point sees them, so a record with a probe has
+        none of its 'lights' lit, copies or not -- said once, by the 'lights'
+        clause, which every record holding lights carries (2026-11-07)."""
         text = SR.LIGHTMAPS.assembly_for({"probe": {"highlights": [{"map": "h"}]}})
-        self.assertNotIn("'probe.highlights'", SR.LIGHTMAPS.assembly_for({"probe": {}}))
+        probe_alone = SR.LIGHTMAPS.assembly_for({"probe": {"map": "p.hdr"}})
+        self.assertNotIn("'probe.highlights'", probe_alone)
         for key in ("probe.highlights", "map", "objects"):
             with self.subTest(key=key):
                 self.assertIn(f"'{key}'", text)
-        self.assertIn("lights none of 'lights'", text)
+        self.assertIn("COMPLETE", text)
+        self.assertIn("in the probe's place", text)
+        self.assertNotIn("box-filtered", text, "nothing is added to the probe")
+        for record in (text, probe_alone):
+            self.assertIn("as the capture point sees them", record)
+        lit = SR.LIGHTMAPS.assembly_for(
+            {"probe": {"map": "p.hdr"}, "lights": [{"type": "point"}]}
+        )
+        self.assertIn("while the record has one, a reader lights none of them", lit)
+        self.assertEqual(lit.count("lights none of"), 1, "said once")
+        lights_alone = SR.LIGHTMAPS.assembly_for({"lights": [{"type": "point"}]})
+        self.assertIn("a delivery with no probe", lights_alone)
 
     def test_the_retired_handoff_names_still_serve_the_handoffs(self):
         """``rendering_policy``, ``HANDOFF_INSTRUCTIONS``, ``HANDOFF_ASSEMBLY``
@@ -1144,25 +1289,15 @@ class TestHandoff(SceneRecordsCase):
 
 
 def _shots(ctx: ExportContext):
-    meta = {"fps": 24.0, "shots": [{"clip": "A", "start": 1, "end": 10}]}
-    if ctx.clip_mode:
-        meta["clip_mode"] = ctx.clip_mode
-    return SR.SHOTS.make(meta)
+    return SR.SHOTS.make({"shots": [{"clip": "A", "description": "The door."}]})
 
 
 def _visibility(ctx: ExportContext):
-    shots = ctx.record(SR.SHOTS, DictStore) or {}
-    takes = SR.declared_takes(lambda key: ctx.record(key, DictStore))
-    span = list(ctx.clip_span) if ctx.clip_span else [0, 100]
+    """A reader of the shots record: one track per shot clip it finds -- what
+    the assembly hands it, else the store's."""
+    shots = (ctx.record(SR.SHOTS, DictStore) or {}).get("shots") or []
     return SR.VISIBILITY.make(
-        {
-            "fps": shots.get("fps"),
-            "tracks": [1],
-            "clip_span": {
-                "*": span,
-                **{t["name"]: [t["start"], t["end"]] for t in takes},
-            },
-        }
+        {"fps": 24.0, "tracks": [{"node": s["clip"]} for s in shots]}
     )
 
 
@@ -1368,7 +1503,7 @@ class TestSnapshot(SceneRecordsCase):
         self.assertEqual(len(SR.LIGHTMAPS.load(DictStore)["objects"]), 2)
 
     def test_assemble_orders_by_dependency_and_hands_prior_records_over(self):
-        ctx = ExportContext(clip_mode="both", clip_span=(5.0, 50.0))
+        ctx = ExportContext()
         snap = ExportSnapshot.assemble(PRODUCERS, ctx)
         # Dependency order, declaration order breaking ties: the two records
         # with no dependencies first (shots, then lightmaps), then the reader
@@ -1379,13 +1514,14 @@ class TestSnapshot(SceneRecordsCase):
         )
         vis = snap.record(SR.VISIBILITY)
         self.assertEqual(
-            vis["fps"], 24.0, "read from the record produced in this assembly"
+            vis["tracks"],
+            [{"node": "A"}],
+            "read from the record produced in this assembly",
         )
         self.assertEqual(
-            vis["clip_span"]["*"], [5.0, 50.0], "the exporter's decision is an INPUT"
+            snap.record(SR.SHOTS),
+            {"version": 3, "shots": [{"clip": "A", "description": "The door."}]},
         )
-        self.assertEqual(vis["clip_span"]["A"], [1, 10], "the clips' own ranges")
-        self.assertEqual(snap.record(SR.SHOTS)["clip_mode"], "both")
         self.assertIsNone(snap.record(SR.LIGHTMAPS))
 
     def test_commit_writes_once_clears_the_empty_and_stamps_the_handoff(self):
@@ -1409,7 +1545,7 @@ class TestSnapshot(SceneRecordsCase):
 
     def test_the_handoff_publishes_the_exports_lighting_choices(self):
         """What the export decided about the lighting recipe (a baked-reflection
-        level) is an input like the clip mode: the stamped handoff carries it,
+        level) is an input: the stamped handoff carries it,
         merged the way the GLB's envelope merges it -- as the file's records
         use the recipe (a lightmapped material's level, where it carries
         lightmaps). Added: 2026-09-21"""
@@ -1431,7 +1567,7 @@ class TestSnapshot(SceneRecordsCase):
         """Re-running an assembly is harmless by construction -- the defect the
         old patch-after-producers pipeline had (three exports logging the right
         clip origin and shipping the old one)."""
-        ctx = ExportContext(clip_mode="full", clip_span=(1.0, 9.0))
+        ctx = ExportContext(source={"application": "test"})
         first = ExportSnapshot.assemble(PRODUCERS, ctx).commit(DictStore)
         second = ExportSnapshot.assemble(PRODUCERS, ctx).commit(DictStore)
         self.assertEqual(first, second)
@@ -1444,7 +1580,7 @@ class TestSnapshot(SceneRecordsCase):
         ExportSnapshot.assemble(PRODUCERS, ctx).commit(DictStore)
         ExportSnapshot.assemble({SR.SHOTS: _nothing}).commit(DictStore)
         snap = ExportSnapshot.assemble({SR.VISIBILITY: _visibility}, ctx)
-        self.assertEqual(list(snap.record(SR.VISIBILITY)["clip_span"]), ["*"])
+        self.assertEqual(snap.record(SR.VISIBILITY)["tracks"], [])
 
     def test_a_producers_notes_are_logged_and_kept_for_one_assembly(self):
         """What a producer leaves out of a deliverable is said, never silent:
@@ -1481,15 +1617,15 @@ class TestSnapshot(SceneRecordsCase):
     def test_a_private_record_is_refused_rather_than_clearing_its_deliverable_twin(
         self,
     ):
-        """The emissive registry (private) shares its key with the emissive
-        manifest (deliverable); a snapshot commits the deliverable carrier, so
-        a private record handed to it would clear the manifest."""
-        SR.EMISSIVE_GROUPS.save(DictStore, {"groups": [1]})
+        """A snapshot commits the deliverable carrier, so a private record
+        handed to it is refused rather than written there (or, cleared, a
+        deliverable of the same key cleared)."""
+        SR.VISIBILITY.save(DictStore, {"tracks": [1]})
         with self.assertRaises(ValueError):
             ExportSnapshot.publish(DictStore, {SR.EMISSIVE_REGISTRY: None})
         with self.assertRaises(ValueError):
             ExportSnapshot.assemble({SR.EMISSIVE_REGISTRY: _nothing})
-        self.assertEqual(SR.EMISSIVE_GROUPS.load(DictStore)["groups"], [1])
+        self.assertEqual(SR.VISIBILITY.load(DictStore)["tracks"], [1])
 
     def test_a_refused_write_is_isolated(self):
         """One record the store refuses (a locked attribute) is left as stored
@@ -1654,12 +1790,6 @@ class TestSnapshot(SceneRecordsCase):
             ["data_export.shadows"],
         )
 
-    def test_the_shot_record_declares_the_clip_mode_under_the_readers_key(self):
-        from pythontk.core_utils.engines.shots.shot_model import ShotStore
-        from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
-
-        self.assertEqual(ShotStore.CLIP_MODE_KEY, MeshConvert.SHOT_CLIP_MODE_KEY)
-
     def test_channels_and_summary(self):
         snap = ExportSnapshot.assemble(PRODUCERS)
         self.assertEqual(sorted(snap.channels()), [SR.SHOTS.key, SR.VISIBILITY.key])
@@ -1667,9 +1797,9 @@ class TestSnapshot(SceneRecordsCase):
         self.assertNotIn(SR.LIGHTMAPS.key, snap.summary(), "nothing shipped")
 
     def test_context_record_falls_back_to_the_store_at_authoring_time(self):
-        SR.SHOTS.save(DictStore, {"fps": 30.0, "shots": []})
+        SR.SHOTS.save(DictStore, {"shots": [{"clip": "A"}]})
         ctx = ExportContext(mode=ExportContext.AUTHORING)
-        self.assertEqual(ctx.record(SR.SHOTS, DictStore)["fps"], 30.0)
+        self.assertEqual(ctx.record(SR.SHOTS, DictStore)["shots"], [{"clip": "A"}])
         self.assertIsNone(ctx.record(SR.SHOTS))
 
 
@@ -2004,62 +2134,6 @@ class TestRecordTransfer(SceneRecordsCase):
         self.assertAlmostEqual(clip["curves"][0]["times"][0], 30.0)
         self.assertTrue(any("30" in n for n in ctx.notes))
 
-    def test_an_emissive_group_whose_slot_is_taken_moves_and_says_so(self):
-        SR.EMISSIVE_REGISTRY.save(
-            DictStore,
-            {
-                "schema": 1,
-                "groups": {"rim": {"slot": 0, "default": 1.0}},
-                "retired_slots": [1],
-            },
-        )
-        _, ctx = self._merge(
-            self._other(
-                private={
-                    SR.EMISSIVE_REGISTRY.key: {
-                        "schema": 1,
-                        "groups": {
-                            "glow": {"slot": 0, "default": 0.5},
-                            "rim": {"slot": 1, "default": 0.2},
-                        },
-                    }
-                }
-            )
-        )
-        groups = SR.EMISSIVE_REGISTRY.load(DictStore)["groups"]
-        self.assertEqual(groups["rim"], {"slot": 0, "default": 1.0})  # this scene's
-        self.assertEqual(groups["glow"]["slot"], 2)  # 0 used, 1 retired
-        self.assertEqual(groups["glow"]["default"], 0.5)
-        self.assertTrue(
-            any("moves from slot 0 to 2" in n for n in ctx.notes), ctx.notes
-        )
-        self.assertTrue(any("'rim'" in n for n in ctx.notes), ctx.notes)
-
-    def test_an_emissive_group_with_no_usable_slot_still_merges(self):
-        """A group whose slot is missing, null or not a number is re-slotted
-        (the merge already tolerates a bad slot) -- it must not trip the
-        ordering that runs first and take the whole record down with it."""
-        SR.EMISSIVE_REGISTRY.save(DictStore, {"schema": 1, "groups": {}})
-        _, ctx = self._merge(
-            self._other(
-                private={
-                    SR.EMISSIVE_REGISTRY.key: {
-                        "schema": 1,
-                        "groups": {
-                            "late": {"slot": None, "default": 0.5},
-                            "early": {"slot": 3, "default": 0.2},
-                            "odd": {"slot": "x", "default": 0.1},
-                        },
-                    }
-                }
-            )
-        )
-        groups = SR.EMISSIVE_REGISTRY.load(DictStore)["groups"]
-        self.assertEqual(sorted(groups), ["early", "late", "odd"], ctx.notes)
-        self.assertEqual(groups["early"]["slot"], 3)
-        self.assertEqual(sorted(groups[g]["slot"] for g in ("late", "odd")), [0, 1])
-        self.assertFalse(any("not merged" in n for n in ctx.notes), ctx.notes)
-
     def test_a_codec_respells_only_the_names_it_holds(self):
         """The shot store's codec respells members, lists and ledger curves; a
         shot named like a node the crossing renamed keeps its name."""
@@ -2124,7 +2198,7 @@ class TestRecordTransfer(SceneRecordsCase):
 
     def test_payloads_are_the_other_scenes_records_by_declaration(self):
         """Decoded, respelled through a context, and keyed by spec -- the
-        private registry and the deliverable manifest each its own."""
+        private registry and a deliverable record each its own."""
         other = self._other(
             private={
                 SR.EMISSIVE_REGISTRY.key: {"schema": 1, "groups": {"g": {"slot": 0}}},
@@ -2136,17 +2210,16 @@ class TestRecordTransfer(SceneRecordsCase):
                 },
             },
             deliverable={
-                SR.EMISSIVE_GROUPS.key: {
-                    "version": SR.EMISSIVE_GROUPS.version,
-                    "encoding": "vertex-color",
-                    "groups": [],
+                SR.VISIBILITY.key: {
+                    "version": SR.VISIBILITY.version,
+                    "tracks": [],
                 }
             },
         )
         merge = RecordTransfer.between(DictStore, other)
         payloads = merge.payloads(TransferContext(rename={"a": "a1"}.get))
         self.assertEqual(payloads[SR.EMISSIVE_REGISTRY]["groups"], {"g": {"slot": 0}})
-        self.assertEqual(payloads[SR.EMISSIVE_GROUPS]["groups"], [])
+        self.assertEqual(payloads[SR.VISIBILITY]["tracks"], [])
         self.assertEqual(payloads[SR.KEY_STASH]["clips"][0]["objects"], ["a1"])
         self.assertEqual(payloads[SR.KEY_STASH]["clips"][0]["label"], "a")
         self.assertEqual(merge.payloads()[SR.KEY_STASH]["clips"][0]["objects"], ["a"])
@@ -2228,21 +2301,16 @@ class TestRecordHandoff(SceneRecordsCase):
         self.assertEqual(Owner.sent, [{"from": "owner"}])
 
     def test_a_received_record_merges_by_its_rule(self):
-        SR.EMISSIVE_REGISTRY.save(
-            DictStore, {"schema": 1, "groups": {"rim": {"slot": 0}}}
-        )
-        manifest = {
-            "records": {
-                SR.EMISSIVE_REGISTRY.key: {
-                    "schema": 1,
-                    "groups": {"glow": {"slot": 0}},
-                }
-            }
-        }
+        """A portable UNION record's entries combine by key, the scene's own
+        winning a collision (noted)."""
+        dirs = SR.LIGHTMAP_DIRS
+        dirs.save(DictStore, {"a": "own/a"})
+        manifest = {"records": {dirs.key: {"a": "theirs/a", "b": "theirs/b"}}}
         ctx = RecordTransfer.receive(manifest, DictStore, TransferContext())
-        groups = SR.EMISSIVE_REGISTRY.load(DictStore)["groups"]
-        self.assertEqual(groups["glow"]["slot"], 1)
-        self.assertTrue(any("slot 0 to 1" in n for n in ctx.notes))
+        merged = dirs.load(DictStore)
+        self.assertEqual(merged["a"], "own/a")
+        self.assertIn("b", merged)
+        self.assertTrue(ctx.notes)
 
     def test_a_bad_record_is_noted_and_never_costs_the_rest(self):
         class Broken:
@@ -2908,10 +2976,41 @@ class _TextShadows:
     pythontk's own model and march. Reads the map from its RGBA image."""
 
     @staticmethod
-    def place(plane, C, L):
+    def _terms(plane, C, L):
+        """The model's terms as the text spells them, Y-up, in metres."""
+        ms, height = plane["max_stretch"], plane["height"]
+        ground = plane["ground"]
+        d = (C[0] - L[0], C[2] - L[2])
+        dist = math.hypot(*d)
+        k_max = 1 + ms
+        k_base = min(max((L[1] - ground) / max(1e-4, L[1] - C[1]), 0), k_max)
+        k_top = min(
+            max((L[1] - ground) / max(1e-4, L[1] - C[1] - height), 0),
+            min(k_max, k_base + ms * height / max(dist, 1e-6)),
+        )
+        reach = max(0.0, dist * (k_top - k_base))
+        return k_base, k_top, reach
+
+    @classmethod
+    def fade(cls, plane, C, L):
+        """The fade, from the text: *plane*'s lengths and *C*, *L* in metres."""
+        k_base, k_top, reach = cls._terms(plane, C, L)
+        radius, ground = plane["radius"], plane["ground"]
+        stretch = max(1, (reach + radius * (k_base + k_top)) / max(1e-4, 2 * radius))
+        clamp = lambda x: min(max(x, 0.0), 1.0)  # noqa: E731
+        return clamp(
+            plane["intensity"]
+            / max(0.001, stretch ** plane["falloff_power"])
+            * clamp((L[1] - C[1]) / plane["source_ramp"])
+            * clamp(1 - max(0, C[1] - ground) / max(0.001, plane["fade_height"]))
+        )
+
+    @classmethod
+    def place(cls, plane, C, L):
         """``(centre (x, z), extent along u, extent along +X)`` of a Y-up quad."""
         ms, height, radius = plane["max_stretch"], plane["height"], plane["radius"]
-        ground, canvas = plane["ground"], plane["canvas"]
+        ground = plane["ground"]
+        canvas = plane["canvas"]
         d = (C[0] - L[0], C[2] - L[2])
         dist = math.hypot(*d)
         u = (d[0] / dist, d[1] / dist) if dist >= 1e-6 else (0.0, 1.0)
@@ -3061,20 +3160,25 @@ class TestShadowsText(unittest.TestCase):
     uses it, exactly as pythontk computes it."""
 
     def test_a_file_is_told_only_what_its_planes_use(self):
-        still = {"planes": [{"type": "projected", "follow_source": False}]}
-        following = {"planes": [{"type": "projected", "follow_source": True}]}
-        horizon = {"planes": [{"type": "horizon", "follow_source": False}]}
-        for spec in (SR.SHADOWS, SR.SHADOWS.glb):
-            with self.subTest(carrier="glb" if spec is SR.SHADOWS.glb else "fbx"):
-                text = spec.assembly_for(still)
-                self.assertIn("A projected plane's shadow", text)
-                self.assertNotIn("k_base", text)
-                self.assertNotIn("horizon", text)
-                self.assertIn("k_base", spec.assembly_for(following))
-                marched = spec.assembly_for(horizon)
-                self.assertIn("disc(x)", marched)
-                self.assertNotIn("A projected plane's shadow", marched)
-                self.assertNotIn("k_base", marched)
+        """v3 (2026-11-07): every plane is marched from its horizon map and
+        fades, so the model, the fade and the march are always stated; the
+        re-placement only where a plane follows its source, the silhouette
+        only where a plane carries one. One statement for both containers:
+        a GLB carries the record itself."""
+        spec = SR.SHADOWS
+        self.assertTrue(spec.glb_verbatim)
+        still = {"planes": [{"follow_source": False}]}
+        following = {"planes": [{"follow_source": True}]}
+        drawn = {"planes": [{"follow_source": False, "silhouette": {"draw": True}}]}
+        text = spec.assembly_for(still)
+        for always in ("k_base", "Every plane fades", "disc(x)"):
+            self.assertIn(always, text)
+        self.assertNotIn("Turn the quad", text)
+        self.assertNotIn("'silhouette' is", text)
+        self.assertIn("Turn the quad", spec.assembly_for(following))
+        self.assertIn("'silhouette' is", spec.assembly_for(drawn))
+        for retired in ("'type'", "texture_index", "source_node", "A projected plane"):
+            self.assertNotIn(retired, spec.assembly_for())
 
     def test_the_text_quotes_the_codes_constants(self):
         from pythontk.geo_utils import shadow_horizon as sh
@@ -3091,6 +3195,66 @@ class TestShadowsText(unittest.TestCase):
         self.assertIn(f"w(R, G)/{int(sh.DIST_SCALE)} in p", text)
         self.assertIn(f"byte/{int(sh.INTERIOR_SCALE)} in p", text)
         self.assertIn(f"w/{int(sh.MAX16)}*height_scale", text)
+
+    def test_the_placement_reads_the_planes_own_canvas(self):
+        """``canvas`` is the plane's (it decides the placement every reader
+        makes), never the silhouette extension's: a reader without the
+        extension placed every plane by the default and clipped the
+        penumbra a soft source spreads past it. Added: 2026-11-07."""
+        import dataclasses
+
+        from pythontk.geo_utils.shadow_record import ShadowPlane, ShadowPlaneSilhouette
+
+        text = SR.SHADOWS.assembly_for()
+        self.assertIn("from its 'canvas'", text)
+        self.assertNotIn("silhouette.canvas", text)
+        names = lambda spec: {f.name for f in dataclasses.fields(spec)}  # noqa: E731
+        self.assertIn("canvas", names(ShadowPlane))
+        self.assertNotIn("canvas", names(ShadowPlaneSilhouette))
+
+    def test_the_text_rebuilds_the_fade(self):
+        """The fade a reader builds from the text alone is
+        ``ShadowProjection.fade`` -- a point source and a sun, a metre and a
+        centimetre rig's ramp, every term in play.
+        Added: 2026-11-07."""
+        from pythontk.geo_utils.shadow_projection import ShadowProjection
+
+        rng = __import__("random").Random(7)
+        for i in range(300):
+            ramp = (1.0, 0.01)[i % 2]
+            C = (rng.uniform(-2, 2), rng.uniform(0, 1.2), rng.uniform(-2, 2))
+            sun = i % 3 == 0
+            if sun:
+                s = (rng.uniform(-1, 1), rng.uniform(-1, -0.05), rng.uniform(-1, 1))
+            else:
+                L = (rng.uniform(-5, 5), C[1] + rng.uniform(-0.05, 5), rng.uniform(-5, 5))
+            plane = {
+                "max_stretch": rng.uniform(2, 8),
+                "height": rng.uniform(0.3, 2),
+                "radius": rng.uniform(0.2, 1),
+                "ground": 0.0,
+                "intensity": rng.uniform(0.2, 1),
+                "falloff_power": rng.uniform(0, 3),
+                "fade_height": rng.uniform(0.5, 3),
+                "source_ramp": ramp,
+            }
+            if sun:
+                L = ShadowProjection.far_point(
+                    C, s, max(plane["height"], 2 * plane["radius"])
+                )
+            want = ShadowProjection.fade(
+                C,
+                L,
+                plane["ground"],
+                plane["radius"],
+                plane["height"],
+                max_stretch=plane["max_stretch"],
+                intensity=plane["intensity"],
+                falloff_power=plane["falloff_power"],
+                fade_height=plane["fade_height"],
+                source_ramp=plane["source_ramp"],
+            )
+            self.assertAlmostEqual(_TextShadows.fade(plane, C, L), want, places=12)
 
     def test_the_text_rebuilds_the_projection_and_its_placement(self):
         from pythontk.geo_utils.shadow_projection import ShadowProjection
@@ -3126,21 +3290,13 @@ class TestShadowsText(unittest.TestCase):
         fragments, 0.10 off)."""
         import numpy as np
 
-        from pythontk.geo_utils.shadow_horizon import HeightFieldMap, ShadowHorizon
+        from pythontk.geo_utils.shadow_horizon import (
+            HeightFieldMap,
+            ShadowHorizon,
+            ShadowHorizonConformance,
+        )
 
-        def box(x0, x1, y0, y1, z0, z1):
-            pts = [[x, y, z] for x in (x0, x1) for y in (y0, y1) for z in (z0, z1)]
-            quads = (
-                (0, 1, 3, 2),
-                (4, 6, 7, 5),
-                (0, 4, 5, 1),
-                (2, 3, 7, 6),
-                (0, 2, 6, 4),
-                (1, 5, 7, 3),
-            )
-            return np.array(pts, float), np.array(
-                [t for a, b, c, d in quads for t in ((a, b, c), (a, c, d))]
-            )
+        box = ShadowHorizonConformance._box
 
         table = [
             box(-0.5, 0.5, 0.70, 0.75, -0.3, 0.3),
@@ -3203,6 +3359,328 @@ class TestShadowsText(unittest.TestCase):
                 got = _TextShadows.shadow(img, horizon, (x, z), 0.0, **light)
                 with self.subTest(size=size, light=light, at=(x, z)):
                     self.assertAlmostEqual(got, float(expected), places=4)
+
+
+class TestPublishedContract(SceneRecordsCase):
+    """``SceneRecords.json_schema``: the contract published as one JSON Schema
+    document, which a reader in any language validates against or generates
+    its types from. Added: 2026-11-04"""
+
+    def test_every_deliverable_record_is_a_property_by_its_key(self):
+        doc = SR.json_schema()
+        for spec in SR.deliverable():
+            with self.subTest(record=spec.key):
+                prop = doc["properties"][spec.key]
+                self.assertEqual(prop["x-version"], spec.version)
+                shape = SR.shape(spec)
+                if shape is not None:
+                    self.assertEqual(prop["$ref"], f"#/$defs/{shape.__name__}")
+
+    def test_every_glb_block_is_a_property_of_the_glb_extras(self):
+        extras = SR.json_schema()["$defs"]["GlbExtras"]["properties"]
+        for spec in SR.glb_records():
+            with self.subTest(record=spec.key):
+                self.assertEqual(extras[spec.key]["x-version"], spec.version)
+
+    def test_every_reference_resolves(self):
+        doc = SR.json_schema()
+
+        def refs(node):
+            if isinstance(node, dict):
+                if "$ref" in node:
+                    yield node["$ref"]
+                for value in node.values():
+                    yield from refs(value)
+            elif isinstance(node, list):
+                for value in node:
+                    yield from refs(value)
+
+        found = list(refs(doc))
+        self.assertTrue(found)
+        for ref in found:
+            self.assertTrue(ref.startswith("#/$defs/"), ref)
+            self.assertIn(ref[len("#/$defs/"):], doc["$defs"])
+
+    def test_it_states_the_frame_and_the_transport(self):
+        doc = SR.json_schema()
+        self.assertEqual(doc["x-frame"]["length"], "metre")
+        self.assertEqual(doc["x-frame"]["up"], "+Y")
+        self.assertEqual(doc["x-frame"]["time"], "second")
+        self.assertEqual(doc["x-transport"]["marker"], "curveProxy")
+        json.dumps(doc)
+
+    def test_the_handoff_is_a_glb_extras_property(self):
+        extras = SR.json_schema()["$defs"]["GlbExtras"]["properties"]
+        self.assertEqual(extras[SR.HANDOFF.key]["x-version"], SR.HANDOFF.version)
+
+    def test_each_record_says_whether_its_values_are_in_the_frame(self):
+        props = SR.json_schema()["properties"]
+        for spec in SR.deliverable():
+            with self.subTest(record=spec.key):
+                self.assertIs(props[spec.key]["x-in-frame"], spec.in_frame)
+
+    def test_an_extension_names_only_readers_of_its_record(self):
+        def readers(node):
+            if isinstance(node, dict):
+                for prop in (node.get("properties") or {}).values():
+                    if isinstance(prop, dict) and "x-readers" in prop:
+                        yield from prop["x-readers"]
+                for value in node.values():
+                    yield from readers(value)
+            elif isinstance(node, list):
+                for value in node:
+                    yield from readers(value)
+
+        for spec in SR.deliverable():
+            for shape in filter(None, [SR.shape(spec)]):
+                with self.subTest(record=spec.key, shape=shape.__name__):
+                    self.assertLessEqual(set(readers(shape.json_schema())), set(spec.consumers))
+
+    def _contract_of(self, shapes):
+        """SR.json_schema over records whose shapes are *shapes*, by key."""
+        specs = [
+            RecordSpec(key, Scope.DELIVERABLE, 1, owner="Test", description=key)
+            for key in shapes
+        ]
+        real_shape = SR.shape.__func__
+
+        def shape(cls, item):
+            spec = cls.resolve(item) if not isinstance(item, RecordSpec) else item
+            return shapes.get(spec.key) or real_shape(cls, item)
+
+        with mock.patch.object(SR, "deliverable", classmethod(lambda cls: specs)), \
+                mock.patch.object(SR, "glb_records", classmethod(lambda cls: [])), \
+                mock.patch.object(SR, "shape", classmethod(shape)):
+            return SR.json_schema()
+
+    def test_a_shape_that_is_one_records_whole_and_nested_in_anothers_is_defined_once(self):
+        from dataclasses import dataclass
+        from typing import Optional
+
+        from pythontk.core_utils.schema_spec import SchemaSpec
+
+        @dataclass
+        class Inner(SchemaSpec):
+            """Inner."""
+
+            TYPED = True
+            n: Optional[int] = SchemaSpec.spec_field(help="A number.")
+
+        @dataclass
+        class Outer(SchemaSpec):
+            """Outer."""
+
+            TYPED = True
+            inner: Optional[Inner] = SchemaSpec.spec_field(help="The inner.")
+
+        doc = self._contract_of({"a": Inner, "b": Outer})
+        self.assertEqual(doc["properties"]["a"]["$ref"], "#/$defs/Inner")
+        self.assertIn("Inner", doc["$defs"])
+
+    def test_two_shapes_defining_one_name_differently_are_refused(self):
+        from dataclasses import dataclass
+        from typing import Optional
+
+        from pythontk.core_utils.schema_spec import SchemaSpec
+
+        @dataclass
+        class One(SchemaSpec):
+            """One."""
+
+            TYPED = True
+            n: Optional[int] = SchemaSpec.spec_field(help="A number.")
+
+        @dataclass
+        class Two(SchemaSpec):
+            """Two."""
+
+            TYPED = True
+            s: Optional[str] = SchemaSpec.spec_field(help="A word.")
+
+        Two.__name__ = "One"
+        with self.assertRaises(ValueError):
+            self._contract_of({"a": One, "b": Two})
+
+    def test_the_producers_and_the_converter_mark_proxies_by_the_declared_transport(self):
+        from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
+
+        self.assertEqual(MeshConvert.CURVE_PROXY_MARKER, SR.TRANSPORT.marker)
+
+
+class TestGlbMedia(unittest.TestCase):
+    """``SceneRecords.GLB_MEDIA``: how each file a record a GLB carries
+    itself names rides that GLB, declared once (2026-11-07) -- the bufferView
+    named by the file's name, its extras stating its bytes."""
+
+    def test_a_file_rides_as_the_buffer_view_named_by_its_file_name(self):
+        """Joined by file name, lower-cased on both sides; a name with a folder
+        joins by its file name, as a record names a file."""
+        media = SR.GLB_MEDIA
+        gltf = {
+            "bufferViews": [{"name": "other.png"}, {"name": "Room_Lightmap.EXR"}, {}]
+        }
+        self.assertEqual(media.view(gltf, "room_lightmap.exr"), 1)
+        self.assertEqual(media.view(gltf, "Room_Lightmap.EXR"), 1)
+        self.assertEqual(media.view(gltf, "maps/Room_Lightmap.exr"), 1)
+        for name in ("missing.exr", "", None):
+            with self.subTest(name=name):
+                self.assertIsNone(media.view(gltf, name))
+        self.assertIsNone(media.view({}, "other.png"))
+        self.assertIsNone(media.view(None, "other.png"))
+
+    def test_a_held_name_joins_by_its_file_name_too(self):
+        """Both sides are joined the same way: a view whose name carries a
+        folder still holds that file. Added: 2026-11-07"""
+        gltf = {"bufferViews": [{"name": "maps\\Room_Lightmap.exr"}]}
+        self.assertEqual(SR.GLB_MEDIA.view(gltf, "room_lightmap.EXR"), 0)
+
+    def test_two_views_holding_one_name_hold_neither(self):
+        """A tie is never guessed, as a node join leaves one unresolved: two
+        views whose names fold alike hold neither file, and ``views`` says
+        which they are. Added: 2026-11-07"""
+        gltf = {"bufferViews": [{"name": "a.exr"}, {"name": "dir/A.EXR"}, {"name": "b.exr"}]}
+        self.assertIsNone(SR.GLB_MEDIA.view(gltf, "A.exr"))
+        self.assertEqual(SR.GLB_MEDIA.views(gltf, "A.exr"), [0, 1])
+        self.assertEqual(SR.GLB_MEDIA.view(gltf, "B.EXR"), 2)
+
+    def test_the_fold_is_lower_case_alike_in_both_languages(self):
+        """``str.lower``, which JavaScript's ``toLowerCase`` spells alike --
+        not ``casefold``, which folds what JavaScript does not (the German
+        sharp s to ``ss``). Added: 2026-11-07"""
+        self.assertEqual(SR.GLB_MEDIA.fold("dir/Stra\u00dfe.EXR"), "stra\u00dfe.exr")
+        gltf = {"bufferViews": [{"name": "strasse.exr"}]}
+        self.assertIsNone(SR.GLB_MEDIA.view(gltf, "Stra\u00dfe.exr"))
+
+    def test_its_extras_state_the_bytes(self):
+        """``mimeType`` always; ``scale`` only for an 8-bit web encoding of
+        an HDR map, whose decoded linear texels times it are the map."""
+        media = SR.GLB_MEDIA
+        self.assertEqual(media.extras(media.radiance), {"mimeType": "image/vnd.radiance"})
+        self.assertEqual(
+            media.extras("image/png", scale=3.25), {"mimeType": "image/png", "scale": 3.25}
+        )
+        self.assertEqual(media.hdr_web, ("image/png", "image/webp", "image/ktx2"))
+        with self.assertRaises(ValueError):
+            media.extras("image/vnd.radiance", scale=2.0)
+
+    def test_a_scale_is_a_finite_positive_number(self):
+        """glTF JSON holds no NaN or infinity, and no map is scaled by zero or
+        less: each is refused before it is written. Added: 2026-11-07"""
+        for scale in (float("nan"), float("inf"), 0.0, -1.0):
+            with self.subTest(scale=scale), self.assertRaises(ValueError):
+                SR.GLB_MEDIA.extras("image/png", scale=scale)
+
+    def test_its_text_is_the_rule_a_reader_holds(self):
+        text = SR.GLB_MEDIA.text
+        for part in (
+            "bufferView",
+            "`name`",
+            "lower-cased (str.lower, toLowerCase)",
+            "hold neither",
+            "the audio record's sounds ride none yet",
+            "`extras.mimeType`",
+            "`extras.scale`",
+            "`image/vnd.radiance`",
+            "`image/png`",
+            "`image/ktx2`",
+            "An FBX embeds each file itself",
+        ):
+            with self.subTest(part=part):
+                self.assertIn(part, text)
+
+    def test_the_published_schema_states_it(self):
+        import dataclasses
+
+        doc = SR.json_schema()
+        self.assertEqual(doc["x-media"], dataclasses.asdict(SR.GLB_MEDIA))
+        self.assertIn(SR.GLB_MEDIA.text, doc["description"])
+
+
+
+class TestRetiredUntil022(unittest.TestCase):
+    """The nine names v0.20.0 noticed for removal in 0.18.0 (2026-10-24),
+    whose window closes 2026-11-23, after 0.21.0 ships: each still works and
+    warns until then (CODE_STANDARD section 5). Delete with the aliases at
+    0.22.0 (``pythontk/__init__.py``, "Held until 0.22.0").
+    Restored: 2026-11-08"""
+
+    def test_the_scene_records_names_warn_and_answer(self):
+        import pythontk as ptk
+
+        with self.assertWarns(DeprecationWarning):
+            old = ptk.WebProjection("crate", version=3)
+        self.assertIsInstance(old, ptk.GlbBlock)
+        self.assertEqual(old.version, 3)
+        with self.assertWarns(DeprecationWarning):
+            self.assertEqual(old.key, "crate")
+        with self.assertWarns(DeprecationWarning):
+            self.assertEqual(ptk.GlbBlock(version=2).key, "")
+        with self.assertWarns(DeprecationWarning):
+            block = SR.SHOTS.web
+        self.assertEqual(block.version, SR.SHOTS.version)
+        with self.assertWarns(DeprecationWarning):
+            self.assertEqual(block.key, SR.SHOTS.key)
+        with self.assertWarns(DeprecationWarning):
+            self.assertIsNone(SR.MATERIALS.web)
+        with self.assertWarns(DeprecationWarning):
+            shape = SR.web_shape(SR.ARTICULATION)
+        self.assertIs(shape, SR.shape(SR.ARTICULATION))
+
+    def test_the_articulation_block_names_warn_and_validate_a_block(self):
+        import pythontk as ptk
+
+        block = {
+            "version": 1,
+            "rigs": [
+                {
+                    "name": "door",
+                    "joints": [
+                        {
+                            "parent": None,
+                            "t": [0.0, 0.0, 0.0],
+                            "q": [0.0, 0.0, 0.0, 1.0],
+                            "rotate_order": "xyz",
+                            "channels": [],
+                            "node": 3,
+                        }
+                    ],
+                    "grab": [{"node": 4, "joint": 0}],
+                }
+            ],
+        }
+        self.assertTrue(ptk.ArticulationWeb.validate(block).ok)
+        with self.assertWarns(DeprecationWarning):
+            ptk.ArticulationWeb(version=1, rigs=[])
+        with self.assertWarns(DeprecationWarning):
+            ptk.ArticulationWebRig(name="door", joints=[], grab=[])
+        with self.assertWarns(DeprecationWarning):
+            ptk.ArticulationWebJoint(
+                parent=None, t=(0, 0, 0), q=(0, 0, 0, 1), rotate_order="xyz", node=3
+            )
+        with self.assertWarns(DeprecationWarning):
+            ptk.ArticulationWebGrab(node=4, joint=0)
+
+    def test_the_mesh_convert_block_attributes_warn_and_answer(self):
+        """A GLB carries each record as it stands: its version is the
+        record's, and no field of it binds by node index."""
+        import pythontk as ptk
+
+        with self.assertWarns(DeprecationWarning):
+            self.assertEqual(ptk.MeshConvert.ANIMATION_WEB_VERSION, SR.SHOTS.version)
+        with self.assertWarns(DeprecationWarning):
+            self.assertEqual(ptk.MeshConvert.SHADOW_WEB_NODE_FIELDS, ())
+        with self.assertWarns(DeprecationWarning):
+            self.assertEqual(ptk.MeshConvert.ARTICULATION_WEB_NODE_FIELDS, ())
+
+    def test_the_region_mask_manifest_states_its_version_under_schema(self):
+        import pythontk as ptk
+
+        manifest = ptk.RegionMaskManifest.vertex_color([{"name": "sign", "slot": 0}])
+        with self.assertWarns(DeprecationWarning):
+            self.assertEqual(manifest.schema, manifest.version)
+        with self.assertWarns(DeprecationWarning):
+            self.assertEqual(ptk.RegionMaskManifest.SCHEMA_VERSION, ptk.RegionMaskManifest.VERSION)
+        self.assertEqual(manifest.to_dict()["groups"], [{"name": "sign", "slot": 0, "default": 1.0}])
 
 
 if __name__ == "__main__":

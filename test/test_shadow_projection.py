@@ -15,7 +15,12 @@ import unittest
 
 import numpy as np
 
-from pythontk import ImgUtils, ShadowConformance, ShadowProjection
+from pythontk import (
+    ImgUtils,
+    ShadowConformance,
+    ShadowHorizonConformance,
+    ShadowProjection,
+)
 
 
 class TestProject(unittest.TestCase):
@@ -135,25 +140,7 @@ class TestModel(unittest.TestCase):
 class TestRasterizeShadow(unittest.TestCase):
     """The rasterizer draws the true projection into a canvas it reports."""
 
-    @staticmethod
-    def _box(x0, x1, y0, y1, z0, z1):
-        """A closed box as (points, tris)."""
-        pts = np.array(
-            [[x, y, z] for x in (x0, x1) for y in (y0, y1) for z in (z0, z1)],
-            dtype=float,
-        )
-        faces = [
-            (0, 1, 3, 2),
-            (4, 6, 7, 5),
-            (0, 4, 5, 1),
-            (2, 3, 7, 6),
-            (0, 2, 6, 4),
-            (1, 5, 7, 3),
-        ]
-        tris = []
-        for a, b, c, d in faces:
-            tris += [(a, b, c), (a, c, d)]
-        return pts, np.array(tris, dtype=np.int64)
+    _box = staticmethod(ShadowHorizonConformance._box)
 
     def _alpha(self, rgba):
         return rgba[:, :, 3].astype(float) / 255.0
@@ -370,6 +357,153 @@ class TestCanvasAttachment(unittest.TestCase):
         self.assertAlmostEqual(self._feet(higher.rect(stamp)), 0.25, places=9)
 
 
+def _producer_fade(C, L, ground, radius, height, max_stretch, intensity, power, fade_h):
+    """Both producers' fade as their live preview spells it (mayatk's
+    ``_expr_opacity``, blendertk's material driver), in the rig's OWN unit:
+    every length here is in that unit, and so is each constant."""
+    model = ShadowProjection.model(
+        C, L, ground, radius, height, max_stretch=max_stretch
+    )
+    length = model.reach + model.base + model.top
+    stretch = max(1.0, length / max(1e-4, 2.0 * radius))
+    dist_opacity = intensity / max(0.001, stretch**power)
+    height_fade = min(max(L[1] - C[1], 0.0), 1.0)
+    rise_fade = min(max(1.0 - max(0.0, C[1] - ground) / max(0.001, fade_h), 0.0), 1.0)
+    return min(max(dist_opacity * height_fade * rise_fade, 0.0), 1.0)
+
+
+class TestFade(unittest.TestCase):
+    """``ShadowProjection.fade``: how strongly a plane draws, from its
+    placement and its terms, in metres -- the fade both producers previewed
+    and baked as keys, now every reader's to evaluate each frame."""
+
+    def test_a_grounded_target_under_a_high_source_lightens_as_it_stretches(self):
+        model = ShadowProjection.model((0, 0, 0), (2.0, 4.0, 0.0), 0.0, 0.5, 1.0)
+        stretch = model.length / 1.0
+        fade = ShadowProjection.fade(
+            (0, 0, 0), (2.0, 4.0, 0.0), 0.0, 0.5, 1.0, intensity=0.8, falloff_power=1.5
+        )
+        self.assertAlmostEqual(fade, 0.8 / stretch**1.5, places=12)
+
+    def test_an_overhead_source_draws_near_its_intensity(self):
+        """No reach past the footprint: the stretch is the top disk's growth
+        alone, so the shadow draws all but at its intensity."""
+        fade = ShadowProjection.fade(
+            (0, 0, 0), (0.0, 50.0, 0.0), 0.0, 0.5, 0.2, intensity=0.7
+        )
+        k_top = 50.0 / 49.8
+        self.assertAlmostEqual(fade, 0.7 / ((1.0 + k_top) / 2.0) ** 1.2, places=12)
+        self.assertGreater(fade, 0.69)
+
+    def test_a_source_under_the_contact_casts_nothing_and_ramps_in_over_its_ramp(self):
+        """The source-height ramp spans the plane's ``source_ramp`` (metres):
+        one unit of the rig that previews it -- 1 cm for a centimetre rig,
+        1 m for a metre one -- whatever unit its record is in. No falloff
+        (power 0), so the ramp alone sets the fade."""
+        C = (0.0, 0.5, 0.0)
+        flat = dict(ground=0.5, falloff_power=0.0, intensity=0.9)
+        for ramp in (1.0, 0.01):
+            with self.subTest(ramp=ramp):
+                span = ramp
+                below = ShadowProjection.fade(
+                    C, (1.0, 0.4, 0.0), source_ramp=ramp, **flat
+                )
+                self.assertEqual(below, 0.0)
+                half = ShadowProjection.fade(
+                    C, (1.0, 0.5 + 0.5 * span, 0.0), source_ramp=ramp, **flat
+                )
+                self.assertAlmostEqual(half, 0.45, places=6)
+                full = ShadowProjection.fade(
+                    C, (1.0, 0.5 + 1.0 * span, 0.0), source_ramp=ramp, **flat
+                )
+                self.assertAlmostEqual(full, 0.9, places=9)
+
+    def test_a_ramp_at_or_under_zero_is_floored_as_every_port_floors_it(self):
+        """A file whose ``source_ramp`` is not over 0 (the record requires it
+        to be) fades by a 1e-4 m ramp, as the viewer's ``shadowFade`` and the
+        C# port floor it -- never a ZeroDivisionError. Added: 2026-11-08"""
+        flat = dict(falloff_power=0.0, intensity=0.8)
+        for ramp in (0.0, -1.0):
+            with self.subTest(ramp=ramp):
+                half = ShadowProjection.fade(
+                    (0.0, 0.0, 0.0), (1.0, 5e-5, 0.0), source_ramp=ramp, **flat
+                )
+                self.assertAlmostEqual(half, 0.4, places=6)
+
+    def test_a_target_rising_off_the_ground_fades_out_at_its_fade_height(self):
+        L = (0.0, 100.0, 0.0)
+        flat = dict(fade_height=2.0, falloff_power=0.0)
+        self.assertEqual(ShadowProjection.fade((0, 0, 0), L, **flat), 1.0)
+        self.assertAlmostEqual(
+            ShadowProjection.fade((0, 1.0, 0), L, **flat), 0.5, places=12
+        )
+        self.assertEqual(ShadowProjection.fade((0, 2.5, 0), L, **flat), 0.0)
+
+    def test_a_sun_fades_from_its_far_point(self):
+        """A directional source is its far point (``far_point``), so it fades
+        as a point that far back does: by its stretch alone above the
+        horizon, to nothing below it."""
+        up = ShadowProjection.fade((0, 0, 0), direction=(1.0, -1.0, 0.0), radius=0.5)
+        stretch = ShadowProjection.model(
+            (0, 0, 0), direction=(1.0, -1.0, 0.0), radius=0.5
+        ).length
+        self.assertAlmostEqual(up, 1.0 / stretch**1.2, places=9)
+        down = ShadowProjection.fade((0, 0, 0), direction=(1.0, 0.1, 0.0))
+        self.assertEqual(down, 0.0)
+
+    def test_it_is_what_both_producers_baked_in_any_rig_unit(self):
+        """The producers evaluate the fade in their rig's unit; the model, in
+        metres from the record's lengths times ``unit_scale`` and the ramp
+        one rig unit (``source_ramp``), is the same number at every unit -- a
+        centimetre Maya rig and a metre Blender rig alike."""
+        rng = np.random.default_rng(5)
+        for _ in range(200):
+            C = (rng.uniform(-2, 2), rng.uniform(0, 1.5), rng.uniform(-2, 2))
+            L = (rng.uniform(-6, 6), rng.uniform(-0.5, 6), rng.uniform(-6, 6))
+            terms = dict(
+                ground=0.0,
+                radius=rng.uniform(0.1, 1.0),
+                height=rng.uniform(0.2, 2.0),
+                max_stretch=rng.uniform(2, 8),
+            )
+            fade = dict(
+                intensity=rng.uniform(0.2, 1.0),
+                power=rng.uniform(0.0, 3.0),
+                fade_h=rng.uniform(0.5, 4.0),
+            )
+            for unit in (1.0, 0.01, 0.0254):
+                # The record's lengths in its unit; the model reads metres.
+                rec = {k: v / unit for k, v in terms.items() if k != "max_stretch"}
+                want = _producer_fade(
+                    [c / unit for c in C],
+                    [c / unit for c in L],
+                    rec["ground"],
+                    rec["radius"],
+                    rec["height"],
+                    terms["max_stretch"],
+                    fade["intensity"],
+                    fade["power"],
+                    fade["fade_h"] / unit,
+                )
+                got = ShadowProjection.fade(
+                    C,
+                    L,
+                    terms["ground"],
+                    terms["radius"],
+                    terms["height"],
+                    max_stretch=terms["max_stretch"],
+                    intensity=fade["intensity"],
+                    falloff_power=fade["power"],
+                    fade_height=fade["fade_h"],
+                    source_ramp=unit,
+                )
+                self.assertAlmostEqual(got, want, places=12)
+
+
+#: The fade cases :meth:`ShadowConformance.cases` appends after the guards.
+_FADES = 8
+
+
 class TestShadowConformance(unittest.TestCase):
     """The golden cases the ports run: each is the reference's own answer."""
 
@@ -389,6 +523,20 @@ class TestShadowConformance(unittest.TestCase):
                 max_stretch=given["max_stretch"],
             )
             centre, along, across = model.placement(given["canvas"])
+            fade = ShadowProjection.fade(
+                given["contact"],
+                given["light"],
+                given["ground"],
+                given["radius"],
+                given["height"],
+                direction=given["direction"],
+                max_stretch=given["max_stretch"],
+                intensity=given["intensity"],
+                falloff_power=given["falloff_power"],
+                fade_height=given["fade_height"],
+                source_ramp=given["source_ramp"],
+            )
+            self.assertEqual(case["fade"], fade, case["name"])
             self.assertEqual(case["model"]["anchor"], list(model.anchor), case["name"])
             self.assertEqual(case["model"]["reach"], model.reach, case["name"])
             self.assertEqual(case["placement"]["centre"], list(centre), case["name"])
@@ -422,9 +570,99 @@ class TestShadowConformance(unittest.TestCase):
         self.assertAlmostEqual(named["low_sun"]["reach"], 4.0)
 
     def test_the_random_cases_cover_both_kinds(self):
-        kinds = {c["name"].rsplit("_", 1)[0] for c in self.doc["cases"][9:]}
+        randoms = self.doc["cases"][9 : 9 + 2 * 4]
+        kinds = {c["name"].rsplit("_", 1)[0] for c in randoms}
         self.assertEqual(kinds, {"point", "sun"})
-        self.assertEqual(len(self.doc["cases"]), 9 + 2 * 4)
+        self.assertEqual(len(self.doc["cases"]), 9 + 2 * 4 + 6 + _FADES)
+
+    def test_the_guard_cases_come_after_the_draw_whatever_it_is(self):
+        """Appended after the random ones, fixed: every earlier case keeps its
+        index, and each guard case binds at any seed."""
+        guards = self.doc["cases"][-6 - _FADES : -_FADES]
+        other = ShadowConformance.cases(seed=11, per_kind=1)["cases"]
+        self.assertEqual(guards, other[-6 - _FADES : -_FADES])
+        self.assertTrue(all(c["name"].startswith(("tiny", "near", "overhead")) for c in guards))
+
+    def test_the_fade_cases_come_last_and_reach_every_branch(self):
+        """The fade's own cases (2026-11-07), appended after the guards so
+        every earlier case keeps its index: each term of the fade decides one
+        -- the source under the contact, inside its ramp, the target risen
+        part way and past its fade height, a falloff, a sun, a centimetre
+        rig's ramp -- and they are the same at any seed."""
+        fades = {c["name"]: c for c in self.doc["cases"][-_FADES:]}
+        other = ShadowConformance.cases(seed=11, per_kind=1)["cases"][-_FADES:]
+        self.assertEqual(list(fades.values()), other)
+        self.assertTrue(all(name.startswith("fade_") for name in fades))
+        self.assertEqual(fades["fade_source_below"]["fade"], 0.0)
+        self.assertEqual(fades["fade_risen_away"]["fade"], 0.0)
+        for name in ("fade_source_ramp", "fade_rising", "fade_ramp_cm"):
+            with self.subTest(case=name):
+                given = fades[name]["input"]
+                self.assertTrue(0.0 < fades[name]["fade"] < given["intensity"])
+        self.assertEqual(fades["fade_ramp_cm"]["input"]["source_ramp"], 0.01)
+        # The ramp's 1e-4 floor, where it binds: a ramp of 0, the source half
+        # a floor over the contact (appended last: every case keeps its index).
+        floor = self.doc["cases"][-1]
+        self.assertEqual(floor["name"], "fade_ramp_floor")
+        self.assertEqual(floor["input"]["source_ramp"], 0.0)
+        self.assertAlmostEqual(floor["fade"], 0.5 * floor["input"]["intensity"], places=6)
+        self.assertIsNotNone(fades["fade_sun"]["input"]["direction"])
+
+    def test_every_case_states_the_fade_terms_a_record_carries(self):
+        """A case hands a port the plane's fade terms as the record names
+        them (``intensity``, ``falloff_power``, ``fade_height``,
+        ``source_ramp``), and the fade's tolerance."""
+        self.assertIn("fade", self.doc["tolerance"])
+        for case in self.doc["cases"]:
+            with self.subTest(case=case["name"]):
+                for key in ("intensity", "falloff_power", "fade_height", "source_ramp"):
+                    self.assertIsInstance(case["input"][key], float)
+                self.assertIsInstance(case["fade"], float)
+
+    def test_each_guard_case_sits_where_its_guard_binds(self):
+        """The model scales with its lengths but for its guard constants, so
+        each guard case is built where one decides the answer: change the
+        constant (in a port) and that case's model changes."""
+        eps = ShadowProjection.EPS
+        guard = {c["name"]: c for c in self.doc["cases"][-6 - _FADES : -_FADES]}
+
+        def given(name):
+            case = guard[name]
+            g = case["input"]
+            (cx, cy, cz), (lx, ly, lz) = g["contact"], case["source"]
+            return case["model"], g, math.hypot(cx - lx, cz - lz), ly - cy, ly
+
+        # The bearing's EPS, from both sides.
+        model, _, dist, _, _ = given("near_overhead")
+        self.assertTrue(eps < dist < 10 * eps, dist)
+        self.assertFalse(model["overhead"])
+        model, _, dist, _, _ = given("overhead_within_eps")
+        self.assertTrue(0.1 * eps < dist <= eps, dist)
+        self.assertTrue(model["overhead"])
+        # The reach cap's max(dist, EPS): the top factor is the cap through dist.
+        model, g, dist, rise, ly = given("tiny_near_overhead")
+        self.assertTrue(eps < dist < 10 * eps, dist)
+        cap = model["k_base"] + g["max_stretch"] * g["height"] / dist
+        self.assertAlmostEqual(model["k_top"], cap, places=12)
+        self.assertGreater(rise - g["height"], 1e-4)  # clear of the top's floor
+        self.assertLess(cap, (ly - g["ground"]) / (rise - g["height"]))
+        self.assertLess(cap, 1.0 + g["max_stretch"])
+        # The top factor's 1e-4 floor, under the cap.
+        model, g, _, rise, ly = given("tiny_over_top")
+        self.assertLess(rise - g["height"], 1e-4)
+        self.assertAlmostEqual(model["k_top"], (ly - g["ground"]) / 1e-4, places=9)
+        self.assertLess(model["k_top"], 1.0 + g["max_stretch"])
+        # The base factor's 1e-4 floor, under 1 + max_stretch.
+        model, g, _, rise, ly = given("tiny_over_contact")
+        self.assertLess(rise, 1e-4)
+        self.assertAlmostEqual(model["k_base"], (ly - g["ground"]) / 1e-4, places=9)
+        self.assertLess(model["k_base"], 1.0 + g["max_stretch"])
+        # The far point's 1e-3 scale floor.
+        sun = guard["tiny_sun"]
+        g = sun["input"]
+        self.assertLess(max(g["height"], 2 * g["radius"]), 1e-3)
+        far = math.dist(sun["source"], g["contact"])
+        self.assertAlmostEqual(far, ShadowProjection.FAR_FACTOR * 1e-3, places=9)
 
 
 if __name__ == "__main__":

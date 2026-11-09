@@ -22,7 +22,6 @@ from pythontk.core_utils.engines.scene_export.export_snapshot import (
     ExportSnapshot,
 )
 from pythontk.core_utils.engines.scene_export.scene_records import (
-    Kind,
     SceneRecords as SR,
     Scope,
 )
@@ -93,19 +92,11 @@ class TestDeclarations(_Case):
                 SR.LIGHTMAPS.key,
                 SR.SHADOWS.key,
                 SR.ARTICULATION.key,
-                SR.EMISSIVE_GROUPS.key,
                 SR.VISIBILITY.key,
             },
         )
         for spec in (SR.SHOTS, SR.AUDIO, SR.HANDOFF):
             self.assertFalse(spec.export_scoped, spec.key)
-
-    def test_the_emissive_groups_refresh_on_every_write(self):
-        """Its producer is the only one that can narrow it (a group names its
-        faces through the host's stores), so a hand-off runs it. Added: 2026-10-31"""
-        self.assertIs(SR.EMISSIVE_GROUPS.kind, Kind.DERIVED)
-        self.assertTrue(ExportContext(mode=ExportContext.HANDOFF).refreshes(SR.EMISSIVE_GROUPS))
-
 
 class TestShips(_Case):
     def test_a_name_matches_as_a_reader_binds_it(self):
@@ -254,6 +245,129 @@ class TestStoredCopy(_Case):
         snap.commit(_Store)
         self.assertEqual(len(SR.LIGHTMAPS.load(_Store)["objects"]), 2)
         self.assertIn(SR.LIGHTMAPS.key, snap.failed)
+
+
+class TestAStoreThatRefusesTheWrite(_Case):
+    """A store that cannot write the scene's carrier without writing over
+    another's (blendertk: a module's own-named ``data_export`` parented under
+    its group holds the name) refuses it (``SceneStoreBase.WriteRefused``).
+    The commit says it ONCE, with its fix and no traceback, notes it for the
+    exporter, and leaves each record failed, as stored. Added: 2026-11-08"""
+
+    FIX = "The name is a module's carrier: rename or unparent it."
+
+    class _Refusing(_Store):
+        @classmethod
+        def write(cls, scope, key, text):
+            if Scope(scope) is Scope.DELIVERABLE and text:
+                raise SceneStoreBase.WriteRefused(TestAStoreThatRefusesTheWrite.FIX)
+            return super().write(scope, key, text)
+
+    def test_a_refusal_is_said_once_and_noted(self):
+        producers = {
+            SR.LIGHTMAPS: lambda ctx: SR.LIGHTMAPS.make(_lightmaps("wall")),
+            SR.SHOTS: lambda ctx: SR.SHOTS.make({"fps": 24.0, "shots": []}),
+        }
+        snap = ExportSnapshot.assemble(producers, ExportContext())
+        with self.assertLogs("pythontk", level="WARNING") as logs:
+            snap.commit(self._Refusing)
+        said = [line for line in logs.output if self.FIX in line]
+        self.assertEqual(len(said), 1, logs.output)
+        self.assertNotIn("Traceback", " ".join(logs.output))
+        self.assertEqual(snap.failed, {SR.LIGHTMAPS.key, SR.SHOTS.key})
+        noted = [n for notes in snap.noted.values() for n in notes if self.FIX in n]
+        self.assertEqual(len(noted), 1, snap.noted)
+        self.assertEqual(self._Refusing.data, {})
+
+
+class TestARefusedRecordShipsNone(_Case):
+    """No write carries a ``lightmaps`` record that reads a map through the
+    wrong UVs (lightmaps v3, 2026-11-07). An export's producer notes its
+    refusal and publishes none, so the delivered record is cleared -- a raise
+    was a failed producer, whose stale stored record shipped. A hand-off,
+    which ships the authored record as stored, ships none its host withheld
+    (``ExportContext.withheld``) and puts it back after the write. Either
+    way the materials read what ships: no lightmaps, so each keeps its
+    occlusion. Added: 2026-11-07"""
+
+    WHY = "Lightmaps not published: wall ('UV2' at index 2). Move it."
+
+    def _readers(self, seen):
+        """A materials producer that records the lightmaps it would read."""
+
+        def materials(ctx):
+            seen.append(ctx.record(SR.LIGHTMAPS, store=_Store))
+            return None
+
+        return {SR.MATERIALS: materials}
+
+    def test_the_materials_read_the_lightmaps_this_write_ships(self):
+        self.assertEqual(SR.MATERIALS.after, (SR.LIGHTMAPS.key,))
+        seen = []
+        producers = dict(self._readers(seen))
+        producers[SR.LIGHTMAPS] = lambda ctx: SR.LIGHTMAPS.make(_lightmaps("wall"))
+        ExportSnapshot.assemble(producers, ExportContext())
+        self.assertEqual([o["name"] for o in seen[0]["objects"]], ["wall"])
+
+    def test_an_exports_refusal_is_noted_and_clears_the_record(self):
+        SR.LIGHTMAPS.save(_Store, _lightmaps("wall"))  # published before the edit
+
+        def refused():
+            ptk.LightmapRecord.check_uv_sets([("wall", "UV2", 2)], fix="Move it.")
+
+        seen = []
+        producers = dict(self._readers(seen))
+        producers[SR.LIGHTMAPS] = lambda ctx: ptk.LightmapRecord.unless_refused(
+            refused, None, note=ctx.note
+        )
+        snap = ExportSnapshot.assemble(producers, ExportContext())
+        self.assertNotIn(SR.LIGHTMAPS.key, snap.failed, "a refusal is no failure")
+        self.assertIsNone(snap.produced[SR.LIGHTMAPS.key])
+        self.assertEqual(seen, [None], "the materials read no lightmaps")
+        self.assertTrue(any("wall ('UV2' at index 2)" in n for n in snap.ctx.notes))
+        snap.commit(_Store)
+        self.assertIsNone(SR.LIGHTMAPS.load(_Store), "the stale record is cleared")
+
+    def _handoff(self, **kwargs):
+        return ExportContext(
+            mode=ExportContext.HANDOFF, withheld={SR.LIGHTMAPS.key: self.WHY}, **kwargs
+        )
+
+    def test_a_hand_off_ships_none_of_a_withheld_record_and_puts_it_back(self):
+        for kwargs in (
+            {},
+            {"scope": ("|wall",), "nodes": frozenset({"wall", "wallShape"})},
+        ):
+            with self.subTest(**kwargs):
+                _Store.data = {}
+                SR.LIGHTMAPS.save(_Store, _lightmaps("wall"))
+                SR.SHOTS.save(_Store, {"fps": 24.0, "shots": []})
+                stored = SR.LIGHTMAPS.read_text(_Store)
+                seen = []
+                snap = ExportSnapshot.assemble(
+                    self._readers(seen), self._handoff(**kwargs)
+                )
+                self.assertEqual(seen, [None], "the materials read no lightmaps")
+                self.assertEqual(snap.ctx.notes.count(self.WHY), 1, snap.ctx.notes)
+                self.assertEqual(snap.noted[SR.LIGHTMAPS.key], [self.WHY])
+                snap.commit(_Store)
+                self.assertIsNone(SR.LIGHTMAPS.load(_Store), "the write ships none")
+                self.assertIsNone(snap.record(SR.LIGHTMAPS))
+                handoff = SR.HANDOFF.load(_Store)
+                self.assertNotIn(
+                    SR.LIGHTMAPS.key, [row.get("part") for row in handoff["assembly"]]
+                )
+                snap.restore_scene_wide(_Store)
+                self.assertEqual(
+                    SR.LIGHTMAPS.read_text(_Store), stored, "the scene keeps it"
+                )
+
+    def test_a_record_the_assembly_produces_is_its_producers_call(self):
+        produced = SR.LIGHTMAPS.make(_lightmaps("wall"))
+        ctx = ExportContext(withheld={SR.LIGHTMAPS.key: self.WHY})
+        snap = ExportSnapshot.assemble({SR.LIGHTMAPS: lambda ctx: produced}, ctx)
+        self.assertEqual(snap.record(SR.LIGHTMAPS), produced.payload)
+        self.assertNotIn(self.WHY, snap.ctx.notes)
 
 
 class TestWriterUnits(_Case):

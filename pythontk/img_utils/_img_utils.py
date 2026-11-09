@@ -475,7 +475,35 @@ class ImgUtils(
                 "Input must be a file path (str) or a PIL.Image.Image object."
             )
 
-        return image.convert(mode) if mode else image
+        return cls.convert_mode(image, mode) if mode else image
+
+    @classmethod
+    def convert_mode(cls, image: "Image.Image", mode: str) -> "Image.Image":
+        """*image* converted to *mode*, a high-bit source SCALED into an 8-bit one.
+
+        Pillow implements ``I;16`` / ``I`` -> ``L`` (and every 8-bit mode) as a
+        CLIP at 255 and ``F`` -> ``L`` as a truncation, so a 16-bit map of
+        30000 (46% grey) converted to 255 and a float one of 0.5 to 0. Here a
+        16-bit, 32-bit integer or float grayscale source reaching an 8-bit
+        mode is first reduced at its value (:meth:`convert_i_to_l`,
+        :meth:`convert_f_to_l`); a conversion between high-bit modes, or from
+        an 8-bit one, is Pillow's own. The one place a source is normalised
+        to a mode: :meth:`ensure_image` with a *mode* goes through it.
+
+        Parameters:
+            image: The image.
+            mode: The target mode.
+        """
+        if image.mode == mode:
+            return image
+        high = image.mode == "F" or image.mode == "I" or image.mode.startswith("I;")
+        target_high = mode == "F" or mode == "I" or mode.startswith("I;")
+        if not high or target_high:
+            return image.convert(mode)
+        reduced = (
+            cls.convert_f_to_l(image) if image.mode == "F" else cls.convert_i_to_l(image)
+        )
+        return reduced if mode == "L" else reduced.convert(mode)
 
     @classmethod
     def enforce_mode(
@@ -2763,6 +2791,7 @@ class ImgUtils(
         bounds=None,
         padding: float = 0.02,
         spans: int = 1,
+        merge_gap: float = 1e-9,
     ):
         """The solid vertical spans of world meshes per footprint pixel: a
         depth-peeled :meth:`rasterize_height_fields`.
@@ -2780,6 +2809,9 @@ class ImgUtils(
         Parameters:
             meshes, up, size, ground, bounds, padding: As :meth:`rasterize_height_fields`.
             spans: Solid spans kept per pixel, ``K``.
+            merge_gap: Two spans of a pixel closer than this (a gap of no
+                more, in height units) are one: two parts meeting where one's
+                top is the other's bottom, rounded apart in float.
 
         Returns:
             ``(lo, hi, bounds)`` -- two ``(K, size, size)`` float32 arrays,
@@ -2794,6 +2826,7 @@ class ImgUtils(
             bounds=bounds,
             padding=padding,
             spans=spans,
+            merge_gap=merge_gap,
         )
 
     @classmethod
@@ -2993,9 +3026,13 @@ class ImgUtils(
     def convert_i_to_l(cls, image):
         """Convert a high-bit-depth grayscale image to 8-bit 'L'.
 
-        Values above the 8-bit range are treated as 16-bit (0-65535) and
-        scaled down (÷257), not truncated. A float source is handed to
-        :meth:`convert_f_to_l`, whose 0..1 full scale this rule would flatten.
+        Scaled at the source's full scale, never truncated: a 16-bit mode
+        (``I;16`` and its byte orders) is 0..65535 (÷257) whatever its values;
+        a 32-bit integer one (``I``, which also holds what an older Pillow
+        read a 16-bit file as) is read by its values -- 0..255 as they are,
+        up to 65535 as 16-bit, above that as 32-bit (0..2**31-1, or 2**32-1
+        unsigned). A float source is handed to :meth:`convert_f_to_l`, whose
+        0..1 full scale this rule would flatten.
 
         Parameters:
             image (str/obj): An image or path to an image.
@@ -3014,8 +3051,17 @@ class ImgUtils(
             return cls.convert_f_to_l(im)
 
         if data.dtype != np.uint8:
-            if data.max(initial=0) > 255:  # 16-bit range -> scale, don't truncate
-                data = np.clip(data, 0, 65535) / 257.0
+            if im.mode.startswith("I;16"):
+                full = 65535.0
+            else:
+                peak = int(data.max(initial=0))
+                if peak <= 255:
+                    full = 255.0
+                elif peak <= 65535:
+                    full = 65535.0
+                else:
+                    full = float(np.iinfo(data.dtype).max)
+            data = np.clip(data.astype(np.float64), 0, full) * (255.0 / full)
             data = np.clip(np.round(data), 0, 255).astype(np.uint8)
 
         return Image.fromarray(data, mode="L")

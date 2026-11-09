@@ -7,8 +7,10 @@ packaged ``shadow_rig`` viewer script, against the contract in
 Two halves, deliberately in one module because they share the fixtures:
 
 * Pure Python -- the pass over hand-authored GLBs (a plane wearing a base
-  colour texture, a source, a contact, the ``data_export`` carrier), the
-  optimiser's keep-as-found rule and the server's auto-activation.
+  colour texture, a source, a contact, the ``data_export`` carrier): the
+  ``shadows`` record carried as it stands and every file it names riding as
+  media, the prune's and the optimiser's keep-as-found rule, the verifier's
+  media gate and the server's auto-activation.
 * The page -- headless Edge through Playwright, the real ``viewer.html`` and
   three.js, the real ``PreviewServer``; the shim's placement is asserted
   against ``ShadowProjection.model`` itself, and the horizon shader against an
@@ -77,34 +79,75 @@ def _data_uri(png: bytes) -> str:
     return "data:image/png;base64," + base64.b64encode(png).decode("ascii")
 
 
-def _record(name: str, **overrides):
-    """One v2 ``shadows`` plane record, the contract's shape."""
+#: The horizon block a fixture plane carries where its test bakes none:
+#: every v3 plane states its map (the record requires it), and a test that
+#: never ships the file draws the plane's silhouette instead.
+HORIZON_LAYOUT = {
+    "texture": "Box_horizon.png",
+    "size": 64,
+    "spans": 1,
+    "bounds": [-0.6, 0.6, -0.6, 0.6],
+    "height_scale": 1.0,
+    "frame_a": [1, 0, 0],
+    "frame_b": [0, 0, 1],
+    "rect": [1, 1, 0, 0],
+}
+
+
+def _record(
+    name: str,
+    *,
+    texture=None,
+    atlas=None,
+    canvas=(-1.0, 1.0, -0.5, 0.5),
+    draw=True,
+    horizon=None,
+    **overrides,
+):
+    """One v3 ``shadows`` plane record, the contract's shape: its horizon map
+    (*horizon*, :data:`HORIZON_LAYOUT` by default) and its silhouette -- the
+    extension -- named *texture* (the plane's own PNG by default), packed
+    into *atlas* (``{"texture", "rect"}``, the rect bottom-left), placed by
+    *canvas* and drawn where *draw* (the projected rig; false is the horizon
+    rig, its silhouette the fallback)."""
+    silhouette = {
+        "texture": texture or f"{name}.png",
+        "draw": draw,
+    }
+    if atlas:
+        silhouette["atlas"] = dict(atlas)
     record = {
         "name": name,
-        "type": "projected",
-        "texture": f"{name}.png",
-        "intensity": 1.0,
         "source": "shadow_source",
+        "contact": "Box_contact_loc",
+        "intensity": 1.0,
         "source_type": "point",
         "source_size": 0.0,
         "source_angle": 0.0,
         "follow_source": True,
-        "contact": "Box_contact_loc",
         "ground": 0.0,
         "radius": 0.6,
         "height": 1.2,
         "max_stretch": 6.0,
-        "canvas": [-1.0, 1.0, -0.5, 0.5],
+        "falloff_power": 1.2,
+        "fade_height": 2.4,
+        "source_ramp": 1.0,
+        "canvas": [float(v) for v in canvas],
+        "horizon": dict(horizon or HORIZON_LAYOUT),
+        "silhouette": silhouette,
     }
     record.update(overrides)
     return record
 
 
-def _payload(planes, unit_scale: float = 1.0, version: int = 2) -> dict:
-    payload = {"version": version, "planes": planes}
-    if version >= 2:
-        payload["unit_scale"] = unit_scale
-    return payload
+def _payload(planes, unit_scale: float = 1.0, version=None) -> dict:
+    """The record around *planes*, at the current version unless *version*."""
+    current = ptk.SceneRecords.SHADOWS.version
+    return {
+        "version": current if version is None else version,
+        "unit_scale": unit_scale,
+        "planes": planes,
+    }
 
 
 def _data_export_node(payload: dict) -> dict:
@@ -125,7 +168,8 @@ def _data_export_node(payload: dict) -> dict:
 
 
 def _pointer_animation(material: int) -> dict:
-    """An authored fade as ``apply_glb_fades`` writes it: alpha 1 -> 0 over 2 s."""
+    """An authored fade as ``apply_glb_fades`` writes it: alpha 1 -> 0 over 2 s
+    -- what a v2 file's shadow plane carried, which a v3 reader never reads."""
     return {
         "name": "FADE",
         "samplers": [{"input": 3, "output": 4, "interpolation": "LINEAR"}],
@@ -145,6 +189,17 @@ def _pointer_animation(material: int) -> dict:
                 },
             }
         ],
+    }
+
+
+def _media_views(gltf: dict) -> dict:
+    """``{file name: (view index, extras)}`` of every bufferView riding a file
+    (``SceneRecords.GLB_MEDIA``)."""
+    media = ptk.SceneRecords.GLB_MEDIA
+    return {
+        view[media.name]: (index, view.get("extras"))
+        for index, view in enumerate(gltf.get("bufferViews") or [])
+        if isinstance(view.get(media.name), str)
     }
 
 
@@ -298,23 +353,7 @@ def _plane_material(name: str, texture: int = 0, alpha: float = 1.0) -> dict:
     }
 
 
-def _box(x0, x1, y0, y1, z0, z1):
-    pts = np.array(
-        [[x, y, z] for x in (x0, x1) for y in (y0, y1) for z in (z0, z1)],
-        dtype=float,
-    )
-    quads = [
-        (0, 1, 3, 2),
-        (4, 6, 7, 5),
-        (0, 4, 5, 1),
-        (2, 3, 7, 6),
-        (0, 2, 6, 4),
-        (1, 5, 7, 3),
-    ]
-    tris = []
-    for a, b, c, d in quads:
-        tris += [(a, b, c), (a, c, d)]
-    return pts, np.array(tris, dtype=np.int64)
+_box = ptk.ShadowHorizonConformance._box
 
 
 def _pole_map(pole_xz, pole_radius, pole_height, *, reach=None):
@@ -483,12 +522,13 @@ def _quat_rotate(q, v):
 
 @unittest.skipUnless(np is not None and Image is not None, "needs numpy + Pillow")
 class TestApplyGlbShadows(unittest.TestCase):
-    """``apply_glb_shadows`` over hand-built GLBs."""
+    """``apply_glb_shadows`` over hand-built GLBs: the ``shadows`` record
+    carried as it stands, every file it names riding as media."""
 
-    #: The same map SHAPE the live tests use -- the block has to describe the
+    #: The same map SHAPE the live tests use -- the record has to describe the
     #: PNG beside it, so both come from one set of constants; only the pole's
-    #: position differs, and this suite never samples the map anyway (the pass
-    #: treats it as opaque bytes).
+    #: position differs, and this suite never samples the map (the pass
+    #: carries it as opaque bytes).
     HORIZON = {
         "texture": "Box_horizon.png",
         "size": POLE_SIZE,
@@ -506,14 +546,22 @@ class TestApplyGlbShadows(unittest.TestCase):
         cls.temp = ptk.TempArtifacts("shadow_web_pass", policy="scoped")
         cls.maps = cls.temp.dir_path()
         cls.horizon_png, _ = _pole_map((0.46, 0.19), POLE_RADIUS, POLE_HEIGHT)
-        with open(os.path.join(cls.maps, "Box_horizon.png"), "wb") as fh:
-            fh.write(cls.horizon_png)
+        cls.atlas_png = _silhouette_png(16)
+        cls.own_png = _silhouette_png(8)
+        for name, data in (
+            ("Box_horizon.png", cls.horizon_png),
+            ("shadow_atlas_projected.png", cls.atlas_png),
+            ("Box_shadow.png", cls.own_png),
+            ("Box_horizon_plane.png", cls.own_png),
+        ):
+            with open(os.path.join(cls.maps, name), "wb") as fh:
+                fh.write(data)
 
     @classmethod
     def tearDownClass(cls):
         cls.temp.cleanup()
 
-    def _glb(self, payload, *, nodes=None, materials=None, name="scene"):
+    def _glb(self, payload, *, nodes=None, materials=None, images=None, textures=None):
         nodes = nodes or [
             {"name": "Box_shadow", "mesh": 0},
             {"name": "shadow_source", "translation": [1.5, 2.0, -0.5]},
@@ -530,11 +578,13 @@ class TestApplyGlbShadows(unittest.TestCase):
             path,
             nodes=nodes,
             materials=materials,
-            images=[{"name": "shadow_atlas", "uri": _data_uri(_silhouette_png())}],
-            textures=[{"source": 0, "sampler": 0}],
+            images=images
+            if images is not None
+            else [{"name": "shadow_atlas", "uri": _data_uri(_silhouette_png())}],
+            textures=textures if textures is not None else [{"source": 0, "sampler": 0}],
         )
 
-    def _v2(self):
+    def _v3(self):
         return _payload(
             [
                 _record(
@@ -543,10 +593,9 @@ class TestApplyGlbShadows(unittest.TestCase):
                         "texture": "shadow_atlas_projected.png",
                         "rect": self.ATLAS_RECT,
                     },
+                    horizon=self.HORIZON,
                 ),
-                _record(
-                    "Box_horizon_plane", type="horizon", horizon=dict(self.HORIZON)
-                ),
+                _record("Box_horizon_plane", draw=False, horizon=self.HORIZON),
             ],
             unit_scale=0.01,
         )
@@ -555,121 +604,68 @@ class TestApplyGlbShadows(unittest.TestCase):
         with MeshConvert.open_glb(path) as edit:
             return json.loads(json.dumps(edit.gltf))
 
-    def test_a_curve_proxy_strip_keeps_the_manifest_on_its_nodes(self):
-        """The conversion strips render-effect curve proxies AFTER this pass,
-        renumbering every node behind one; the manifest's indices must follow
-        or the planes follow the wrong source."""
-        proxy = {
-            "name": "Fx__highlight",
-            "extras": {
-                "fromFBX": {
-                    "userProperties": {
-                        MeshConvert.CURVE_PROXY_MARKER: {
-                            "type": "eFbxBool",
-                            "value": True,
-                        }
-                    }
-                }
-            },
-        }
-        nodes = [
-            proxy,
-            {"name": "Box_shadow", "mesh": 0},
-            {"name": "shadow_source", "translation": [1.5, 2.0, -0.5]},
-            {"name": "Box_contact_loc", "translation": [0.2, 0.0, 0.3]},
-            {"name": "Box_horizon_plane", "mesh": 1},
-            _data_export_node(self._v2()),
-        ]
-        path = self._glb(None, nodes=nodes)
-        MeshConvert.apply_glb_shadows(path, search_dirs=[self.maps])
-        MeshConvert.strip_glb_curve_proxies(path)
-        gltf = self._read(path)
-        manifest = gltf["extras"][ptk.SceneRecords.SHADOWS.key]
-        names = [n.get("name") for n in gltf["nodes"]]
-        self.assertEqual(
-            sorted(names[plane["node"]] for plane in manifest["planes"]),
-            ["Box_horizon_plane", "Box_shadow"],
-        )
-        for plane in manifest["planes"]:
-            self.assertEqual(names[plane["source_node"]], "shadow_source")
-            self.assertEqual(names[plane["contact_node"]], "Box_contact_loc")
-
-    def test_the_manifest_carries_indices_top_left_rects_and_the_data_sampler(self):
-        path = self._glb(self._v2())
-        manifest = MeshConvert.apply_glb_shadows(path, search_dirs=[self.maps])
-
-        self.assertIsNotNone(manifest)
-        self.assertEqual(manifest["version"], 2)
-        self.assertNotIn(
-            "metadata_version", manifest, "the record's version is not the block's"
-        )
-        self.assertAlmostEqual(manifest["unit_scale"], 0.01)
-        gltf = self._read(path)
-        self.assertEqual(gltf["extras"][ptk.SceneRecords.SHADOWS.key], manifest)
-        # Bound by index in place of every name, and nothing beyond the
-        # declared shape: a packed plane's tile is its quad's own UVs.
-        res = ptk.ShadowBlock.validate(manifest)
-        self.assertEqual((res.errors, res.warnings), ([], []))
-        by_name = {gltf["nodes"][p["node"]]["name"]: p for p in manifest["planes"]}
-        self.assertEqual(set(by_name), {"Box_shadow", "Box_horizon_plane"})
-
-        projected = by_name["Box_shadow"]
-        self.assertEqual(projected["node"], 0)
-        self.assertEqual(projected["source_node"], 1)
-        self.assertEqual(projected["contact_node"], 2)
-        self.assertEqual(projected["texture_index"], 0, "the material's base colour")
-        self.assertTrue(projected["follow_source"])
-        # The record's own fields travel untouched, DCC units and all.
-        self.assertEqual(projected["radius"], 0.6)
-        self.assertEqual(projected["canvas"], [-1.0, 1.0, -0.5, 0.5])
-
-        horizon = by_name["Box_horizon_plane"]
-        self.assertEqual(horizon["node"], 3)
-        self.assertIsNone(horizon["texture_index"], "the march shades it")
-        self.assertEqual(
-            horizon["horizon"]["rect"], ImgUtils.flip_rect_v(self.HORIZON["rect"])
-        )
-        index = horizon["horizon"]["texture_index"]
-        self.assertIsInstance(index, int)
-        texture = gltf["textures"][index]
-        self.assertEqual(texture["name"], "Box_horizon")
-        self.assertEqual(
-            gltf["samplers"][texture["sampler"]], MeshConvert.SHADOW_DATA_SAMPLER
-        )
-        # The atlas texture the material samples keeps ITS sampler.
-        self.assertEqual(gltf["textures"][0]["sampler"], 0)
-        self.assertEqual(horizon["horizon"]["spans"], POLE_SPANS)
-
-    def test_the_horizon_png_is_embedded_byte_for_byte(self):
-        """Never decoded: the map is data, and the session relocates it into
-        the BIN on close exactly as it was read."""
-        path = self._glb(self._v2())
-        manifest = MeshConvert.apply_glb_shadows(path, search_dirs=[self.maps])
-        index = manifest["planes"][1]["horizon"]["texture_index"]
+    def _payload_of(self, path, view):
         with MeshConvert.open_glb(path) as edit:
-            image = edit.images[edit.textures[index]["source"]]
-            self.assertIn("bufferView", image, "relocated out of the JSON chunk")
-            self.assertEqual(image.get("mimeType"), "image/png")
-            self.assertEqual(edit._image_payload(image), self.horizon_png)
+            entry = edit.gltf["bufferViews"][view]
+            start = int(entry.get("byteOffset", 0))
+            return bytes(edit.bin_data[start : start + int(entry["byteLength"])])
 
-    def test_rerunning_replaces_the_manifest_and_adds_nothing(self):
-        path = self._glb(self._v2())
+    def test_the_record_rides_as_it_stands_and_each_file_it_names_as_media(self):
+        """One layout, two containers: the root extras hold the record the
+        carrier holds, and each file it names -- horizon map, silhouette,
+        atlas -- the bufferView named by that file, its bytes as they are (a
+        horizon map is data) and its extras stating them: PNG, no scale. No
+        glTF image, texture or sampler is made, and nothing is bound by index.
+        Added: 2026-11-07"""
+        payload = self._v3()
+        path = self._glb(payload)
+        before = self._read(path)
+        carried = MeshConvert.apply_glb_shadows(path, search_dirs=[self.maps])
+
+        gltf = self._read(path)
+        self.assertEqual(carried, payload)
+        self.assertEqual(gltf["extras"][ptk.SceneRecords.SHADOWS.key], payload)
+        res = ptk.ShadowRecord.validate(carried)
+        self.assertEqual((res.errors, res.warnings), ([], []))
+        views = _media_views(gltf)
+        self.assertEqual(
+            set(views),
+            {
+                "Box_horizon.png",
+                "shadow_atlas_projected.png",
+                "Box_shadow.png",
+                "Box_horizon_plane.png",
+            },
+        )
+        for name, data in (
+            ("Box_horizon.png", self.horizon_png),
+            ("shadow_atlas_projected.png", self.atlas_png),
+            ("Box_shadow.png", self.own_png),
+        ):
+            index, extras = views[name]
+            self.assertEqual(extras, {"mimeType": "image/png"}, name)
+            self.assertEqual(self._payload_of(path, index), data, f"{name} re-encoded")
+        for key in ("images", "textures", "samplers", "materials"):
+            self.assertEqual(gltf[key], before[key], key)
+        self.assertNotIn("texture_index", json.dumps(gltf["extras"]))
+
+    def test_rerunning_adds_nothing(self):
+        path = self._glb(self._v3())
         first = MeshConvert.apply_glb_shadows(path, search_dirs=[self.maps])
         before = self._read(path)
-        second = MeshConvert.apply_glb_shadows(path, search_dirs=[self.maps])
+        # The record in the root extras is the one read: the carrier gone, as
+        # the conversion leaves it, the files found again by name.
+        second = MeshConvert.apply_glb_shadows(path, search_dirs=[])
         after = self._read(path)
-
         self.assertEqual(first, second)
-        self.assertEqual(len(after["images"]), len(before["images"]))
-        self.assertEqual(len(after["textures"]), len(before["textures"]))
-        self.assertEqual(len(after["samplers"]), len(before["samplers"]))
+        self.assertEqual(after["bufferViews"], before["bufferViews"])
         self.assertEqual(after["extras"], before["extras"])
 
     def test_a_record_of_another_version_is_refused_not_guessed(self):
-        """A reader reads the schema the record declares alone: an older one
-        -- version 1 stated no source, contact or unit -- is refused as a
-        newer one is, and said, the cure a re-export; never read through a
-        branch for its shape. Added: 2026-10-20"""
+        """A reader reads the schema the record declares alone: v2 -- a
+        plane's 'type' and its silhouette's fields on the plane, no fade terms
+        -- is refused as a newer one is, and said, the cure a re-export; never
+        read through a branch for its shape. Added: 2026-10-20"""
         current = ptk.SceneRecords.SHADOWS.version
         for version in (current - 1, current + 1):
             with self.subTest(version=version):
@@ -685,9 +681,9 @@ class TestApplyGlbShadows(unittest.TestCase):
                     ),
                     log.output,
                 )
-                self.assertNotIn(
-                    ptk.SceneRecords.SHADOWS.key, self._read(path).get("extras", {})
-                )
+                gltf = self._read(path)
+                self.assertNotIn(ptk.SceneRecords.SHADOWS.key, gltf.get("extras", {}))
+                self.assertEqual(_media_views(gltf), {})
 
     def test_the_retired_plane_defaults_are_the_planes_declared_ones(self):
         """``MeshConvert.SHADOW_PLANE_DEFAULTS`` (retired 2026-10-20, removed
@@ -716,183 +712,185 @@ class TestApplyGlbShadows(unittest.TestCase):
             },
         )
 
-    def test_a_missing_horizon_map_skips_that_plane_with_a_warning(self):
-        path = self._glb(self._v2())
+    def test_a_file_found_nowhere_is_warned_once_naming_its_planes(self):
+        """A plane whose horizon map is nowhere still ships in the record (its
+        silhouette is its fallback): the map is warned ONCE, naming every
+        plane that reads it, and the rest ride. Added: 2026-11-07"""
+        path = self._glb(self._v3())
         with self.assertLogs(MESH_CONVERT_LOGGER, level="WARNING") as log:
-            manifest = MeshConvert.apply_glb_shadows(path, search_dirs=[])
-        self.assertTrue(
-            any("Box_horizon.png" in line for line in log.output), log.output
-        )
-        nodes = self._read(path)["nodes"]
-        self.assertEqual(
-            [nodes[p["node"]]["name"] for p in manifest["planes"]], ["Box_shadow"]
-        )
+            carried = MeshConvert.apply_glb_shadows(path, search_dirs=[])
+        horizon = [line for line in log.output if "Box_horizon.png" in line]
+        self.assertEqual(len(horizon), 1, log.output)
+        self.assertIn("Box_shadow", horizon[0])
+        self.assertIn("Box_horizon_plane", horizon[0])
+        self.assertEqual(len(carried["planes"]), 2)
+        self.assertEqual(_media_views(self._read(path)), {})
 
-    def test_no_channel_is_a_clean_no_op(self):
+    def test_no_record_is_a_clean_no_op(self):
         path = self._glb(None, nodes=[{"name": "Box_shadow", "mesh": 0}])
+        before = self._read(path)
         self.assertIsNone(MeshConvert.apply_glb_shadows(path))
-        self.assertNotIn(
-            ptk.SceneRecords.SHADOWS.key, self._read(path).get("extras", {})
+        self.assertEqual(self._read(path), before)
+
+    def test_a_plane_this_file_does_not_carry_ships_no_bytes(self):
+        """The record names the export's planes; a GLB of part of it (a plane
+        renamed away here) carries the record whole and the files of the
+        planes it holds alone -- a plane elsewhere would ship dead bytes.
+        Added: 2026-11-07"""
+        payload = self._v3()
+        payload["planes"][1]["horizon"] = dict(
+            self.HORIZON, texture="Elsewhere_horizon.png"
         )
+        with open(os.path.join(self.maps, "Elsewhere_horizon.png"), "wb") as fh:
+            fh.write(self.horizon_png)
+        nodes = [
+            {"name": "Box_shadow", "mesh": 0},
+            {"name": "shadow_source", "translation": [1.5, 2.0, -0.5]},
+            {"name": "Box_contact_loc", "translation": [0.2, 0.0, 0.3]},
+            {"name": "Other_plane", "mesh": 1},
+            _data_export_node(payload),
+        ]
+        path = self._glb(None, nodes=nodes)
+        with self.assertLogs(MESH_CONVERT_LOGGER, level="INFO") as log:
+            carried = MeshConvert.apply_glb_shadows(path, search_dirs=[self.maps])
+        self.assertEqual(carried, payload)
+        views = _media_views(self._read(path))
+        self.assertNotIn("Elsewhere_horizon.png", views)
+        self.assertNotIn("Box_horizon_plane.png", views)
+        self.assertIn("Box_horizon.png", views)
+        self.assertTrue(any("1 plane(s) not in this export" in m for m in log.output))
 
-    def test_a_run_that_binds_nothing_removes_a_stale_manifest(self):
-        path = self._glb(self._v2())
-        MeshConvert.apply_glb_shadows(path, search_dirs=[self.maps])
-        with MeshConvert.open_glb(path) as edit:
-            # Rename the planes away: the channel still names them, the file no
-            # longer carries them.
-            for node in edit.gltf["nodes"]:
-                if "mesh" in node:
-                    node["name"] = "gone_" + node["name"]
-            edit.dirty = True
-        self.assertIsNone(MeshConvert.apply_glb_shadows(path, search_dirs=[self.maps]))
-        self.assertNotIn(ptk.SceneRecords.SHADOWS.key, self._read(path)["extras"])
-
-    def test_a_leaf_name_binds_every_namespaced_plane_but_never_an_ambiguous_source(
-        self,
-    ):
+    def test_a_plane_nothing_tells_apart_ships_no_bytes_and_is_said(self):
+        """Planes resolve by the rule the lightmaps record does (the exact
+        name, else the one after the last ':', a tie never guessed): a bare
+        name two namespaced planes share is ambiguous -- warned, its files
+        unshipped, never put on the wrong plane. Added: 2026-11-07"""
         nodes = [
             {"name": "A:Box_shadow", "mesh": 0},
             {"name": "B:Box_shadow", "mesh": 0},
-            {"name": "A:shadow_source", "translation": [1, 2, 0]},
-            {"name": "B:shadow_source", "translation": [1, 2, 0]},
+            {"name": "shadow_source"},
             {"name": "Box_contact_loc"},
-            _data_export_node(_payload([_record("Box_shadow")])),
+            _data_export_node(_payload([_record("Box_shadow", horizon=self.HORIZON)])),
         ]
         path = self._glb(None, nodes=nodes, materials=[_plane_material("m")])
         with self.assertLogs(MESH_CONVERT_LOGGER, level="WARNING") as log:
-            manifest = MeshConvert.apply_glb_shadows(path)
-        self.assertEqual([p["node"] for p in manifest["planes"]], [0, 1])
-        self.assertTrue(all(p["source_node"] is None for p in manifest["planes"]))
-        self.assertTrue(all(p["contact_node"] == 4 for p in manifest["planes"]))
+            MeshConvert.apply_glb_shadows(path, search_dirs=[self.maps])
         self.assertTrue(any("ambiguous" in line for line in log.output), log.output)
+        self.assertEqual(_media_views(self._read(path)), {})
 
-    def test_a_projected_plane_without_any_colour_map_is_skipped(self):
-        materials = [
-            {"name": "bare", "pbrMetallicRoughness": {"baseColorFactor": [0, 0, 0, 1]}}
-        ]
+    def test_a_map_the_fbx_embedded_for_a_material_rides_from_the_files_image(self):
+        """The real Maya shape: the FBX embedded the atlas for the plane's
+        material, so the GLB holds it as an image the converter named by its
+        source file; with no loose copy anywhere, those bytes are the atlas
+        the record names. Added: 2026-11-07"""
+        atlas = _silhouette_png(12)
         path = self._glb(
-            None,
-            nodes=[
-                {"name": "Box_shadow", "mesh": 0},
-                _data_export_node(
-                    _payload([_record("Box_shadow", texture="nowhere.png")])
-                ),
-            ],
-            materials=materials,
+            self._v3(),
+            images=[{"name": "shadow_atlas_projected", "uri": _data_uri(atlas)}],
         )
-        with self.assertLogs(MESH_CONVERT_LOGGER, level="WARNING"):
-            self.assertIsNone(MeshConvert.apply_glb_shadows(path))
-
-    def test_a_loose_silhouette_is_bound_when_the_material_lost_it(self):
-        with open(os.path.join(self.maps, "Box_shadow.png"), "wb") as fh:
-            fh.write(_silhouette_png(4))
-        materials = [
-            {"name": "bare", "pbrMetallicRoughness": {"baseColorFactor": [0, 0, 0, 1]}}
-        ]
-        path = self._glb(
-            None,
-            nodes=[
-                {"name": "Box_shadow", "mesh": 0},
-                _data_export_node(_payload([_record("Box_shadow")])),
-            ],
-            materials=materials,
-        )
-        manifest = MeshConvert.apply_glb_shadows(path, search_dirs=[self.maps])
-        (plane,) = manifest["planes"]
-        gltf = self._read(path)
-        self.assertEqual(gltf["textures"][plane["texture_index"]]["name"], "Box_shadow")
+        MeshConvert.apply_glb_shadows(path, search_dirs=[])
+        views = _media_views(self._read(path))
         self.assertEqual(
-            gltf["samplers"][gltf["textures"][plane["texture_index"]]["sampler"]],
-            {"wrapS": 33071, "wrapT": 33071},
-            "a colour map takes the atlas precedent's clamp sampler, not the data one",
+            self._payload_of(path, views["shadow_atlas_projected.png"][0]), atlas
         )
 
-    def test_an_atlas_in_the_file_becomes_the_planes_colour_map(self):
-        """The real Maya shape: the materials lost their textures through the
-        FBX, both the atlas and each plane's own PNG are embedded, and the
-        record names an atlas. The plane must sample the ATLAS -- its quad's
-        UVs address a tile of that image, so pointing the block at the plane's
-        own full-frame PNG reads the wrong part of it and leaves the viewer
-        unable to batch (measured on shadow_e2e_proj.glb: three planes, three
-        different texture indices, no InstancedMesh)."""
-        with open(os.path.join(self.maps, "Box_shadow.png"), "wb") as fh:
-            fh.write(_silhouette_png(4))
-        own, atlas_png = _silhouette_png(4), _silhouette_png(8)
+    def test_the_files_own_copy_rides_before_a_loose_one(self):
+        """The copy the FBX itself carried wins over a loose one, as it always
+        has for the atlas: an image the GLB holds under the file's name rides
+        even where a folder holds other bytes of that name (a stale export
+        beside the scene). Added: 2026-11-08 (HEAD's order, restored)."""
+        atlas = _silhouette_png(12)
+        self.assertNotEqual(atlas, self.atlas_png, "the copies must differ")
+        path = self._glb(
+            self._v3(),
+            images=[{"name": "shadow_atlas_projected", "uri": _data_uri(atlas)}],
+        )
+        MeshConvert.apply_glb_shadows(path, search_dirs=[self.maps])
+        views = _media_views(self._read(path))
+        self.assertEqual(
+            self._payload_of(path, views["shadow_atlas_projected.png"][0]), atlas
+        )
+        # A file the GLB holds no image of rides from the folder.
+        self.assertEqual(
+            self._payload_of(path, views["Box_horizon.png"][0]), self.horizon_png
+        )
+
+    def test_a_carried_record_its_shape_refuses_is_refused_and_said(self):
+        """The record in the root extras is held to the current shape as the
+        carrier's is: a plane missing a field the record requires (a file an
+        earlier v3 build wrote) is refused and said -- its fix a re-export --
+        never carried on or given media. Added: 2026-11-08"""
+        payload = self._v3()
+        del payload["planes"][0]["source_ramp"]
+        path = self._glb(None, nodes=[{"name": "Box_shadow", "mesh": 0}])
+        with MeshConvert.open_glb(path) as edit:
+            edit.gltf.setdefault("extras", {})[ptk.SceneRecords.SHADOWS.key] = payload
+            edit.dirty = True
+        with self.assertLogs(MESH_CONVERT_LOGGER, level="WARNING") as log:
+            self.assertIsNone(MeshConvert.apply_glb_shadows(path, search_dirs=[self.maps]))
+        self.assertTrue(
+            any("source_ramp" in line and "re-export" in line for line in log.output),
+            log.output,
+        )
+        self.assertEqual(_media_views(self._read(path)), {})
+
+    def test_the_files_survive_the_prune_and_the_optimiser_as_found(self):
+        """No texture index reaches a file the record names, so the prune
+        cannot drop or renumber it, and the optimiser -- resizing and
+        re-encoding everything else -- leaves the data map and the
+        silhouettes byte for byte. Added: 2026-11-07"""
+        big = _png_bytes(np.full((64, 64, 4), 200, np.uint8))
         path = self.temp.path(extension=".glb")
         _write_glb(
             path,
             nodes=[
                 {"name": "Box_shadow", "mesh": 0},
-                _data_export_node(
-                    _payload(
-                        [
-                            _record(
-                                "Box_shadow",
-                                atlas={
-                                    "texture": "shadow_atlas_projected.png",
-                                    "rect": self.ATLAS_RECT,
-                                },
-                            )
-                        ]
-                    )
-                ),
+                {"name": "Box_horizon_plane", "mesh": 1},
+                {"name": "other", "mesh": 2},
+                _data_export_node(self._v3()),
             ],
-            materials=[_bare_material("Box_shadow_mat")],
+            materials=[
+                _plane_material("shadow", texture=0),
+                _plane_material("horizon", texture=0),
+                _plane_material("other", texture=1),
+            ],
             images=[
-                {"name": "Box_shadow.png", "uri": _data_uri(own)},
-                {"name": "shadow_atlas_projected.png", "uri": _data_uri(atlas_png)},
+                {"name": "orphan", "uri": _data_uri(big)},
+                {"name": "plain", "uri": _data_uri(big)},
             ],
-            textures=[{"source": 0, "sampler": 0}, {"source": 1, "sampler": 0}],
+            textures=[{"source": 1, "sampler": 0}, {"source": 1, "sampler": 0}],
         )
-        manifest = MeshConvert.apply_glb_shadows(path, search_dirs=[self.maps])
+        MeshConvert.apply_glb_shadows(path, search_dirs=[self.maps])
+        with MeshConvert.open_glb(path) as edit:
+            MeshConvert.prune_glb_unreferenced_textures(edit)
+        for image_format in ("PNG", "WEBP"):
+            with self.subTest(image_format=image_format):
+                MeshConvert.optimize_glb_textures(
+                    path, max_size=16, image_format=image_format, workers=1
+                )
+                gltf = self._read(path)
+                views = _media_views(gltf)
+                for name, data in (
+                    ("Box_horizon.png", self.horizon_png),
+                    ("shadow_atlas_projected.png", self.atlas_png),
+                    ("Box_shadow.png", self.own_png),
+                ):
+                    index, extras = views[name]
+                    self.assertEqual(extras, {"mimeType": "image/png"}, name)
+                    self.assertEqual(self._payload_of(path, index), data, name)
+                with MeshConvert.open_glb(path) as edit:
+                    sizes = [
+                        Image.open(io.BytesIO(edit._image_payload(i))).size
+                        for i in edit.images
+                    ]
+                self.assertEqual(sizes, [(16, 16)], "the control was not resized")
 
-        (plane,) = manifest["planes"]
-        gltf = self._read(path)
-        atlas_image = gltf["textures"][plane["texture_index"]]["source"]
-        self.assertEqual(
-            gltf["images"][atlas_image]["name"],
-            "shadow_atlas_projected.png",
-            "the plane must sample the atlas, not its own tile PNG",
-        )
-        # Resolved from the file: no second copy of the atlas was embedded.
-        self.assertEqual(len(gltf["images"]), 2)
-
-    def test_an_unresolvable_atlas_leaves_the_material_map_as_the_tile_source(self):
-        """The other production shape: the DCC's material DOES point at the
-        atlas (the base-colour sidecar repaired it), and no loose atlas file is
-        around. The material's own map is then the atlas the rect describes."""
-        path = self._glb(
-            None,
-            nodes=[
-                {"name": "Box_shadow", "mesh": 0},
-                _data_export_node(
-                    _payload(
-                        [
-                            _record(
-                                "Box_shadow",
-                                atlas={
-                                    "texture": "nowhere_atlas.png",
-                                    "rect": self.ATLAS_RECT,
-                                },
-                            )
-                        ]
-                    )
-                ),
-            ],
-            materials=[_plane_material("Box_shadow_MAT")],
-        )
-        with self.assertLogs(MESH_CONVERT_LOGGER, level="WARNING"):
-            manifest = MeshConvert.apply_glb_shadows(path, search_dirs=[])
-        (plane,) = manifest["planes"]
-        self.assertEqual(plane["texture_index"], 0)
-
-    def test_the_handoff_names_the_manifest(self):
-        """A standalone reader is told the block exists, in the artifact: the
-        handoff of a file carrying it names it -- its ``assembly`` row,
-        addressed at the block under the part the FBX's record gives it too,
-        saying what it means."""
-        path = self._glb(self._v2())
+    def test_the_handoff_names_the_record(self):
+        """A standalone reader is told the record is there, in the artifact:
+        the handoff of a file carrying it names it -- its ``assembly`` row,
+        addressed at the record under the part the FBX's record gives it too,
+        stating what this file's planes use."""
+        path = self._glb(self._v3())
         self.assertIsNotNone(
             MeshConvert.apply_glb_shadows(path, search_dirs=[self.maps])
         )
@@ -905,60 +903,54 @@ class TestApplyGlbShadows(unittest.TestCase):
         record = ptk.SceneRecords.SHADOWS
         (row,) = [r for r in handoff["assembly"] if r["data"] == [block]]
         self.assertEqual(row["part"], record.key)
-        # what this file's planes use, and nothing they do not
         with MeshConvert.open_glb(path) as edit:
             payload = edit.gltf["extras"][record.key]
-        self.assertEqual(row["spec"], record.glb.assembly_for(payload))
+        self.assertEqual(row["spec"], record.assembly_for(payload))
 
-    def test_the_optimiser_keeps_every_bound_shadow_map_as_found(self):
-        """Neither resized nor re-encoded, in a mode that resizes everything else."""
-        big = _png_bytes(np.full((64, 64, 4), 200, np.uint8))
-        with open(os.path.join(self.maps, "Box_horizon.png"), "wb") as fh:
-            fh.write(self.horizon_png)
-        path = self.temp.path(extension=".glb")
-        _write_glb(
-            path,
-            nodes=[
-                {"name": "Box_shadow", "mesh": 0},
-                {"name": "Box_horizon_plane", "mesh": 1},
-                {"name": "other", "mesh": 2},
-                _data_export_node(self._v2()),
-            ],
-            materials=[
-                _plane_material("shadow", texture=0),
-                _plane_material("horizon"),
-                _plane_material("other", texture=1),
-            ],
-            images=[
-                {"name": "shadow_atlas", "uri": _data_uri(big)},
-                {"name": "plain", "uri": _data_uri(big)},
-            ],
-            textures=[{"source": 0, "sampler": 0}, {"source": 1, "sampler": 0}],
-        )
+    def test_verify_glb_holds_the_files_the_record_names(self):
+        """The media gate: a file several views hold is held by none and a
+        view stating another media type (or a scale) is unreadable -- both
+        fail the file; a map a plane here reads that rides nothing is a
+        note. Added: 2026-11-07"""
+        path = self._glb(self._v3())
         MeshConvert.apply_glb_shadows(path, search_dirs=[self.maps])
-        MeshConvert.optimize_glb_textures(
-            path, max_size=16, image_format="PNG", workers=1
-        )
         with MeshConvert.open_glb(path) as edit:
-            payloads = {img["name"]: edit._image_payload(img) for img in edit.images}
-        self.assertEqual(payloads["shadow_atlas"], big, "the atlas was touched")
-        self.assertEqual(
-            payloads["Box_horizon.png"], self.horizon_png, "the data map was touched"
-        )
-        self.assertNotEqual(
-            payloads["plain"], big, "the control image should have been resized"
-        )
-        self.assertEqual(Image.open(io.BytesIO(payloads["plain"])).size, (16, 16))
+            MeshConvert.embed_glb_handoff(
+                edit, ptk.HandoffRecord.block("glb", [], {"application": "maya"})
+            )
+        where = f"extras.{ptk.SceneRecords.SHADOWS.key}"
+        clean = MeshConvert.verify_glb(path)
+        self.assertEqual([p for p in clean["problems"] if where in p], [])
+        self.assertEqual([n for n in clean["notes"] if where in n], [])
 
-    def test_fbx_to_glb_runs_the_pass_and_searches_sourceimages_beside_the_fbx(self):
-        """The registration, end to end, with the converter replaced by a copy."""
+        with MeshConvert.open_glb(path) as edit:
+            views = edit.gltf["bufferViews"]
+            index = _media_views(edit.gltf)["Box_horizon.png"][0]
+            views[index]["extras"] = {"mimeType": "image/png", "scale": 2.0}
+            atlas = _media_views(edit.gltf)["shadow_atlas_projected.png"][0]
+            views.append(dict(views[atlas], name="SHADOW_ATLAS_PROJECTED.png"))
+            own = _media_views(edit.gltf)["Box_shadow.png"][0]
+            views[own]["name"] = "renamed.png"
+            edit.dirty = True
+        report = MeshConvert.verify_glb(path)
+        problems = "\n".join(report["problems"])
+        self.assertIn("the view of Box_horizon.png states 'image/png' with a scale", problems)
+        self.assertIn("2 bufferViews hold shadow_atlas_projected.png", problems)
+        self.assertTrue(
+            any("Box_shadow.png" in note for note in report["notes"]), report["notes"]
+        )
+
+    def test_fbx_to_glb_carries_the_record_and_rides_the_maps_beside_the_fbx(self):
+        """The registration, end to end, with the converter replaced by a
+        copy: the record in the root extras, the horizon map found in the
+        Maya project's ``sourceimages`` beside the FBX."""
         project = self.temp.dir_path()
         os.makedirs(os.path.join(project, "sourceimages"))
         shutil.copy(
             os.path.join(self.maps, "Box_horizon.png"),
             os.path.join(project, "sourceimages", "Box_horizon.png"),
         )
-        fixture = self._glb(self._v2())
+        fixture = self._glb(self._v3())
         src = os.path.join(project, "scene.fbx")
         with open(src, "wb") as fh:
             fh.write(b"Kaydara FBX Binary  \x00")
@@ -974,10 +966,59 @@ class TestApplyGlbShadows(unittest.TestCase):
         ):
             out = MeshConvert.fbx_to_glb(src, timeout=60, lightmaps=False)
         gltf = self._read(out)
-        manifest = gltf["extras"][ptk.SceneRecords.SHADOWS.key]
+        self.assertEqual(gltf["extras"][ptk.SceneRecords.SHADOWS.key], self._v3())
+        self.assertIn("Box_horizon.png", _media_views(gltf))
+
+    def test_a_glb_built_from_a_finished_fbx_rides_the_maps_it_embeds(self):
+        """A delivered FBX ships nothing beside it (every map the record names
+        embedded, ``FbxMedia.DEPENDENCY_FIELDS``): a GLB built from it reads
+        each file out of the FBX itself, with no folder searched.
+        Added: 2026-11-07"""
+        from test_fbx_media import build_carrier_fbx
+
+        payload = self._v3()
+        project = self.temp.dir_path()
+        src = build_carrier_fbx(
+            os.path.join(project, "delivered.fbx"),
+            {ptk.SceneRecords.SHADOWS.key: payload},
+        )
+        embed_dir = os.path.join(project, "to_embed")
+        os.makedirs(embed_dir)
+        for name in ("Box_horizon.png", "shadow_atlas_projected.png"):
+            shutil.copy(os.path.join(self.maps, name), os.path.join(embed_dir, name))
+        ptk.FbxMedia.embed(
+            src,
+            files=[
+                os.path.join(embed_dir, n)
+                for n in ("Box_horizon.png", "shadow_atlas_projected.png")
+            ],
+        )
+        shutil.rmtree(embed_dir)
+        # Other bytes of the same names beside the FBX and in its project:
+        # the FBX's own copies still ride (they are what it delivers).
+        stale = _silhouette_png(4)
+        os.makedirs(os.path.join(project, "sourceimages"))
+        for folder in (project, os.path.join(project, "sourceimages")):
+            for name in ("Box_horizon.png", "shadow_atlas_projected.png"):
+                with open(os.path.join(folder, name), "wb") as fh:
+                    fh.write(stale)
+        fixture = self._glb(payload)
+
+        def fake_run(cmd, **kwargs):
+            base = cmd[cmd.index("-o") + 1]
+            shutil.copy(fixture, base + ".glb")
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+        with (
+            patch.object(MeshConvert, "resolve_binary", return_value="FBX2glTF"),
+            patch(f"{FBX2GLTF_MODULE}.subprocess.run", side_effect=fake_run),
+        ):
+            out = MeshConvert.fbx_to_glb(src, timeout=60, lightmaps=False)
+        gltf = self._read(out)
+        views = _media_views(gltf)
+        self.assertEqual(self._payload_of(out, views["Box_horizon.png"][0]), self.horizon_png)
         self.assertEqual(
-            {gltf["nodes"][p["node"]]["name"] for p in manifest["planes"]},
-            {"Box_shadow", "Box_horizon_plane"},
+            self._payload_of(out, views["shadow_atlas_projected.png"][0]), self.atlas_png
         )
 
 
@@ -1108,7 +1149,10 @@ export default function probe(viewer) {
       const horizon = u.uHorizonMap ? u.uHorizonMap.value : null;
       return {
         name: plane.name,
-        node: plane.record.node,
+        node: plane.nodeIndex,
+        mode: plane.mode,
+        opacity: plane.opacity,
+        sourceBound: !!plane.source,
         follow: plane.follow,
         position: [p.x, p.y, p.z],
         yaw: new THREE.Euler().setFromQuaternion(q, 'YXZ').y,
@@ -1131,6 +1175,9 @@ export default function probe(viewer) {
         mapBound: !!(u.uMap && u.uMap.value),
         mapImage: u.uMap && u.uMap.value && u.uMap.value.image
           ? [u.uMap.value.image.width, u.uMap.value.image.height] : null,
+        mapColorSpace: u.uMap && u.uMap.value ? u.uMap.value.colorSpace : null,
+        mapWrap: u.uMap && u.uMap.value ? [u.uMap.value.wrapS, u.uMap.value.wrapT] : null,
+        mapIsOriginal: !!(u.uMap && u.uMap.value && u.uMap.value === plane.original.map),
         horizonBound: !!horizon,
         horizonColorSpace: horizon ? horizon.colorSpace : null,
         horizonMipmaps: horizon ? horizon.generateMipmaps : null,
@@ -1177,7 +1224,7 @@ _HORIZON_READBACK_JS = """
       {
         const renderer = viewer.renderer;
         const scene = viewer.scene;
-        const plane = session.planes.find((p) => p.record.type === 'horizon');
+        const plane = session.planes.find((p) => p.mode === 1);
         const target = new THREE.WebGLRenderTarget(4, 4);
         const camera = new THREE.OrthographicCamera(-0.002, 0.002, 0.002, -0.002, 0.001, 50);
         camera.layers.set(7);
@@ -1281,14 +1328,59 @@ class TestShadowRigLive(unittest.TestCase):
         self.assertIsNotNone(manifest, "the fixture itself must bind")
         return path
 
-    def _following_glb(self, unit_scale=1.0, source_node=None):
+    def _maps(self, files):
+        """A folder holding *files* ``{name: bytes}``, for a fixture's
+        ``search_dirs``: the maps the record names, as an export writes them."""
+        folder = self.temp.dir_path()
+        for name, data in files.items():
+            with open(os.path.join(folder, name), "wb") as fh:
+                fh.write(data)
+        return folder
+
+    def _fade(
+        self,
+        source=None,
+        contact=None,
+        *,
+        direction=None,
+        radius=0.6,
+        height=1.2,
+        ground=0.0,
+        intensity=1.0,
+        falloff_power=1.2,
+        fade_height=2.4,
+        unit_scale=1.0,
+        source_ramp=1.0,
+    ):
+        """``ShadowProjection.fade`` of a plane whose source and contact
+        stand at *source* and *contact* (metres): the reference the page's
+        fade is held to. The lengths are metres; *unit_scale* is the
+        record's and *source_ramp* the plane's (record units)."""
+        return ptk.ShadowProjection.fade(
+            contact or self.CONTACT,
+            None if direction is not None else (source or self.SOURCE),
+            ground,
+            radius,
+            height,
+            direction=direction,
+            max_stretch=6.0,
+            intensity=intensity,
+            falloff_power=falloff_power,
+            fade_height=fade_height,
+            # The plane's source_ramp, in metres.
+            source_ramp=source_ramp * unit_scale,
+        )
+
+    def _following_glb(self, unit_scale=1.0, source_node=None, source_ramp=1.0):
         scale = 1.0 / unit_scale
         record = _record(
             "Box_shadow",
             ground=0.0,
             radius=0.6 * scale,
             height=1.2 * scale,
+            fade_height=2.4 * scale,
             source_size=0.0,
+            source_ramp=source_ramp,
         )
         if source_node and "rotation" in source_node:
             record["source_type"] = "directional"
@@ -1304,7 +1396,10 @@ class TestShadowRigLive(unittest.TestCase):
         )
 
     # -------------------------------------------------------------- driver
-    def _load(self, glb, action="", points=None):
+    def _load(self, glb, action="", points=None, around=None):
+        """The page's snapshot of *glb* (PROBE_JS). *around* is
+        ``(before, after)``: two scripts' sources registered on either side of
+        the shim -- each sees the shim's ``load`` from its side."""
         from playwright.sync_api import sync_playwright
 
         probe = self.temp.path(extension=".js")
@@ -1325,7 +1420,11 @@ class TestShadowRigLive(unittest.TestCase):
         # (A push naming the asset and the scripts together is held for them
         # too: test_preview_viewer_live pins that.) Auto-activation is pinned
         # by the server tests.
+        if around:
+            server.add_script("before_shim", self._script(around[0]))
         server.add_script("shadow_rig")
+        if around:
+            server.add_script("after_shim", self._script(around[1]))
         server.add_script("probe", probe)
         console = []
         try:
@@ -1353,14 +1452,23 @@ class TestShadowRigLive(unittest.TestCase):
                     "() => window.__probe.ready === true", timeout=180_000
                 )
                 found = page.evaluate("() => window.__probe")
+                page_timing = page.evaluate("() => window.__timing || null")
                 browser.close()
         finally:
             server.stop()
         found["console"] = console
         found["scripts"] = scripts
+        found["timing"] = page_timing
         self.assertEqual(found["errors"], [], found)
         self.assertTrue(found.get("hasSession"), f"the shim built no session: {found}")
         return found
+
+    def _script(self, source):
+        """A viewer script holding *source*, on disk."""
+        path = self.temp.path(extension=".js")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(source)
+        return path
 
     # ----------------------------------------------------------- expected
     def _expected(
@@ -1435,9 +1543,13 @@ class TestShadowRigLive(unittest.TestCase):
             fh.write(png)
         record = _record(
             "Box_horizon_plane",
-            type="horizon",
+            draw=False,
             follow_source=False,
             max_stretch=POLE_MAX_STRETCH,
+            # No falloff: the plane's fade is exactly 1 (its source a unit and
+            # more over its grounded contact), so the pins read the march
+            # alone -- the fade has its own (test_the_fade_*).
+            falloff_power=0.0,
             source_type="directional" if "rotation" in source_node else "point",
             source_size=source_size,
             source_angle=source_angle,
@@ -1520,19 +1632,24 @@ class TestShadowRigLive(unittest.TestCase):
             found["before"][0], self._expected(direction=direction), places=4
         )
 
-    def test_atlas_planes_batch_into_one_instanced_mesh_and_a_faded_one_keeps_its_fade(
-        self,
-    ):
+    def test_atlas_planes_batch_into_one_instanced_mesh_each_at_its_own_fade(self):
+        """Planes sharing one atlas -- riding the file as media -- are ONE
+        InstancedMesh, each instance on its own tile and at its own fade: the
+        model's, every frame, its intensity the ceiling. A plane whose
+        material a v2 file's fade ramp still animates batches too: a v3
+        reader reads no fade off the file (the DCC bakes none).
+        Added: 2026-11-07"""
         rects = {
             "A_shadow": [0.5, 0.5, 0.0, 0.0],
             "B_shadow": [0.5, 0.5, 0.5, 0.0],
             "C_shadow": [0.5, 0.5, 0.5, 0.5],
         }
+        intensities = {"A_shadow": 0.9, "B_shadow": 0.6, "C_shadow": 0.3}
         records = [
             _record(
                 name,
                 atlas={"texture": "shadow_atlas_projected.png", "rect": rect},
-                intensity=0.9,
+                intensity=intensities[name],
             )
             for name, rect in rects.items()
         ]
@@ -1553,86 +1670,408 @@ class TestShadowRigLive(unittest.TestCase):
             ],
             animations=[_pointer_animation(2)],
             # Packed as the DCC packs them: each quad's UVs remapped into the
-            # tile its record names, which the block then states nowhere.
+            # tile its record names.
             uv_rects=[ImgUtils.flip_rect_v(rect) for rect in rects.values()],
+            search_dirs=[self._maps({"shadow_atlas_projected.png": _silhouette_png(16)})],
         )
+        moved = [-1.0, 1.5, 1.2]
         found = self._load(
             glb,
-            action="viewer.mixer.timeScale = 1; viewer.mixer.setTime(1.0); viewer.mixer.timeScale = 0;",
+            action=(
+                "viewer.mixer.timeScale = 1; viewer.mixer.setTime(1.0); viewer.mixer.timeScale = 0;"
+                f"session.planes[0].source.position.set({moved[0]}, {moved[1]}, {moved[2]});"
+            ),
         )
         by_name = {p["name"]: p for p in found["before"]}
         self.assertEqual(found["instancedMeshes"], 1)
-        for name in ("A_shadow", "B_shadow"):
-            self.assertTrue(by_name[name]["instanced"], by_name[name])
-            self.assertEqual(by_name[name]["batchCount"], 2)
-            self.assertTrue(by_name[name]["hidden"])
-        faded = by_name["C_shadow"]
-        self.assertFalse(faded["instanced"])
-        self.assertTrue(faded["isShader"])
-        # Each plane on its own tile: its quad's UV bounds, read off the quad.
+        after = {p["name"]: p for p in found["after"]}
         for name, plane in by_name.items():
+            self.assertTrue(plane["instanced"], plane)
+            self.assertEqual(plane["batchCount"], 3)
+            self.assertTrue(plane["hidden"])
+            self.assertEqual(plane["mode"], 0)
+            # Each plane on its own tile: its quad's UV bounds.
             for got, want in zip(plane["uRect"], ImgUtils.flip_rect_v(rects[name])):
                 self.assertAlmostEqual(got, want, places=6, msg=name)
             self._assert_placed(plane, self._expected(), places=4)
-        # The authored intensity lands ONCE. The DCC multiplies shadowIntensity
-        # into the opacity it bakes (Maya's expression, Blender's driver), so
-        # the faded plane's ramp already carries it and the shader must not
-        # apply it again -- it did, which squared it (0.81 for 0.9). The
-        # static planes' file carries no opacity at all (no track for a
-        # constant ramp; the material alpha arrives at 1), so the record's
-        # number is the one statement of it there.
-        for name in ("A_shadow", "B_shadow"):
-            self.assertAlmostEqual(by_name[name]["uIntensity"], 0.9, places=6)
-        self.assertAlmostEqual(faded["uIntensity"], 1.0, places=6, msg=faded)
-        # The fade: the page drives the ORIGINAL material (the clip auto-plays,
-        # so the first snapshot already sits somewhere down the ramp); the shim
-        # follows it, and the seek to 1 s lands it on 0.5 exactly. The batched
-        # planes, which no ramp targets, stay at their static alpha.
-        self.assertAlmostEqual(faded["uOpacity"], faded["originalOpacity"], places=6)
-        self.assertLess(faded["uOpacity"], 1.0, faded)
-        after = {p["name"]: p for p in found["after"]}
-        self.assertAlmostEqual(after["C_shadow"]["originalOpacity"], 0.5, places=3)
-        # What the shader multiplies the texel by IS the ramp's value.
-        self.assertAlmostEqual(
-            after["C_shadow"]["uOpacity"] * after["C_shadow"]["uIntensity"],
-            after["C_shadow"]["originalOpacity"],
-            places=6,
+            # The fade carries the intensity, once.
+            self.assertEqual(plane["uIntensity"], 1.0, plane)
+            want = self._fade(intensity=intensities[name])
+            self.assertLess(want, intensities[name], "the fixture must stretch")
+            self.assertAlmostEqual(plane["uOpacity"], want, places=6, msg=name)
+            moved_fade = self._fade(source=moved, intensity=intensities[name])
+            self.assertAlmostEqual(after[name]["uOpacity"], moved_fade, places=6, msg=name)
+        self.assertNotAlmostEqual(
+            after["A_shadow"]["uOpacity"], by_name["A_shadow"]["uOpacity"], places=3
         )
-        for name in ("A_shadow", "B_shadow"):
-            self.assertEqual(after[name]["uOpacity"], 1.0, after[name])
-            self.assertAlmostEqual(after[name]["uIntensity"], 0.9, places=6)
+        # The atlas the record names is on the batch material, off its view.
+        self.assertTrue(by_name["A_shadow"]["mapBound"])
+        self.assertEqual(by_name["A_shadow"]["mapImage"], [16, 16])
 
-    def test_a_static_alpha_the_file_states_is_not_dimmed_again(self):
-        """Without a fade track the record's intensity stands in for the
-        opacity ONLY where the file states none (material alpha 1, which is
-        what a real export delivers today). A material whose static alpha is
-        below 1 already states the plane's opacity -- which the DCC computes
-        as intensity times its fades, so never above the intensity -- and the
-        intensity must not dim it a second time."""
+    def test_the_fade_is_the_models_and_nothing_of_the_material_is_read(self):
+        """A plane's alpha is its shadow times the fade the record states,
+        evaluated off the placement every frame -- whether or not it follows
+        its source -- and never dimmed by its material's alpha (a v2 rule: the
+        DCC's baked opacity once rode there). A plane whose source the file
+        does not carry draws at its intensity. Added: 2026-11-07"""
         records = [
-            _record(name, intensity=0.9) for name in ("Plain_shadow", "Stated_shadow")
+            _record("Plain_shadow", intensity=0.9),
+            _record("Stated_shadow", intensity=0.9, follow_source=False),
+            _record("Lost_shadow", intensity=0.7, source="nowhere"),
         ]
         glb = self._glb(
             None,
             nodes=[
                 {"name": "Plain_shadow", "mesh": 0},
                 {"name": "Stated_shadow", "mesh": 1},
+                {"name": "Lost_shadow", "mesh": 2},
                 {"name": "shadow_source", "translation": self.SOURCE},
                 {"name": "Box_contact_loc", "translation": self.CONTACT},
                 _data_export_node(_payload(records)),
             ],
             materials=[
-                _plane_material("Plain_MAT"),
-                _plane_material("Stated_MAT", alpha=0.45),
+                _plane_material("Plain_MAT", texture=0),
+                _plane_material("Stated_MAT", texture=1, alpha=0.45),
+                _plane_material("Lost_MAT", texture=2),
+            ],
+            # One map each (the material's own): no batch, each plane its
+            # own uniforms.
+            images=[
+                {"name": f"map{i}", "uri": _data_uri(_silhouette_png(4 + 2 * i))}
+                for i in range(3)
+            ],
+            textures=[{"source": i, "sampler": 0} for i in range(3)],
+        )
+        found = self._load(glb)
+        by_name = {p["name"]: p for p in found["before"]}
+        for name in ("Plain_shadow", "Stated_shadow"):
+            plane = by_name[name]
+            self.assertFalse(plane["instanced"], plane)
+            self.assertAlmostEqual(plane["uOpacity"], self._fade(intensity=0.9), places=6)
+            self.assertEqual(plane["uIntensity"], 1.0)
+        self.assertTrue(by_name["Plain_shadow"]["follow"])
+        self.assertFalse(by_name["Stated_shadow"]["follow"])
+        lost = by_name["Lost_shadow"]
+        self.assertFalse(lost["sourceBound"])
+        self.assertAlmostEqual(lost["uOpacity"], 0.7, places=6)
+        # Said once, naming what it lost: a selection export that left the
+        # source behind is seen, not read as a flat shadow.
+        said = [c for c in found["console"] if "does not resolve" in c]
+        self.assertEqual(len(said), 1, found["console"])
+        self.assertIn("Lost_shadow", said[0])
+        self.assertIn("source nowhere", said[0])
+        self.assertIn("draws at its intensity", said[0])
+
+    def test_the_fade_ramps_over_the_planes_source_ramp(self):
+        """The source-height term ramps in over the plane's ``source_ramp``
+        (record units, times ``unit_scale``): the ramp its producer previews
+        -- one centimetre of a Maya cm rig, whether its record is in cm
+        (1 x 0.01) or exported in metres (0.01 x 1), one metre of Blender's --
+        so the same source half a centimetre over the contact fades a cm
+        rig's plane to half and a metre rig's to almost nothing.
+        Added: 2026-11-07. REGRESSION (2026-11-08): the page ramped over one
+        unit of the record, which a cm rig exported in metres read as a metre.
+        """
+        low = [self.SOURCE[0], self.CONTACT[1] + 0.005, self.SOURCE[2]]
+        for unit_scale, source_ramp in ((0.01, 1.0), (1.0, 0.01), (1.0, 1.0)):
+            with self.subTest(unit_scale=unit_scale, source_ramp=source_ramp):
+                found = self._load(
+                    self._following_glb(
+                        unit_scale=unit_scale,
+                        source_node={"name": "shadow_source", "translation": low},
+                        source_ramp=source_ramp,
+                    )
+                )
+                (plane,) = found["before"]
+                want = self._fade(
+                    source=low,
+                    fade_height=2.4,
+                    unit_scale=unit_scale,
+                    source_ramp=source_ramp,
+                )
+                self.assertAlmostEqual(plane["uOpacity"], want, places=6)
+        self.assertGreater(
+            self._fade(source=low, source_ramp=0.01),
+            50 * self._fade(source=low, source_ramp=1.0),
+        )
+
+    def test_a_rig_draws_its_silhouette_where_it_says_and_marches_otherwise(self):
+        """The mode, per plane: the silhouette where the rig draws it and the
+        file holds it; else the horizon march; else -- a horizon map the file
+        lacks -- the silhouette, the fallback; a drawn silhouette the file
+        lacks marches the horizon, as a reader without the extension does.
+        Added: 2026-11-07"""
+        png, hmap = _pole_map((0.5, 0.0), POLE_RADIUS, POLE_HEIGHT)
+        layout = _horizon_block(hmap)
+        records = [
+            _record("Drawn_shadow", draw=True, horizon=layout),
+            _record("Marched_shadow", draw=False, horizon=layout),
+            _record(
+                "Fallback_shadow",
+                draw=False,
+                horizon=dict(layout, texture="Missing_horizon.png"),
+            ),
+            _record("Unshipped_shadow", draw=True, horizon=layout),
+        ]
+        names = [r["name"] for r in records]
+        maps = self._maps(
+            {
+                "Box_horizon.png": png,
+                "Drawn_shadow.png": _silhouette_png(4),
+                "Marched_shadow.png": _silhouette_png(6),
+                "Fallback_shadow.png": _silhouette_png(8),
+            }
+        )
+        glb = self._glb(
+            None,
+            nodes=[{"name": n, "mesh": i, "scale": [4.0, 1.0, 4.0]} for i, n in enumerate(names)]
+            + [
+                {"name": "shadow_source", "translation": self.SOURCE},
+                {"name": "Box_contact_loc"},
+                _data_export_node(_payload(records)),
+            ],
+            materials=[_bare_material(f"{n}_MAT") for n in names],
+            search_dirs=[maps],
+        )
+        found = self._load(glb)
+        by_name = {p["name"]: p for p in found["before"]}
+        self.assertEqual(
+            {n: by_name[n]["mode"] for n in names},
+            {"Drawn_shadow": 0, "Marched_shadow": 1, "Fallback_shadow": 0, "Unshipped_shadow": 1},
+        )
+        self.assertEqual(by_name["Drawn_shadow"]["mapImage"], [4, 4])
+        self.assertEqual(by_name["Fallback_shadow"]["mapImage"], [8, 8])
+        for name in ("Marched_shadow", "Unshipped_shadow"):
+            self.assertTrue(by_name[name]["horizonBound"], name)
+            self.assertFalse(by_name[name]["horizonMipmaps"], name)
+            self.assertTrue(by_name[name]["horizonWrap"], name)
+
+    def test_the_colour_map_is_the_atlas_then_the_material_then_the_planes_own(self):
+        """A silhouette plane's colour map, in the order the page has always
+        looked: the atlas once packed, else the plane's material's own map
+        (read through the plane's rect: on a packed plane it is the atlas),
+        else the plane's own image -- read whole, its rect the identity
+        whatever its quad's packed UVs say (it is the full canvas, never a
+        tile). A map from the file is colour (sRGB) sampled as glTF's default
+        sampler samples it (repeat). Added: 2026-11-08 (HEAD's chain and
+        sampler, restored)."""
+        tile = [0.5, 0.5, 0.5, 0.0]
+        records = [
+            _record(
+                "Atlas_shadow",
+                atlas={"texture": "shadow_atlas_projected.png", "rect": tile},
+            ),
+            _record("Material_shadow"),
+            _record(
+                "Own_shadow",
+                atlas={"texture": "Nowhere_atlas.png", "rect": tile},
+            ),
+        ]
+        names = [r["name"] for r in records]
+        glb = self._glb(
+            None,
+            nodes=[{"name": n, "mesh": i} for i, n in enumerate(names)]
+            + [
+                {"name": "shadow_source", "translation": self.SOURCE},
+                {"name": "Box_contact_loc", "translation": self.CONTACT},
+                _data_export_node(_payload(records)),
+            ],
+            materials=[
+                _bare_material("Atlas_MAT"),
+                _plane_material("Material_MAT"),
+                _bare_material("Own_MAT"),
+            ],
+            # The atlas plane and the own-image plane packed into a tile.
+            uv_rects=[ImgUtils.flip_rect_v(tile), None, ImgUtils.flip_rect_v(tile)],
+            search_dirs=[
+                self._maps(
+                    {
+                        "shadow_atlas_projected.png": _silhouette_png(16),
+                        "Material_shadow.png": _silhouette_png(4),
+                        "Own_shadow.png": _silhouette_png(6),
+                    }
+                )
             ],
         )
         found = self._load(glb)
         by_name = {p["name"]: p for p in found["before"]}
-        plain, stated = by_name["Plain_shadow"], by_name["Stated_shadow"]
-        self.assertAlmostEqual(plain["uOpacity"], 1.0, places=6, msg=plain)
-        self.assertAlmostEqual(plain["uIntensity"], 0.9, places=6, msg=plain)
-        self.assertAlmostEqual(stated["uOpacity"], 0.45, places=6, msg=stated)
-        self.assertAlmostEqual(stated["uIntensity"], 1.0, places=6, msg=stated)
+        repeat = [1000, 1000]  # THREE.RepeatWrapping
+        atlas = by_name["Atlas_shadow"]
+        self.assertEqual(atlas["mapImage"], [16, 16])
+        for got, want in zip(atlas["uRect"], ImgUtils.flip_rect_v(tile)):
+            self.assertAlmostEqual(got, want, places=6)
+        material = by_name["Material_shadow"]
+        self.assertTrue(material["mapIsOriginal"], material)
+        self.assertEqual(material["mapImage"], [8, 8])
+        own = by_name["Own_shadow"]
+        self.assertFalse(own["mapIsOriginal"], own)
+        self.assertEqual(own["mapImage"], [6, 6])
+        self.assertEqual(own["uRect"], [1, 1, 0, 0])
+        for name in names:
+            self.assertEqual(by_name[name]["mapColorSpace"], "srgb", name)
+            self.assertEqual(by_name[name]["mapWrap"], repeat, name)
+
+    def test_a_horizon_map_packed_in_an_atlas_is_read_from_its_own_tile(self):
+        """A horizon map is packed into its image at the record's rect, origin
+        bottom-left; the page flips it to glTF's top-left before it fetches a
+        texel. Two maps stacked in one image, the plane's the bottom tile
+        (rect ``[1, 0.5, 0, 0]``) and an empty one over it: the page draws the
+        bottom tile's ``HeightFieldMap.alpha``. Added: 2026-11-08"""
+        azimuth, away, perp, pole = _pole_geometry_frame()
+        source = [2.0 * math.cos(azimuth), 3.0, 2.0 * math.sin(azimuth)]
+        points = [
+            (pole[0] + 0.5 * away[0], pole[1] + 0.5 * away[1]),
+            (pole[0] + 2.5 * away[0], pole[1] + 2.5 * away[1]),
+            (pole[0] + 0.5 * away[0] + 0.35 * perp[0], pole[1] + 0.5 * away[1] + 0.35 * perp[1]),
+        ]
+        _, hmap = _pole_map(pole, POLE_RADIUS, POLE_HEIGHT)
+        tile = hmap.to_rgba()
+        packed = _png_bytes(np.concatenate([np.zeros_like(tile), tile], axis=0))
+        maps = self._maps({"Box_horizon.png": packed})
+        record = _record(
+            "Box_horizon_plane",
+            draw=False,
+            follow_source=False,
+            max_stretch=POLE_MAX_STRETCH,
+            falloff_power=0.0,
+            horizon=_horizon_block(hmap, rect=[1.0, 0.5, 0.0, 0.0]),
+        )
+        glb = self._glb(
+            None,
+            nodes=[
+                {"name": "Box_horizon_plane", "mesh": 0, "scale": [14.0, 1.0, 14.0]},
+                {"name": "shadow_source", "translation": source},
+                {"name": "Box_contact_loc"},
+                _data_export_node(_payload([record])),
+            ],
+            materials=[_plane_material("Box_horizon_MAT")],
+            search_dirs=[maps],
+        )
+        expected = hmap.alpha([[x, 0.0, z] for x, z in points], light=source)
+        self.assertEqual(round(float(expected[0])), 1, "the fixture puts its point in shadow")
+        found = self._load(glb, action=HORIZON_SAMPLES_JS, points=points)
+        (plane,) = found["before"]
+        self.assertEqual(plane["uMode"], 1)
+        for got, want in zip(found["samples"], expected):
+            self.assertAlmostEqual(got, float(want), delta=0.05, msg=found["samples"])
+
+    def test_names_resolve_against_one_index_of_the_file(self):
+        """Each source and contact name is resolved alone, by the record rule
+        over every node -- against ONE index of the file, built once: a
+        file of 30k nodes and 200 planes builds its session in well under a
+        second (measured 13.7 s while every name re-indexed the file).
+        Added: 2026-11-08"""
+        count, filler = 200, 30000
+        nodes = [{"name": f"n{i}"} for i in range(filler)]
+        for i in range(1, filler):
+            nodes[(i - 1) // 4].setdefault("children", []).append(i)
+        records = []
+        for p in range(count):
+            nodes += [
+                {"name": f"P{p}_shadow", "mesh": 0},
+                {"name": f"S{p}_source", "translation": self.SOURCE},
+                {"name": f"C{p}_contact", "translation": self.CONTACT},
+            ]
+            records.append(
+                _record(f"P{p}_shadow", source=f"S{p}_source", contact=f"C{p}_contact")
+            )
+        nodes.append(_data_export_node(_payload(records)))
+        glb = self._glb(None, nodes=nodes, materials=[_plane_material("m")])
+        start = "export default function t(viewer) { viewer.on('load', () => { window.__timing = { start: performance.now() }; }); }"
+        end = "export default function t(viewer) { viewer.on('load', () => { window.__timing.built = performance.now() - window.__timing.start; }); }"
+        found = self._load(glb, around=(start, end))
+        self.assertEqual(len(found["before"]), count)
+        self.assertTrue(all(p["follow"] for p in found["before"]))
+        self.assertLess(found["timing"]["built"], 3000.0, found["timing"])
+
+    def test_a_map_the_page_cannot_read_is_said_and_the_session_still_comes_up(self):
+        """A horizon map whose bytes do not decode is said and left unbound
+        (HEAD's page rejected the whole session); a silhouette two views hold
+        is held by neither -- said, as ``verify_glb`` says it -- and its plane
+        marches its horizon, as a reader without the extension does.
+        Added: 2026-11-07"""
+        png, hmap = _pole_map((0.5, 0.0), POLE_RADIUS, POLE_HEIGHT)
+        layout = _horizon_block(hmap)
+        records = [
+            _record("Broken_shadow", draw=False, horizon=dict(layout, texture="Broken_horizon.png")),
+            _record("Tied_shadow", draw=True, horizon=layout),
+        ]
+        maps = self._maps(
+            {
+                "Broken_horizon.png": b"not a PNG at all" * 8,
+                "Box_horizon.png": png,
+                "Tied_shadow.png": _silhouette_png(4),
+            }
+        )
+        glb = self._glb(
+            None,
+            nodes=[
+                {"name": "Broken_shadow", "mesh": 0},
+                {"name": "Tied_shadow", "mesh": 1},
+                {"name": "shadow_source", "translation": self.SOURCE},
+                {"name": "Box_contact_loc"},
+                _data_export_node(_payload(records)),
+            ],
+            materials=[_bare_material("a"), _bare_material("b")],
+            search_dirs=[maps],
+        )
+        with MeshConvert.open_glb(glb) as edit:
+            views = edit.gltf["bufferViews"]
+            (index,) = ptk.SceneRecords.GLB_MEDIA.views(edit.gltf, "Tied_shadow.png")
+            views.append(dict(views[index], name="TIED_SHADOW.png"))
+            edit.dirty = True
+        found = self._load(glb)
+        by_name = {p["name"]: p for p in found["before"]}
+        self.assertEqual(by_name["Broken_shadow"]["mode"], 1)
+        self.assertFalse(by_name["Broken_shadow"]["horizonBound"])
+        self.assertEqual(by_name["Tied_shadow"]["mode"], 1)
+        self.assertTrue(by_name["Tied_shadow"]["horizonBound"])
+        console = "\n".join(found["console"])
+        self.assertIn("could not be read", console)
+        self.assertIn("held by several bufferViews", console)
+        self.assertIn("Tied_shadow.png", console)
+
+    def test_planes_sources_and_contacts_resolve_by_the_record_rule(self):
+        """Names resolve as the lightmaps record's do (resolve.js): exact,
+        else the name after the last ':' where one node carries it, a tie
+        never guessed. A source that is no mesh resolves over every node; a
+        bare plane name two namespaced planes share is left as the file has
+        it; a source two nodes share leaves its plane still, at its
+        intensity. Added: 2026-11-07"""
+        records = [
+            _record("A:Box_shadow", source="shadow_source", contact="Box_contact_loc"),
+            _record("Crate_shadow", source="twin", intensity=0.8),
+            _record("Shared_shadow"),
+        ]
+        glb = self._glb(
+            None,
+            nodes=[
+                {"name": "A:Box_shadow", "mesh": 0},
+                {"name": "Crate_shadow", "mesh": 1},
+                {"name": "X:Shared_shadow", "mesh": 2},
+                {"name": "Y:Shared_shadow", "mesh": 2},
+                {"name": "NS:shadow_source", "translation": self.SOURCE},
+                {"name": "NS:Box_contact_loc", "translation": self.CONTACT},
+                {"name": "P:twin", "translation": self.SOURCE},
+                {"name": "Q:twin", "translation": self.SOURCE},
+                _data_export_node(_payload(records)),
+            ],
+            materials=[_plane_material(f"m{i}") for i in range(3)],
+        )
+        found = self._load(glb)
+        by_name = {p["name"]: p for p in found["before"]}
+        self.assertEqual(set(by_name), {"A:Box_shadow", "Crate_shadow"})
+        box = by_name["A:Box_shadow"]
+        self.assertTrue(box["follow"], box)
+        self._assert_placed(box, self._expected(), places=4)
+        crate = by_name["Crate_shadow"]
+        self.assertFalse(crate["sourceBound"], crate)
+        self.assertFalse(crate["follow"], crate)
+        self.assertAlmostEqual(crate["uOpacity"], 0.8, places=6)
+        self.assertTrue(
+            any("ambiguous" in line and "twin" in line for line in found["console"]),
+            found["console"],
+        )
 
     def test_the_real_export_shape_batches_three_planes_onto_one_atlas(self):
         """The production case, reproduced from the measured export: three
@@ -1764,6 +2203,7 @@ class TestShadowRigLive(unittest.TestCase):
 
         (plane,) = found["before"]
         self.assertEqual(plane["uMode"], 1)
+        self.assertEqual(plane["uOpacity"], 1.0, "the fixture's fade is exactly 1")
         self.assertAlmostEqual(plane["uHorizonScale"], hmap.height_scale, places=5)
         self.assertTrue(plane["horizonBound"])
         self.assertEqual(plane["horizonColorSpace"], "")
@@ -2119,6 +2559,95 @@ class TestShadowRigLive(unittest.TestCase):
             corners.append([x, ground + 0.01, -y])
         return corners
 
+    def test_each_producers_canvas_sides_land_where_its_own_rig_put_them(self):
+        """One scene, one lopsided canvas, rigged in both DCCs: the page puts
+        each producer's quad on the corners its own rig gave it, measured --
+        mayatk's expression (Maya 2025, cm, Y-up: the quad in its local X/Z)
+        and blendertk's drivers (Blender 5.1, m, Z-up: the quad in its local
+        X/Y, the file in its exporter's axes). The two rigs write the canvas's
+        sides along the quad's local +X, each in its own DCC's ground axes, so
+        the same record lands mirrored across the bearing between them (here
+        0.34 m apart): the page reads a Y-up quad's sides as written and a
+        Z-up quad's swapped, told off the quad itself (``quadExtent``) -- as
+        unitytk's importer does in Unity's mirrored frame. Added: 2026-11-08"""
+        canvas = [-0.3, 1.1, -0.55, 0.35]
+        # Maya: the rig's world corners (cm), its source and contact (cm).
+        maya_cm = [
+            [-298.927425, 0.01, -15.608639],
+            [-251.212054, 0.01, 139.466321],
+            [77.771017, 0.01, -131.515848],
+            [125.486387, 0.01, 23.559113],
+        ]
+        maya = [[v * 0.01 for v in c] for c in maya_cm]
+        # Blender: the rig's world corners, source and contact, Blender's axes.
+        to_file = lambda p: [p[0], p[2], -p[1]]  # noqa: E731  the exporter's turn
+        blender = [
+            to_file(c)
+            for c in (
+                [1.3608983, -0.5802022, 0.01],
+                [0.8837445, 0.9705476, 0.01],
+                [-2.8832405, -0.1885246, 0.01],
+                [-2.4060867, -1.7392744, 0.01],
+            )
+        ]
+        upright = _quat((1, 0, 0), -90.0)
+        cases = {
+            "maya": (
+                maya,
+                0.01,
+                _record(
+                    "Box_shadow",
+                    radius=36.055513,
+                    height=120.0,
+                    fade_height=240.0,
+                    canvas=canvas,
+                ),
+                [
+                    {"name": "Box_shadow", "mesh": 0},
+                    {"name": "shadow_source", "translation": [1.5, 2.0, -0.5]},
+                    {"name": "Box_contact_loc", "translation": [0.2, 0.0, -0.1]},
+                ],
+                False,
+            ),
+            "blender": (
+                blender,
+                1.0,
+                _record(
+                    "Box_shadow",
+                    contact="Box_contact",
+                    radius=0.360555,
+                    height=1.2,
+                    canvas=canvas,
+                ),
+                [
+                    {"name": "Box_shadow", "mesh": 0, "rotation": upright},
+                    {"name": "shadow_source", "translation": to_file([1.5, 0.5, 2.0])},
+                    {
+                        "name": "Box_contact",
+                        "translation": to_file([0.2, 0.1, 0.0]),
+                        "rotation": upright,
+                    },
+                ],
+                True,
+            ),
+        }
+
+        def gap(a, b):
+            return max(min(max(abs(p[i] - q[i]) for i in range(3)) for q in b) for p in a)
+
+        self.assertGreater(gap(maya, blender), 0.3, "the producers' sides must differ")
+        for producer, (want, unit_scale, record, nodes, z_up) in cases.items():
+            with self.subTest(producer=producer):
+                glb = self._glb(
+                    None,
+                    nodes=nodes + [_data_export_node(_payload([record], unit_scale=unit_scale))],
+                    materials=[_plane_material("m")],
+                    z_up=z_up,
+                )
+                (plane,) = self._load(glb)["before"]
+                self.assertTrue(plane["follow"], plane)
+                self.assertLess(gap(plane["corners"], want), 1e-5, (producer, plane["corners"]))
+
     def test_a_z_up_quad_lies_flat_where_the_blender_drivers_put_it(self):
         """A Blender push delivers its shadow quad in the quad's local X/Y
         (normal +Z) -- Blender's exporter turns the ROOT nodes upright and
@@ -2188,13 +2717,14 @@ class TestShadowRigLive(unittest.TestCase):
 #: Every ``shadow_projection`` golden case through the feature's model port,
 #: imported by its own served path (as an app vendoring it would). Each function
 #: is held to its own inputs: the far point to the reference's, the model to
-#: the reference's source point, the placement to the model it computed.
+#: the reference's source point, the placement and the fade to the model it
+#: computed.
 CONFORMANCE_JS = """
-import { farPoint, placement, shadowModel } from '../features/shadow_rig/model.js';
+import { farPoint, placement, shadowFade, shadowModel } from '../features/shadow_rig/model.js';
 
 export default function probe() {
   const doc = __DOC__;
-  const worst = { source: 0, model: 0, placement: 0 };
+  const worst = { source: 0, model: 0, placement: 0, fade: 0 };
   const flags = [];
   const gap = (a, b) => Math.max(...a.map((v, i) => Math.abs(v - b[i])));
   for (const c of doc.cases) {
@@ -2220,6 +2750,11 @@ export default function probe() {
       Math.abs(p.along - c.placement.along),
       Math.abs(p.across - c.placement.across),
     );
+    const f = shadowFade(
+      m, given.contact, c.source, given.ground, given.radius, given.intensity,
+      given.falloff_power, given.fade_height, given.source_ramp,
+    );
+    worst.fade = Math.max(worst.fade, Math.abs(f - c.fade));
   }
   window.__probe = { ready: true, worst, flags, count: doc.cases.length };
 }

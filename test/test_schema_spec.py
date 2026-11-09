@@ -620,5 +620,84 @@ class JsonSchemaTest(unittest.TestCase):
             Both.json_schema()
 
 
+@dataclass
+class Plane(SchemaSpec):
+    """A plane."""
+
+    TYPED = True
+    name: str = SchemaSpec.spec_field(help="Its node.", required=True)
+    silhouette: Optional[str] = SchemaSpec.spec_field(
+        help="The silhouette map.", readers=("glb",)
+    )
+
+
+@dataclass
+class Ground(SchemaSpec):
+    """Planes on the ground."""
+
+    TYPED = True
+    planes: List[Plane] = SchemaSpec.spec_field(
+        help="Every plane.", nested=[Plane], default_factory=list
+    )
+
+
+class ExtensionFieldTest(unittest.TestCase):
+    """A field only some readers use names them (``readers``): the schema says
+    so, and a reader's view of the schema leaves out the extensions of others.
+    Added: 2026-11-04"""
+
+    def test_an_extension_names_its_readers_in_the_schema(self):
+        prop = Plane.json_schema()["properties"]["silhouette"]
+        self.assertEqual(prop["x-readers"], ["glb"])
+        self.assertNotIn("x-readers", Plane.json_schema()["properties"]["name"])
+
+    def test_a_readers_view_leaves_out_the_extensions_of_others(self):
+        self.assertNotIn("silhouette", Plane.json_schema(reader="unity")["properties"])
+        self.assertIn("silhouette", Plane.json_schema(reader="glb")["properties"])
+        self.assertIn("name", Plane.json_schema(reader="unity")["properties"])
+
+    def test_a_nested_extension_is_left_out_too(self):
+        nested = Ground.json_schema(reader="unity")["$defs"]["Plane"]["properties"]
+        self.assertEqual(sorted(nested), ["name"])
+
+    def test_an_extension_cannot_be_required(self):
+        with self.assertRaises(SchemaError):
+            SchemaSpec.spec_field(required=True, readers=("glb",))
+
+    def test_the_markdown_names_an_extensions_readers(self):
+        self.assertIn("Read only by glb.", Plane.to_markdown())
+
+    def test_a_definition_only_an_extension_uses_leaves_a_readers_view(self):
+        @dataclass
+        class Atlas(SchemaSpec):
+            """An atlas rect."""
+
+            TYPED = True
+            x: Optional[float] = SchemaSpec.spec_field(help="Left.")
+
+        @dataclass
+        class Packed(SchemaSpec):
+            """A packed plane."""
+
+            TYPED = True
+            name: str = SchemaSpec.spec_field(help="Its node.", required=True)
+            atlas: Optional[Atlas] = SchemaSpec.spec_field(
+                help="Its rect.", readers=("glb",)
+            )
+
+        self.assertNotIn("$defs", Packed.json_schema(reader="unity"))
+        self.assertEqual(sorted(Packed.json_schema(reader="glb")["$defs"]), ["Atlas"])
+
+    def test_a_bare_reader_name_is_one_reader(self):
+        @dataclass
+        class Bare(SchemaSpec):
+            """A field read by one reader, named bare."""
+
+            TYPED = True
+            mark: Optional[str] = SchemaSpec.spec_field(help="A mark.", readers="glb")
+
+        self.assertEqual(Bare.json_schema()["properties"]["mark"]["x-readers"], ["glb"])
+
+
 if __name__ == "__main__":
     unittest.main()

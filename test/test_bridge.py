@@ -137,6 +137,75 @@ class TemplatesTest(unittest.TestCase):
             script_template.ScriptTemplate.declared_modes(path), (ROUND_TRIP,)
         )
 
+    def test_a_script_declares_its_own_rows(self):
+        """A person's script shows its own settings: one ``Row:`` line each, in
+        whatever comment its language uses, typed by its kind."""
+        path = self._write(
+            "mine.py",
+            '# Row: __ITERATIONS__ int 4 "Iterations" min=1 max=64 tooltip="Passes to run."\n'
+            "// Row: __SOFTEN__ bool on\n"
+            '-- Row: __MODE__ choice Fast "Mode" choices=Fast|Best\n'
+            "# Row: __GAIN__ float 0.5 decimals=2\n"
+            "# Row: __NAME__ str\n"
+            "# Row: no key here\n"
+            "x = '__ITERATIONS__'  # Row: __NOT_A_HEADER__ int 1\n",
+        )
+        rows = {r["key"]: r for r in script_template.ScriptTemplate.declared_rows(path)}
+        self.assertEqual(list(rows), ["ITERATIONS", "SOFTEN", "MODE", "GAIN", "NAME"])
+        self.assertEqual(
+            rows["ITERATIONS"],
+            {
+                "key": "ITERATIONS",
+                "kind": "int",
+                "default": 4,
+                "label": "Iterations",
+                "minimum": 1,
+                "maximum": 64,
+                "tooltip": "Passes to run.",
+            },
+        )
+        self.assertIs(rows["SOFTEN"]["default"], True)
+        self.assertEqual(rows["MODE"]["choices"], ["Fast", "Best"])
+        self.assertEqual((rows["GAIN"]["default"], rows["GAIN"]["decimals"]), (0.5, 2))
+        self.assertEqual(rows["NAME"], {"key": "NAME", "kind": "str", "default": ""})
+
+    def test_a_path_default_keeps_its_backslashes(self):
+        path = self._write("p.py", '# Row: __OUT__ path "C:\\work\\out" "Out" tooltip="it\'s here"\n')
+        (row,) = script_template.ScriptTemplate.declared_rows(path)
+        self.assertEqual((row["default"], row["tooltip"]), ("C:\\work\\out", "it's here"))
+
+    def test_a_quoted_default_or_label_holding_an_equals_sign_is_no_option(self):
+        """An option is an unquoted ``name=value``: a quoted default or label
+        that holds ``=`` is the default or the label (it read as an unknown
+        option and the row vanished). Added: 2026-11-08"""
+        path = self._write(
+            "eq.py",
+            '# Row: __QUERY__ str "a=b&c=d" "Query = filter" tooltip="k=v pairs"\n'
+            "# Row: __BAD__ str a=b\n",
+        )
+        (row,) = script_template.ScriptTemplate.declared_rows(path)
+        self.assertEqual(
+            row,
+            {
+                "key": "QUERY",
+                "kind": "str",
+                "default": "a=b&c=d",
+                "label": "Query = filter",
+                "tooltip": "k=v pairs",
+            },
+        )
+
+    def test_a_bad_row_line_is_skipped_not_raised(self):
+        """A typo in one script's header must not stop the panel listing it."""
+        path = self._write(
+            "bad.py",
+            "# Row: __A__ int many\n# Row: __B__ nonsense 1\n# Row: __C__ int 2 \"unclosed\n# Row: __D__ int 3\n",
+        )
+        self.assertEqual(
+            [r["key"] for r in script_template.ScriptTemplate.declared_rows(path)], ["D"]
+        )
+        self.assertEqual(script_template.ScriptTemplate.declared_rows(self.tmp / "nope.py"), [])
+
     def test_declared_values_is_none_when_unannotated(self):
         """``None`` (not ``()``) has to survive the split from ``declared_modes``."""
         self.assertIsNone(
@@ -197,6 +266,63 @@ class TemplatesTest(unittest.TestCase):
         )
         self.assertIn('FBX = r"C:/x.fbx"', out)
         self.assertIn("N = 3", out)
+
+
+class ScriptTiersTest(unittest.TestCase):
+    """Built-in scripts plus a person's own: one ordered list of folders, the
+    first holding a name wins, so a user script shadows a built-in one."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.builtin = self.tmp / "builtin"
+        self.user = self.tmp / "user"
+        for folder in (self.builtin, self.user):
+            folder.mkdir()
+        self.ST = script_template.ScriptTemplate
+
+    def _write(self, folder, name, body=""):
+        path = folder / name
+        path.write_text(body, encoding="utf-8")
+        return path
+
+    def test_a_user_script_shadows_the_built_in_one_of_its_name(self):
+        self._write(self.builtin, "import.py")
+        self._write(self.builtin, "lookdev.py")
+        mine = self._write(self.user, "import.py")
+        self._write(self.user, "turntable.py")
+        found = self.ST.list_templates([self.user, self.builtin])
+        self.assertEqual([p.stem for p in found], ["import", "lookdev", "turntable"])
+        self.assertEqual(found[0], mine)
+        self.assertEqual(self.ST.find([self.user, self.builtin], "import"), mine)
+        self.assertEqual(self.ST.tier(mine, [self.user, self.builtin]), "user")
+        self.assertEqual(self.ST.tier(self.builtin / "lookdev.py", [self.user, self.builtin]), "builtin")
+
+    def test_a_missing_folder_and_a_missing_name_are_not_errors(self):
+        self._write(self.builtin, "import.py")
+        dirs = [self.tmp / "nowhere", self.builtin]
+        self.assertEqual([p.stem for p in self.ST.list_templates(dirs)], ["import"])
+        self.assertIsNone(self.ST.find(dirs, "absent"))
+
+    def test_modes_are_listed_across_the_tiers(self):
+        self._write(self.builtin, "import.py", "BRIDGE_MODES = ('send_to',)\n")
+        self._write(self.user, "bake.py", "BRIDGE_MODES = ('round_trip',)\n")
+        self.assertEqual(
+            self.ST.list_template_modes([self.user, self.builtin], allowed=("send_to", "round_trip")),
+            [("bake", "round_trip"), ("import", "send_to")],
+        )
+
+    def test_the_user_folder_is_one_per_app_and_comes_first(self):
+        with mock.patch.dict(os.environ, {_config_root_env(): str(self.tmp / "cfg")}):
+            folder = self.ST.user_dir("some_app")
+            self.assertEqual(folder, self.tmp / "cfg" / "scripts" / "some_app")
+            self.assertEqual(self.ST.search_dirs(self.builtin, "some_app"), (folder, self.builtin))
+
+
+def _config_root_env():
+    from pythontk.core_utils.user_config import UserConfig
+
+    return UserConfig.CONFIG_ROOT_ENV_VAR
 
 
 class AppScanTest(unittest.TestCase):

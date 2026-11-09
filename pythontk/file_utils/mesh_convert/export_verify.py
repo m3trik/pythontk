@@ -24,7 +24,7 @@ import glob as _glob
 import json
 import os
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Sequence, Union
+from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 from pythontk.core_utils.deprecation import Deprecation
 from pythontk.core_utils.engines.scene_export.export_profile import ExportProfile
@@ -122,79 +122,46 @@ class _ExportVerifierInternal:
         return None
 
     @staticmethod
-    def _declared_takes(sidecar: Optional[dict]) -> List[dict]:
-        """The takes the exporter declared: each clip of the shots record
-        (``SceneRecords.SHOTS``), with its own range."""
-        return SceneRecords.declared_takes(
-            ((sidecar or {}).get("data_export") or {}).get
-        )
+    def _declared_clips(sidecar: Optional[dict]) -> Tuple[List[str], Optional[str]]:
+        """The shots the exporter declared, as their clip names in timeline
+        order -- one take per shot, each named after its shot (the
+        ``animation`` record, ``SceneRecords.SHOTS``) -- and why none can be
+        read: a record of another version is refused, its cure a re-export.
 
-    @classmethod
-    def _undeclared_clips(cls, spans, sidecar: Optional[dict]) -> List[str]:
-        """Clip names no declared take claims, in file order.
-
-        Exactly one of these is the converter's own whole-timeline stack --
-        the clip whose length IS the stack's, and the only one that can show
-        a wrong origin (a declared take is cut to its own window). Shared so
-        ``clips_vs_takes`` and ``clip_origin`` cannot disagree about which
-        clip that is.
+        Returns:
+            ``(clip names, problem)``; ``([], None)`` when the scene declares
+            no shots (a file of one whole-timeline take).
         """
-        declared = {t.get("name") for t in cls._declared_takes(sidecar)}
-        return [name for name in spans if name not in declared]
+        export = (sidecar or {}).get("data_export") or {}
+        record = export.get(SceneRecords.SHOTS.key) if isinstance(export, dict) else None
+        if not record:
+            return [], None
+        if not SceneRecords.SHOTS.is_current(record):
+            found = record.get("version") if isinstance(record, dict) else None
+            return [], (
+                f"the {SceneRecords.SHOTS.key!r} record is version {found!r}, and "
+                f"this reader reads version {SceneRecords.SHOTS.version}: its "
+                "shots cannot be read -- re-export the file"
+            )
+        return [
+            str(s["clip"])
+            for s in record.get("shots") or []
+            if isinstance(s, dict) and s.get("clip")
+        ], None
 
     @staticmethod
     def _published_fps(sidecar: Optional[dict]) -> Optional[float]:
-        """The scene's frame rate, as the exporter recorded it."""
+        """The scene's frame rate, as the exporter recorded it: the
+        ``animation`` record's (the ``audio`` and ``render_effects`` records
+        state no frame and no rate)."""
         export = (sidecar or {}).get("data_export") or {}
-        for channel in (SceneRecords.SHOTS.key, SceneRecords.VISIBILITY.key):
+        for channel in (SceneRecords.SHOTS.key,):
             rate = (export.get(channel) or {}).get("fps")
             try:
                 if rate and float(rate) > 0:
                     return float(rate)
             except (TypeError, ValueError):
                 continue
-        return None
-
-    @staticmethod
-    def _published_clip_mode(sidecar: Optional[dict]) -> Optional[str]:
-        """The Animation Clips mode the exporter DECLARED, or ``None``.
-
-        Read, never inferred: a Full Sequence Only file carries one stack while
-        its takes list every shot, and that is also exactly what a split that
-        silently failed leaves.
-        """
-        export = (sidecar or {}).get("data_export") or {}
-        meta = export.get(SceneRecords.SHOTS.key)
-        mode = (
-            meta.get(MeshConvert.SHOT_CLIP_MODE_KEY) if isinstance(meta, dict) else None
-        )
-        return mode if isinstance(mode, str) else None
-
-    @staticmethod
-    def _published_span(sidecar: Optional[dict]) -> Optional[List[float]]:
-        """The whole-timeline ``clip_span`` entry the producer published
-        (``MeshConvert._published_origin``, the reader the rebuild uses)."""
-        export = (sidecar or {}).get("data_export")
-        origin = MeshConvert._published_origin(
-            export.get if isinstance(export, dict) else lambda key: None
-        )
-        return list(origin) if origin else None
-
-    @staticmethod
-    def _cut_origin(gltf: Optional[dict], clip: str) -> Optional[float]:
-        """The authoring frame *clip* was cut from -- its ``zero_frame`` in the
-        file's ``extras.animation`` block, measured from the FBX the
-        conversion read (``MeshConvert._stamp_clip_spans``) -- or ``None``
-        where the file states none. The one place a finished GLB states it."""
-        block = (
-            SceneRecords.glb_block(gltf, SceneRecords.SHOTS)
-            if isinstance(gltf, dict)
-            else None
-        )
-        for entry in (block or {}).get("clips") or []:
-            if isinstance(entry, dict) and entry.get("name") == clip:
-                value = entry.get("zero_frame")
-                return float(value) if isinstance(value, (int, float)) else None
         return None
 
 
@@ -211,8 +178,9 @@ class ExportVerifier(_ExportVerifierInternal):
         baseline_glb: A previous known-good GLB to diff structure against
             (counts, image mimes, clip names). ``None`` -> that gate SKIPs.
         fps: Frame rate for converting clip seconds to frames. ``None``
-            (default) takes the rate the sidecar publishes, falling back to
-            30 -- every frame the gates quote is an AUTHORING frame, and a
+            (default) takes the rate the sidecar publishes, else the FBX's
+            own, falling back to 30 -- every frame the gates quote is a
+            timeline frame, and a
             24 or 60 fps scene compared at 30 makes each of them wrong by the
             ratio. Pass a number only to override a sidecar that is itself
             suspect.
@@ -260,17 +228,26 @@ class ExportVerifier(_ExportVerifierInternal):
             except (OSError, ValueError) as e:
                 self.sidecar_error = f"sidecar unreadable: {e}"
 
-        # After the sidecar, because that is where the scene's rate is
-        # published. Every frame these gates quote is an authoring frame
-        # converted from clip SECONDS, so assuming 30 on a 24 or 60 fps scene
-        # scales every one of them -- and the caller that matters here
-        # (TaskManager.verify_deliverables) passes only paths.
-        self.fps = float(fps) if fps else (self._published_fps(self.sidecar) or 30.0)
-
         self._reader: Optional[GlbReader] = None
         self._reader_error: Optional[str] = None
         self._fbx: Optional[FbxFile] = None
         self._fbx_error: Optional[str] = None
+
+        # After the sidecar, because that is where the scene's rate is
+        # published (else the FBX states its own). Every frame these gates
+        # quote is a timeline frame converted from clip SECONDS, so assuming
+        # 30 on a 24 or 60 fps scene scales every one of them -- and the
+        # caller that matters here (TaskManager.verify_deliverables) passes
+        # only paths.
+        self.fps = (
+            float(fps)
+            if fps
+            else (
+                self._published_fps(self.sidecar)
+                or (self.fbx._fps() if self.fbx is not None else None)
+                or 30.0
+            )
+        )
 
     # ---- lazy inputs ------------------------------------------------------
 
@@ -680,7 +657,7 @@ class ExportVerifier(_ExportVerifierInternal):
         extras = GlbEdit.extras_of(self.reader.gltf)
         if not extras.get(HandoffRecord.KEY):
             return [Finding(SKIP, "glb_handoff", "no embedded handoff")]
-        result = MeshConvert.verify_glb(self.glb_path)
+        result = MeshConvert.verify_glb(self.glb_path, described=self._packed_materials())
         rows = [
             Finding(FAIL, "glb_handoff", problem)
             for problem in result.get("problems") or []
@@ -699,6 +676,27 @@ class ExportVerifier(_ExportVerifierInternal):
             rows.append(Finding(PASS, "glb_handoff", "handoff verified"))
         return rows
 
+    def _packed_materials(self) -> Optional[List[str]]:
+        """The materials whose metal / roughness packing the export wrote --
+        those the FBX's ``materials`` record binds a metallicRoughness image
+        on, which the GLB's materials are -- or ``None`` with no readable FBX
+        or record: what :meth:`MeshConvert.verify_glb` exempts from its ORM
+        finding (a fully metal surface packs blue white, as authored)."""
+        if self.fbx is None:
+            return None
+        from pythontk.core_utils.engines.scene_export.material_record import (
+            MaterialFamilies,
+        )
+
+        record = MeshConvert._carried_record(self.fbx)
+        if record is None or SceneRecords.problems(SceneRecords.MATERIALS, record):
+            return None
+        return [
+            name
+            for name, material in MaterialFamilies.materials_by_name(record).items()
+            if "metallicRoughnessTexture" in MaterialFamilies.material_files(record, material)
+        ]
+
     @Deprecation.symbol(
         "ExportVerifier.check_glb_handoff -- a GLB carries extras.handoff, "
         "not an envelope",
@@ -712,235 +710,126 @@ class ExportVerifier(_ExportVerifierInternal):
     # ---- sidecar gates ----------------------------------------------------
 
     def check_clips_vs_takes(self) -> List[Finding]:
-        """Each GLB clip's length matches its declared take (±1 frame).
+        """The GLB's clips are the declared shots' takes: one per shot, named
+        after it, and no other -- a file with shots carries no whole-timeline
+        clip beside them -- each as long as its take in the FBX, when the FBX
+        is given (one frame of tolerance).
 
-        Exactly one clip with no declared take is treated as the
-        whole-timeline clip, measured from where the file says it was cut from
-        (its ``zero_frame`` in ``extras.animation``, :meth:`_cut_origin`) and
-        compared against the takes' overall end -- ending SHORT of them FAILs
-        (it cannot play the declared range), while running long is judged on
-        the frames it ANIMATES rather than the frames it occupies: a bake pads
-        it with held poses, so an inert margin is a WARN and only motion past
-        the last take FAILs.
+        A record of another version FAILs with its cure (re-export): its
+        shots cannot be read.
         """
         if self.reader is None:
             return [Finding(SKIP, "clips_vs_takes", "no readable GLB")]
-        takes = self._declared_takes(self.sidecar)
-        if not takes:
-            detail = self.sidecar_error or "no sidecar takes"
+        clips, problem = self._declared_clips(self.sidecar)
+        if problem:
+            return [Finding(FAIL, "clips_vs_takes", problem)]
+        if not clips:
+            detail = self.sidecar_error or "no sidecar shots"
             return [Finding(SKIP, "clips_vs_takes", detail)]
         spans = self.reader.clip_spans(self.fps)
-        by_name = {t.get("name"): t for t in takes}
         rows: List[Finding] = []
-        unmatched = self._undeclared_clips(spans, self.sidecar)
-        for clip, (_low, _high, end_frame) in spans.items():
-            take = by_name.get(clip)
-            if take is None:
-                continue
-            want = int(take["end"]) - int(take["start"])
-            if abs(end_frame - want) > 1:
-                rows.append(
-                    Finding(
-                        FAIL,
-                        "clips_vs_takes",
-                        f"{clip}: {end_frame}f vs declared {want}f",
-                    )
-                )
-        if len(unmatched) == 1:
-            clip = unmatched[0]
-            # The whole-timeline stack is REBASED: the converter puts its
-            # first key at t=0, so its raw end frame is short of the takes'
-            # end by however late the export starts. The clip publishes the
-            # authoring frame it sits on; measure from there, or a correct
-            # file reads as a failure (33 frames on the PROPS assembly).
-            zero = self._cut_origin(self.reader.gltf, clip) or 0.0
-            end_frame = int(round(spans[clip][2] + zero))
-            timeline_end = max(int(t["end"]) for t in takes)
-            # The two ends fail for different reasons, so judge them apart.
-            # SHORT is measured on keys: a clip whose keys stop before the
-            # last take cannot play the declared range at all. LONG is
-            # measured on motion: the bake writes keys across whatever range
-            # it is handed, so a whole-timeline clip routinely ends on a held
-            # pose past the last take -- inert padding, not an overrun. Only
-            # motion out there is content no shot will ever play. Measured on
-            # the PROPS assembly: 48 padded frames moving 76 of 1185 channels
-            # by at most 3e-4, against a body moving 1183 of them by up to
-            # 3.5. Motion that stops EARLY is never a fault -- a clip closing
-            # on a deliberate hold is ordinary animation, not truncation.
-            if end_frame < timeline_end - 1:
-                rows.append(
-                    Finding(
-                        FAIL,
-                        "clips_vs_takes",
-                        f"{clip}: full-timeline clip ends {end_frame}f, "
-                        f"short of the takes' {timeline_end}f",
-                    )
-                )
-            elif end_frame > timeline_end + 1:
-                motion = self.reader.motion_span(clip)
-                motion_end = (
-                    int(round(motion[1] * self.fps + zero))
-                    if motion is not None
-                    else timeline_end
-                )
-                excess = end_frame - timeline_end
-                if motion_end > timeline_end + 1:
-                    rows.append(
-                        Finding(
-                            FAIL,
-                            "clips_vs_takes",
-                            f"{clip}: full-timeline clip animates to "
-                            f"{motion_end}f, past the takes' {timeline_end}f",
-                        )
-                    )
-                else:
-                    rows.append(
-                        Finding(
-                            WARN,
-                            "clips_vs_takes",
-                            f"{clip}: full-timeline clip ends {end_frame}f vs "
-                            f"takes {timeline_end}f, but those {excess:+d}f "
-                            f"hold still (bake padding, not content)",
-                        )
-                    )
-        elif unmatched:
+        missing = [clip for clip in clips if clip not in spans]
+        if missing:
             rows.append(
-                Finding(WARN, "clips_vs_takes", f"undeclared clips: {unmatched}")
+                Finding(FAIL, "clips_vs_takes", f"declared but absent: {missing}")
             )
-        # A declared Shots + Full Sequence file ships the whole timeline beside
-        # the shots. One whose every clip is a declared shot lost it -- the
-        # Blender split replaced it until 2026-10-05 -- and nothing above can
-        # see that: every clip matches its take.
-        if not unmatched and self._published_clip_mode(self.sidecar) == "both":
+        named = set(clips)
+        extra = [name for name in spans if name not in named]
+        if extra:
             rows.append(
                 Finding(
                     FAIL,
                     "clips_vs_takes",
-                    "Shots + Full Sequence declared, but every clip is a declared "
-                    "shot: the whole-timeline clip is missing",
+                    f"clip(s) no shot names: {extra} -- a file with shots "
+                    "carries one take per shot and no whole-timeline take",
                 )
             )
-        missing = sorted(set(by_name) - set(spans))
-        # A declared Full Sequence Only file keeps the shots as metadata; its
-        # whole-timeline clip is still judged against their range above.
-        if missing and self._published_clip_mode(self.sidecar) != "full":
-            rows.append(
-                Finding(FAIL, "clips_vs_takes", f"declared but absent: {missing}")
-            )
+        windows = self.fbx.take_windows() if self.fbx is not None else {}
+        for clip in clips:
+            if clip not in spans or clip not in windows:
+                continue
+            low, high, _end = spans[clip]
+            got = int(round((high - low) * self.fps))
+            start, end = windows[clip]
+            want = int(round((end - start) * self.fps))
+            if abs(got - want) > 1:
+                rows.append(
+                    Finding(
+                        FAIL,
+                        "clips_vs_takes",
+                        f"{clip}: {got}f vs its take's {want}f",
+                    )
+                )
         if not rows:
             rows.append(
                 Finding(
                     PASS,
                     "clips_vs_takes",
-                    f"{len(takes)} take(s) match their clips",
+                    f"{len(clips)} shot clip(s), one per take",
                 )
             )
         return rows
 
-    def check_clip_origin(self) -> List[Finding]:
-        """The stack is as long as the span its clips were cut against.
-
-        ``clip_span["*"]`` is the authoring window the exporter publishes as
-        the frame the whole-timeline stack puts at ``t=0``; every clip is cut
-        from that stack by offsetting against it
-        (``_Animation._clip_zero``). The exporter cannot see the written file,
-        so it publishes a MEASUREMENT of the curves it is about to serialize --
-        and when that measurement is taken from the wrong thing (a bake range
-        bounds what the plugin re-bakes, not what an authored curve carries)
-        the number describes a file that was never written.
-
-        Nothing else here catches that. Every clip keeps the LENGTH its take
-        declares and every declared shot is present, so ``clips_vs_takes`` and
-        ``cross_clips`` pass; the clips are simply cut from the wrong PLACE,
-        each landing earlier than its window by the difference and playing the
-        tail of the shot before it. Measured on a production assembly: a stack
-        carrying frames 80-4281 published as 161-4275, so all 18 shots played
-        81 frames early while their visibility gates -- written against the
-        published span, and therefore correct -- switched on time.
-
-        Compared on the whole-timeline clip, whose length IS the stack's: a
-        declared take is cut to its own window and cannot show the drift.
-
-        The span judged is the one the file was cut against: the
-        conversion measures it from the FBX it reads
-        (``MeshConvert._stamp_clip_spans``) and states where the stack starts
-        -- the whole-timeline clip's ``zero_frame`` in ``extras.animation``
-        (:meth:`_cut_origin`) -- so a producer's prediction that is off no
-        longer misplaces a single clip, and judging that prediction FAILed a
-        file cut right. A published span that disagrees with the file's is a
-        WARN naming both; a GLB stating no origin is judged against the
-        published one, and one stating its origin with no published span to
-        set beside it is a SKIP -- its stack measured from its own origin
-        cannot disagree with itself.
-        """
+    def check_glb_shot_clips(self) -> List[Finding]:
+        """Every shot the GLB's ``animation`` record names plays the glTF
+        animation of its clip's name -- the join every reader of the GLB
+        makes (the record rides it as it stands). Read off the GLB alone."""
+        name = "glb_shot_clips"
         if self.reader is None:
-            return [Finding(SKIP, "clip_origin", "no readable GLB")]
-        published = self._published_span(self.sidecar)
-        spans = self.reader.clip_spans(self.fps)
-        loose = self._undeclared_clips(spans, self.sidecar) if spans else []
-        clip = loose[0] if len(loose) == 1 else None
-        origin = self._cut_origin(self.reader.gltf, clip) if clip else None
-        if origin is None and published is None:
-            detail = self.sidecar_error or "no published clip_span"
-            return [Finding(SKIP, "clip_origin", detail)]
-        if not spans:
-            return [Finding(SKIP, "clip_origin", "no clips")]
-        if clip is None:
+            return [Finding(SKIP, name, "no readable GLB")]
+        record = SceneRecords.glb_block(self.reader.gltf, SceneRecords.SHOTS)
+        if not isinstance(record, dict):
+            return [Finding(SKIP, name, f"no extras.{SceneRecords.SHOTS.key} record")]
+        shots = [
+            str(s["clip"])
+            for s in record.get("shots") or []
+            if isinstance(s, dict) and s.get("clip")
+        ]
+        clips = set(self.reader.animations())
+        missing = [clip for clip in shots if clip not in clips]
+        if missing:
             return [
-                Finding(
-                    SKIP,
-                    "clip_origin",
-                    f"no single whole-timeline clip ({len(loose)} undeclared)",
-                )
-            ]
-        carried = spans[clip][2] - round(spans[clip][0] * self.fps)
-        if origin is not None and published is None:
-            # Measured from where the file says it starts, the stack is its
-            # own length by construction: nothing here judges it.
-            return [
-                Finding(
-                    SKIP,
-                    "clip_origin",
-                    f"{clip}: no independent span -- the file states its origin "
-                    f"({origin:g}) and nothing published one to judge it by",
-                )
-            ]
-        # The file's own stack, from where it says it starts; else the
-        # producer's prediction is all there is to judge it by.
-        span = [origin, origin + carried] if origin is not None else published
-        length = span[1] - span[0]
-        drift = carried - length
-        rows: List[Finding] = []
-        if abs(drift) > 1:
-            rows.append(
                 Finding(
                     FAIL,
-                    "clip_origin",
-                    f"{clip}: stack carries {carried:.0f}f but clips were cut "
-                    f"against a {length:.0f}f span ({span[0]:g}-{span[1]:g}), "
-                    f"{drift:+.0f}f out -- that origin is not this stack's, so "
-                    "every clip is cut from the wrong frame",
+                    name,
+                    f"shot(s) with no animation of their clip's name: {missing}",
                 )
-            )
-        if published and any(abs(p - s) > 1 for p, s in zip(published, span)):
-            rows.append(
-                Finding(
-                    WARN,
-                    "clip_origin",
-                    f"{clip}: the producer published {published[0]:g}-"
-                    f"{published[1]:g}, but the clips were cut against "
-                    f"{span[0]:g}-{span[1]:g}, the span the file carries (the "
-                    "conversion measures it from the FBX) -- the producer's "
-                    "prediction is off",
-                )
-            )
-        return rows or [
+            ]
+        return [Finding(PASS, name, f"{len(shots)} shot(s), each its clip by name")]
+
+    def check_animation_rate(self) -> List[Finding]:
+        """The rate the ``animation`` record states is the FBX's own (its
+        ``GlobalSettings`` time mode): the record states it for a reader of a
+        format that holds none (a GLB's), and a reader of the FBX uses the
+        file's -- so the two must be one rate. Each record read -- the
+        sidecar's, the GLB's -- is held to it."""
+        name = "animation_rate"
+        rate = self.fbx._fps() if self.fbx is not None else None
+        if not rate:
+            return [Finding(SKIP, name, "no FBX that states a time mode")]
+        stated = []
+        export = (self.sidecar or {}).get("data_export") or {}
+        held = export.get(SceneRecords.SHOTS.key) if isinstance(export, dict) else None
+        if isinstance(held, dict) and SceneRecords.SHOTS.is_current(held):
+            stated.append(("the sidecar's record", held.get("fps")))
+        if self.reader is not None:
+            carried = SceneRecords.glb_block(self.reader.gltf, SceneRecords.SHOTS)
+            if isinstance(carried, dict):
+                stated.append(("the GLB's record", carried.get("fps")))
+        stated = [(where, fps) for where, fps in stated if isinstance(fps, (int, float))]
+        if not stated:
+            return [Finding(SKIP, name, "no record states a rate")]
+        rows = [
             Finding(
-                PASS,
-                "clip_origin",
-                f"{clip}: {carried:.0f}f matches the span its clips were cut "
-                f"against ({span[0]:g}-{span[1]:g})",
+                FAIL,
+                name,
+                f"{where} states {fps:g} fps; the FBX's time mode is {rate:g}",
             )
+            for where, fps in stated
+            if abs(float(fps) - rate) > 1e-3
+        ]
+        return rows or [
+            Finding(PASS, name, f"{len(stated)} record(s) at the FBX's {rate:g} fps")
         ]
 
     # ---- FBX gates --------------------------------------------------------
@@ -970,8 +859,9 @@ class ExportVerifier(_ExportVerifierInternal):
         without its lighting. The records as a reader applies them
         (``FbxMedia.reader_records``): a referenced module's copy beside the
         scene's own, or naming nodes the file does not carry, binds nothing
-        and names no file the FBX needs. Read off the parsed file: no media is
-        held.
+        and names no file the FBX needs; an artist's property of a record's
+        name on another node is none (``SceneStoreBase.reader_values``). Read
+        off the parsed file: no media is held.
         """
         from pythontk.file_utils.mesh_convert.fbx_media import FbxMedia
 
@@ -980,7 +870,7 @@ class ExportVerifier(_ExportVerifierInternal):
             return [Finding(SKIP, name, "no readable FBX")]
         channels = []
         for key in FbxMedia.DEPENDENCY_FIELDS:
-            for owner, value in self.fbx.user_properties(key, named=True):
+            for owner, value in self.fbx.user_properties(key, named=True, paths=True):
                 if not isinstance(value, (bytes, bytearray)):
                     continue  # a number: no record's text (bytes(n) is n zeros)
                 try:
@@ -1029,9 +919,10 @@ class ExportVerifier(_ExportVerifierInternal):
         Read off the ``data_export`` carriers -- the scene's and any
         referenced module's. A property there that is a record by its shape
         (a JSON object stating a ``version``) under a key no record declares
-        is one a reader passes over: an older file's, which is re-exported.
-        A carrier's other properties -- the emissive groups' keyable floats --
-        are not records.
+        is one a reader passes over: an older file's, which is re-exported; a
+        record retired whole (``SceneRecords.RETIRED_FIXES``) is named with
+        its fix. A carrier's other properties -- an old file's keyable
+        floats -- are not records.
         """
         from pythontk.core_utils.engines.scene_export.scene_store import SceneStoreBase
 
@@ -1049,10 +940,15 @@ class ExportVerifier(_ExportVerifierInternal):
             try:
                 payload = json.loads(bytes(value).decode("utf-8"))
             except (TypeError, ValueError, UnicodeDecodeError):
-                continue  # not JSON text: no record (an emissive group's float)
+                continue  # not JSON text: no record (a keyable float)
             if key in declared:
                 read += 1
                 problems += [f"{owner}: {p}" for p in SceneRecords.problems(key, payload)]
+            elif key in SceneRecords.RETIRED_FIXES:
+                problems.append(
+                    f"{owner}: {key!r} is a retired record: "
+                    f"{SceneRecords.RETIRED_FIXES[key]}"
+                )
             elif isinstance(payload, dict) and "version" in payload:
                 problems.append(f"{owner}: {key!r} is no declared record")
         if problems:
@@ -1061,43 +957,132 @@ class ExportVerifier(_ExportVerifierInternal):
             return [Finding(SKIP, name, "the FBX carries no record")]
         return [Finding(PASS, name, f"{read} record(s) in their declared version and shape")]
 
+    def check_fbx_render_effects(self) -> List[Finding]:
+        """The ``render_effects`` record names exactly the curves the FBX
+        carries: one curve proxy (``SceneRecords.TRANSPORT``) per channel each
+        track and material entry names, and no proxy the record does not name
+        -- the record says what carries what, the proxies are the curves, and
+        a reader joins the two. A node channel plays on its proxy's parent
+        (``SceneRecords.TRANSPORT.join``), so each track's channel has a proxy
+        of its own: two tracks whose nodes share a leaf on one proxy ship one
+        curve, and two proxies of one name two curves a reader keys as one.
+        The record is the one a reader applies: the scene's own carrier's,
+        else the first module's (``SceneStoreBase.reader_values``).
+        """
+        from pythontk.core_utils.engines.scene_export.scene_store import SceneStoreBase
+
+        name = "fbx_render_effects"
+        if self.fbx is None:
+            return [Finding(SKIP, name, "no readable FBX")]
+        spec, transport = SceneRecords.VISIBILITY, SceneRecords.TRANSPORT
+        proxies: set = set()
+        carried: Dict[Tuple[str, str], int] = {}
+        rows = []
+        for owner, key, value in self.fbx.user_property_items(paths=True):
+            leaf = (owner or "").rsplit("|", 1)[-1]
+            if key == transport.marker and value and transport.parse(leaf):
+                proxies.add(transport.parse(leaf))
+                carried[transport.parse(leaf)] = carried.get(transport.parse(leaf), 0) + 1
+            elif key == spec.key and isinstance(value, (bytes, bytearray)):
+                rows.append((owner, True, key, value))
+        record = None
+        chosen = SceneStoreBase.reader_values(rows).get(spec.key)
+        if chosen is not None:
+            try:
+                record = json.loads(bytes(chosen[0]).decode("utf-8"))
+            except (TypeError, ValueError, UnicodeDecodeError):
+                return [Finding(FAIL, name, f"the {spec.key!r} record is not JSON")]
+        if record is None and not proxies:
+            return [Finding(SKIP, name, "the FBX carries no render effect")]
+        if record is not None and not spec.is_current(record):
+            return [
+                Finding(
+                    FAIL,
+                    name,
+                    f"the {spec.key!r} record is version {record.get('version')!r}; "
+                    f"this reader reads version {spec.version} -- re-export the file",
+                )
+            ]
+        # The record names a target as the delivery (a material, namespace
+        # included) or its host (a node) does; its proxy by the transport's
+        # name for it. The pair joins on that name; a failure says the
+        # record's own.
+        named = set()
+        said: Dict[Tuple[str, str], str] = {}
+        tracked: Dict[Tuple[str, str], List[str]] = {}
+        for section, target in (("tracks", "node"), ("materials", "material")):
+            for entry in (record or {}).get(section) or ():
+                if isinstance(entry, dict) and entry.get(target):
+                    for channel in entry.get("channels") or ():
+                        pair = (transport.target_name(entry[target]), str(channel))
+                        named.add(pair)
+                        said.setdefault(pair, str(entry[target]))
+                        if section == "tracks" and pair[1] in transport.node_channels:
+                            tracked.setdefault(pair, []).append(str(entry[target]))
+        problems = [
+            f"the record names {said[(target, channel)]}'s {channel} but the "
+            f"file carries no {transport.proxy_name(target, channel)!r} proxy"
+            for target, channel in sorted(named - proxies)
+            if channel in transport.channels
+        ] + [
+            f"a {transport.proxy_name(target, channel)!r} proxy the record does not name"
+            for target, channel in sorted(proxies - named)
+        ]
+        for (target, channel), nodes in sorted(tracked.items()):
+            count = carried.get((target, channel), 0)
+            proxy = transport.proxy_name(target, channel)
+            if count and len(nodes) > count:
+                problems.append(
+                    f"the record names {len(nodes)} nodes' {channel} "
+                    f"({', '.join(sorted(nodes))}) but the file carries {count} "
+                    f"{proxy!r} prox{'y' if count == 1 else 'ies'}: a reader plays "
+                    f"each curve on its proxy's parent alone"
+                )
+            elif count > len(nodes):
+                problems.append(
+                    f"the file carries {count} {proxy!r} proxies for "
+                    f"{len(nodes)} node{'' if len(nodes) == 1 else 's'}: a reader "
+                    f"keys their curves by the one name and reads the first"
+                )
+        if problems:
+            return [Finding(FAIL, name, problem) for problem in problems]
+        return [Finding(PASS, name, f"{len(named)} channel(s), each on its curve proxy")]
+
     def check_fbx_takes(self) -> List[Finding]:
-        """Declared sidecar takes all exist as AnimationStacks."""
+        """The FBX carries one take per declared shot, named after it, and no
+        other: a file with shots ships no whole-timeline take beside them."""
         if self.fbx is None:
             return [Finding(SKIP, "fbx_takes", "no readable FBX")]
-        takes = {t.get("name") for t in self._declared_takes(self.sidecar)}
-        if not takes:
-            detail = self.sidecar_error or "no sidecar takes"
+        clips, problem = self._declared_clips(self.sidecar)
+        if problem:
+            return [Finding(FAIL, "fbx_takes", problem)]
+        if not clips:
+            detail = self.sidecar_error or "no sidecar shots"
             return [Finding(SKIP, "fbx_takes", detail)]
-        if self._published_clip_mode(self.sidecar) == "full":
-            # The takes describe the SCENE's shots in every mode; this file was
-            # declared to carry them as metadata inside its one sequence.
-            detail = (
-                f"Full Sequence Only: the {len(takes)} declared shot(s) ride as "
-                "metadata, not as takes"
-            )
-            return [Finding(SKIP, "fbx_takes", detail)]
-        stacks = set(self.fbx.take_names())
-        missing = sorted(takes - stacks)
+        stacks = self.fbx.take_names()
+        missing = sorted(set(clips) - set(stacks))
         if missing:
             return [Finding(FAIL, "fbx_takes", f"declared but absent: {missing}")]
-        if self._published_clip_mode(self.sidecar) == "both" and not stacks - takes:
+        named = set(clips)
+        extra = [name for name in stacks if name not in named]
+        if extra:
             return [
                 Finding(
                     FAIL,
                     "fbx_takes",
-                    "Shots + Full Sequence declared, but every take is a declared "
-                    "shot: the whole-timeline take is missing",
+                    f"take(s) no shot names: {extra} -- a file with shots "
+                    "carries one take per shot and no whole-timeline take",
                 )
             ]
-        return [Finding(PASS, "fbx_takes", f"{len(takes)} declared take(s) present")]
+        return [Finding(PASS, "fbx_takes", f"{len(clips)} shot take(s), one per shot")]
 
     #: Channels a failing take names before the rest are counted.
     _LISTED_CHANNELS = 3
 
     def check_fbx_take_channels(self) -> List[Finding]:
-        """Every declared take is an exact slice of the animation: it animates
-        each channel the whole-timeline take does, keyed across its window.
+        """Every shot's take is an exact slice of the animation: it animates
+        each channel any shot's take does, keyed across its own window (the
+        span the take declares, :meth:`FbxFile.take_windows`).
 
         Maya's take split restricts each curve to a take's window before
         writing it unless every curve is resampled, so a curve with no key
@@ -1106,29 +1091,22 @@ class ExportVerifier(_ExportVerifierInternal):
         its clips from them) -- and a take's keys stop at its last in-window
         key, a clip shorter than its shot. Measured in Unity 6000.3: a 50-frame
         shot imported 40 frames long with two of three nodes frozen, the next
-        shot as a clip with no curves at all. The whole-timeline take, when the
-        file carries one, is the reference; a file without one (Blender
-        windows each take itself) is held to the windows alone. A declared
-        take whose stack carries no curve is judged like any other: against
-        the whole timeline it lost every channel; held to its window alone it
-        is a still shot.
+        shot as a clip with no curves at all. A take whose stack carries no
+        curve is judged like any other: it lost every channel.
         """
         name = "fbx_take_channels"
         if self.fbx is None:
             return [Finding(SKIP, name, "no readable FBX")]
-        declared = {
-            t["name"]: t
-            for t in self._declared_takes(self.sidecar)
-            if t.get("name") and "start" in t and "end" in t
-        }
-        if not declared:
-            return [Finding(SKIP, name, self.sidecar_error or "no sidecar takes")]
-        if self._published_clip_mode(self.sidecar) == "full":
-            return [Finding(SKIP, name, "Full Sequence Only: no shot takes to slice")]
+        clips, problem = self._declared_clips(self.sidecar)
+        if problem:
+            return [Finding(FAIL, name, problem)]
+        if not clips:
+            return [Finding(SKIP, name, self.sidecar_error or "no sidecar shots")]
         curves = self.fbx.take_curves()
+        windows = self.fbx.take_windows()
         present = set(self.fbx.take_names())
-        whole = [take for take in curves if take not in declared]
-        reference = set().union(*(set(curves[take]) for take in whole))
+        shot_takes = [take for take in clips if take in present]
+        reference = set().union(*(set(curves.get(take, {})) for take in shot_takes))
         tick = FbxFile.TICKS_PER_SECOND / self.fps
 
         def listed(keys) -> str:
@@ -1141,9 +1119,7 @@ class ExportVerifier(_ExportVerifierInternal):
 
         rows: List[Finding] = []
         checked = 0
-        for take, window in declared.items():
-            if take not in present:
-                continue  # an absent take is check_fbx_takes' to name
+        for take in shot_takes:
             # A stack with no curve is not absent: it animates nothing, which
             # take_curves leaves out -- and check_fbx_takes reads names alone.
             channels = curves.get(take, {})
@@ -1154,12 +1130,16 @@ class ExportVerifier(_ExportVerifierInternal):
                     Finding(
                         FAIL,
                         name,
-                        f"{take}: {len(missing)} channel(s) the whole timeline "
+                        f"{take}: {len(missing)} channel(s) another shot's take "
                         f"animates are absent -- they play their rest pose for "
                         f"the whole shot: {listed(missing)}",
                     )
                 )
-            lo, hi = float(window["start"]) * tick, float(window["end"]) * tick
+            window = windows.get(take)
+            if window is None:
+                continue
+            lo = window[0] * FbxFile.TICKS_PER_SECOND
+            hi = window[1] * FbxFile.TICKS_PER_SECOND
             short = [
                 key
                 for key, (first, last, _count) in channels.items()
@@ -1171,24 +1151,20 @@ class ExportVerifier(_ExportVerifierInternal):
                         FAIL,
                         name,
                         f"{take}: {len(short)} channel(s) keyed short of the take's "
-                        f"{window['start']:g}-{window['end']:g} window: "
-                        f"{listed(short)}",
+                        f"{window[0] * self.fps:g}-{window[1] * self.fps:g} "
+                        f"window: {listed(short)}",
                     )
                 )
         if not checked:
             return [Finding(SKIP, name, "no declared take is in the file")]
         if rows:
             return rows
-        scope = (
-            f"all {len(reference)} channel(s) of the whole timeline"
-            if whole
-            else "every channel (no whole-timeline take to compare)"
-        )
         return [
             Finding(
                 PASS,
                 name,
-                f"{checked} take(s) carry {scope} across their windows",
+                f"{checked} take(s) carry all {len(reference)} animated "
+                "channel(s) across their windows",
             )
         ]
 

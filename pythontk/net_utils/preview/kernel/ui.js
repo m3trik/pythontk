@@ -42,7 +42,7 @@ addEventListener('keydown', (event) => {
   }
   // A letter typed into the clip picker is that control's own type-ahead, so
   // the page's single-letter shortcuts must not fire on top of it -- reaching
-  // for "(full range)" would otherwise re-frame the camera on the way. Only
+  // for a shot named "Flyby" would otherwise re-frame the camera on the way. Only
   // the picker: the sliders use arrows, which this page has no shortcut for,
   // and excluding them would cost Space-to-pause after a scrub.
   if (event.target === el.clipSelect) return;

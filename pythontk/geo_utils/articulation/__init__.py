@@ -8,7 +8,7 @@ importing this package loads none of its modules.
 - :mod:`~pythontk.geo_utils.articulation.model` -- :class:`ArticulationModel`:
   the joint model a rig ships (rest frames, per-joint channels, limits) and the
   grab solver that poses it. The single source of truth the runtimes port:
-  unitytk's ``ArticulatedRigController.cs``, the WebXR preview's
+  unitytk's ``ArticulationModel.cs`` (``Features/ArticulatedRig/Model/``), the WebXR preview's
   ``articulated_rig.js`` and the mayatk grab tool.
 - :mod:`~pythontk.geo_utils.articulation.analysis` --
   :class:`ArticulationAnalysis`: which parts move together, where they pivot
@@ -17,10 +17,10 @@ importing this package loads none of its modules.
   the plan a DCC's ``ArticulatedRig`` builds from and edits (checked and
   ordered, rest frames, the record's joints, the end control, the post-rig
   edits, the pivots adjusted), host-free so mayatk and blendertk share it.
-- :mod:`~pythontk.geo_utils.articulation.record` -- :class:`ArticulationRecord`
-  and :class:`ArticulationBlock`: the ``articulation`` record's payload and the
-  GLB block bound from it, declared once (the ports' types are generated from
-  them).
+- :mod:`~pythontk.geo_utils.articulation.record` -- :class:`ArticulationRecord`:
+  the ``articulation`` record's payload in both containers (an FBX's carrier,
+  a GLB's root ``extras``), declared once (the ports' types are generated from
+  it).
 - :mod:`~pythontk.geo_utils.articulation.conformance` --
   :class:`ArticulationConformance`: the golden cases every port of the model
   is held to (``Conformance.cases("articulation")``).

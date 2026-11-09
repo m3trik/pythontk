@@ -1727,7 +1727,7 @@ class ContainerModeAgreementTest(_TextureFixture):
         ).reshape(64, 64)
         source = Image.frombytes("I;16B", (64, 64), ramp.astype(">u2").tobytes())
 
-        reduced = MapOptimizer._coerce_mode(source, "L")
+        reduced = ImgUtils.convert_mode(source, "L")
 
         self.assertEqual(reduced.mode, "L")
         # Rescaled, not clipped: the full-scale ramp keeps its 64 steps.

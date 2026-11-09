@@ -93,8 +93,10 @@ class LookCapture:
         self.timeout = float(timeout)
         self._manifest: Optional[Dict[str, Any]] = None
         self._maps: Optional[Dict[str, str]] = None
-        #: The template's own probe as a payload carries it (:meth:`_file_probe`).
+        #: The template's own probe as a payload carries it (:meth:`_file_probe`),
+        #: and its linear pixels (what its highlight copies are built on).
         self._probe_payload: Optional[Dict[str, Any]] = None
+        self._probe_pixels: Optional["np.ndarray"] = None
         self._server = self._playwright = self._browser = self._page = None
         self._module_url = ""
 
@@ -106,8 +108,8 @@ class LookCapture:
 
     @property
     def manifest(self) -> Dict[str, Any]:
-        """The template's ``lightmaps`` block: materials, probe
-        (``SceneRecords.glb_block``)."""
+        """The template's ``lightmaps`` record, as a GLB carries it
+        (``SceneRecords.glb_block``: its root extras, in the current schema)."""
         if self._manifest is None:
             gltf = GlbReader.load(self.template).gltf
             self._manifest = SceneRecords.glb_block(gltf, SceneRecords.LIGHTMAPS) or {}
@@ -115,61 +117,27 @@ class LookCapture:
 
     @property
     def maps(self) -> Dict[str, str]:
-        """``{material name: image stem}``: the lightmap each lightmapped
-        material of the template binds (:meth:`bound_maps`) -- what a relight
-        swaps."""
+        """``{map file name: image stem}``: each lightmap the template lights
+        an object with (:meth:`bound_maps`) -- what a relight swaps."""
         if self._maps is None:
             gltf = GlbReader.load(self.template).gltf
-            self._maps = self.bound_maps(gltf, self.manifest)
+            self._maps = self.bound_maps(gltf)
         return self._maps
 
     @staticmethod
-    def bound_maps(gltf: Mapping[str, Any], block: Mapping[str, Any]) -> Dict[str, str]:
-        """``{material name: image stem}`` for each material the ``lightmaps``
-        *block* names: the image its texture in the block's carrier slot
-        (``carrier``: ``occlusionTexture``, or ``emissiveTexture``) samples --
-        its ``source``, or an image extension's -- by name or file name, the
-        extension dropped: the stem a bake's atlas is matched by. A block
-        names no map: a material's is the texture it binds. A material binding
-        no image is left out."""
-        block = block if isinstance(block, Mapping) else {}
-        slot = (
-            "emissiveTexture"
-            if block.get("carrier") == "emissive"
-            else "occlusionTexture"
-        )
-        named = (
-            block.get("materials")
-            if isinstance(block.get("materials"), Mapping)
-            else {}
-        )
-        textures = gltf.get("textures") or []
-        images = gltf.get("images") or []
+    def bound_maps(gltf: Mapping[str, Any]) -> Dict[str, str]:
+        """``{map file name: image stem}`` for each map the template's
+        ``lightmaps`` record lights a node of it with
+        (``MeshConvert.lit_nodes``: the entry resolved to its node, its map
+        riding the file) -- keyed by the record's own file name, which the
+        viewer swaps by (no longer by material name); the stem is what a
+        bake's atlas is matched by."""
+        from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
+
         maps: Dict[str, str] = {}
-        for material in gltf.get("materials") or []:
-            name = material.get("name") if isinstance(material, Mapping) else None
-            ref = material.get(slot) if name in named else None
-            index = ref.get("index") if isinstance(ref, Mapping) else None
-            if not isinstance(index, int) or not 0 <= index < len(textures):
-                continue
-            texture = textures[index]
-            source = texture.get("source")
-            if not isinstance(source, int):
-                source = next(
-                    (
-                        ext["source"]
-                        for ext in (texture.get("extensions") or {}).values()
-                        if isinstance(ext, Mapping)
-                        and isinstance(ext.get("source"), int)
-                    ),
-                    None,
-                )
-            if not isinstance(source, int) or not 0 <= source < len(images):
-                continue
-            image = images[source]
-            label = image.get("name") or os.path.basename(str(image.get("uri") or ""))
-            if label and not label.startswith("data:"):
-                maps[name] = os.path.splitext(label)[0]
+        for entry in MeshConvert.lit_nodes(dict(gltf)).values():
+            name = SceneRecords.GLB_MEDIA.file_name(entry.get("map"))
+            maps.setdefault(name, os.path.splitext(name)[0])
         return maps
 
     def start(self) -> "LookCapture":
@@ -258,17 +226,18 @@ class LookCapture:
         probe: Optional[Mapping[str, Any]] = None,
         maps: Optional[Mapping[str, str]] = None,
     ) -> Dict[str, Any]:
-        """What a relight sends: each material's image, the images, the probe.
+        """What a relight sends: each map's image, the images, the probe.
 
         Parameters:
             bakes: ``{file name: (height, width, 3) linear}`` -- atlases matched
-                to the template's images by name stem, the probe by ``_Probe``.
-            manifest: The template's ``lightmaps`` block (its probe).
-            probe: ``{"position", "box"}`` overriding the manifest's placement
-                of the probe (a panorama taken elsewhere; ``"box": None``
-                reads it as distant).
-            maps: ``{material name: image stem}`` each lightmapped material
-                binds (:attr:`maps`, :meth:`bound_maps`); a material whose
+                to the template's maps by name stem, the probe by ``_Probe``.
+            manifest: The template's ``lightmaps`` record (its probe, placed
+                in the record's units beside its ``unit_scale``).
+            probe: ``{"position", "box"}`` in metres overriding the record's
+                placement of the probe (a panorama taken elsewhere;
+                ``"box": None`` reads it as distant).
+            maps: ``{map file name: image stem}`` the template lights its
+                objects with (:attr:`maps`, :meth:`bound_maps`); a map whose
                 stem no bake carries is left as it is.
         """
         stems = {os.path.splitext(name)[0]: image for name, image in bakes.items()}
@@ -288,7 +257,7 @@ class LookCapture:
         probe_stem = next((s for s in stems if s.endswith("_Probe")), None)
         if probe_stem is not None:
             image = np.asarray(stems[probe_stem], np.float32)
-            entry = dict(manifest.get("probe") or {}, **placement)
+            entry = dict(cls._placement(manifest) or {}, **placement)
             probe = {
                 "width": image.shape[1],
                 "height": image.shape[0],
@@ -297,6 +266,14 @@ class LookCapture:
                 "box": entry.get("box"),
             }
         return {"maps": maps, "images": images, "probe": probe}
+
+    @staticmethod
+    def _placement(manifest: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
+        """The record's probe as the viewer places it: ``{"position", "box"}``
+        in metres (each length times the record's ``unit_scale``), or ``None``."""
+        from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
+
+        return MeshConvert._probe_in_metres(manifest)
 
     @staticmethod
     def decode(shot: str) -> "np.ndarray":
@@ -338,20 +315,42 @@ class LookCapture:
         """
         payload = self.payload(bakes, self.manifest, probe, self.maps)
         payload["emissive"] = dict(emissive) if emissive else None
-        payload["highlights"] = self._highlights(payload, lights) if lights else None
+        payload["highlights"] = (
+            self._highlights(payload, bakes, lights) if lights else None
+        )
         return int(self._call("setLighting", payload))
 
     def _highlights(
-        self, payload: Dict[str, Any], lights: Sequence[Mapping[str, Any]]
+        self,
+        payload: Dict[str, Any],
+        bakes: Mapping[str, "np.ndarray"],
+        lights: Sequence[Mapping[str, Any]],
     ) -> Optional[List[Dict[str, Any]]]:
-        """The payload's highlight layers for *lights*, its probe filled in when
-        the swap carried none (the copies are a probe plus a layer)."""
+        """*lights* as the delivery ships them, on the payload's probe -- the
+        swap's, else the template's own (filled in): the probe with each light
+        drawn in as its capture point sees it, and a complete copy per group of
+        receivers (the probe box-filtered to the copy's size plus its layer,
+        for the nodes it names), ``MeshConvert.highlight_probe_layers``' layers
+        drawn as ``embed_fbx_highlight_probes`` draws them. The template's own
+        probe ships its own lights drawn in already, so its environment is
+        that probe less its capture point's layer (:meth:`_raw_file_probe`):
+        each copy, like the probe sent, is built on the environment alone, as
+        the delivery builds them on the bake's raw probe."""
+        from pythontk.file_utils.mesh_convert._highlights import _Highlights
         from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
 
-        if payload.get("probe") is None:
-            payload["probe"] = self._file_probe()
-            if payload["probe"] is None:
+        stems = {os.path.splitext(name)[0]: image for name, image in bakes.items()}
+        stem = next((s for s in stems if s.endswith("_Probe")), None)
+        if payload.get("probe") is None or stem is None:
+            file_probe = self._file_probe()
+            if file_probe is None:
                 return None
+            pixels = self._raw_file_probe()
+            # The template's own payload stays as it ships; this one is the
+            # environment, the lights drawn in below.
+            payload["probe"] = dict(file_probe, b64=self._half_b64(pixels))
+        else:
+            pixels = np.asarray(stems[stem], np.float32)[..., :3]
         probe = payload["probe"]
         layers = MeshConvert.highlight_probe_layers(
             self.template,
@@ -359,28 +358,68 @@ class LookCapture:
             probe={"position": probe["position"], "box": probe.get("box")},
             width=int(probe["width"]),
         )
-        return [
-            {
-                "materials": layer["materials"],
-                "width": int(layer["image"].shape[1]),
-                "height": int(layer["image"].shape[0]),
-                "b64": self._half_b64(layer["image"]),
-            }
-            for layer in layers
-        ] or None
+        copies = []
+        for layer in layers:
+            image = np.asarray(layer["image"], np.float32)
+            if layer["receivers"] == "probe":
+                if image.shape == pixels.shape:
+                    probe["b64"] = self._half_b64(pixels + image)
+                continue
+            if not layer.get("objects"):
+                continue
+            complete = _Highlights._complete_copy(pixels, image)
+            copies.append(
+                {
+                    "objects": layer["objects"],
+                    "materials": layer["materials"],
+                    "width": int(complete.shape[1]),
+                    "height": int(complete.shape[0]),
+                    "b64": self._half_b64(complete),
+                }
+            )
+        return copies or None
+
+    def _raw_file_probe(self) -> "np.ndarray":
+        """The template's probe as the environment alone: what it ships (its
+        lights drawn in as the capture point sees them, where its record
+        names the lit probe, ``MeshConvert.HIGHLIGHT_PROBE_NAME``) less that
+        layer, drawn as the delivery drew it, clamped at 0 -- the base every
+        copy is built on (:meth:`_highlights`). :meth:`_file_probe` first."""
+        from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
+
+        pixels = self._probe_pixels
+        manifest = self.manifest
+        lit = MeshConvert.HIGHLIGHT_PROBE_NAME.format(stem="")
+        name = SceneRecords.GLB_MEDIA.file_name((manifest.get("probe") or {}).get("map"))
+        lights = MeshConvert.lights_in_metres(manifest.get("lights"), manifest.get("unit_scale"))
+        place = self._placement(manifest)
+        if pixels is None or not name.endswith(lit) or not lights or place is None:
+            return pixels
+        C = np.asarray(place["position"], float)
+        box = place.get("box")
+        lo = np.asarray(box["min"], float) if box else None
+        hi = np.asarray(box["max"], float) if box else None
+        n = len(lights)
+        seen = MeshConvert._highlight_layer(lights, [C] * n, [1.0] * n, C, lo, hi, pixels.shape[1])
+        if seen.shape != pixels.shape:
+            return pixels
+        return np.maximum(pixels - seen, 0.0).astype(np.float32)
 
     def _file_probe(self) -> Optional[Dict[str, Any]]:
-        """The template's own reflection probe as a payload's (decoded once), or ``None``."""
+        """The template's own reflection probe as a payload's (decoded once),
+        or ``None``: the file its record names, from the bufferView of that
+        name (``SceneRecords.GLB_MEDIA``), placed in metres."""
         if self._probe_payload is None:
             entry = self.manifest.get("probe") or {}
-            view = entry.get("bufferView")
-            if not isinstance(view, int):
-                return None
-            import cv2
-
+            place = self._placement(self.manifest)
             from pythontk.file_utils.mesh_convert.glb.edit import GlbEdit
 
             edit = GlbEdit.read(self.template)
+            view = SceneRecords.GLB_MEDIA.view(edit.gltf, entry.get("map"))
+            if view is None or place is None:
+                return None
+            import cv2
+
             spec = (edit.gltf.get("bufferViews") or [])[view]
             start = int(spec.get("byteOffset", 0))
             raw = bytes(edit.bin_data[start : start + int(spec["byteLength"])])
@@ -390,12 +429,13 @@ class LookCapture:
             if image is None:
                 return None
             rgb = np.ascontiguousarray(image[..., 2::-1], np.float32)
+            self._probe_pixels = rgb
             self._probe_payload = {
                 "width": rgb.shape[1],
                 "height": rgb.shape[0],
                 "b64": self._half_b64(rgb),
-                "position": entry.get("position", [0.0, 0.0, 0.0]),
-                "box": entry.get("box"),
+                "position": place["position"],
+                "box": place["box"],
             }
         return self._probe_payload
 

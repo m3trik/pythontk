@@ -23,7 +23,11 @@ from typing import Any, Dict, List
 
 # From this package:
 from pythontk.file_utils._file_utils import FileUtils
+from pythontk.core_utils.color import Palette
 from pythontk.str_utils.report_doc import ReportDoc
+
+_STATUS = Palette.status()  # the shared severity scheme
+_INFO, _WARN, _ERROR = (_STATUS[tier][0] for tier in ("info", "warn", "error"))
 
 
 class MatReport:
@@ -73,7 +77,7 @@ class MatReport:
         """Render ``get_texture_info`` output as styled HTML. Scene-derived values (names,
         paths) are HTML-escaped — node names / file paths can legitimately contain ``& < >``."""
         head = (
-            f"<h2 style='color:#9cf; margin:0 0 6px 0;'>Texture Info</h2>"
+            f"<h2 style='color:{_INFO}; margin:0 0 6px 0;'>Texture Info</h2>"
             f"<p style='color:#bbb; margin:0 0 8px 0;'>"
             f"Found <b>{len(info_list)}</b> valid texture(s) in scene.</p>"
         )
@@ -139,7 +143,7 @@ class MatReport:
         containing folder on click."""
         esc = _html.escape
         head = (
-            f"<h2 style='color:#9cf; margin:0 0 6px 0;'>Material Info</h2>"
+            f"<h2 style='color:{_INFO}; margin:0 0 6px 0;'>Material Info</h2>"
             f"<p style='color:#bbb; margin:0 0 8px 0;'>"
             f"<b>{len(records)}</b> material(s)</p>"
         )
@@ -171,7 +175,7 @@ class MatReport:
                 )
                 if "error" in t:
                     body_lines.append(
-                        f"    <span style='color:#e58;'>Error:     {esc(str(t['error']))}</span>"
+                        f"    <span style='color:{_ERROR};'>Error:     {esc(str(t['error']))}</span>"
                     )
                     continue
                 if "width" in t or "mode" in t or "format" in t:
@@ -187,7 +191,7 @@ class MatReport:
                     continue
                 if "error" in opt:
                     body_lines.append(
-                        f"    <span style='color:#e58;'>Optimize:  (error: {esc(str(opt['error']))})</span>"
+                        f"    <span style='color:{_ERROR};'>Optimize:  (error: {esc(str(opt['error']))})</span>"
                     )
                     continue
                 if opt.get("recommended"):
@@ -207,7 +211,7 @@ class MatReport:
                 # no other work. See the text renderer for the full rationale.
                 for w in opt.get("warnings", []):
                     body_lines.append(
-                        f"    <span style='color:#e9a;'>Budget:    {esc(str(w))}</span>"
+                        f"    <span style='color:{_WARN};'>Budget:    {esc(str(w))}</span>"
                     )
             chunks.append(
                 "<pre style='font-family:monospace; margin:0 0 0 16px;'>"

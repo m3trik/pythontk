@@ -18,7 +18,7 @@ import os
 import struct
 from collections.abc import Mapping
 from contextlib import contextmanager
-from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Union
 
 logger = logging.getLogger(__name__)
 
@@ -642,7 +642,10 @@ class GlbEdit:
         trap this exists to avoid -- images name their view DIRECTLY rather
         than through an accessor, so counting accessor references alone reads
         every image in the file as garbage (measured while sizing this pass on
-        a production assembly: 75.78 MB of phantom saving).
+        a production assembly: 75.78 MB of phantom saving). A view with a glTF
+        ``name`` is live as well: a file a record names rides the view of its
+        name, held by that name rather than by any index
+        (``SceneRecords.GLB_MEDIA``).
 
         Survivors keep their order and their dicts; only ``byteOffset`` moves,
         each view padded to the 4-byte boundary an accessor requires, and every
@@ -683,6 +686,11 @@ class GlbEdit:
         # Everything BUT the view array itself: a view names a buffer, never
         # another view, and walking it would re-add every index.
         live = _walk({k: v for k, v in gltf.items() if k != "bufferViews"}, set())
+        live.update(
+            index
+            for index, view in enumerate(views)
+            if isinstance(view, dict) and isinstance(view.get("name"), str)
+        )
         if all(index in live for index in range(len(views))):
             return 0
 
@@ -853,6 +861,20 @@ class GlbEdit:
         return extras if isinstance(extras, Mapping) else {}
 
     @classmethod
+    def user_property(cls, node: Any, key: str) -> Any:
+        """One user property off a node's extras, in either on-disk shape:
+        FBX2glTF nests user properties under ``extras.fromFBX.userProperties``
+        as ``{"type", "value"}`` records; a native glTF writer puts a plain
+        value at ``extras[key]``. ``None`` when the node carries none."""
+        extras = cls.extras_of(node)
+        nested = ((extras.get("fromFBX") or {}).get("userProperties") or {}).get(key)
+        if isinstance(nested, dict):
+            return nested.get("value")
+        if nested is not None:
+            return nested
+        return extras.get(key)
+
+    @classmethod
     def accessor_elements(cls, edit: "GlbEdit", index: int) -> Optional[List[bytes]]:
         """One accessor's elements as raw byte strings, or None if unreadable.
 
@@ -984,7 +1006,16 @@ class GlbEdit:
             those would silently re-point it at the wrong data, so the pass
             declines rather than guess.
         """
-        gltf = edit.gltf
+        dropped = cls._drop_unreferenced(edit.gltf, candidates)
+        if dropped:
+            edit.dirty = True
+        return dropped
+
+    @classmethod
+    def _drop_unreferenced(cls, gltf: Dict[str, Any], candidates: Set[int]) -> int:
+        """:meth:`drop_orphaned_accessors` on the JSON alone, for a pass that
+        holds the document and not its session; the bytes the deleted
+        accessors read are :meth:`compact_bin`'s to collect."""
         accessors = gltf.get("accessors") or []
         orphaned = {
             index
@@ -1008,8 +1039,51 @@ class GlbEdit:
         remap = {old: new for new, old in enumerate(keep)}
         gltf["accessors"] = [accessors[i] for i in keep]
         cls.map_accessor_refs(gltf, lambda index: remap.get(index))
-        edit.dirty = True
         return len(orphaned)
+
+    @classmethod
+    def _keep_channels(
+        cls, gltf: Dict[str, Any], drop: Callable[[Dict[str, Any], Dict[str, Any]], bool]
+    ) -> Tuple[int, Set[int]]:
+        """Drop every animation channel *drop* names (``drop(channel,
+        animation)``), then, in each clip that lost one, every sampler no
+        channel left reads, the rest renumbered -- a sampler outlives its
+        channels as a span every pass reads (``_animation_time_span``) and the
+        file no longer plays. JSON only.
+
+        Returns:
+            ``(channels dropped, accessor indices the dropped samplers read)``:
+            the candidates for :meth:`drop_orphaned_accessors`.
+        """
+        dropped = 0
+        released: Set[int] = set()
+        for animation in gltf.get("animations") or []:
+            samplers = animation.get("samplers") or []
+            wired = animation.get("channels") or []
+            kept = [channel for channel in wired if not drop(channel, animation)]
+            if len(kept) == len(wired):
+                continue
+            dropped += len(wired) - len(kept)
+            used = sorted(
+                {
+                    c["sampler"]
+                    for c in kept
+                    if isinstance(c.get("sampler"), int) and 0 <= c["sampler"] < len(samplers)
+                }
+            )
+            for index, sampler in enumerate(samplers):
+                if index not in used:
+                    released.update(
+                        i
+                        for i in ((sampler or {}).get("input"), (sampler or {}).get("output"))
+                        if isinstance(i, int)
+                    )
+            remap = {old: new for new, old in enumerate(used)}
+            for channel in kept:
+                channel["sampler"] = remap.get(channel.get("sampler"), channel.get("sampler"))
+            animation["channels"] = kept
+            animation["samplers"] = [samplers[i] for i in used]
+        return dropped, released
 
     @classmethod
     def release_animation_payload(
@@ -1051,3 +1125,83 @@ class GlbEdit:
         if not cls.drop_orphaned_accessors(edit, mine):
             return 0
         return cls.compact_bin(edit)
+
+
+class _SamplerBatch:
+    """New animation samplers for one GLB, their payloads written in one BIN
+    append: the shape every channel writer here shares (the presence gates,
+    the take holds, the pointer channels).
+
+    Plan first -- each sampler's times and values a float payload
+    (:meth:`slot`), an identical payload stored once -- then :meth:`commit`
+    the payloads in one :meth:`GlbEdit.append_bin_views`, and add each
+    sampler (:meth:`sampler`): its accessors are built then, one per payload
+    and type, shared by every sampler that reads the same one. An internal
+    helper of the ``mesh_convert`` passes.
+    """
+
+    def __init__(self) -> None:
+        #: The float32 payloads planned, in slot order.
+        self.payloads: List[bytes] = []
+        self._slots: Dict[bytes, int] = {}
+        self._values: List[List[float]] = []
+        self._views: List[int] = []
+        self._built: Dict[Tuple[int, str], int] = {}
+        self._gltf: Optional[Dict[str, Any]] = None
+
+    def slot(self, values: Sequence[float]) -> int:
+        """The payload slot holding *values* as float32, planned once."""
+        raw = struct.pack(f"<{len(values)}f", *values)
+        if raw not in self._slots:
+            self._slots[raw] = len(self.payloads)
+            self.payloads.append(raw)
+            self._values.append([float(v) for v in values])
+        return self._slots[raw]
+
+    def commit(self, edit: "GlbEdit") -> bool:
+        """Append every planned payload to *edit*'s BIN, in one write;
+        ``False`` -- nothing written -- when there is none, or when its
+        buffer is external (:meth:`GlbEdit.append_bin_views`)."""
+        self._views = GlbEdit.append_bin_views(edit, self.payloads)
+        self._gltf = edit.gltf
+        return bool(self._views)
+
+    def sampler(
+        self,
+        animation: Dict[str, Any],
+        times: int,
+        values: int,
+        kind: str,
+        interpolation: str = "LINEAR",
+    ) -> int:
+        """Add to *animation* a sampler reading payload *times* (seconds) and
+        *values* (one *kind* element -- ``"VEC3"``, ``"VEC4"`` -- per time),
+        after :meth:`commit`; returns its index. The input states its
+        ``min``/``max``, as an animation input must."""
+        count = len(self._values[times])
+        samplers = animation.setdefault("samplers", [])
+        samplers.append(
+            {
+                "input": self._accessor(times, "SCALAR", count, span=True),
+                "output": self._accessor(values, kind, count),
+                "interpolation": interpolation,
+            }
+        )
+        return len(samplers) - 1
+
+    def _accessor(self, slot: int, kind: str, count: int, span: bool = False) -> int:
+        key = (slot, kind)
+        if key not in self._built:
+            entry: Dict[str, Any] = {
+                "bufferView": self._views[slot],
+                "componentType": 5126,  # FLOAT
+                "count": count,
+                "type": kind,
+            }
+            if span:
+                given = self._values[slot]
+                entry["min"], entry["max"] = [given[0]], [given[-1]]
+            accessors = self._gltf.setdefault("accessors", [])
+            accessors.append(entry)
+            self._built[key] = len(accessors) - 1
+        return self._built[key]

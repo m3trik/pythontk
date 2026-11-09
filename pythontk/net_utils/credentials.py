@@ -28,6 +28,10 @@ class Credentials:
     3. Environment Variables (Fallback for CI/Headless)
     """
 
+    #: The keyring entry beside a target's password that keeps its username:
+    #: keyring holds one secret per name, so the username is an entry of its own.
+    KEYRING_USERNAME_SUFFIX = "#username"
+
     @staticmethod
     def get_password(target_name: str) -> str:
         """
@@ -52,11 +56,12 @@ class Credentials:
             try:
                 pwd = keyring.get_password("pythontk", target_name)
                 if pwd:
-                    # Keyring doesn't always store usernames tightly coupled,
-                    # but we can try to fetch a separate entry or default it.
-                    # For simple usage, we might just return the password.
-                    # To keep API consistent, we try to finding a stored user or return 'unknown'.
-                    return {"username": "keyring_user", "password": pwd}
+                    # The username is its own entry (KEYRING_USERNAME_SUFFIX);
+                    # one stored before it was kept reads as "keyring_user".
+                    user = keyring.get_password(
+                        "pythontk", target_name + Credentials.KEYRING_USERNAME_SUFFIX
+                    )
+                    return {"username": user or "keyring_user", "password": pwd}
             except Exception:
                 pass
 
@@ -83,6 +88,16 @@ class Credentials:
         if keyring:
             try:
                 keyring.set_password("pythontk", target_name, password)
+                user_entry = target_name + Credentials.KEYRING_USERNAME_SUFFIX
+                if username:
+                    keyring.set_password("pythontk", user_entry, username)
+                else:
+                    # No username now: an older one must not read back
+                    # beside the new password.
+                    try:
+                        keyring.delete_password("pythontk", user_entry)
+                    except Exception:  # noqa: BLE001 -- none stored (PasswordDeleteError)
+                        pass
                 return True
             except Exception as e:
                 print(f"Keyring failed: {e}")

@@ -192,7 +192,7 @@ function rowsFor(probe) {
 function probeLevel() {
   const level = policy.probeIntensity;
   const unit = Math.abs(level - DEFAULT_PROBE_INTENSITY) < 1e-6;
-  return `${level.toFixed(2)}${unit ? " (1/π: the bake's units)" : ''}`;
+  return `${level.toFixed(2)}${unit ? " (as captured: the bake's units)" : ''}`;
 }
 
 // Bring the window, the switch, the HUD's line and the helpers up to date

@@ -199,8 +199,23 @@ SDK_IDS = (
 )
 
 
+def _scene_info(rows):
+    """The ``SceneInfo`` a writer puts in ``FBXHeaderExtension``, its
+    ``Properties70`` *rows* ``{name: text}`` (``KString`` each, a ``*Url`` one
+    labelled ``Url``, as Maya writes them)."""
+    props = [
+        ("P", [key.encode(), b"KString", b"Url" if key.endswith("Url") else b"", b"", value.encode()], [])
+        for key, value in rows.items()
+    ]
+    return (
+        "SceneInfo",
+        [b"GlobalInfo\x00\x01SceneInfo", b"UserData"],
+        [("Type", [b"UserData"], []), ("Version", [I32(100)], []), ("Properties70", [], props)],
+    )
+
+
 def build_stingray_fbx(
-    path: str, maps, records=None, props=None, shading=None, name="orm"
+    path: str, maps, records=None, props=None, shading=None, name="orm", scene_info=None
 ) -> str:
     """A quad with a Stingray PBS material the FBX SDK -- so FBX2glTF -- binds.
 
@@ -217,6 +232,8 @@ def build_stingray_fbx(
     :data:`SDK_IDS` header, a ``Definitions`` count per object type and the
     ``Texture`` / ``Video`` records' own properties: without those it finds
     the images and binds none ("could not find a image file for texture").
+    *scene_info* ``{name: text}`` adds the header's ``SceneInfo`` rows (the
+    document URLs a writer stamps).
     """
 
     def p(*values):
@@ -418,6 +435,8 @@ def build_stingray_fbx(
     ]
     file_id, created, footer_id = SDK_IDS
     header = [("FBXHeaderVersion", [I32(1003)], []), ("FBXVersion", [I32(7700)], [])]
+    if scene_info:
+        header.append(_scene_info(scene_info))
     roots = [
         ("FBXHeaderExtension", [], header),
         ("FileId", [Raw(file_id)], []),
@@ -602,6 +621,7 @@ def build_curve_fbx(
     poses=None,
     parents=None,
     axes=None,
+    windows=None,
 ) -> str:
     """An FBX whose takes animate real curves, written by :class:`FbxWriter`.
 
@@ -618,14 +638,16 @@ def build_curve_fbx(
     gives a take extra, empty layers; *base_layer* names a take's first layer
     (Maya's ``BaseLayer``; Blender names it after the take); *user* names
     the user properties (``A+U``, a DCC's custom attributes) every model
-    declares. *poses* ``{model: {property: value}}`` gives a model its own
+    declares -- at 0, or, as ``{prop: {model: value}}``, at each model's own. *poses* ``{model: {property: value}}`` gives a model its own
     transform properties (``Lcl Scaling``, ``RotationOrder``,
     ``PreRotation`` ...), a model no take keys among them -- the FBX SDK
     reads no model without one, so a file FBX2glTF converts poses each;
     *parents* ``{model: parent model}`` parents one under another (the root,
     by default); *axes*
     ``{property: int}`` declares the axis system (``UpAxis``, ``UpAxisSign``
-    ...). 30 fps (``TimeMode`` 6).
+    ...). 30 fps (``TimeMode`` 6). Each take declares its key extent as its
+    window, unless *windows* ``{take: (first frame, last frame)}`` declares
+    another (Maya's writer declares the playback range).
     """
     from pythontk.file_utils.mesh_convert._fbx_writer import FbxNode, FbxWriter
 
@@ -660,8 +682,11 @@ def build_curve_fbx(
                     declared.p(prop, prop, "", "A", *map(float, value))
                 else:
                     declared.p(prop, "Vector3D", "Vector", "", *map(float, value))
+            # A name declares the property at 0; a mapping gives each model
+            # its value, ``{prop: {model: value}}`` (0 for a model it skips).
             for prop in user:
-                declared.p(prop, "Number", "", "A+U", 0.0)
+                value = user[prop].get(model, 0) if isinstance(user, dict) else 0
+                declared.p(prop, "Number", "", "A+U", float(value))
     for model, oid in models.items():
         link(oid, models[parents[model]] if model in (parents or {}) else 0)
 
@@ -717,6 +742,8 @@ def build_curve_fbx(
                 first = lo if first is None else min(first, lo)
                 last = hi if last is None else max(last, hi)
         spans[take] = (first or 0, last or 0)
+        if take in (windows or {}):
+            spans[take] = tuple(round(f * FRAME) for f in windows[take])
         props = stack_record.add("Properties70")
         for name, value in (
             ("LocalStart", spans[take][0]),
@@ -1100,6 +1127,44 @@ class DropTakesTestCase(unittest.TestCase):
         self.assertEqual(FbxMedia.drop_takes(out, again)["takes"], [])
         self.assertFalse(os.path.exists(again))
 
+    def test_keep_takes_leaves_only_the_declared_ones(self):
+        """The one body both hosts' exporters ran after a write, written once
+        (mayatk ``FbxUtils.drop_undeclared_takes``, blendertk
+        ``ship_declared_takes``): every take the shots do not name leaves the
+        file in place; no names, a file the split never reached, or one with
+        nothing undeclared is left as written. Added: 2026-11-05"""
+        self.assertIsNone(FbxMedia.keep_takes(self.src, []), "no shots: as written")
+        self.assertIsNone(
+            FbxMedia.keep_takes(self.src, ["Other"]), "none declared: as written"
+        )
+        self.assertEqual(FbxFile.load(self.src).take_names(), self.TAKES)
+
+        report = FbxMedia.keep_takes(self.src, ["Shot_A", "Shot_B"])
+        self.assertEqual(report["takes"], ["Take 001"])
+        self.assertEqual(FbxFile.load(self.src).take_names(), ["Shot_A", "Shot_B"])
+        self.assertIsNone(
+            FbxMedia.keep_takes(self.src, ["Shot_A", "Shot_B"]), "idempotent"
+        )
+        self.assertIsNone(FbxMedia.keep_takes(os.path.join(self.dir, "gone.fbx"), ["A"]))
+
+    def test_keep_takes_joins_a_take_to_its_shot_ignoring_case(self):
+        """The shot/take join ignores case, as every other reader of it does
+        (``_Animation._shot_clips``, the take naming): a take spelled
+        ``shot_a`` by its write is the shot ``Shot_A``'s, never dropped.
+        Added: 2026-11-08"""
+        report = FbxMedia.keep_takes(self.src, ["SHOT_A", "shot_b"])
+        self.assertEqual(report["takes"], ["Take 001"])
+        self.assertEqual(FbxFile.load(self.src).take_names(), ["Shot_A", "Shot_B"])
+
+    def test_keep_takes_never_raises(self):
+        """The file is already written: a take it cannot drop is warned, not
+        raised. Added: 2026-11-05"""
+        bad = os.path.join(self.dir, "not_binary.fbx")
+        with open(bad, "w") as handle:
+            handle.write("; FBX 7.4.0 project file\n")
+        with self.assertLogs("pythontk.file_utils.mesh_convert.fbx_media", "WARNING"):
+            self.assertIsNone(FbxMedia.keep_takes(bad, ["Shot_A"]))
+
     def test_user_properties_read_the_declared_channel(self):
         values = FbxFile.load(self.src).user_properties(SceneRecords.SHOTS.key)
         self.assertEqual(len(values), 1)
@@ -1180,6 +1245,88 @@ class TakeKeysTestCase(unittest.TestCase):
             list(FbxFile.load(self.src).take_keys(user=True)["Shot_A"]),
             [("Lamp", "opacity", "d|opacity")],
         )
+
+
+class FitTakeWindowsTestCase(unittest.TestCase):
+    """``FbxMedia.fit_take_windows``: a written file's takes declare exactly
+    the keys they hold. Maya's writer declares a take with no shots over the
+    playback range whatever it holds (measured on Maya 2025 / FBX 2020.3.6,
+    2026-11-05: keys 10-100 under a 1-120 playback range, bake on or off,
+    declared 1-120), and Unity's model importer cuts its default clip by the
+    declared window while a GLB converted from the keys plays their extent.
+    Added: 2026-11-05"""
+
+    def setUp(self):
+        self.temp = TempArtifacts("test_fbx_fit_take_windows", policy="scoped")
+        self.src = build_curve_fbx(
+            os.path.join(self.temp.dir_path(), "shotless.fbx"),
+            {"Take 001": {("box", "Lcl Translation", "d|X"): frames(10, 100)}},
+            windows={"Take 001": (1, 120)},
+        )
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def _declared(self):
+        """``(Takes entry LocalTime, ReferenceTime, the stack's four times)``
+        in frames: every place the file declares the take's window."""
+        fbx = FbxFile.load(self.src)
+        entry = next(
+            c for c in fbx.section("Takes")["children"] if c.get("name") == "Take"
+        )
+        times = {
+            child["name"]: tuple(t / FRAME for t in child["props"][:2])
+            for child in entry["children"]
+            if child["name"] in ("LocalTime", "ReferenceTime")
+        }
+        stack = next(
+            o for o in fbx.section("Objects")["children"] if o["name"] == "AnimationStack"
+        )
+        block = next(c for c in stack["children"] if c["name"] == "Properties70")
+        for prop in block["children"]:
+            times[prop["props"][0].decode()] = prop["props"][4] / FRAME
+        return times
+
+    def test_each_take_declares_the_keys_it_holds(self):
+        self.assertEqual(self._declared()["LocalTime"], (1.0, 120.0), "as written")
+        fitted = FbxMedia.fit_take_windows(self.src)
+        self.assertEqual(
+            {take: tuple(round(t * 30, 6) for t in span) for take, span in fitted.items()},
+            {"Take 001": (10.0, 100.0)},
+        )
+        self.assertEqual(
+            self._declared(),
+            {
+                "LocalTime": (10.0, 100.0),
+                "ReferenceTime": (10.0, 100.0),
+                "LocalStart": 10.0,
+                "LocalStop": 100.0,
+                "ReferenceStart": 10.0,
+                "ReferenceStop": 100.0,
+            },
+        )
+        fbx = FbxFile.load(self.src, span_arrays=("KeyTime",))
+        self.assertEqual(fbx.take_windows(), fbx.take_spans())
+
+    def test_a_fitted_file_is_left_as_it_is(self):
+        FbxMedia.fit_take_windows(self.src)
+        written = os.path.getmtime(self.src), os.path.getsize(self.src)
+        with open(self.src, "rb") as handle:
+            before = handle.read()
+        self.assertEqual(
+            set(FbxMedia.fit_take_windows(self.src)), {"Take 001"}, "idempotent"
+        )
+        with open(self.src, "rb") as handle:
+            self.assertEqual(handle.read(), before)
+        self.assertEqual((os.path.getmtime(self.src), os.path.getsize(self.src)), written)
+
+    def test_a_file_it_cannot_read_is_left_alone(self):
+        self.assertEqual(FbxMedia.fit_take_windows(os.path.join(self.temp.dir_path(), "gone.fbx")), {})
+        bad = os.path.join(self.temp.dir_path(), "ascii.fbx")
+        with open(bad, "w") as handle:
+            handle.write("; FBX 7.4.0 project file\n")
+        with self.assertLogs("pythontk.file_utils.mesh_convert.fbx_media", "WARNING"):
+            self.assertEqual(FbxMedia.fit_take_windows(bad), {})
 
 
 class MergeTakesTestCase(unittest.TestCase):
@@ -1941,14 +2088,16 @@ class DropApparatusTestCase(unittest.TestCase):
 
 
 def build_carrier_fbx(
-    path: str, channels, media=None, definitions=True, others=None
+    path: str, channels, media=None, definitions=True, others=None, parents=None
 ) -> str:
     """An FBX shaped like a Scene Exporter's: a mesh, a ``data_export`` carrier
     holding *channels* ``{record key: payload}`` as user properties, and the
     material media *media* ``{name: bytes}`` (each Video wired to a Texture).
     *definitions* writes the ``Definitions`` counts the SDK writes. *others*
     ``{carrier name: channels}`` are further carriers written AHEAD of the
-    scene's own (a module's ``NS:data_export``, a stray ``data_export1``)."""
+    scene's own (a module's ``NS:data_export``, a stray ``data_export1``);
+    *parents* ``{carrier name: group name}`` wires one of them under a group
+    Model of that name (a grouped module's own ``data_export``)."""
 
     def carrier(uid, name, held):
         props = [
@@ -1967,12 +2116,22 @@ def build_carrier_fbx(
         *extra,
         carrier(1002, "data_export", channels),
     ]
+    groups = {}
+    for i, group in enumerate(dict.fromkeys((parents or {}).values())):
+        groups[group] = 3001 + i
+        objects.append(("Model", [3001 + i, group.encode() + b"\x00\x01Model", b"Null"], []))
+    under = {
+        record[1][0]: groups[(parents or {})[name]]
+        for record, name in zip(extra, (others or {}))
+        if name in (parents or {})
+    }
     media_objects, media_connections = _media_records(media or {})
     objects += media_objects
     connections = [
         ("C", [b"OO", 1001, 0], []),
         ("C", [b"OO", 1002, 0], []),
-        *(("C", [b"OO", record[1][0], 0], []) for record in extra),
+        *(("C", [b"OO", record[1][0], under.get(record[1][0], 0)], []) for record in extra),
+        *(("C", [b"OO", uid, 0], []) for uid in groups.values()),
     ] + media_connections
     roots = []
     if definitions:
@@ -2011,22 +2170,24 @@ class EmbedTestCase(unittest.TestCase):
     LIGHTMAPS = {
         "version": 1,
         "objects": [
-            {"name": "Crate", "map": "Room_Lightmap.exr", "uvIndex": 1},
-            {"name": "Shelf", "map": "Room_Lightmap.exr", "uvIndex": 1},
-            {"name": "Lamp", "map": "Lamp_Lightmap.exr", "uvIndex": 1},
+            {"name": "Crate", "map": "Room_Lightmap.exr", "scaleOffset": [1.0, 1.0, 0.0, 0.0], "hierarchy": ["Crate"]},
+            {"name": "Shelf", "map": "Room_Lightmap.exr", "scaleOffset": [1.0, 1.0, 0.0, 0.0], "hierarchy": ["Shelf"]},
+            {"name": "Lamp", "map": "Lamp_Lightmap.exr", "scaleOffset": [1.0, 1.0, 0.0, 0.0], "hierarchy": ["Lamp"]},
         ],
         "probe": {"map": "Room_Probe.exr", "position": [0, 1, 2], "unit_scale": 0.01},
     }
     SHADOWS = {
-        "version": 2,
+        "version": 3,
         "unit_scale": 0.01,
         "planes": [
             {
                 "name": "Box_shadow",
-                "texture": "Box_shadow.png",
-                "type": "horizon",
-                "atlas": {"texture": "shadow_atlas_horizon.png", "rect": [1, 1, 0, 0]},
-                "horizon": {"texture": "Box_horizon.png", "encoding": 2},
+                "horizon": {"texture": "Box_horizon.png", "size": 64},
+                "silhouette": {
+                    "texture": "Box_shadow.png",
+                    "atlas": {"texture": "shadow_atlas_horizon.png", "rect": [1, 1, 0, 0]},
+                    "draw": False,
+                },
             }
         ],
     }
@@ -2168,8 +2329,8 @@ class EmbedTestCase(unittest.TestCase):
     MODULE_LIGHTMAPS = {
         "version": 1,
         "objects": [
-            {"name": "ModA", "map": "ModA_Module.exr", "uvIndex": 1},
-            {"name": "ModB", "map": "ModB_Module.exr", "uvIndex": 1},
+            {"name": "ModA", "map": "ModA_Module.exr", "scaleOffset": [1.0, 1.0, 0.0, 0.0], "hierarchy": ["ModA"]},
+            {"name": "ModB", "map": "ModB_Module.exr", "scaleOffset": [1.0, 1.0, 0.0, 0.0], "hierarchy": ["ModB"]},
         ],
         "probe": {"map": "Module_Probe.exr", "position": [0, 0, 0]},
     }
@@ -2214,8 +2375,8 @@ class EmbedTestCase(unittest.TestCase):
             FbxMedia.dependencies(partial), ["ModA_Module.exr", "Module_Probe.exr"]
         )
         shadows = {
-            "version": 2,
-            "planes": [{"name": "ModB_shadow", "texture": "ModB_shadow.png"}],
+            "version": 3,
+            "planes": [{"name": "ModB_shadow", "silhouette": {"texture": "ModB_shadow.png"}}],
         }
         left_out = build_carrier_fbx(
             os.path.join(self.dir, "left_out.fbx"),
@@ -2397,26 +2558,29 @@ class EmbedTestCase(unittest.TestCase):
         with open(os.path.join(self.maps, "OP_Base.png"), "wb") as fh:
             fh.write(b"an openPBR colour map" + bytes(range(256)))
 
+        from pythontk.core_utils.engines.scene_export.material_record import (
+            MaterialFamilies,
+        )
+
         def entry(name, **maps):
             return {
                 "name": name, "baseColorFactor": [1.0, 1.0, 1.0, 1.0], "metallicFactor": 0.0,
-                "roughnessFactor": 0.5, "emissiveFactor": [0.0, 0.0, 0.0],
+                "roughnessFactor": 0.5, "emissiveFactor": [1.0, 1.0, 1.0],
                 "alphaMode": "OPAQUE", **maps,
             }
 
-        record = {
-            "version": 1,
-            "materials": [
+        record = MaterialFamilies.payload(
+            [
                 entry("OP_mat", baseColorTexture="OP_Base.png", normalTexture="OP_Gone.png"),
-                entry("SS_mat", baseColorTexture="SS_Own.png", roughnessTexture="OP_Base.png"),
-            ],
-        }
+                entry("SS_mat", baseColorTexture="SS_Own.png", emissiveTexture="OP_Base.png"),
+            ]
+        )
         src = build_carrier_fbx(
             os.path.join(self.dir, "materials.fbx"),
             {"lightmaps": self.LIGHTMAPS, "materials": record},
             media={"SS_Own.png": own},
         )
-        named = self.NAMED[:3] + ["OP_Base.png", "SS_Own.png", "OP_Gone.png"]
+        named = self.NAMED[:3] + ["OP_Base.png", "OP_Gone.png", "SS_Own.png"]
         self.assertEqual(FbxMedia.dependencies(src), named)
         out = os.path.join(self.dir, "out.fbx")
         with self.assertLogs("pythontk.file_utils.mesh_convert.fbx_media", "WARNING"):
@@ -2433,6 +2597,95 @@ class EmbedTestCase(unittest.TestCase):
             self.assertEqual(fh.read(), b"an openPBR colour map" + bytes(range(256)))
         with open(got["SS_Own.png"], "rb") as fh:
             self.assertEqual(fh.read(), own)
+
+    def test_the_producers_packed_image_rides_in_from_the_pack_store(self):
+        """The packed metal / roughness image is a delivery file: the
+        producer writes it into the pack store, in no scene folder, and the
+        pass embeds it from there by its file name -- over a stale file of the
+        name a scene folder holds (one an older export wrote beside its
+        maps). Added: 2026-11-05"""
+        from PIL import Image
+
+        from pythontk.core_utils.engines.scene_export.material_record import (
+            MaterialFamilies,
+        )
+
+        sources = os.path.join(self.dir, "sources")
+        os.makedirs(sources)
+        rough = os.path.join(sources, "Crate_Roughness.png")
+        Image.new("L", (4, 4), 60).save(rough)
+        with open(os.path.join(self.maps, "Crate_ORM.png"), "wb") as fh:
+            fh.write(b"a stale pack beside the maps")
+        record = MaterialFamilies.payload(
+            [MaterialFamilies.entry("pbr", "Crate_mat", {}, {"roughness": rough})],
+            pack=MaterialFamilies.pack_metallic_roughness,
+        )
+        src = build_carrier_fbx(os.path.join(self.dir, "packed.fbx"), {"materials": record})
+        out = os.path.join(self.dir, "out.fbx")
+        report = FbxMedia.embed_dependencies(src, out, search_dirs=[self.maps])
+        self.assertEqual(report["embedded"], ["Crate_ORM.png"])
+        self.assertEqual(os.listdir(sources), ["Crate_Roughness.png"])
+        read = os.path.join(self.dir, "read")
+        os.makedirs(read)
+        got = FbxMedia.extract(out, read, ["Crate_ORM.png"])
+        with open(got["Crate_ORM.png"], "rb") as fh, open(
+            MaterialFamilies.packed_file("Crate_ORM.png"), "rb"
+        ) as packed:
+            self.assertEqual(fh.read(), packed.read())
+
+    def test_another_writes_pack_never_rides_into_this_one(self):
+        """The pack memo is the latest write's: in one long session, scene
+        A's packed ``Wood_ORM.png`` never rides into scene B, whose record
+        names its own ``Wood_ORM.png`` (an authored ORM in B's folder) --
+        B's producer (``MaterialFamilies.export_record``) starts the memo
+        afresh. Added: 2026-11-08"""
+        from PIL import Image
+
+        from pythontk.core_utils.engines.scene_export.export_snapshot import (
+            ExportContext,
+        )
+        from pythontk.core_utils.engines.scene_export.material_record import (
+            MaterialFamilies,
+        )
+
+        a = os.path.join(self.dir, "scene_a")
+        b = os.path.join(self.dir, "scene_b")
+        os.makedirs(a)
+        os.makedirs(b)
+        rough = os.path.join(a, "Wood_Roughness.png")
+        Image.new("L", (4, 4), 60).save(rough)
+        MaterialFamilies.export_record(
+            ExportContext(),
+            [MaterialFamilies.entry("pbr", "Wood_A", {}, {"roughness": rough})],
+            lambda: [],
+            pack=MaterialFamilies.pack_metallic_roughness,
+        )
+        self.assertIsNotNone(MaterialFamilies.packed_file("Wood_ORM.png"))
+        # Scene B: its own ORM, authored, bound as it is.
+        own = os.path.join(b, "Wood_ORM.png")
+        Image.new("RGB", (4, 4), (255, 10, 20)).save(own)
+        record = MaterialFamilies.export_record(
+            ExportContext(),
+            [
+                MaterialFamilies.entry(
+                    "pbr", "Wood_B", {}, {"roughness": own, "metallic": own}
+                )
+            ],
+            lambda: [],
+            pack=MaterialFamilies.pack_metallic_roughness,
+        )
+        self.assertEqual(MaterialFamilies.texture_files(record.payload), ["Wood_ORM.png"])
+        src = build_carrier_fbx(
+            os.path.join(self.dir, "b.fbx"), {"materials": record.payload}
+        )
+        out = os.path.join(self.dir, "out.fbx")
+        report = FbxMedia.embed_dependencies(src, out, search_dirs=[b])
+        self.assertEqual(report["embedded"], ["Wood_ORM.png"])
+        read = os.path.join(self.dir, "read")
+        os.makedirs(read)
+        got = FbxMedia.extract(out, read, ["Wood_ORM.png"])
+        with open(got["Wood_ORM.png"], "rb") as fh, open(own, "rb") as authored:
+            self.assertEqual(fh.read(), authored.read(), "scene B's own ORM")
 
     def test_a_name_the_folders_miss_is_found_under_the_walk_root(self):
         """The folders a host records can lag the disk; the root it keeps its
@@ -2520,18 +2773,17 @@ class EmbedTestCase(unittest.TestCase):
 
     # ---- the audio record's digests: what the pass embedded -------------
     # ``media`` is the SHA-256 of each audio file the FBX carries, by the
-    # event name whose stem it is: the content Unity compares a same-named
-    # clip against before it reuses one. Written by the pass that embeds, from
+    # cue's ``sound``, the file name it is delivered under: the content Unity
+    # compares a same-named sound against before it reuses one. Written by the pass that embeds, from
     # the bytes inside, so a write without it (a raw File > Export, whose
     # producer digested nothing) reads as one from before the digests, and
     # Unity extracts or binds by name as it did. Added: 2026-10-31
 
     AUDIO = {
-        "version": 2,
-        "fps": 24.0,
-        "events": [
-            {"clip": "", "frame": 0, "name": "footstep"},
-            {"clip": "", "frame": 4, "name": "ghost"},
+        "version": 3,
+        "cues": [
+            {"clip": "", "sound": "footstep.wav", "time": 0.0, "offset": 0.0, "stop": 1.0},
+            {"clip": "", "sound": "ghost.wav", "time": 0.5, "offset": 0.0, "stop": 1.0},
         ],
     }
 
@@ -2549,10 +2801,10 @@ class EmbedTestCase(unittest.TestCase):
         record = FbxMedia.record(out, "audio")
         self.assertEqual(
             record["media"],
-            {"footstep": hashlib.sha256(b"RIFF....WAVE take three").hexdigest()},
+            {"footstep.wav": hashlib.sha256(b"RIFF....WAVE take three").hexdigest()},
             "ghost has no file inside: no digest",
         )
-        self.assertEqual(record["events"], self.AUDIO["events"])
+        self.assertEqual(record["cues"], self.AUDIO["cues"])
         self.assertIsNone(FbxMedia.record(self._audio_fbx(), "audio").get("media"))
 
     def test_a_digest_is_of_the_bytes_inside_not_the_file_handed_over(self):
@@ -2569,11 +2821,11 @@ class EmbedTestCase(unittest.TestCase):
         self.assertEqual(report["embedded"], [])
         self.assertEqual(
             FbxMedia.record(out, "audio")["media"],
-            {"footstep": hashlib.sha256(b"RIFF first").hexdigest()},
+            {"footstep.wav": hashlib.sha256(b"RIFF first").hexdigest()},
         )
 
     def test_a_digest_for_a_file_no_longer_inside_is_pruned(self):
-        stale = dict(self.AUDIO, media={"ghost": "ab" * 32})
+        stale = dict(self.AUDIO, media={"ghost.wav": "ab" * 32})
         src = self._audio_fbx(stale)
         before = os.path.getmtime(src)
         FbxMedia.embed_dependencies(src)
@@ -2592,41 +2844,74 @@ class EmbedTestCase(unittest.TestCase):
         with open(out, "rb") as fh:
             self.assertEqual(fh.read(), written)
 
-    def test_audio_events_names_the_tracks_the_manifest_plays(self):
-        """An audio event names its TRACK, not a file: a host resolves each
-        name to its file and hands it over (mayatk / blendertk
-        ``FbxUtils.embed_dependencies``). Each name once; a blank or ``None``
+    def test_audio_sounds_names_the_files_the_cues_play(self):
+        """A cue names its sound by the file the delivery carries: a host
+        resolves each name to its source and hands it over (mayatk /
+        blendertk ``FbxUtils.embed_dependencies``). Each name once; a blank
         name names nothing."""
         audio = {
-            "version": 2,
-            "events": [
-                {"clip": "Intro", "frame": 4, "name": "footstep"},
-                {"clip": "Fight", "frame": 9, "name": "punch"},
-                {"clip": "Fight", "frame": 20, "name": "footstep"},
-                {"clip": "", "frame": 0, "name": "None"},
-                {"clip": "", "frame": 0, "name": " "},
+            "version": 3,
+            "cues": [
+                {"clip": "Intro", "sound": "footstep.wav", "time": 0.1, "offset": 0.0, "stop": 1.1},
+                {"clip": "Fight", "sound": "punch.ogg", "time": 0.3, "offset": 0.0, "stop": 1.3},
+                {"clip": "Fight", "sound": "footstep.wav", "time": 0.6, "offset": 0.0, "stop": 1.6},
+                {"clip": "", "sound": " ", "time": 0.0, "offset": 0.0, "stop": 1.0},
             ],
         }
         path = build_carrier_fbx(os.path.join(self.dir, "audio.fbx"), {"audio": audio})
-        self.assertEqual(FbxMedia.audio_events(path), ["footstep", "punch"])
-        self.assertEqual(FbxMedia.audio_events(self.src), [])
+        self.assertEqual(FbxMedia.audio_sounds(path), ["footstep.wav", "punch.ogg"])
+        self.assertEqual(FbxMedia.audio_sounds(self.src), [])
 
-    def test_audio_events_reads_the_carrier_the_readers_read(self):
+    def test_audio_files_resolves_each_sound_through_the_hosts_tracks(self):
+        """Each sound's stem is the host's track id: its file goes in under the
+        record's own spelling, and a sound no file answers is warned and left
+        out. Added: 2026-11-05"""
+        audio = {
+            "version": 3,
+            "cues": [
+                {"clip": "", "sound": "Footstep.wav", "time": 0.0, "offset": 0.0, "stop": 1.0},
+                {"clip": "", "sound": "ghost.ogg", "time": 0.5, "offset": 0.0, "stop": 1.0},
+            ],
+        }
+        path = build_carrier_fbx(os.path.join(self.dir, "audio.fbx"), {"audio": audio})
+        asked = []
+
+        def track_files(ids):
+            asked.append(list(ids))
+            return [("footstep.WAV", "/src/footstep_take3.wav")]
+
+        with self.assertLogs("pythontk.file_utils.mesh_convert.fbx_media", "WARNING") as logs:
+            found = FbxMedia.audio_files(path, track_files)
+        self.assertEqual(asked, [["Footstep", "ghost"]])
+        self.assertEqual(found, [("Footstep.wav", "/src/footstep_take3.wav")])
+        self.assertIn("ghost.ogg", " ".join(logs.output))
+
+    def test_audio_sounds_refuses_a_record_of_another_version(self):
+        """Version 2 named tracks at frames: read as cues it would name no
+        file the delivery carries. Refused, warned, its fix said. Added:
+        2026-11-05"""
+        v2 = {"version": 2, "fps": 24.0, "events": [{"clip": "", "frame": 0, "name": "footstep"}]}
+        path = build_carrier_fbx(os.path.join(self.dir, "audio.fbx"), {"audio": v2})
+        with self.assertLogs("pythontk.file_utils.mesh_convert.fbx_media", "WARNING") as logs:
+            self.assertEqual(FbxMedia.audio_sounds(path), [])
+        self.assertIn("re-export", " ".join(logs.output))
+
+    def test_audio_sounds_reads_the_carrier_the_readers_read(self):
         """An assembly ships a stray ``data_export1`` (and a module's
-        ``NS:data_export``) beside the scene's own, each holding the events as
+        ``NS:data_export``) beside the scene's own, each holding the cues as
         last exported alone (measured on an assembly, 2026-10-13). The readers
         take ONE carrier per channel -- the scene's own, else the first met
         (the GLB applier; unitytk ``CarrierImport.Collect``) -- and the scene's
         own record is re-derived from the whole merged scene, so the stray
-        copies' events are stale: their clips are not shipped."""
-        own = {"version": 2, "events": [{"clip": "", "frame": 0, "name": "footstep"}]}
-        stray = {"version": 2, "events": [{"clip": "", "frame": 3, "name": "door"}]}
+        copies' cues are stale: their sounds are not shipped."""
+        own = {"version": 3, "cues": [{"clip": "", "sound": "footstep.wav", "time": 0.0, "offset": 0.0, "stop": 1.0}]}
+        stray = {"version": 3, "cues": [{"clip": "", "sound": "door.wav", "time": 0.1, "offset": 0.0, "stop": 1.1}]}
         assembly = build_carrier_fbx(
             os.path.join(self.dir, "assembly.fbx"),
             {"audio": own},
             others={"data_export1": {"audio": stray}},
         )
-        self.assertEqual(FbxMedia.audio_events(assembly), ["footstep"])
+        self.assertEqual(FbxMedia.audio_sounds(assembly), ["footstep.wav"])
         modules = build_carrier_fbx(
             os.path.join(self.dir, "modules.fbx"),
             {},
@@ -2636,8 +2921,8 @@ class EmbedTestCase(unittest.TestCase):
             },
         )
         self.assertEqual(
-            FbxMedia.audio_events(modules),
-            ["door"],
+            FbxMedia.audio_sounds(modules),
+            ["door.wav"],
             "no record on the scene's own carrier: the first met",
         )
 
@@ -2736,10 +3021,34 @@ class EmbedTestCase(unittest.TestCase):
         exr = os.path.join(self.maps, "Room_Probe.exr")
         with self.assertRaises(ValueError):
             FbxMedia.embed(junk, files=[exr])
-        with self.assertRaises(ValueError):
-            FbxMedia.embed_dependencies(junk, search_dirs=[self.maps])
         with self.assertRaises(OSError):
             FbxMedia.embed(self.src, files=[os.path.join(self.dir, "nowhere.exr")])
+
+    def test_embed_dependencies_leaves_a_file_that_is_no_binary_fbx_quietly(self):
+        """The dependency pass runs on any delivered file (a folder deliverer
+        hands it every file, so the content gate is this code's): an ASCII FBX,
+        an OBJ or an empty file embeds nothing, is never written, and warns
+        nothing. One with the binary magic it cannot read still raises
+        (:meth:`test_a_truncated_fbx_is_a_value_error`). Added: 2026-11-04"""
+        bodies = {
+            "ascii.fbx": b"; FBX 7.7.0 project file (ASCII)\n" * 20,
+            "scan.obj": b"v 0 0 0\n",
+            "empty.fbx": b"",
+        }
+        for name, body in bodies.items():
+            path = os.path.join(self.dir, name)
+            with open(path, "wb") as fh:
+                fh.write(body)
+            out = os.path.join(self.dir, f"out_{name}")
+            with self.subTest(name), self.assertNoLogs(
+                "pythontk.file_utils.mesh_convert.fbx_media", "WARNING"
+            ):
+                report = FbxMedia.embed_dependencies(path, out, search_dirs=[self.maps])
+                self.assertEqual(report["embedded"], [])
+                self.assertEqual(report["named"], [])
+                self.assertFalse(os.path.exists(out))
+                with open(path, "rb") as fh:
+                    self.assertEqual(fh.read(), body)
 
     def test_a_truncated_fbx_is_a_value_error(self):
         """A binary FBX cut short (a copy that never finished) has the magic
@@ -2827,6 +3136,35 @@ class RecordTestCase(unittest.TestCase):
         )
         self.assertEqual(FbxMedia.records(self._fbx(), keys=["audio"]), {})
 
+    def test_a_carrier_under_a_group_is_its_modules_never_the_scenes(self):
+        """The scene's own carrier is the root-level ``data_export``: one of
+        the same name under a group is a grouped module's own, read only
+        where the scene's carries no such record, its ``handoff`` never --
+        though it comes first in the file (measured 2026-11-08: an assembly's
+        ``Module|data_export`` was read as the scene's). Added: 2026-11-08"""
+        stale = {"version": 1, "objects": [{"name": "Crate", "map": "Old_Lightmap.exr"}]}
+        module = {"lightmaps": stale, "handoff": {"version": 3}, "audio": self.MODULE}
+        src = build_carrier_fbx(
+            os.path.join(self.dir, "grouped.fbx"),
+            {"lightmaps": self.OWN},
+            others={"data_export": module},
+            parents={"data_export": "Module"},
+        )
+        self.assertEqual(FbxMedia.record(src, "lightmaps"), self.OWN)
+        self.assertEqual(FbxMedia.record(src, "audio"), self.MODULE)
+        self.assertIsNone(FbxMedia.record(src, "handoff"))
+        self.assertEqual(
+            FbxMedia.records(src, keys=["lightmaps", "handoff"]), {"lightmaps": self.OWN}
+        )
+        self.assertEqual(FbxMedia.dependencies(src), ["Room_Lightmap.exr"])
+        owners = [
+            owner
+            for owner, _ in FbxFile.load(src).user_properties(
+                "lightmaps", named=True, paths=True
+            )
+        ]
+        self.assertEqual(owners, ["Module|data_export", "data_export"])
+
     def test_a_modules_handoff_is_never_the_files(self):
         """A ``handoff`` on a module's carrier describes that module, not the
         file (the FBX handoff's own rule): a file whose own carrier holds none
@@ -2841,6 +3179,21 @@ class RecordTestCase(unittest.TestCase):
         self.assertEqual(
             FbxMedia.records(src),
             {"shadows": {"planes": []}, "lightmaps": self.MODULE},
+        )
+
+    def test_reader_records_never_take_a_modules_handoff(self):
+        """``FbxMedia.reader_records`` is the reader's precedence
+        (``SceneStoreBase.reader_values``): a module's ``handoff`` describes
+        that module, never the file, whether the file's own carrier holds one
+        or not. Added: 2026-11-08"""
+        rows = [
+            ("MOD:data_export", "handoff", {"version": 3, "by": "module"}),
+            ("MOD:data_export", "audio", self.MODULE),
+        ]
+        self.assertEqual(FbxMedia.reader_records(rows), {"audio": self.MODULE})
+        own = rows + [("data_export", "handoff", {"version": 3, "by": "scene"})]
+        self.assertEqual(
+            FbxMedia.reader_records(own)["handoff"], {"version": 3, "by": "scene"}
         )
 
     def test_set_record_replaces_the_applied_copy_and_embeds_in_one_write(self):
@@ -3131,9 +3484,14 @@ class StateMaterialsTestCase(unittest.TestCase):
 
     @staticmethod
     def _record(**entry):
-        return {
-            "version": 1,
-            "materials": [
+        """The record (literal glTF) stating one material from a flat
+        statement."""
+        from pythontk.core_utils.engines.scene_export.material_record import (
+            MaterialFamilies,
+        )
+
+        return MaterialFamilies.payload(
+            [
                 {
                     "name": "NS:openpbr_MAT",
                     "baseColorFactor": [0.8, 0.2, 0.1, 0.6],
@@ -3143,8 +3501,8 @@ class StateMaterialsTestCase(unittest.TestCase):
                     "alphaMode": "BLEND",
                     **entry,
                 }
-            ],
-        }
+            ]
+        )
 
     def _stated(self, path, name="NS:openpbr_MAT"):
         return next(m for m in FbxFile.load(path).materials() if m["name"] == name)
@@ -3187,9 +3545,13 @@ class StateMaterialsTestCase(unittest.TestCase):
         )
         entry = record["materials"][0]
         self.assertEqual(
-            [round(c, 6) for c in read["baseColorFactor"]], entry["baseColorFactor"]
+            [round(c, 6) for c in read["baseColorFactor"]],
+            entry["pbrMetallicRoughness"]["baseColorFactor"],
         )
-        self.assertEqual([round(c, 6) for c in read["emissiveFactor"]], entry["emissiveFactor"])
+        self.assertEqual(
+            [round(c, 6) for c in read["emissiveFactor"]],
+            MaterialFamilies.emission(entry),
+        )
         self.assertEqual(read["alphaMode"], "BLEND")
 
     def test_over_a_map_the_factor_is_the_multiplier(self):
@@ -3208,6 +3570,35 @@ class StateMaterialsTestCase(unittest.TestCase):
             os.path.join(self.dir, "p.fbx"), self._record(), material="openpbr_MAT"
         )
         self.assertEqual(FbxMedia.state_materials(path), {"materials": ["openpbr_MAT"]})
+
+    def test_emission_above_one_is_stated_whole(self):
+        """The record carries emission above 1 as its strength extension; a
+        stock reader of the file's own material reads it whole. Added:
+        2026-11-05"""
+        path = build_placeholder_fbx(
+            os.path.join(self.dir, "p.fbx"), self._record(emissiveFactor=[0.0, 2.0, 4.0])
+        )
+        FbxMedia.state_materials(path)
+        props = self._stated(path)["props"]
+        self.assertEqual(tuple(round(c, 6) for c in props["EmissiveColor"]), (0.0, 2.0, 4.0))
+
+    def test_a_version_1_record_is_refused(self):
+        """The flat shape is refused, said with its cure: the file is not
+        written. Added: 2026-11-05"""
+        flat = {
+            "version": 1,
+            "materials": [
+                {"name": "NS:openpbr_MAT", "baseColorFactor": [1, 0, 0, 1],
+                 "metallicFactor": 0, "roughnessFactor": 1,
+                 "emissiveFactor": [0, 0, 0], "alphaMode": "OPAQUE"}
+            ],
+        }
+        path = build_placeholder_fbx(os.path.join(self.dir, "p.fbx"), flat)
+        before = open(path, "rb").read()
+        with self.assertLogs("pythontk.file_utils.mesh_convert.fbx_media", "WARNING") as logs:
+            self.assertEqual(FbxMedia.state_materials(path), {"materials": []})
+        self.assertIn("re-export", logs.output[0])
+        self.assertEqual(open(path, "rb").read(), before)
 
     def test_a_file_without_a_record_is_not_written(self):
         path = build_placeholder_fbx(
@@ -3298,6 +3689,266 @@ class DropHostLightingTestCase(unittest.TestCase):
         self.assertEqual(FbxMedia.drop_host_lighting_media(self.path)["textures"], 0)
         with open(self.path, "rb") as fh:
             self.assertEqual(fh.read(), before)
+
+
+#: Where the fixtures below say a producer wrote from: a user's home, the
+#: staging folder under it, the project folder (what Maya 2025 and Blender 5.1
+#: were measured to stamp, 2026-11-08; the user is a stand-in).
+HOME = "C:/Users/producer"
+STAGE = "C:\\Users\\producer\\AppData\\Local\\Temp\\ptk\\stage_1\\room.fbx"
+
+
+def build_paths_fbx(path: str) -> str:
+    """An FBX laid out as Maya's writer laid out a delivered one (measured on
+    the unitytk ``Materials`` sample): the header's document URLs, project
+    folder and source file, each embedded map's ``Video`` and ``Texture``
+    naming its absolute source and a path relative to the staging folder,
+    the SDK's second ``Video`` for a file it embedded once (no ``Content``),
+    and a map that is NOT embedded -- a reference, whose path is how a reader
+    finds it."""
+
+    def p(*values):
+        return ("P", list(values), [])
+
+    maps = {
+        # name: (Filename, RelativeFilename, Content)
+        "Wood_BaseColor.png": (f"{HOME}/proj/sourceimages/Wood_BaseColor.png", "..\\..\\proj\\sourceimages\\Wood_BaseColor.png", b"wood" * 16),
+        "Wood_Normal.png": ("/home/producer/maps/Wood_Normal.png", "../../maps/Wood_Normal.png", b"normal" * 9),
+        "Wood_Normal.png#twin": ("/home/producer/maps/Wood_Normal.png", "../../maps/Wood_Normal.png", b""),
+        "Library_Rough.png": ("//server/library/Library_Rough.png", "Library_Rough.png", b""),
+    }
+    objects, connections = [], []
+    for index, (key, (filename, relative, content)) in enumerate(maps.items()):
+        video, texture = 7001 + index, 8001 + index
+        stem = key.split(".")[0].encode()
+        children = [
+            ("Type", [b"Clip"], []),
+            ("Properties70", [], [
+                p(b"Path", b"KString", b"XRefUrl", b"", filename.encode()),
+                p(b"RelPath", b"KString", b"XRefUrl", b"", relative.encode()),
+            ]),
+            ("UseMipMap", [I32(0)], []),
+            ("Filename", [filename.encode()], []),
+            ("RelativeFilename", [relative.encode()], []),
+        ]
+        if content:
+            children.append(("Content", [Raw(content)], []))
+        objects.append(("Video", [video, stem + b"\x00\x01Video", b"Clip"], children))
+        objects.append((
+            "Texture",
+            [texture, stem + b"\x00\x01Texture", b""],
+            [
+                ("Type", [b"TextureVideoClip"], []),
+                ("FileName", [filename.encode()], []),
+                ("RelativeFilename", [relative.encode()], []),
+            ],
+        ))
+        connections.append(("C", [b"OO", video, texture], []))
+    info = _scene_info({
+        "DocumentUrl": STAGE,
+        "SrcDocumentUrl": STAGE,
+        "Original|ApplicationVendor": "Autodesk",
+        "Original|FileName": STAGE,
+        "Original|ApplicationActiveProject": "C:\\Users\\producer\\Documents\\maya\\projects",
+        "Original|ApplicationNativeFile": "/Users/producer/scenes/room.blend",
+        "LastSaved|ApplicationName": "Maya",
+    })
+    roots = [
+        ("FBXHeaderExtension", [], [("FBXHeaderVersion", [I32(1004)], []), info]),
+        ("Objects", [], objects),
+        ("Connections", [], connections),
+    ]
+    return _write_fbx(path, roots)
+
+
+#: Maya 2025's ASCII write of a cube with one embedded map and one it only
+#: references (measured 2026-11-08, cut to the records that name a path).
+ASCII_FBX = """; FBX 7.7.0 project file
+; ----------------------------------------------------
+
+FBXHeaderExtension:  {
+	FBXHeaderVersion: 1004
+	SceneInfo: "SceneInfo::GlobalInfo", "UserData" {
+		Type: "UserData"
+		Properties70:  {
+			P: "DocumentUrl", "KString", "Url", "", "C:\\Users\\producer\\AppData\\Local\\Temp\\room.fbx"
+			P: "SrcDocumentUrl", "KString", "Url", "", "C:\\Users\\producer\\AppData\\Local\\Temp\\room.fbx"
+			P: "Original|ApplicationVendor", "KString", "", "", "Autodesk"
+			P: "Original|FileName", "KString", "", "", "C:\\Users\\producer\\AppData\\Local\\Temp\\room.fbx"
+			P: "Original|ApplicationActiveProject", "KString", "", "", "C:\\Users\\producer\\Documents\\maya\\projects"
+		}
+	}
+}
+Objects:  {
+	Video: 101, "Video::Wood_file", "Clip" {
+		Type: "Clip"
+		Properties70:  {
+			P: "Path", "KString", "XRefUrl", "", "C:/Users/producer/proj/sourceimages/Wood_BaseColor.png"
+			P: "RelPath", "KString", "XRefUrl", "", "sourceimages\\Wood_BaseColor.png"
+		}
+		UseMipMap: 0
+		Filename: "C:/Users/producer/proj/sourceimages/Wood_BaseColor.png"
+		RelativeFilename: "sourceimages\\Wood_BaseColor.png"
+		Content: ,
+ "iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAIAAAAmkwkpAAAAEElEQVR4nGM4YywIRwzEcQDF8xEBQ7BpzgAAAABJRU5ErkJggg=="
+	}
+	Texture: 201, "Texture::Wood_file", "" {
+		Type: "TextureVideoClip"
+		Media: "Video::Wood_file"
+		FileName: "C:/Users/producer/proj/sourceimages/Wood_BaseColor.png"
+		RelativeFilename: "sourceimages\\Wood_BaseColor.png"
+	}
+	Video: 102, "Video::Rough_file", "Clip" {
+		Type: "Clip"
+		Filename: "D:/library/Library_Rough.png"
+		RelativeFilename: "..\\library\\Library_Rough.png"
+	}
+	Texture: 202, "Texture::Rough_file", "" {
+		Type: "TextureVideoClip"
+		FileName: "D:/library/Library_Rough.png"
+		RelativeFilename: "..\\library\\Library_Rough.png"
+	}
+}
+Connections:  {
+
+	;Video::Wood_file, Texture::Wood_file
+	C: "OO",101,201
+
+	;Video::Rough_file, Texture::Rough_file
+	C: "OO",102,202
+}
+"""
+
+
+class StripMachinePathsTestCase(unittest.TestCase):
+    """``strip_machine_paths``: a delivered FBX names no folder of the
+    machine that wrote it.
+
+    Bug: every FBX the Scene Exporter delivered -- each committed unitytk
+    sample, each file a user sent a client -- carried the producer's user
+    name and folders: the header's document URLs (the staging file under the
+    user's temp folder), Maya's project folder, Blender's source ``.blend``,
+    and each embedded map's absolute source path. No reader uses them for an
+    embedded map (Unity and FBX2glTF read the ``Content``); a map the file
+    only references is found by its path, so that path stays. Fixed:
+    2026-11-08 (measured on Maya 2025's and Blender 5.1's writes)."""
+
+    def setUp(self):
+        self.temp = TempArtifacts("test_fbx_media_paths", policy="scoped")
+        self.addCleanup(self.temp.cleanup)
+        self.path = build_paths_fbx(os.path.join(self.temp.dir_path(), "room.fbx"))
+
+    def _fields(self, path=None):
+        """``{(kind, file name key): {field: text}}`` of every Video and
+        Texture, plus ``("SceneInfo", name)`` rows."""
+        loaded = FbxFile.load(path or self.path)
+        out = {}
+        for record in loaded.iter_objects():
+            if record["name"] not in ("Video", "Texture"):
+                continue
+            uid = record["props"][0]
+            fields = {}
+            for child in record["children"]:
+                if child["name"] in ("Filename", "FileName", "RelativeFilename"):
+                    fields[child["name"]] = bytes(child["props"][0]).decode()
+                elif child["name"] == "Properties70":
+                    for row in child["children"]:
+                        fields[bytes(row["props"][0]).decode()] = bytes(row["props"][4]).decode()
+            out[(record["name"], uid)] = fields
+        header = loaded.section("FBXHeaderExtension")
+        for child in header["children"]:
+            if child["name"] == "SceneInfo":
+                for block in child["children"]:
+                    if block["name"] == "Properties70":
+                        for row in block["children"]:
+                            out[("SceneInfo", bytes(row["props"][0]).decode())] = bytes(row["props"][4]).decode()
+        return out
+
+    def test_the_header_and_embedded_maps_name_no_folder(self):
+        before = {row["name"]: row for row in FbxMedia.embedded(self.path)}
+        report = FbxMedia.strip_machine_paths(self.path)
+        fields = self._fields()
+        for name in ("DocumentUrl", "SrcDocumentUrl", "Original|FileName",
+                     "Original|ApplicationActiveProject", "Original|ApplicationNativeFile"):
+            self.assertEqual(fields[("SceneInfo", name)], "", name)
+        # What names no path stays as written.
+        self.assertEqual(fields[("SceneInfo", "Original|ApplicationVendor")], "Autodesk")
+        self.assertEqual(fields[("SceneInfo", "LastSaved|ApplicationName")], "Maya")
+        # Each embedded map, its SDK twin and their Textures: the bare name,
+        # the spelling ``embed_dependencies`` writes and Unity extracts under.
+        for video, texture, name in ((7001, 8001, "Wood_BaseColor.png"),
+                                     (7002, 8002, "Wood_Normal.png"),
+                                     (7003, 8003, "Wood_Normal.png")):
+            self.assertEqual(
+                set(fields[("Video", video)].values()), {name}, fields[("Video", video)]
+            )
+            self.assertEqual(set(fields[("Texture", texture)].values()), {name})
+        # The map the file only references keeps the path a reader finds it by.
+        self.assertEqual(fields[("Video", 7004)]["Filename"], "//server/library/Library_Rough.png")
+        self.assertEqual(fields[("Texture", 8004)]["FileName"], "//server/library/Library_Rough.png")
+        self.assertEqual(
+            report,
+            {
+                "document": ["DocumentUrl", "Original|ApplicationActiveProject",
+                             "Original|ApplicationNativeFile", "Original|FileName", "SrcDocumentUrl"],
+                "media": ["Wood_BaseColor.png", "Wood_Normal.png"],
+                "kept": ["Library_Rough.png"],
+            },
+        )
+        # The bytes each map carries are untouched.
+        after = {row["name"]: row for row in FbxMedia.embedded(self.path)}
+        self.assertEqual(
+            {n: r["bytes"] for n, r in after.items()}, {n: r["bytes"] for n, r in before.items()}
+        )
+        with open(self.path, "rb") as fh:
+            data = fh.read()
+        for leaked in (b"/Users/producer", b"\\Users\\producer", b"/home/producer", b"AppData"):
+            self.assertNotIn(leaked, data)
+
+    def test_a_clean_file_is_not_written(self):
+        FbxMedia.strip_machine_paths(self.path)
+        with open(self.path, "rb") as fh:
+            before = fh.read()
+        report = FbxMedia.strip_machine_paths(self.path)
+        self.assertEqual((report["document"], report["media"]), ([], []))
+        with open(self.path, "rb") as fh:
+            self.assertEqual(fh.read(), before)
+
+    def test_an_ascii_write_is_stripped_as_text(self):
+        """Maya's preset can write ASCII (no carrier ships then): the same
+        rule, applied to the text, its line endings kept."""
+        for newline in ("\n", "\r\n"):
+            path = os.path.join(self.temp.dir_path(), "room_ascii.fbx")
+            with open(path, "wb") as fh:
+                fh.write(ASCII_FBX.replace("\n", newline).encode("utf-8"))
+            report = FbxMedia.strip_machine_paths(path)
+            with open(path, "rb") as fh:
+                text = fh.read().decode("utf-8")
+            self.assertEqual(text.count("\r\n"), ASCII_FBX.count("\n") if newline == "\r\n" else 0)
+            self.assertNotIn("producer", text)
+            self.assertIn('P: "DocumentUrl", "KString", "Url", "", ""', text)
+            self.assertIn('P: "Original|ApplicationVendor", "KString", "", "", "Autodesk"', text)
+            self.assertIn('Filename: "Wood_BaseColor.png"', text)
+            self.assertIn('RelativeFilename: "Wood_BaseColor.png"', text)
+            self.assertIn('FileName: "Wood_BaseColor.png"', text)
+            self.assertEqual(text.count('Filename: "D:/library/Library_Rough.png"'), 1)
+            self.assertIn("iVBORw0KGgo", text, "the embedded bytes stay")
+            self.assertEqual(
+                report,
+                {
+                    "document": ["DocumentUrl", "Original|ApplicationActiveProject",
+                                 "Original|FileName", "SrcDocumentUrl"],
+                    "media": ["Wood_BaseColor.png"],
+                    "kept": ["Library_Rough.png"],
+                },
+            )
+
+    def test_a_file_that_is_no_fbx_is_refused(self):
+        path = os.path.join(self.temp.dir_path(), "notes.txt")
+        with open(path, "w") as fh:
+            fh.write("not an fbx")
+        with self.assertRaises(ValueError):
+            FbxMedia.strip_machine_paths(path)
 
 
 if __name__ == "__main__":

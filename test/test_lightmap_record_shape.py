@@ -1,11 +1,12 @@
 #!/usr/bin/python
 # coding=utf-8
-"""The ``lightmaps`` record's and GLB block's declared shapes, held to their producers.
+"""The ``lightmaps`` record's declared shape, held to its producers.
 
 :class:`LightmapRecord` (the record on a deliverable's ``data_export``
-carrier) and :class:`LightmapsBlock` (a GLB's ``extras.lightmaps``) are typed
-:class:`~pythontk.SchemaSpec` declarations: the types another language reads a
-file through are generated from them. Each must admit exactly what every
+carrier, and, from version 3, a GLB's ``extras.lightmaps`` as it stands) is a
+typed :class:`~pythontk.SchemaSpec` declaration: the types another language
+reads a file through are generated from it. :class:`TestTheGlbCarriesTheRecordShape`
+holds the record a GLB carries as it stands to the same shape. Each must admit exactly what every
 producer writes today -- pythontk's own passes run here for real, the DCC
 producers' entries are copied as they spell them -- and refuse a missing field
 or a wrong type.
@@ -19,37 +20,34 @@ import struct
 import unittest
 
 from pythontk import LightmapRecord, MeshConvert, SceneRecords, TempArtifacts
-from pythontk.core_utils.engines.scene_export.lightmap_record import LightmapsBlock
 from pythontk.file_utils.mesh_convert.fbx_media import FbxMedia
 
 # ------------------------------------------------------- what producers write
-#: An entry as mayatk's ``LightmapRecords._record`` spells one
-#: (mayatk/light_utils/lightmap_baker/lightmap_records.py): the transform's
-#: leaf name, namespace kept; the marker's map and rect; the lightmap set's
-#: index; the DAG path's names, root first.
-MAYA_ENTRY = {
+#: An entry as a host whose objects sit in a DAG of transforms spells one:
+#: the transform's leaf name, namespace kept; the marker's map and rect; the
+#: DAG path's names, root first (version 3: no UV set -- the contract reads
+#: the second).
+DAG_ENTRY = {
     "name": "PROPS:crate",
     "map": "room_Lightmap.exr",
-    "uvIndex": 1,
     "scaleOffset": [0.5, 0.5, 0.5, 0.0],
     "hierarchy": ["ROOM", "PROPS:props", "PROPS:crate"],
 }
-#: The probe mayatk hands the builder: ``LightmapRecords.probe()`` in the
-#: working unit (``_in_working_unit``), its box the ``[min, max]`` points the
-#: host keeps and its own ``unit_scale`` beside it.
-MAYA_PROBE = {
+#: The probe that host hands the builder: in its working unit (centimetres),
+#: its box the ``[min, max]`` points the host keeps and its own ``unit_scale``
+#: beside it.
+DAG_PROBE = {
     "map": "room_Probe.exr",
     "position": [0.0, 150.0, 200.0],
     "box": [[-400.0, 0.0, -400.0], [400.0, 400.0, 400.0]],
     "unit_scale": 0.01,
 }
-#: mayatk's lights, one of each kind, as its producer hands them to the
-#: builder: ``LightUtils.specular_lights``' form (mayatk/light_utils/
-#: _light_utils.py), the name -- the scene's bookkeeping -- left out: every
+#: That host's lights, one of each kind, as its producer hands them to the
+#: builder, the name -- the scene's bookkeeping -- left out: every
 #: light its type, position, direction, colour, intensity and unit; a spot's
 #: angle, penumbra and radius, a point's radius, a rect's right, width and
 #: height.
-MAYA_LIGHTS = [
+DAG_LIGHTS = [
     {
         "type": "point",
         "position": [0.0, 160.0, 30.0],
@@ -82,20 +80,18 @@ MAYA_LIGHTS = [
         "height": 60.0,
     },
 ]
-#: An entry as blendertk's ``LightmapRecords._record`` spells one
-#: (blendertk/light_utils/lightmap_baker/lightmap_records.py): the object's
-#: name, its marker's map and rect, the lightmap layer's index, its
-#: hierarchy (``_hierarchy``: the names root first, its own last).
-BLENDER_ENTRY = {
+#: An entry as a host whose object names are unique in a file spells one:
+#: the object's name, its marker's map and rect, its hierarchy (the names
+#: root first, its own last).
+OBJECT_ENTRY = {
     "name": "crate",
     "map": "room_Lightmap.exr",
-    "uvIndex": 1,
     "scaleOffset": [1.0, 1.0, 0.0, 0.0],
     "hierarchy": ["crate"],
 }
-#: The probe blendertk hands the builder: ``LightmapRecords.probe()`` as
-#: stored, in Blender units -- an open scene, its box ``None``.
-BLENDER_PROBE = {
+#: The probe that host hands the builder, as stored in its own units --
+#: an open scene, its box ``None``.
+OBJECT_PROBE = {
     "map": "room_Probe.exr",
     "position": [0.0, 1.5, 2.0],
     "box": None,
@@ -107,18 +103,9 @@ FBX_HIGHLIGHT = {
     "map": "room_Probe_Highlight1.hdr",
     "objects": [{"name": "TABLE", "hierarchy": ["ROOM", "TABLE"]}],
 }
-#: The probe entry ``_Lightmaps._embed_lightmap_probe`` writes, with one copy
-#: as ``_embed_highlight_probes`` lists it.
-GLB_PROBE = {
-    "bufferView": 3,
-    "position": [0.0, 1.5, 2.0],
-    "box": {"min": [-4.0, 0.0, -4.0], "max": [4.0, 4.0, 4.0]},
-    "highlights": [{"bufferView": 4, "materials": ["tableMat"]}],
-}
-
 #: Names a nested C# record type must not take: sync_scene_records drops the
 #: root's family prefix (``LightmapEntry`` is ``LightmapRecord.Shape.Entry``),
-#: so these would shadow UnityEngine's or System's types, or the generated
+#: so these would shadow the engine's or System's types, or the generated
 #: file's own.
 _CS_TAKEN = {"Object", "Type", "String", "Light", "Payload", "Shape", "Wire"}
 
@@ -163,7 +150,7 @@ def _require_cv2():
 
 # ------------------------------------------------- a room the real pass reads
 class _Codec:
-    """A host's HDR codec (``hdr_codec``), as Blender hands one: a lightmap
+    """A host's HDR codec (``hdr_codec``), as one without cv2 hands it: a lightmap
     as a PNG and the scalar restoring its range, the probe as Radiance bytes
     whose header states its size -- the size its copies are drawn at."""
 
@@ -192,7 +179,7 @@ ROOM = (
     ("TABLE", "tableMat", ((-0.8, 0.9, 0.4), (0.8, 0.9, 0.4), (0.8, 0.9, -0.4), (-0.8, 0.9, -0.4))),
     ("LAMP", "lampMat", ((0.15, 1.05, 0.0), (0.45, 1.05, 0.0), (0.45, 1.35, 0.0), (0.15, 1.35, 0.0))),
 )
-#: A point light over the table, as mayatk's producer hands it (its direction
+#: A point light over the table, as a DAG host's producer hands it (its direction
 #: the builder drops).
 HANGING = {
     "type": "point",
@@ -288,18 +275,27 @@ def _room_glb(path, record):
     return _write_glb(path, gltf, bytes(blob))
 
 
-def _lit_room(folder, lights=(), box=True):
+def _lit_room(folder, lights=(), box=True, probe_pixels=False):
     """The room through ``MeshConvert.apply_glb_lightmaps`` and the record it
-    carried: the floor and table baked as mayatk names them, each a map of
-    its own (an atlas rect clones its material per object), the probe at
+    carried: the floor and table baked as a DAG host names them, the probe at
     head height in the room's box (or, without *box*, an open scene's), and
-    *lights*. Returns ``(glb, record)``."""
+    *lights*. The files are stand-ins the host codec reads none of -- but
+    with *probe_pixels* the probe is a real EXR, which drawing the lights
+    into it reads (cv2). Returns ``(glb, record)``."""
     for name in ("room_Lightmap.exr", "room_Probe.exr"):
         with open(os.path.join(folder, name), "wb") as fh:
             fh.write(b"\x00")  # the codec reads none of it
+    if probe_pixels:
+        import cv2
+        import numpy as np
+
+        cv2.imwrite(
+            os.path.join(folder, "room_Probe.exr"),
+            np.full((32, 64, 3), 0.2, np.float32),
+        )
     record = LightmapRecord.payload(
         [
-            dict(MAYA_ENTRY, name=n, hierarchy=[n], scaleOffset=[1.0, 1.0, 0.0, 0.0])
+            dict(DAG_ENTRY, name=n, hierarchy=[n], scaleOffset=[1.0, 1.0, 0.0, 0.0])
             for n in ("FLOOR", "TABLE")
         ],
         probe={
@@ -319,7 +315,7 @@ def _lit_room(folder, lights=(), box=True):
 
 
 def _glb_block(glb):
-    """*glb*'s ``lightmaps`` block, as a reader reads it."""
+    """The ``lightmaps`` record *glb* carries, as a reader reads it."""
     with MeshConvert.open_glb(glb) as edit:
         return copy.deepcopy(SceneRecords.glb_block(edit.gltf, SceneRecords.LIGHTMAPS))
 
@@ -337,9 +333,9 @@ class TestLightmapRecordShape(unittest.TestCase):
         """A record with every part: objects, a boxed probe with a highlight
         copy, and a light of each kind."""
         return LightmapRecord.payload(
-            [MAYA_ENTRY],
-            probe=dict(MAYA_PROBE, highlights=[FBX_HIGHLIGHT]),
-            lights=MAYA_LIGHTS,
+            [DAG_ENTRY],
+            probe=dict(DAG_PROBE, highlights=[FBX_HIGHLIGHT]),
+            lights=DAG_LIGHTS,
             unit_scale=0.01,
         )
 
@@ -348,15 +344,15 @@ class TestLightmapRecordShape(unittest.TestCase):
         state), a probe in a room and in the open (its box ``null``), lights
         alone, and everything with a highlight copy."""
         cases = {
-            "objects alone": LightmapRecord.payload([MAYA_ENTRY]),
+            "objects alone": LightmapRecord.payload([DAG_ENTRY]),
             "a probe in a room": LightmapRecord.payload(
-                [MAYA_ENTRY], probe=MAYA_PROBE, unit_scale=0.01
+                [DAG_ENTRY], probe=DAG_PROBE, unit_scale=0.01
             ),
             "a probe in the open": LightmapRecord.payload(
-                [MAYA_ENTRY], probe=dict(MAYA_PROBE, box=None), unit_scale=0.01
+                [DAG_ENTRY], probe=dict(DAG_PROBE, box=None), unit_scale=0.01
             ),
             "lights alone": LightmapRecord.payload(
-                [MAYA_ENTRY], lights=MAYA_LIGHTS, unit_scale=0.01
+                [DAG_ENTRY], lights=DAG_LIGHTS, unit_scale=0.01
             ),
             "everything": self._full(),
         }
@@ -366,13 +362,13 @@ class TestLightmapRecordShape(unittest.TestCase):
             with self.subTest(label):
                 self.assertEqual(_verdict(LightmapRecord, payload), ([], []))
 
-    def test_mayatks_record_is_the_shape(self):
-        """mayatk's producer as it assembles the record: its entries, its
+    def test_a_dag_hosts_record_is_the_shape(self):
+        """A DAG host's producer as it assembles the record: its entries, its
         probe in the working unit and its lights, through the builder."""
         payload = LightmapRecord.payload(
-            [MAYA_ENTRY, dict(MAYA_ENTRY, name="TABLE", hierarchy=["ROOM", "TABLE"])],
-            probe=MAYA_PROBE,
-            lights=MAYA_LIGHTS,
+            [DAG_ENTRY, dict(DAG_ENTRY, name="TABLE", hierarchy=["ROOM", "TABLE"])],
+            probe=DAG_PROBE,
+            lights=DAG_LIGHTS,
             unit_scale=0.01,
         )
         self.assertEqual(_verdict(LightmapRecord, payload), ([], []))
@@ -381,28 +377,47 @@ class TestLightmapRecordShape(unittest.TestCase):
         self.assertIn("direction", spot)
         self.assertIn("right", panel)
 
-    def test_blendertks_record_is_the_shape(self):
-        """blendertk's ``LightmapRecords._record`` writes every entry's
-        ``hierarchy`` now (it wrote none until 2026-10-20), so its record is
-        the shape whole."""
+    def test_an_object_hosts_record_is_the_shape(self):
+        """A host whose object names are unique writes every entry's
+        ``hierarchy`` too (one shape for every host), so its record is the
+        shape whole."""
         payload = LightmapRecord.payload(
-            [BLENDER_ENTRY], probe=BLENDER_PROBE, unit_scale=1.0
+            [OBJECT_ENTRY], probe=OBJECT_PROBE, unit_scale=1.0
         )
         self.assertEqual(_verdict(LightmapRecord, payload), ([], []))
 
     def test_the_fbx_highlight_pass_writes_the_shape(self):
-        """The real pass: the GLB built from a lit room draws its probe's
-        copies, and ``embed_fbx_highlight_probes`` lists them on the FBX
-        record's probe -- the record as the deliverable then carries it."""
+        """The real pass: drawn from the room's geometry and its probe, the
+        delivered probe with the lights in it and its complete copies, which
+        ``embed_fbx_highlight_probes`` names on the FBX record's probe -- the
+        record as the deliverable then carries it."""
         _require_cv2()
+        import cv2
+        import numpy as np
         from test_fbx_media import build_carrier_fbx
 
-        glb, record = _lit_room(self.tmp, lights=[HANGING])
+        probe = np.full((32, 64, 3), 0.2, np.float32)
+        cv2.imwrite(os.path.join(self.tmp, "room_Probe.exr"), probe)
+        record = LightmapRecord.payload(
+            [
+                dict(DAG_ENTRY, name=n, hierarchy=[n], scaleOffset=[1.0, 1.0, 0.0, 0.0])
+                for n in ("FLOOR", "TABLE")
+            ],
+            probe={
+                "map": "room_Probe.exr",
+                "position": [0.0, 1.8, 2.0],
+                "box": [[-4.0, 0.0, -4.0], [4.0, 4.0, 4.0]],
+            },
+            lights=[HANGING],
+            unit_scale=1.0,
+        )
+        glb = _room_glb(os.path.join(self.tmp, "room.glb"), record)
         fbx = build_carrier_fbx(os.path.join(self.tmp, "room.fbx"), {"lightmaps": record})
-        names = MeshConvert.embed_fbx_highlight_probes(fbx, glb)
-        self.assertTrue(names, "the pass drew no copy")
+        names = MeshConvert.embed_fbx_highlight_probes(fbx, glb, search_dirs=[self.tmp])
+        self.assertTrue(names, "the pass drew nothing")
         shipped = FbxMedia.record(fbx, SceneRecords.LIGHTMAPS.key)
-        self.assertEqual([h["map"] for h in shipped["probe"]["highlights"]], names)
+        drawn = [shipped["probe"]["map"]] + [h["map"] for h in shipped["probe"]["highlights"]]
+        self.assertEqual(drawn, names)
         self.assertEqual(_verdict(LightmapRecord, shipped), ([], []))
 
     def test_a_missing_required_field_is_refused(self):
@@ -433,7 +448,6 @@ class TestLightmapRecordShape(unittest.TestCase):
         a ``null`` where a producer leaves the key out, a light of a kind no
         record carries."""
         cases = (
-            (("objects", 0), "uvIndex", "1", "objects[0].uvIndex: expected integer, got string"),
             (
                 ("objects", 0),
                 "scaleOffset",
@@ -471,7 +485,7 @@ class TestLightmapRecordShape(unittest.TestCase):
                 self.assertEqual(errors, [error])
 
     def test_its_json_schema_builds(self):
-        """The document unitytk's C# record types are generated from: each
+        """The document a C# reader's record types are generated from: each
         nested type named for what it is once the family prefix goes, and the
         probe's box the one field a producer writes as ``null``."""
         schema = LightmapRecord.json_schema()
@@ -500,148 +514,59 @@ class TestLightmapRecordShape(unittest.TestCase):
                 self.assertNotIn(rest, _CS_TAKEN)
 
 
-class TestLightmapsBlockShape(unittest.TestCase):
-    """:class:`LightmapsBlock`: the block ``MeshConvert.lightmaps_block``
-    builds, with the probe and its copies the lightmap pass embeds -- the FBX
-    route's (``apply_glb_lightmaps``) and a native export's
-    (``embed_glb_lightmap_probe``, blendertk's)."""
+class TestTheGlbCarriesTheRecordShape(unittest.TestCase):
+    """The record a GLB carries as it stands (version 3: one layout, two
+    containers) is a :class:`LightmapRecord` whatever the lightmap pass did
+    to it -- the FBX route's (``apply_glb_lightmaps``), its probe drawn or
+    not, and a native export's (the record lifted into the root extras, its
+    files riding after the write)."""
 
     def setUp(self):
         self.tmp = _scratch(self)
 
-    @staticmethod
-    def _full():
-        """A block with every part: two materials and a boxed probe with a
-        highlight copy."""
-        return MeshConvert.lightmaps_block(
-            {"floorMat": 2.5, "tableMat": 13.656251234}, probe=GLB_PROBE
-        )
-
-    def test_what_the_block_builder_writes_is_the_shape(self):
-        cases = {
-            "materials alone": MeshConvert.lightmaps_block({"roomMat": 1}),
-            "the emissive carrier": MeshConvert.lightmaps_block(
-                {"roomMat": 1.0}, carrier="emissive"
-            ),
-            "no lightmapped material": MeshConvert.lightmaps_block({}),
-            "everything": self._full(),
-        }
-        for label, block in cases.items():
-            with self.subTest(label):
-                self.assertEqual(_verdict(LightmapsBlock, block), ([], []))
-
     def test_the_lightmap_pass_writes_the_shape(self):
-        """The FBX route's pass over a baked room, its probe embedded -- in a
+        """The FBX route's pass over a baked room, its probe riding -- in a
         room's box, and in the open (``null``)."""
         for box in (True, False):
             with self.subTest(box=box):
-                glb, _record = _lit_room(_scratch(self), box=box)
-                block = _glb_block(glb)
-                self.assertEqual(sorted(block["materials"]), ["floorMat", "tableMat"])
-                self.assertEqual(block["probe"]["box"] is None, not box)
-                self.assertEqual(_verdict(LightmapsBlock, block), ([], []))
+                glb, record = _lit_room(_scratch(self), box=box)
+                carried = _glb_block(glb)
+                self.assertEqual(carried, record, "as the FBX's carrier holds it")
+                self.assertEqual(carried["probe"]["box"] is None, not box)
+                self.assertEqual(_verdict(LightmapRecord, carried), ([], []))
 
-    def test_a_native_exports_probe_is_the_shape(self):
-        """blendertk's native glTF export: the builder's block in the root
-        extras, its probe embedded after the write."""
-        gltf = {
-            "asset": {"version": "2.0"},
-            "extras": {"lightmaps": MeshConvert.lightmaps_block({"roomMat": 3.19})},
-        }
-        glb = _write_glb(os.path.join(self.tmp, "native.glb"), gltf)
-        with open(os.path.join(self.tmp, "room_Probe.exr"), "wb") as fh:
-            fh.write(b"\x00")
-        probe = dict(BLENDER_PROBE, box=[[-4.0, 0.0, -4.0], [4.0, 4.0, 4.0]])
-        entry = MeshConvert.embed_glb_lightmap_probe(
-            glb, probe, [self.tmp], hdr_codec=_Codec
+    def test_a_native_exports_record_is_the_shape(self):
+        """A host's native glTF export: the record in the root extras, its
+        files riding after the write."""
+        record = LightmapRecord.payload(
+            [dict(OBJECT_ENTRY, name="FLOOR", hierarchy=["FLOOR"])],
+            probe=dict(OBJECT_PROBE, box=[[-4.0, 0.0, -4.0], [4.0, 4.0, 4.0]]),
+            unit_scale=1.0,
         )
-        self.assertIsNotNone(entry, "the probe was not embedded")
-        self.assertEqual(_verdict(LightmapsBlock, _glb_block(glb)), ([], []))
+        glb = _room_glb(os.path.join(self.tmp, "native.glb"), {})
+        with MeshConvert.open_glb(glb) as edit:
+            edit.gltf["nodes"] = [n for n in edit.gltf["nodes"] if n["name"] != "data_export"]
+            edit.gltf["scenes"][0]["nodes"] = list(range(len(edit.gltf["nodes"])))
+            edit.gltf["extras"] = {"lightmaps": record}
+            edit.dirty = True
+        for name in ("room_Lightmap.exr", "room_Probe.exr"):
+            with open(os.path.join(self.tmp, name), "wb") as fh:
+                fh.write(b"\x00")
+        bound = MeshConvert.apply_glb_lightmaps(glb, search_dirs=[self.tmp], hdr_codec=_Codec)
+        self.assertTrue(bound, "the record lit nothing")
+        with MeshConvert.open_glb(glb) as edit:
+            self.assertIsNotNone(SceneRecords.GLB_MEDIA.view(edit.gltf, "room_Probe.exr"))
+        self.assertEqual(_verdict(LightmapRecord, _glb_block(glb)), ([], []))
 
     def test_the_highlight_copies_are_the_shape(self):
-        """The pass over a room with a light over its table: the probe's
-        copies, one per group of receivers, in the block."""
+        """The pass over a room with a light over its table: the probe drawn
+        and its complete copies, one per group of receivers, named on the
+        record the GLB carries."""
         _require_cv2()
-        glb, _record = _lit_room(self.tmp, lights=[HANGING])
-        block = _glb_block(glb)
-        self.assertTrue(block["probe"].get("highlights"), "the pass drew no copy")
-        self.assertEqual(_verdict(LightmapsBlock, block), ([], []))
-
-    def test_a_missing_required_field_is_refused(self):
-        cases = (
-            ((), "version", "missing required key 'version'"),
-            ((), "carrier", "missing required key 'carrier'"),
-            ((), "materials", "missing required key 'materials'"),
-            (
-                ("materials", "tableMat"),
-                "intensity",
-                "materials.tableMat.missing required key 'intensity'",
-            ),
-            (("probe",), "bufferView", "probe.missing required key 'bufferView'"),
-            (("probe",), "box", "probe.missing required key 'box'"),
-            (
-                ("probe", "highlights", 0),
-                "materials",
-                "probe.highlights[0].missing required key 'materials'",
-            ),
-        )
-        full = self._full()
-        for path, key, error in cases:
-            with self.subTest(error):
-                errors, _warnings = _verdict(
-                    LightmapsBlock, _mutated(full, path, key, _GONE)
-                )
-                self.assertEqual(errors, [error])
-
-    def test_a_wrong_type_is_refused(self):
-        cases = (
-            ((), "carrier", "lightmap", "carrier: 'lightmap' is not one of ['occlusion', 'emissive']"),
-            ((), "materials", [{"intensity": 2.5}], "materials: expected object, got array"),
-            (
-                ("materials", "tableMat"),
-                "intensity",
-                "2.5",
-                "materials.tableMat.intensity: expected number, got string",
-            ),
-            (("probe",), "bufferView", 3.0, "probe.bufferView: expected integer, got number"),
-            (("probe",), "position", [0.0, 1.5], "probe.position: expected 3 items, got 2"),
-            (
-                ("probe", "highlights", 0),
-                "materials",
-                "tableMat",
-                "probe.highlights[0].materials: expected array, got string",
-            ),
-        )
-        full = self._full()
-        for path, key, value, error in cases:
-            with self.subTest(error):
-                errors, _warnings = _verdict(
-                    LightmapsBlock, _mutated(full, path, key, value)
-                )
-                self.assertEqual(errors, [error])
-
-    def test_its_json_schema_builds(self):
-        """The document the WebXR runtime's JSDoc typedefs are generated from,
-        each def by its own name: the box is the record's, in metres here."""
-        schema = LightmapsBlock.json_schema()
-        json.dumps(schema)
-        self.assertEqual(schema["title"], "LightmapsBlock")
-        self.assertEqual(schema["required"], ["version", "carrier", "materials"])
-        self.assertEqual(
-            sorted(schema["$defs"]),
-            [
-                "LightmapBox",
-                "LightmapsBlockHighlight",
-                "LightmapsBlockMaterial",
-                "LightmapsBlockProbe",
-            ],
-        )
-        self.assertEqual(schema["properties"]["carrier"]["enum"], ["occlusion", "emissive"])
-        self.assertEqual(
-            schema["properties"]["materials"]["additionalProperties"],
-            {"$ref": "#/$defs/LightmapsBlockMaterial"},
-        )
-
+        glb, _record = _lit_room(self.tmp, lights=[HANGING], probe_pixels=True)
+        carried = _glb_block(glb)
+        self.assertTrue(carried["probe"].get("highlights"), "the pass drew no copy")
+        self.assertEqual(_verdict(LightmapRecord, carried), ([], []))
 
 if __name__ == "__main__":
     unittest.main()

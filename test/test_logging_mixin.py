@@ -390,9 +390,9 @@ class DefaultTextLogHandlerTest(BaseTestCase):
         widget = MockTextWidget()
         handler = DefaultTextLogHandler(widget)
 
-        self.assertEqual(handler.get_color("DEBUG"), "#AAAAAA")
-        self.assertEqual(handler.get_color("ERROR"), "#FFCCCC")
-        self.assertEqual(handler.get_color("SUCCESS"), "#CCFFCC")
+        self.assertEqual(handler.get_color("DEBUG"), "#888888")
+        self.assertEqual(handler.get_color("ERROR"), "#D4908F")
+        self.assertEqual(handler.get_color("SUCCESS"), "#9CC69B")
 
     def test_get_color_unknown_level(self):
         """Test color for unknown level."""
@@ -535,7 +535,7 @@ class LogBoxTest(BaseTestCase):
 
         first = widget.messages[0]
         # Level "ERROR" resolved to its hex
-        self.assertIn("background-color:#FFCCCC", first)
+        self.assertIn("background-color:#D4908F", first)
         # Per-line wrapping: one span per box row.
         # With items, rows are: top, title, sep, item, bottom = 5
         self.assertEqual(first.count("<span style="), 5 + 1)  # +1 monospace wrapper
@@ -544,7 +544,7 @@ class LogBoxTest(BaseTestCase):
         # Raw color passed through unchanged
         self.assertIn("background-color:#222", second)
         # Combined with text color from level
-        self.assertIn("color:#CCFFCC", second)
+        self.assertIn("color:#9CC69B", second)
 
     def test_log_box_clamps_to_terminal_width(self):
         """When a stream handler is attached to a TTY, log_box clamps to the
@@ -2012,26 +2012,26 @@ class LayoutCharacterizationTest(BaseTestCase):
             "╚═══════════════════════════════╝</span>"
         ),
         "level": (
-            "<span style=\"font-family:'Consolas','Courier New',Monaco,monospace; white-space:pre;\"><span style=\"color:#CCFFCC;font-family:'Consolas','Courier New',Monaco,monospace;white-space:pre\">╔══════╗\n"
+            "<span style=\"font-family:'Consolas','Courier New',Monaco,monospace; white-space:pre;\"><span style=\"color:#9CC69B;font-family:'Consolas','Courier New',Monaco,monospace;white-space:pre\">╔══════╗\n"
             "║·Done·║\n"
             "╟──────╢\n"
             "║·ok···║\n"
             "╚══════╝</span></span>"
         ),
         "bg": (
-            "<span style=\"font-family:'Consolas','Courier New',Monaco,monospace; white-space:pre;\"><span style=\"font-family:'Consolas','Courier New',Monaco,monospace;white-space:pre;color:#FFCCCC;background-color:#222\">╔═══════╗</span>\n"
-            "<span style=\"font-family:'Consolas','Courier New',Monaco,monospace;white-space:pre;color:#FFCCCC;background-color:#222\">║·Alert·║</span>\n"
-            "<span style=\"font-family:'Consolas','Courier New',Monaco,monospace;white-space:pre;color:#FFCCCC;background-color:#222\">╟───────╢</span>\n"
-            "<span style=\"font-family:'Consolas','Courier New',Monaco,monospace;white-space:pre;color:#FFCCCC;background-color:#222\">║·bad···║</span>\n"
-            "<span style=\"font-family:'Consolas','Courier New',Monaco,monospace;white-space:pre;color:#FFCCCC;background-color:#222\">║·worse·║</span>\n"
-            "<span style=\"font-family:'Consolas','Courier New',Monaco,monospace;white-space:pre;color:#FFCCCC;background-color:#222\">╚═══════╝</span></span>"
+            "<span style=\"font-family:'Consolas','Courier New',Monaco,monospace; white-space:pre;\"><span style=\"font-family:'Consolas','Courier New',Monaco,monospace;white-space:pre;color:#D4908F;background-color:#222\">╔═══════╗</span>\n"
+            "<span style=\"font-family:'Consolas','Courier New',Monaco,monospace;white-space:pre;color:#D4908F;background-color:#222\">║·Alert·║</span>\n"
+            "<span style=\"font-family:'Consolas','Courier New',Monaco,monospace;white-space:pre;color:#D4908F;background-color:#222\">╟───────╢</span>\n"
+            "<span style=\"font-family:'Consolas','Courier New',Monaco,monospace;white-space:pre;color:#D4908F;background-color:#222\">║·bad···║</span>\n"
+            "<span style=\"font-family:'Consolas','Courier New',Monaco,monospace;white-space:pre;color:#D4908F;background-color:#222\">║·worse·║</span>\n"
+            "<span style=\"font-family:'Consolas','Courier New',Monaco,monospace;white-space:pre;color:#D4908F;background-color:#222\">╚═══════╝</span></span>"
         ),
         "bg_level_name": (
-            "<span style=\"font-family:'Consolas','Courier New',Monaco,monospace; white-space:pre;\"><span style=\"font-family:'Consolas','Courier New',Monaco,monospace;white-space:pre;background-color:#CCFFCC\">╔════════╗</span>\n"
-            "<span style=\"font-family:'Consolas','Courier New',Monaco,monospace;white-space:pre;background-color:#CCFFCC\">║·Tinted·║</span>\n"
-            "<span style=\"font-family:'Consolas','Courier New',Monaco,monospace;white-space:pre;background-color:#CCFFCC\">╟────────╢</span>\n"
-            "<span style=\"font-family:'Consolas','Courier New',Monaco,monospace;white-space:pre;background-color:#CCFFCC\">║·x······║</span>\n"
-            "<span style=\"font-family:'Consolas','Courier New',Monaco,monospace;white-space:pre;background-color:#CCFFCC\">╚════════╝</span></span>"
+            "<span style=\"font-family:'Consolas','Courier New',Monaco,monospace; white-space:pre;\"><span style=\"font-family:'Consolas','Courier New',Monaco,monospace;white-space:pre;background-color:#9CC69B\">╔════════╗</span>\n"
+            "<span style=\"font-family:'Consolas','Courier New',Monaco,monospace;white-space:pre;background-color:#9CC69B\">║·Tinted·║</span>\n"
+            "<span style=\"font-family:'Consolas','Courier New',Monaco,monospace;white-space:pre;background-color:#9CC69B\">╟────────╢</span>\n"
+            "<span style=\"font-family:'Consolas','Courier New',Monaco,monospace;white-space:pre;background-color:#9CC69B\">║·x······║</span>\n"
+            "<span style=\"font-family:'Consolas','Courier New',Monaco,monospace;white-space:pre;background-color:#9CC69B\">╚════════╝</span></span>"
         ),
     }
 
@@ -2097,7 +2097,7 @@ class LayoutCharacterizationTest(BaseTestCase):
         [
             (
                 "<span style=\"font-family:'Consolas','Courier New',Monaco,monospace; white-space:pre;\">\n"
-                '<span style="color:#FFF5B7; font-weight:bold">Group title</span>\n'
+                '<span style="color:#D4B878; font-weight:bold">Group title</span>\n'
                 '<span style="color:#888888">▎ first</span>\n'
                 '<span style="color:#888888">▎ second ✅</span></span>'
             ),

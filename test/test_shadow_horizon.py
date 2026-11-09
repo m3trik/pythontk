@@ -7,11 +7,14 @@ encoding round trip, and the reference -- ``HeightFieldMap.alpha`` -- against
 the exact projection on the props that broke the map this one replaced.
 """
 
+import base64
+import json
 import math
 import os
 import sys
 import time
 import unittest
+import zlib
 
 import numpy as np
 
@@ -23,6 +26,7 @@ from pythontk.geo_utils.shadow_horizon import (  # noqa: E402
     HeightFieldMap,
     HorizonMap,
     ShadowHorizon,
+    ShadowHorizonConformance,
 )
 from pythontk.img_utils._img_utils import ImgUtils  # noqa: E402
 
@@ -30,24 +34,7 @@ from pythontk.img_utils._img_utils import ImgUtils  # noqa: E402
 class HorizonCase(unittest.TestCase):
     """Fixtures: axis-aligned boxes standing on the ground of a Y-up frame."""
 
-    @staticmethod
-    def _box(x0, x1, y0, y1, z0, z1):
-        pts = np.array(
-            [[x, y, z] for x in (x0, x1) for y in (y0, y1) for z in (z0, z1)],
-            dtype=float,
-        )
-        quads = [
-            (0, 1, 3, 2),
-            (4, 6, 7, 5),
-            (0, 4, 5, 1),
-            (2, 3, 7, 6),
-            (0, 2, 6, 4),
-            (1, 5, 7, 3),
-        ]
-        tris = []
-        for a, b, c, d in quads:
-            tris += [(a, b, c), (a, c, d)]
-        return pts, np.array(tris, dtype=np.int64)
+    _box = staticmethod(ShadowHorizonConformance._box)
 
     @classmethod
     def box(cls):
@@ -110,6 +97,31 @@ class HorizonCase(unittest.TestCase):
 class TestHeightSpans(HorizonCase):
     """ImgUtils.rasterize_height_spans -- the bake's solid columns."""
 
+    def test_two_parts_meeting_a_float_apart_bake_one_span(self):
+        """Bug: an awning's post and slab, two boxes in one mesh, meet where
+        the post's top is the slab's bottom; an engine's import of one DCC's
+        delivery put them one float32 step apart (1.0999999 and 1.1, measured
+        2026-11-08), and the bake kept the 1e-7 gap as daylight: a second span
+        over the post the delivered map (baked where they coincide) has not.
+        A gap no wider than one step of the map's 16-bit height code is none
+        -- it encodes as touching -- so the map is one span there, as with
+        the faces coincident. Fixed: 2026-11-08"""
+        under = float(np.nextafter(np.float32(1.1), np.float32(0.0)))
+        for post_top in (1.1, under):
+            with self.subTest(post_top=post_top):
+                awning = [
+                    self._box(-0.06, 0.06, 0.0, post_top, -0.06, 0.06),
+                    self._box(-0.3, 0.5, 1.1, 1.18, -0.2, 0.2),
+                ]
+                hmap = ShadowHorizon.bake(awning, up=1, size=64, spans=2)
+                a0, a1, b0, b1 = hmap.bounds
+                ix = int((0.0 - a0) / (a1 - a0) * hmap.size)
+                iy = int((0.0 - b0) / (b1 - b0) * hmap.size)
+                self.assertTrue(np.isnan(hmap.hi[1, iy, ix]), "one span over the post")
+                self.assertEqual(float(hmap.lo[0, iy, ix]), 0.0)
+                self.assertAlmostEqual(float(hmap.hi[0, iy, ix]), 1.18, places=4)
+                self.assertTrue(np.isnan(hmap.hi[1]).all(), "nowhere a second span")
+
     def test_box_gives_a_solid_column(self):
         lo, hi, bounds = ImgUtils.rasterize_height_spans(
             self.box(), up=1, size=32, spans=2
@@ -163,6 +175,52 @@ class TestHeightSpans(HorizonCase):
         self.assertEqual(int(present[1:].sum()), 0)
         solid = present[0]
         self.assertTrue((hi[0][solid] > 1.99).all())
+
+    def test_a_ray_along_an_edge_two_triangles_share_counts_once(self):
+        """Watertight: a box split on either diagonal bakes the same solid,
+        every column of its footprint full height. Maya's polyCube split
+        (the ShadowPlane sample's box) left 6 columns on its faces'
+        diagonals with only a zero-thickness span at the top: the ray down
+        the bottom face's shared edge missed both its triangles. Added:
+        2026-11-07."""
+        extents = (-30, 30, 0, 60, -30, 30)
+        maps = [
+            ShadowHorizon.bake([mesh], size=128, spans=2)
+            for mesh in (
+                ShadowHorizonConformance._box_flipped(*extents),
+                self._box(*extents),
+            )
+        ]
+        for hmap in maps:
+            a0, a1, b0, b1 = hmap.bounds
+            c = (np.arange(hmap.size) + 0.5) / hmap.size
+            inside = (np.abs(b0 + c * (b1 - b0))[:, None] < 30) & (
+                np.abs(a0 + c * (a1 - a0))[None, :] < 30
+            )
+            full = (hmap.lo[0] <= 0.0) & (hmap.hi[0] >= 60.0)
+            self.assertEqual(np.argwhere(inside & ~full).tolist(), [])
+        np.testing.assert_array_equal(maps[0].to_rgba(), maps[1].to_rgba())
+
+    def test_a_point_on_a_shared_edge_or_vertex_is_one_triangles(self):
+        """The fill rule: a pixel centre on an edge two triangles share, or
+        on the vertex a fan shares, is covered by exactly one of them -- an
+        inclusive test gave it to all of them (the duplicates removed after)
+        or, a rounding below zero each side, to none. Added: 2026-11-07."""
+        from pythontk.img_utils._rasterize import _ImgRasterizeInternal
+
+        pts, tris = ShadowHorizonConformance._fan()
+        x = (pts[:, 0] + 1.0) / 2.0 * 16
+        y = (pts[:, 2] + 1.0) / 2.0 * 16
+        yy, xx = np.mgrid[0:16, 0:16] + 0.5
+        top = [t for t in tris if (pts[t, 1] == 1.0).all()]
+        self.assertEqual(len(top), 8)
+        covered = np.zeros((16, 16), int)
+        for t in top:
+            xs, ys = x[t], y[t]
+            ccw = (xs[1] - xs[0]) * (ys[2] - ys[0]) - (ys[1] - ys[0]) * (xs[2] - xs[0]) > 0
+            covered += _ImgRasterizeInternal._covers(xs, ys, ccw, xx, yy)
+        self.assertTrue((covered[4:12, 4:12] == 1).all(), covered[4:12, 4:12])
+        self.assertLessEqual(int(covered.max()), 1)
 
     def test_thin_member_registers_at_pixel_resolution(self):
         lo, hi, _ = ImgUtils.rasterize_height_spans(self.pole(), up=1, size=16, spans=1)
@@ -605,6 +663,148 @@ class TestMeasure(HorizonCase):
         t0 = time.perf_counter()
         ShadowHorizon.bake(self.chair(), up=1)
         self.assertLess(time.perf_counter() - t0, 1.5)
+
+
+class TestShadowHorizonConformance(unittest.TestCase):
+    """The golden cases a port of the bake and the evaluation is held to
+    (``Conformance.cases("shadow_horizon")``)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.doc = ShadowHorizonConformance.cases(seed=2, per_kind=2)
+        cls.by_name = {c["name"]: c for c in cls.doc["cases"]}
+
+    @staticmethod
+    def _image(m):
+        raw = zlib.decompress(base64.b64decode(m["rgba"]))
+        return np.frombuffer(raw, np.uint8).reshape(m["height"], m["width"], 4)
+
+    @staticmethod
+    def _delivered(m):
+        return HeightFieldMap.from_rgba(
+            TestShadowHorizonConformance._image(m),
+            size=m["size"],
+            spans=m["spans"],
+            bounds=m["bounds"],
+            ground=m["ground"],
+            up=m["up"],
+            height_scale=m["height_scale"],
+        )
+
+    def test_the_named_cases_cover_each_edge_the_bake_has(self):
+        for name in (
+            "single_triangle",
+            "overhang",
+            "interior_hole",
+            "canvas_edge",
+            "empty_outside",
+            "empty_buried",
+            "no_geometry",
+        ):
+            self.assertIn(name, self.by_name)
+        baked = [c for c in self.doc["cases"] if "map" in c]
+        self.assertEqual({c["map"]["spans"] for c in baked}, {1, 2, 3})
+        self.assertIn(ShadowHorizon.DEFAULT_SPANS, {c["map"]["spans"] for c in baked})
+        self.assertTrue(
+            set(ShadowHorizon.ADAPTIVE_SIZES) <= {c["map"]["size"] for c in baked}
+        )
+        self.assertEqual({c["map"]["up"] for c in baked}, {1, 2})
+
+    def test_each_image_is_the_bake_of_its_input(self):
+        for c in self.doc["cases"]:
+            if "map" not in c:
+                continue
+            with self.subTest(c["name"]):
+                given = c["input"]
+                meshes = [
+                    (np.reshape(m["points"], (-1, 3)), np.reshape(m["triangles"], (-1, 3)))
+                    for m in given["meshes"]
+                ]
+                hmap = ShadowHorizon.bake(
+                    meshes,
+                    ground=given["ground"],
+                    up=given["up"],
+                    size=given["size"],
+                    spans=given["spans"],
+                    bounds=given["bounds"],
+                    padding=given["padding"],
+                )
+                np.testing.assert_array_equal(self._image(c["map"]), hmap.to_rgba())
+
+    def test_each_alpha_is_the_delivered_maps(self):
+        c = self.by_name["stool"]
+        hmap = self._delivered(c["map"])
+        for e in c["alpha"]:
+            got = hmap.alpha(
+                np.reshape(e["points"], (-1, 3)),
+                e["light"],
+                direction=e["direction"],
+                source_size=e["source_size"],
+                source_angle=e["source_angle"],
+                intensity=e["intensity"],
+            )
+            self.assertEqual([float(v) for v in got], e["alpha"])
+        # a soft and a hard source of each kind, all shadowing some point
+        kinds = [(e["light"] is None, e["source_size"] + e["source_angle"] > 0) for e in c["alpha"]]
+        self.assertEqual(len(set(kinds)), 4)
+        self.assertTrue(all(max(e["alpha"]) > 0.0 for e in c["alpha"]))
+
+    def test_an_empty_footprint_holds_no_column_and_casts_nothing(self):
+        for name in ("empty_outside", "empty_buried"):
+            with self.subTest(name):
+                c = self.by_name[name]
+                hmap = self._delivered(c["map"])
+                self.assertTrue(np.isnan(hmap.hi).all())
+                self.assertEqual(c["map"]["height_scale"], 1e-3)
+                self.assertTrue(np.all(hmap.dist == DIST_FAR))
+                self.assertTrue(all(v == 0.0 for e in c["alpha"] for v in e["alpha"]))
+
+    def test_the_edge_ray_cases_pin_a_watertight_bake(self):
+        """Either split of one box is one image, and every column of the
+        fan's interior is solid from the ground to its top: a port whose
+        fill rule leaks on a shared edge, or counts it twice, fails them.
+        Added: 2026-11-07."""
+        a, b = (self.by_name[n]["map"] for n in ("edge_rays_flipped", "edge_rays_split"))
+        np.testing.assert_array_equal(self._image(a), self._image(b))
+        fan = self._delivered(self.by_name["edge_rays_fan"]["map"])
+        self.assertTrue((fan.lo[0][4:12, 4:12] == 0.0).all())
+        self.assertTrue((fan.hi[0][4:12, 4:12] >= 1.0).all())
+
+    def test_the_exact_cases_sit_on_their_ties(self):
+        """Each pins one rule a port could spell otherwise and pass every
+        other case (measured on the C# port: each mutant survived the rest):
+        the lowest of equal gaps merged; a half code rounded to even; the
+        lower row of two equally near columns; a ray leaving a pixel edge
+        starting in the pixel it heads into; a sun within 1e-9 of the zenith
+        casting nothing. Added: 2026-11-07."""
+        boards = self._delivered(self.by_name["equal_gaps"]["map"])
+        np.testing.assert_allclose(boards.lo[:, 8, 8], (0.25, 0.75), atol=1e-4)
+        np.testing.assert_allclose(boards.hi[:, 8, 8], (0.625, 0.875), atol=1e-4)
+        half = self.by_name["half_code"]["input"]["bounds"]
+        self.assertEqual((half[1] - half[0]) / (half[3] - half[2]), 129 / 128)
+        self.assertIn(1.0, self._delivered(self.by_name["half_code"]["map"]).dist)
+        tie = self._delivered(self.by_name["row_tie"]["map"])
+        self.assertEqual(np.argwhere(~np.isnan(tie.hi[0])).tolist(), [[6, 7], [9, 8]])
+        self.assertEqual(float(tie.near_hi[8, 6]), 1.0)
+        on_edge, zenith = self.by_name["march_edges"]["alpha"][-2:]
+        self.assertEqual(on_edge["points"][0], 0.0)
+        self.assertEqual(on_edge["alpha"] + zenith["alpha"], [0.0] * 4)
+
+    def test_a_refused_input_carries_its_error_and_no_map(self):
+        c = self.by_name["no_geometry"]
+        self.assertEqual(c["error"], "ValueError")
+        self.assertNotIn("map", c)
+        self.assertNotIn("alpha", c)
+
+    def test_a_source_under_the_ground_casts_nothing(self):
+        below = self.by_name["box"]["alpha"][-1]
+        self.assertLess(below["light"][1], 0.0)
+        self.assertTrue(all(v == 0.0 for v in below["alpha"]))
+
+    def test_the_document_stays_small_enough_to_generate_per_test_run(self):
+        """Measured: 0.9 MB of JSON in ~3.5 s at the default draw; the whole
+        images ride because deflated they cost 1 to 80 KB each."""
+        self.assertLess(len(json.dumps(ShadowHorizonConformance.cases())), 3_000_000)
 
 
 if __name__ == "__main__":

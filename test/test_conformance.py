@@ -15,14 +15,17 @@ from pythontk import Conformance
 
 class TestConformance(unittest.TestCase):
     def test_the_ported_models_are_registered(self):
-        self.assertEqual(Conformance.names(), ["articulation", "shadow_projection"])
+        self.assertEqual(
+            Conformance.names(),
+            ["articulation", "shadow_projection", "shadow_horizon", "record_names"],
+        )
 
     def test_every_provider_writes_one_document_shape(self):
         for name in Conformance.names():
             with self.subTest(name):
                 doc = Conformance.cases(name, seed=4)
                 self.assertIsInstance(doc["tolerance"], dict)
-                self.assertTrue(doc["tolerance"])
+                # An exact model (names, no numbers) states no bound at all.
                 self.assertTrue(
                     all(
                         isinstance(v, float) and v > 0
@@ -48,6 +51,13 @@ class TestConformance(unittest.TestCase):
         small = Conformance.cases("articulation", seed=1, per_rig=1)
         large = Conformance.cases("articulation", seed=1, per_rig=2)
         self.assertEqual(2 * len(small["cases"]), len(large["cases"]))
+        # named cases first, then per_kind of each random kind
+        fewer = Conformance.cases("shadow_horizon", seed=1, per_kind=1)
+        more = Conformance.cases("shadow_horizon", seed=1, per_kind=3)
+        self.assertEqual(len(more["cases"]) - len(fewer["cases"]), 4)
+        few = Conformance.cases("record_names", seed=1, count=2)
+        many = Conformance.cases("record_names", seed=1, count=5)
+        self.assertEqual(len(many["cases"]) - len(few["cases"]), 3)
 
     def test_an_unknown_model_names_the_registered_ones(self):
         with self.assertRaises(KeyError) as caught:

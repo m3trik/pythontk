@@ -22,6 +22,7 @@ pure in-memory mode.
 
 from __future__ import annotations
 
+import json
 import logging
 import math
 from dataclasses import dataclass, field
@@ -811,6 +812,24 @@ class ShotStore(_ShotStoreInternal):
     NAME_RULE: ClassVar[str] = StrUtils.LEGAL_NAME_RULE
     DETECTION_MODES = ("auto", "all", "skip_zero", "zero_as_end")
     FIT_MODES = ("extend_only", "fit_contents")
+    #: The metadata keys the Shot Manifest writes on a step's shot from what
+    #: its author wrote in the sheet -- the one declaration of them (the
+    #: manifest's ``_STEP_FIELDS`` is keyed by these: ``MANIFEST_METADATA``
+    #: is this set).  Declared here, below the manifest, because they are
+    #: also what a store ships when it never said what it ships
+    #: (:attr:`shipped_metadata`'s default: a new store, and a scene saved
+    #: before stores said).  The sheet's pass-through columns are not among
+    #: them: a store saved before ``shipped_metadata`` ships those again only
+    #: once a Build has read them from the sheet.
+    MANIFEST_FIELDS: ClassVar[frozenset] = frozenset(
+        ("section", "section_title", "csv_objects", "behaviors", "voice_text", "step")
+    )
+    #: Keys a shipped metadata value's entries never carry into the record:
+    #: the authoring store's machine paths (a ``behaviors`` entry's
+    #: ``source_path``, the author's audio file).  The shot keeps them -- the
+    #: manifest re-keys from them -- but a delivery names a clip, never a
+    #: file on the author's disk (:meth:`_json_metadata`).
+    AUTHORING_ONLY_KEYS: ClassVar[frozenset] = frozenset(("source_path",))
     DEFAULT_INITIAL_SHOT_LENGTH: float = 200.0
     DEFAULT_FIT_MODE: str = "extend_only"
     DEFAULT_SNAP_WHOLE_FRAMES: bool = True
@@ -895,6 +914,12 @@ class ShotStore(_ShotStoreInternal):
         # take that holds still, and an export names them so the user can
         # delete their records or turn this on.
         self.drop_stale_shots: bool = False
+        # The metadata keys an export ships, on each shot holding them: the
+        # ones the scene's author writes for a reader of the file (the Shot
+        # Manifest's Build sets them, :meth:`set_shipped_metadata`; until one
+        # does, the manifest's own fields, :attr:`MANIFEST_FIELDS`).  Every
+        # other key is the scene's own bookkeeping and stays in the store.
+        self.shipped_metadata: frozenset = self.MANIFEST_FIELDS
         self._active_shot_id: Optional[int] = None  # session-only, not persisted
         self._listeners: List[Callable[[StoreEvent], None]] = []
         self._batch_depth: int = 0
@@ -1623,15 +1648,16 @@ class ShotStore(_ShotStoreInternal):
         carrier.
 
         The authoring-time publish: the shot record :meth:`export_records`
-        builds (each clip with its range) committed through the host
+        builds (per shot its clip, description and metadata) committed through the host
         (:meth:`ShotsHost.publish_records`, ``FbxUtils.publish_authored``),
         handoff block included.  Idempotent; regenerated from the live store so
         it can't go stale.  An empty store **clears** the record (never
         creating the carrier just to hold it) -- deleting the last shot must
         not leave the previous takes riding into the next export.  An export
         pipeline does not call this: its ``FbxUtils.PRODUCERS`` row names
-        :meth:`produce_export_records`, and the pipeline's own context (the
-        Animation Clips mode) reaches the record there.
+        :meth:`produce_export_records`, and the pipeline's own context (whether
+        the write carries animation, :attr:`ExportContext.animated`) reaches
+        the record there.
 
         Returns:
             The carrier's name, or ``None`` outside a host (the pure default)
@@ -2465,9 +2491,9 @@ class ShotStore(_ShotStoreInternal):
 
         A shot's name is its clip name on every carrier, so it has to be
         written as it will arrive: non-empty, :attr:`NAME_PATTERN` only, and
-        unique among the other shots IGNORING CASE -- Unity joins clip names
-        case-insensitively (``ShotMetadataController``), so ``Intro`` and
-        ``intro`` would be one clip there.  :meth:`define_shot` and
+        unique among the other shots IGNORING CASE -- Unity joins a shot to
+        its take's clips ignoring case (unitytk's ``ShotsImporter``), so
+        ``Intro`` and ``intro`` would be one take there.  :meth:`define_shot` and
         :meth:`update_shot` refuse what this refuses; a UI asks it first to
         say why.
 
@@ -2996,6 +3022,7 @@ class ShotStore(_ShotStoreInternal):
             "auto_publish_export": self.auto_publish_export,
             "clip_name_strategy": self.clip_name_strategy,
             "drop_stale_shots": self.drop_stale_shots,
+            "shipped_metadata": sorted(self.shipped_metadata),
             "edit_ledger": self.edit_ledger.to_dict(),
             "effect_recipe": self.effect_recipe.to_dict(),
             "member_ids": self._capture_member_ids(),
@@ -3220,21 +3247,16 @@ class ShotStore(_ShotStoreInternal):
     def to_export_view(self, strategy: str = "name") -> Dict[str, Any]:
         """Build the FBX/Unity export view from the current shots.
 
-        Returns ``{SceneRecords.SHOTS.key: {...}}``: one entry per clip -- its
-        name (the FBX take and the ``clip`` join key, from a single
-        :func:`resolve_clip_specs` pass, so they cannot drift), its
-        ``start`` / ``end`` frames, and a description only when the shot has
-        one -- never its members or its production section, which no reader
-        of the file reads (the takes and this store hold them).  One record,
-        one join key: the ranges are the take list, so there is no second
-        list to disagree with it.
-
-        ``fps`` rides on the metadata envelope rather than per shot: the ranges
-        it qualifies are the store's, not any one shot's, and without it every
-        frame number in this view is unitless to a consumer that did not author
-        the scene (``MeshConvert.apply_glb_animations`` is one -- it reads the
-        published view back out of the deliverable).  Additive, so the schema
-        version stands: a reader that does not know the key is unaffected.
+        Returns ``{SceneRecords.SHOTS.key: {...}}``: one entry per shot -- its
+        clip name (the FBX take and the ``clip`` join key, from a single
+        :func:`resolve_clip_specs` pass, so they cannot drift), and its
+        description and the metadata its author wrote for a reader of the
+        file (:attr:`shipped_metadata`) only when it has them -- never its
+        frames, which the file's take for it holds (one take per shot,
+        spanning its range: :meth:`declared_takes`), its members, which no
+        reader of the file reads, nor the keys the tools keep on it for
+        themselves, which stay in the scene. A metadata value JSON cannot hold
+        ships as its string form, warned (:meth:`_json_metadata`).
 
         Every shot, as the store holds it.  What an export publishes is
         :meth:`export_records`: the same, less the stale shots
@@ -3301,9 +3323,9 @@ class ShotStore(_ShotStoreInternal):
 
         Every shot is NAMED before any is left out: the ``sequence`` strategy
         numbers clips by position, and leaving one out first would renumber
-        every clip after it. A shot ships what a reader of the file uses --
-        its clip, frames and description -- never its members or its
-        production section, which the takes and the scene's own store hold.
+        every clip after it. A shot ships what a clip cannot hold -- its
+        description and its shipped metadata (:attr:`shipped_metadata`) --
+        joined to its take by clip name; its frames are the take's.
         """
         leave_out = set(leave_out)
         sorted_s = self.sorted_shots()
@@ -3326,20 +3348,100 @@ class ShotStore(_ShotStoreInternal):
                 self.NAME_RULE,
             )
         shots_meta = []
-        for (clip, start, end), shot in zip(specs, sorted_s):
+        for (clip, _start, _end), shot in zip(specs, sorted_s):
             if shot.shot_id in leave_out:
                 continue
-            entry: Dict[str, Any] = {"clip": clip, "start": start, "end": end}
+            entry: Dict[str, Any] = {"clip": clip}
             if shot.description:
                 entry["description"] = shot.description
+            metadata = self._json_metadata(shot, self.shipped_metadata)
+            if metadata:
+                entry["metadata"] = metadata
             shots_meta.append(entry)
         return {
             SceneRecords.SHOTS.key: {
                 "version": SceneRecords.SHOTS.version,
-                "fps": self.scene_fps,
                 "shots": shots_meta,
+                # The scene's rate, the one its takes are cut at: for a reader
+                # of a format that holds none (a GLB carries this record as it
+                # stands); the FBX states its own, and the two agree.
+                "fps": round(float(self._scene_fps()), 6),
             },
         }
+
+    def set_shipped_metadata(self, keys: Iterable[str]) -> bool:
+        """Make *keys* the metadata keys an export ships (:attr:`shipped_metadata`).
+
+        What the tool that authors a shot's metadata for a reader of the file
+        calls -- the Shot Manifest's Build, with the keys it writes from the
+        sheet -- so the record carries those and the tools' own bookkeeping
+        stays in the scene.
+
+        Returns:
+            Whether the store changed (it is then marked dirty).
+        """
+        keys = frozenset(str(k) for k in keys)
+        if keys == self.shipped_metadata:
+            return False
+        self.shipped_metadata = keys
+        self.mark_dirty()
+        return True
+
+    @staticmethod
+    def _json_metadata(shot: "ShotBlock", keys: Iterable[str]) -> Dict[str, Any]:
+        """*shot*'s metadata as the record ships it: its *keys*, as JSON.
+
+        Only *keys* ship (:attr:`shipped_metadata`): the rest is the tools'
+        bookkeeping, kept in the scene's own record.  The dict is the
+        scene's, so a value JSON cannot hold (a set, a path, an object) is
+        shipped as its string form -- the stored record's own rule
+        (``RecordSpec.encode``) -- and warned, naming the shot and the key,
+        rather than left to the encoder unsaid. A tuple ships as a list, as
+        JSON spells one. An entry's machine path (:attr:`AUTHORING_ONLY_KEYS`)
+        never ships.
+        """
+        keys = set(keys)
+        metadata = {k: v for k, v in (shot.metadata or {}).items() if k in keys}
+        if not metadata:
+            return {}
+        odd: List[str] = []
+
+        def spelled(value: Any) -> str:
+            odd.append(type(value).__name__)
+            return str(value)
+
+        try:
+            shipped = json.loads(json.dumps(metadata, default=spelled))
+        except (TypeError, ValueError) as error:  # a non-string key, a cycle
+            _log.warning(
+                "Shot %r: its metadata is not JSON (%s) and ships without it.",
+                shot.name,
+                error,
+            )
+            return {}
+        if odd:
+            _log.warning(
+                "Shot %r: %d metadata value(s) JSON cannot hold (%s) ship as "
+                "their string form.",
+                shot.name,
+                len(odd),
+                ", ".join(sorted(set(odd))),
+            )
+        return ShotStore._without_authoring_keys(shipped)
+
+    @staticmethod
+    def _without_authoring_keys(value: Any) -> Any:
+        """*value* (JSON) less every :attr:`AUTHORING_ONLY_KEYS` key, at any
+        depth: what the record carries of the authoring store's metadata."""
+        if isinstance(value, dict):
+            return {
+                k: ShotStore._without_authoring_keys(v)
+                for k, v in value.items()
+                if k not in ShotStore.AUTHORING_ONLY_KEYS
+            }
+        if isinstance(value, list):
+            return [ShotStore._without_authoring_keys(v) for v in value]
+        return value
 
     def _member_ids(self, names: Iterable[str]) -> Dict[str, str]:
         """``{name: stable id}`` for each of *names* that names ONE node now
@@ -3363,20 +3465,12 @@ class ShotStore(_ShotStoreInternal):
         self.member_ids = ids
         return dict(ids)
 
-    #: Key on the shot record under which the exporter's Animation Clips mode
-    #: is declared (``full`` / ``shots`` / ``both``).  The clips carry their
-    #: ranges in every mode, so only this says whether the file was meant to
-    #: carry them as clips.  ``MeshConvert.SHOT_CLIP_MODE_KEY`` is
-    #: the reader's name for the same key.
-    CLIP_MODE_KEY = "clip_mode"
-
     def export_records(
         self, ctx: Optional[ExportContext] = None, strategy: Optional[str] = None
     ) -> Optional[List[Record]]:
         """This store's shot records, ready to store -- ``None`` when empty.
 
-        The producer form of :meth:`to_export_view`: the shot record, with the
-        context's clip mode declared on it when the exporter decided one.  An
+        The producer form of :meth:`to_export_view`: the shot record.  An
         empty store yields ``None``, which a commit turns into a CLEAR --
         deleting the last shot must not leave the previous takes riding into
         the next export.
@@ -3390,12 +3484,23 @@ class ShotStore(_ShotStoreInternal):
         one. Every take ships whatever the export set: a shot is a span of
         time, and the frames are the file's whatever it carries.
 
+        A store with no shot to ship still ships the scene's rate to an
+        export (*ctx*, not an authoring one) whose write carries animation
+        (:attr:`ExportContext.animated`, the writer's) of a scene that
+        animates (:meth:`ShotsHost.has_animation`): the rate is the
+        animation's, not the shots', and a GLB holds none of its own -- so
+        the record is ``{version, shots: [], fps}`` (:meth:`_rate_record`).
+        No animation exported, no record: a write with its animation off, or
+        of a scene that animates nothing, ships none, and an authoring
+        publish (no *ctx*) clears it as before: the export writes the rate
+        it holds then.
+
         Returns:
-            ``[shot record]``, or ``None`` for an empty store, or one whose
-            every shot is left out.
+            ``[shot record]``; ``[rate record]`` for an export of a store with
+            no shot to ship in a scene that animates; else ``None``.
         """
         if not self.shots:
-            return None
+            return self._rate_record(ctx)
         stale = (
             self._scene_scope()[0]
             if self.drop_stale_shots or ctx is not None
@@ -3416,10 +3521,29 @@ class ShotStore(_ShotStoreInternal):
                 _log.info(note)
         meta = view[SceneRecords.SHOTS.key]
         if not meta["shots"]:
-            return None
-        if ctx is not None and ctx.clip_mode:
-            meta[self.CLIP_MODE_KEY] = ctx.clip_mode
+            return self._rate_record(ctx)
         return [SceneRecords.SHOTS.make(meta)]
+
+    def _rate_record(self, ctx: Optional[ExportContext]) -> Optional[List[Record]]:
+        """``[{version, shots: [], fps}]`` for an export (*ctx*, not an
+        authoring one) whose write carries animation (:attr:`ExportContext.
+        animated`; the scene decides only where the writer stated nothing) of
+        a scene that animates -- the record of a scene with no shot to ship,
+        stating the rate its one whole-timeline take is cut at -- else
+        ``None``."""
+        if ctx is None or ctx.mode == ExportContext.AUTHORING:
+            return None
+        if ctx.animated is False or not self.host.has_animation():
+            return None
+        return [
+            SceneRecords.SHOTS.make(
+                {
+                    "version": SceneRecords.SHOTS.version,
+                    "shots": [],
+                    "fps": round(float(self._scene_fps()), 6),
+                }
+            )
+        ]
 
     @classmethod
     def produce_export_records(
@@ -3635,6 +3759,16 @@ class ShotStore(_ShotStoreInternal):
         if strat in CLIP_NAME_STRATEGIES:
             store.clip_name_strategy = str(strat)
         store.drop_stale_shots = bool(data.get("drop_stale_shots", False))
+        # A scene saved before stores said what they ship (no list) ships the
+        # manifest's own fields; its sheet's pass-through columns are not
+        # recoverable without the sheet, and ship again from the next Build.
+        # A saved list, empty included, is the store's choice, kept.
+        shipped = data.get("shipped_metadata")
+        store.shipped_metadata = (
+            frozenset(str(k) for k in shipped)
+            if isinstance(shipped, list)
+            else cls.MANIFEST_FIELDS
+        )
         store.edit_ledger = ShotEditLedger.from_dict(data.get("edit_ledger"))
         # Claims a removed shot left on its id (data saved before removal
         # disowned them) would pass to the next shot given that id.
@@ -3851,6 +3985,42 @@ class ShotStore(_ShotStoreInternal):
             seen.add(clip.casefold())
             specs.append((clip, int(round(shot.start)), int(round(shot.end))))
         return specs
+
+    @classmethod
+    def declared_takes(cls, strategy: Optional[str] = None) -> List[Dict[str, Any]]:
+        """The takes an export of the active store's scene splits, as
+        ``{"name", "start", "end"}`` entries in timeline order -- one per shot
+        the export declares, named by its clip and spanning its range.
+
+        The one source of take ranges at export time: the record publishes no
+        frames (each shot's take holds them), so the exporter's take split,
+        the audio cues and the render-effect tracks are all scoped against
+        this, through the same :meth:`resolve_clip_specs` pass that names the
+        record's clips, and so cannot disagree with it. After the write a
+        file's takes are its own (``FbxFile.take_spans``). A stale shot is a
+        take unless :attr:`drop_stale_shots` leaves it out of
+        :meth:`export_records` too.
+
+        Parameters:
+            strategy: A :data:`CLIP_NAME_STRATEGIES` key; ``None`` takes the
+                store's own (:attr:`clip_name_strategy`), as the record does.
+
+        Returns:
+            The takes; empty when no store is active or it declares none.
+        """
+        store = cls.active()
+        if store is None:
+            return []
+        shots = store.sorted_shots()
+        dropped = store._dropped_shot_ids()
+        specs = cls.resolve_clip_specs(
+            shots, strategy=strategy or store.clip_name_strategy
+        )
+        return [
+            {"name": name, "start": start, "end": end}
+            for (name, start, end), shot in zip(specs, shots)
+            if shot.shot_id not in dropped
+        ]
 
     @classmethod
     def declared_range(cls, strategy: str = "name") -> Optional[Tuple[int, int]]:

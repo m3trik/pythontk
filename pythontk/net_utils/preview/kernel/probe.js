@@ -1,6 +1,7 @@
 // The deliverable's reflection probe: the room its bake lit, captured by the
-// bake as an HDR from one point (_Lightmaps._embed_lightmap_probe ->
-// `extras.lightmaps.probe`) -- what a lightmap cannot hold.
+// bake as an HDR from one point -- the `lightmaps` record's `probe`, its file
+// riding the GLB as the bufferView of its name (records.js GLB_MEDIA) -- what
+// a lightmap cannot hold.
 //
 // A lightmap is diffuse irradiance with no direction in it, so a baked METAL,
 // which has no diffuse, showed only what the page's studio environment gave
@@ -19,11 +20,12 @@
 //
 // Three details decide whether it looks right:
 //
-//   * Units. A lightmap holds a white card's radiance (irradiance / pi), which
-//     three.js reads as irradiance; the probe holds the room's radiance, so it
-//     plays at `policy.probeIntensity` (1/pi) to stay in the bake's units (see
-//     DEFAULT_PROBE_INTENSITY). Played at 1, every reflection and every unbaked
-//     object came out pi too bright beside the bake.
+//   * Units. A lightmap holds a white card's radiance (irradiance / pi), drawn
+//     as stored (texel x albedo, lightmaps.js LIGHTMAP_AS_STORED); the probe
+//     holds the room's radiance, so it plays as captured, at
+//     `policy.probeIntensity` (1, DEFAULT_PROBE_INTENSITY): the bake, its
+//     reflections and every unbaked object in one unit, as an engine's
+//     lightmap path and the baking renderer draw them.
 //   * Frame. The probe was captured in the deliverable's own axes, and the page
 //     re-centres the model (layout) and may spin it (the turntable), so every
 //     lookup is made in MODEL space through a world-to-model matrix synced each
@@ -35,18 +37,21 @@
 //     with no box (an open scene) is read as distant. Diffuse irradiance is
 //     read along the normal unprojected, as runtimes do.
 //
-// And the bake's lights, as highlights. A light on the probe's box reflects
-// where it hangs; one hanging inside the room (over a bench) is read as if it
-// hung on the wall behind it, so the probe ships COPIES of itself for groups of
-// receivers, each with the lights drawn in where box projection shows them true
-// for that group (_Highlights._embed_highlight_probes, `probe.highlights`). A
-// copy is the probe plus its layer, prefiltered like the probe, and its
-// materials read it as their own envMap -- one lookup, as every other material
+// And the bake's lights, as highlights. The probe the file carries has them
+// drawn in as its capture point sees them, so every surface reflects them. A
+// light on the probe's box reflects where it hangs; one hanging inside the
+// room (over a bench) is read as if it hung on the wall behind it, so the probe
+// ships COMPLETE COPIES of itself for groups of receivers, each with the
+// lights drawn where box projection shows them true for that group
+// (pythontk's _Highlights, `probe.highlights`), each listing the nodes that
+// read it. A copy is prefiltered like the probe, and the materials its nodes
+// wear read it as their own envMap -- one lookup, as every other material
 // reads the probe, so the highlights cost no shader work. The room's shell
-// reads the probe as captured.
+// reads the probe.
 
 import * as THREE from 'three';
 import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
+import { mediaOf } from './extras.js';
 import { materialsOf } from './model.js';
 import { LIGHTMAPS } from './records.js';
 import { onBeforeDraw, policy, prefilter, readExtras, renderer } from './scene.js';
@@ -124,7 +129,7 @@ let facts = null;
 let boxed = false;
 let on = true;
 const patched = new Set();
-// The highlight copies while a probe is loaded: material name -> its copy's
+// The highlight copies while a probe is loaded: material -> its copy's
 // prefiltered target, and the targets themselves. `copied` holds each
 // material's own envMap and level from before its copy went on.
 let copyOf = new Map();
@@ -155,8 +160,9 @@ export function probeCopies() {
 
 // What the loaded probe is, or null: `{on, width, height, bytes, bufferView,
 // position, box, copies, decodeMs, prefilterMs}` -- `position` and `box`
-// (`{min, max}`, null when it is read as distant) in the file's metres,
-// `copies` how many highlight copies it carries.
+// (`{min, max}`, null when it is read as distant) in metres (the record's
+// lengths times its `unit_scale`), `copies` how many highlight copies it
+// carries.
 export function probeState() {
   return facts ? { on, ...facts } : null;
 }
@@ -233,7 +239,7 @@ function applySwitch() {
 // again otherwise.
 export function syncProbeCopies() {
   for (const material of patched) {
-    const copy = on ? copyOf.get(material.name) : null;
+    const copy = on ? copyOf.get(material) : null;
     if (copy) {
       if (!copied.has(material)) {
         copied.set(material, { envMap: material.envMap, envMapIntensity: material.envMapIntensity });
@@ -292,60 +298,76 @@ export function releaseProbe() {
 // recheck that its load is still the current one before the probe goes up
 // (see load.js). The decode and the prefilter are timed apart: the first is
 // the CPU's, the second the GPU's, and a headset pays both inside the load.
+// Each copy comes back with its place in the record's `highlights` (`index`):
+// the caller names the materials that read it (`readers`, lightmaps.js).
 export async function loadProbe(gltf, issues = []) {
-  /** @type {import('./records.js').LightmapsBlockProbe} */
-  const entry = readExtras(gltf, LIGHTMAPS)?.probe;
-  if (!entry || !Number.isInteger(entry.bufferView)) return null;
+  /** @type {import('./records.js').LightmapRecord} */
+  const record = readExtras(gltf, LIGHTMAPS);
+  const entry = record?.probe;
+  const json = gltf.parser?.json;
+  const media = entry ? mediaOf(json, entry.map) : null;
+  if (!media) return null;
+  // The record's lengths times its unit are metres, the GLB's own space.
+  const unit = Number(record.unit_scale);
+  const metres = (point) => (Array.isArray(point) && point.length === 3 ? point.map((c) => Number(c) * unit) : null);
+  const position = metres(entry.position);
+  const box = entry.box ? { min: metres(entry.box.min), max: metres(entry.box.max) } : null;
+  const placed = (point) => Boolean(point) && point.every((c) => isFinite(c));
+  if (!(unit > 0) || !placed(position) || (box && !(placed(box.min) && placed(box.max)))) {
+    issues.push({ level: 'warning', text: 'reflection probe not loaded: the file places it in no unit' });
+    return null;
+  }
   const listed = Array.isArray(entry.highlights) ? entry.highlights : [];
-  const layers = listed.filter((copy) => Number.isInteger(copy?.bufferView));
-  // A probe with highlight copies is decoded at full float: each copy is the
-  // probe plus its layer, summed here before it is prefiltered.
+  const layers = listed
+    .map((copy, index) => ({ index, media: mediaOf(json, copy?.map) }))
+    .filter((copy) => copy.media);
+  // A probe with highlight copies is decoded at full float, as its copies are.
   const type = layers.length ? THREE.FloatType : THREE.HalfFloatType;
   const decoding = performance.now();
   let parsed;
   try {
-    const bytes = await gltf.parser.getDependency('bufferView', entry.bufferView);
+    const bytes = await gltf.parser.getDependency('bufferView', media.view);
     parsed = new RGBELoader().setDataType(type).parse(bytes);
   } catch (error) {
     issues.push({ level: 'warning', text: `reflection probe not loaded: ${error.message || error}` });
     return null;
   }
   const decoded = [];
-  for (const copy of layers) {
+  for (const layer of layers) {
     try {
-      const bytes = await gltf.parser.getDependency('bufferView', copy.bufferView);
-      decoded.push({ copy, image: new RGBELoader().setDataType(THREE.FloatType).parse(bytes) });
+      const bytes = await gltf.parser.getDependency('bufferView', layer.media.view);
+      decoded.push({ index: layer.index, image: new RGBELoader().setDataType(THREE.FloatType).parse(bytes) });
     } catch (error) {
       issues.push({ level: 'warning', text: `probe highlight copy not loaded: ${error.message || error}` });
     }
   }
   const prefiltering = performance.now();
   const prefiltered = prefilterEquirect(parsed.data, parsed.width, parsed.height, parsed.type);
+  // Each copy's `readers` (the materials its nodes wear) is filled in by the
+  // load once the lightmaps are bound (load.js, relight.js).
+  /** @type {{prefiltered: any, index: number, readers?: any}[]} */
   const copies = [];
-  for (const { copy, image } of decoded) {
-    const data = addProbe(parsed, image);
-    if (!data) {
+  for (const { index, image } of decoded) {
+    if (image.width < MIN_COPY_WIDTH) {
       issues.push({
         level: 'warning',
-        text: `probe highlight copy skipped: ${image.width} x ${image.height} cannot be built on the probe's ${parsed.width} x ${parsed.height} (it must divide it, at least ${MIN_COPY_WIDTH} wide)`,
+        text: `probe highlight copy skipped: ${image.width} x ${image.height} is too narrow to prefilter (at least ${MIN_COPY_WIDTH} wide)`,
       });
       continue;
     }
-    copies.push({
-      prefiltered: prefilterEquirect(data, image.width, image.height, THREE.FloatType),
-      materials: copy.materials || [],
-    });
+    copies.push({ prefiltered: prefilterEquirect(image.data, image.width, image.height, THREE.FloatType), index });
   }
   const done = performance.now();
   return {
     prefiltered,
     copies,
-    position: entry.position,
-    box: entry.box || null,
+    gltf,
+    position,
+    box,
     width: parsed.width,
     height: parsed.height,
-    bytes: gltf.parser.json.bufferViews?.[entry.bufferView]?.byteLength ?? 0,
-    bufferView: entry.bufferView,
+    bytes: json.bufferViews?.[media.view]?.byteLength ?? 0,
+    bufferView: media.view,
     decodeMs: prefiltering - decoding,
     prefilterMs: done - prefiltering,
   };
@@ -417,17 +439,25 @@ export function disposeProbe(probe) {
 
 // Put a loaded probe (loadProbe) up for the model `root`: its point and box
 // into the shared uniforms, and every standard material of the model patched
-// to read it.
+// to read it. Each copy goes on its `readers` (materials), and on the model's
+// materials of the names it lists (`materials`: a relight's layer).
 export function useProbe(probe, model) {
   releaseProbe();
-  const { prefiltered, copies = [], ...rest } = probe;
+  const { prefiltered, copies = [], gltf: _file, ...rest } = probe;
   target = prefiltered;
   root = model;
   facts = { ...rest, copies: copies.length };
   copyTargets = copies.map((copy) => copy.prefiltered);
   copyOf = new Map();
   for (const copy of copies) {
-    for (const name of copy.materials) copyOf.set(name, copy.prefiltered);
+    for (const material of copy.readers || []) copyOf.set(material, copy.prefiltered);
+    if (!copy.materials?.length) continue;
+    const named = new Set(copy.materials);
+    model.traverse((node) => {
+      for (const material of materialsOf(node)) {
+        if (named.has(material.name)) copyOf.set(material, copy.prefiltered);
+      }
+    });
   }
   const [x, y, z] = probe.position;
   uniforms.probePosition.value.set(x, y, z);

@@ -12,7 +12,6 @@ import logging
 import os
 from typing import Any, Dict, Optional
 
-from pythontk.core_utils.engines.scene_export.scene_records import SceneRecords
 from pythontk.file_utils.mesh_convert.glb.edit import GlbEdit, GlbTarget
 
 logger = logging.getLogger(__name__)
@@ -271,26 +270,12 @@ class _Images:
                 return out
 
             refs = _texture_refs(gltf.get("materials") or [], [])
+            # Nothing else in the file binds a texture by index: the files a
+            # record names (its lightmaps, its shadow maps) ride as the
+            # bufferViews named by them (``SceneRecords.GLB_MEDIA``), which
+            # no texture index reaches and the collector keeps by their name.
             live_textures = {
                 r["index"] for r in refs if 0 <= r["index"] < len(textures)
-            }
-
-            # --- and what extras.shadows binds by index --------------------
-            # The shadow manifest names its maps by INDEX, and the horizon map
-            # is sampled by no material -- so the walk above can see neither
-            # fact, and without this the prune DELETES the horizon map and
-            # renumbers the survivors out from under the manifest. In the
-            # preview path the prune always fires (FBX2glTF's diffuse_cube /
-            # ibl_brdf_lut sit at low indices), so every projected plane
-            # shipped a stale index. extras.lightmaps is immune only
-            # because it stores names.
-            shadow_slots = self._mc._shadow_rigs._shadow_texture_slots(
-                SceneRecords.glb_block(gltf, SceneRecords.SHADOWS)
-            )
-            live_textures |= {
-                h["texture_index"]
-                for h in shadow_slots
-                if 0 <= h["texture_index"] < len(textures)
             }
 
             texture_map = {}
@@ -345,9 +330,6 @@ class _Images:
             for ref in refs:
                 if ref["index"] in texture_map:
                     ref["index"] = texture_map[ref["index"]]
-            for holder in shadow_slots:
-                if holder["texture_index"] in texture_map:
-                    holder["texture_index"] = texture_map[holder["texture_index"]]
             edit.embedded = {
                 key: texture_map[index]
                 for key, index in edit.embedded.items()
@@ -439,24 +421,14 @@ class _Images:
         cache_key: str,
         raw: bytes,
         mime: str = "image/png",
-        name: Optional[str] = None,
-        clamp: bool = False,
     ) -> int:
         """Embed already-encoded image bytes; return the texture index.
 
-        The tail of :meth:`_embed_image`, split out so writers that *produce* their
-        bytes (the lightmap applier encodes EXR -> PNG in memory) share the same
-        images/textures/samplers plumbing and the same session dedupe cache --
-        keyed by *cache_key* (the SOURCE file's abspath), so an atlas shared by six
-        objects costs one embed.
-
-        ``clamp=True`` samples the new texture CLAMP_TO_EDGE instead of the
-        default REPEAT -- for atlases. Atlas rects can legally extend past
-        [0, 1] (an island crop folded into the published rect), and REPEAT
-        turns any tap past an atlas edge into the OPPOSITE edge's texels --
-        an unrelated object's lighting. Clamping returns the nearest real
-        content instead. Only the texture created here is affected; sampler 0
-        (shared by the file's ordinary materials) keeps its wrap.
+        The tail of :meth:`_embed_image`, split out so a writer that *produces*
+        its bytes (a re-encoded TGA) shares the same images/textures/samplers
+        plumbing and the same session dedupe cache -- keyed by *cache_key* (the
+        SOURCE file's abspath), so a map shared by six materials costs one
+        embed.
         """
         gltf, cache = edit.gltf, edit.embedded
         if cache_key in cache:
@@ -474,7 +446,7 @@ class _Images:
         samplers = gltf.setdefault("samplers", [])
         data = base64.b64encode(raw).decode("ascii")
         entry = {
-            "name": name or os.path.basename(cache_key),
+            "name": os.path.basename(cache_key),
             "uri": f"data:{mime};base64,{data}",
             "mimeType": mime,
         }
@@ -490,14 +462,6 @@ class _Images:
         if not samplers:  # one repeat sampler is enough for a preview
             samplers.append({"wrapS": 10497, "wrapT": 10497})
         sampler_index = 0
-        if clamp:
-            wanted = {"wrapS": 33071, "wrapT": 33071}  # CLAMP_TO_EDGE
-            sampler_index = next(
-                (i for i, s in enumerate(samplers) if s == wanted), None
-            )
-            if sampler_index is None:
-                samplers.append(dict(wanted))
-                sampler_index = len(samplers) - 1
         # Named for the same reason the image is: FBX2glTF names the textures it
         # writes, so an unnamed one is a tell that a later pass added it -- and
         # the name is the only human-readable handle on which map a slot samples

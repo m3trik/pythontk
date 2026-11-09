@@ -161,7 +161,7 @@ class _Sidecar:
             if not extras:
                 del node["extras"]
         notes = 0
-        for kind, key in (("materials", "fromFBX"), ("animations", "zero_frame")):
+        for kind, key in (("materials", "fromFBX"),):
             for item in gltf.get(kind) or []:
                 extras = item.get("extras") if isinstance(item, dict) else None
                 if isinstance(extras, dict) and key in extras:
@@ -195,13 +195,17 @@ class _Sidecar:
     ) -> bool:
         with self._mc.open_glb(glb) as edit:
             changed = self._mc._lift_scene_blocks(edit.gltf)
+            changed = bool(self._carry_glb_records(edit.gltf)) or changed
             handoff = self._fbx_handoff(edit.gltf, rendering)
             if handoff:
                 self._mc.embed_glb_handoff(edit, handoff)
                 changed = True
             elif changed:
                 self._mc._finish_glb_handoff(edit)
-            changed = bool(self._mc.strip_fbx_records(edit.gltf)) or changed
+            stripped = bool(self._mc.strip_fbx_records(edit.gltf))
+            if stripped:
+                self._mc._compact_bin(edit)  # what a bare carrier's samplers read
+            changed = stripped or changed
             if changed:
                 edit.dirty = True
             return changed
@@ -439,7 +443,9 @@ class _Sidecar:
             + " -- a viewer without it must refuse this file"
         )
 
-    def verify_glb(self, glb: GlbTarget) -> Dict[str, Any]:
+    def verify_glb(
+        self, glb: GlbTarget, *, described: Optional[Iterable[str]] = None
+    ) -> Dict[str, Any]:
         report: Dict[str, Any] = {"ok": True, "problems": [], "notes": []}
 
         def fail(message: str) -> None:
@@ -483,16 +489,14 @@ class _Sidecar:
             # animated deliverable.
             animation = SceneRecords.glb_block(edit.gltf, SceneRecords.SHOTS)
             if isinstance(animation, dict):
-                clips = animation.get("clips") or []
+                clips = [a.get("name") for a in edit.gltf.get("animations") or []]
                 shots = {s.get("clip") for s in animation.get("shots") or []}
                 report["animation"] = {
                     "clips": len(clips),
                     "shots": len(shots),
-                    # The shots that play a clip of their own; the rest play
-                    # their window of the whole-timeline clip.
-                    "declared": sum(1 for c in clips if c.get("name") in shots),
-                    "default_clip": animation.get("default_clip"),
-                    "fps": animation.get("fps"),
+                    # The shots that play the clip of their name: every one, in
+                    # a file whose takes reached the conversion.
+                    "declared": len(shots & set(clips)),
                 }
             elif edit.gltf.get("animations"):
                 # Not a failure -- the block is only written by our own
@@ -526,7 +530,9 @@ class _Sidecar:
             # which renders black under a lightmap.
             suspect = {
                 material: found
-                for material, found in self._mc.suspect_orm_materials(edit).items()
+                for material, found in self._mc.suspect_orm_materials(
+                    edit, described=described
+                ).items()
                 if found["finding"] == self._mc.ORM_FINDING_METALLIC_FULL
             }
             if suspect:
@@ -556,9 +562,70 @@ class _Sidecar:
                 fail(f"extras.{problem}")
             for spec in SceneRecords.glb_records():
                 if spec.key in extras:
-                    for problem in SceneRecords.block_problems(spec, extras[spec.key]):
-                        fail(problem)
+                    for problem in SceneRecords.problems(spec, extras[spec.key]):
+                        fail(f"extras.{problem}")
+            # The files the record names, as the media transport carries them
+            # (SceneRecords.GLB_MEDIA): a reader decodes each by what its view
+            # states, so a view stating something else is unreadable.
+            for part in (self._mc._lightmaps, self._mc._shadow_rigs):
+                problems, notes = part.media_findings(edit.gltf)
+                for problem in problems:
+                    fail(problem)
+                report["notes"].extend(notes)
+            # What a reader of the rigs cannot pose (an ambiguous joint, a
+            # rig not wholly in the file, a part not grabbable): notes, as
+            # the build said them -- the file is readable, those rigs inert.
+            where = f"extras.{SceneRecords.ARTICULATION.key}"
+            report["notes"].extend(
+                f"{where}: {text}"
+                for _level, text in self._mc._articulation.findings(edit.gltf)
+            )
         return report
+
+    #: The fields a record states about the FBX container itself, by record
+    #: key, which its GLB copy leaves out (:meth:`_carry_glb_records`): the
+    #: ``audio`` record's ``media`` digests the sound files the FBX embeds
+    #: (``AudioRecord.media``), and a GLB embeds none -- a copy naming them
+    #: would vouch for bytes the file does not carry.
+    GLB_CONTAINER_FIELDS = {SceneRecords.AUDIO.key: ("media",)}
+
+    def _carry_glb_records(self, gltf: dict, skip: Iterable[str] = ()) -> List[str]:
+        """Copy each record a GLB carries as it stands
+        (:attr:`RecordSpec.glb_verbatim`) from the FBX's carrier into the root
+        ``extras``, under its key -- one layout, two containers -- unless a
+        pass has already put it there (:meth:`apply_glb_animations` carries
+        ``animation`` with its takes renamed), less the fields that describe
+        the FBX container (:attr:`GLB_CONTAINER_FIELDS`). Read in the schema
+        it declares (:meth:`_current_record`: another version is refused,
+        warned), so the GLB never states what the FBX's record did not.
+        Before :meth:`strip_fbx_records` takes the carrier away. A key in
+        *skip* is not carried (a build told to leave its files out names none
+        of them).
+
+        Returns:
+            The keys carried, in declaration order; the caller marks its edit
+            session dirty when this is non-empty.
+        """
+        extras = gltf.get("extras")
+        carried: List[str] = []
+        skip = set(skip)
+        for spec in SceneRecords.glb_records():
+            if not spec.glb_verbatim or spec.key in skip:
+                continue
+            if isinstance(extras, dict) and spec.key in extras:
+                continue
+            record = self._current_record(gltf, spec)
+            if not isinstance(record, dict):
+                continue
+            carried_record = {
+                field: value
+                for field, value in copy.deepcopy(record).items()
+                if field not in self.GLB_CONTAINER_FIELDS.get(spec.key, ())
+            }
+            SceneRecords.put_glb_block(gltf, spec, carried_record)
+            extras = gltf.get("extras")
+            carried.append(spec.key)
+        return carried
 
     def _current_record(self, gltf: dict, spec: RecordSpec) -> Optional[Dict[str, Any]]:
         """*spec*'s record on *gltf*'s carrier in the schema it declares
@@ -606,16 +673,21 @@ class _Sidecar:
         -- or ``None`` when no node carries one. The one place the reader's
         precedence lives, so a writer can put a channel back where it was read.
 
-        The scene's own carrier (``data_export``, no namespace) wins over a
-        referenced module's (``NS:data_export``), which an assembly export
-        carries beside it in whatever order the writer put them; a module's
-        is read only where the scene's carries no such channel, the first in
-        file order. unitytk's importers apply the same rule
-        (``CarrierImport``), so the two deliverables of one export read the
-        same record.
+        The scene's own carrier (``data_export``, no namespace, at the
+        file's root: :meth:`_root_level_nodes`) wins over a module's
+        (``NS:data_export``, or a ``data_export`` under a group), which an
+        assembly export carries beside it in whatever order the writer put
+        them; a module's is read only where the scene's carries no such
+        channel, the first in file order (``SceneStoreBase.is_scene_carrier``),
+        and a module's ``handoff`` never (it describes that module, not the
+        file: the FBX handoff's own rule) -- ``SceneStoreBase.reader_values``,
+        the one statement of it every reader of a written file calls.
+        unitytk's importers apply the same rule (``CarrierImport``), so the two
+        deliverables of one export read the same record.
         """
-        first = None
-        for node in gltf.get("nodes", []) or []:
+        rows = []
+        root_level = self._root_level_nodes(gltf)
+        for index, node in enumerate(gltf.get("nodes", []) or []):
             extras = GlbEdit.extras_of(node)
             # TWO on-disk shapes: FBX2glTF nests user properties under
             # extras.fromFBX.userProperties (the Maya route), a native glTF
@@ -631,11 +703,44 @@ class _Sidecar:
             ):
                 if props.get(key) is not None:
                     name = str(node.get("name") or "").split("|")[-1]
-                    if name == self._mc.DATA_EXPORT_NODE:
-                        return node, props
-                    first = first or (node, props)
+                    rows.append((name, index in root_level, key, (node, props)))
                     break
-        return first
+        chosen = SceneStoreBase.reader_values(rows).get(key)
+        return chosen[0] if chosen else None
+
+    #: The node FBX2glTF roots a converted file's hierarchy under: the FBX's
+    #: root nodes are its children.
+    CONVERTER_ROOT = "RootNode"
+
+    @classmethod
+    def _root_level_nodes(cls, gltf: dict) -> set:
+        """The indices of the nodes at the root of the file's hierarchy: the
+        scene roots (every node no node parents, for a file stating no scene),
+        a converter's ``RootNode`` standing for its children -- the level the
+        scene's own carrier sits at (``SceneStoreBase.is_scene_carrier``)."""
+        nodes = gltf.get("nodes") or []
+        roots = [
+            i
+            for scene in gltf.get("scenes") or []
+            for i in (scene.get("nodes") or [])
+            if isinstance(i, int)
+        ]
+        if not roots:
+            children = {
+                c
+                for node in nodes
+                if isinstance(node, dict)
+                for c in node.get("children") or []
+            }
+            roots = [i for i in range(len(nodes)) if i not in children]
+        level = set()
+        for i in roots:
+            node = nodes[i] if 0 <= i < len(nodes) else None
+            if isinstance(node, dict) and node.get("name") == cls.CONVERTER_ROOT:
+                level.update(c for c in node.get("children") or [] if isinstance(c, int))
+            else:
+                level.add(i)
+        return level
 
     @staticmethod
     def _write_data_export(node: dict, key: str, value: Any) -> None:
@@ -674,27 +779,28 @@ class _Sidecar:
 
     def overlay_data_export(self, gltf: dict, channels: Dict[str, Any]) -> List[str]:
         changed = set()
-        carrier = None
         nodes = gltf.get("nodes") or []
         for key in channels or {}:
-            held = self._drop_data_export_channel(gltf, key)
-            if held:
+            if self._drop_data_export_channel(gltf, key):
                 changed.add(key)
-                carrier = carrier or held[0]
 
         written = {k: v for k, v in (channels or {}).items() if v is not None}
         if written:
-            if carrier is None:
-                carrier = next(
-                    (
-                        node
-                        for node in nodes
-                        if isinstance(node, dict)
-                        and str(node.get("name") or "").split("|")[-1].split(":")[-1]
-                        == self._mc.DATA_EXPORT_NODE
-                    ),
-                    None,
-                )
+            # The scene's own carrier (the root-level ``data_export``), never a
+            # module's that happened to hold a channel; made at the root when
+            # the file has none.
+            root_level = self._root_level_nodes(gltf)
+            carrier = next(
+                (
+                    node
+                    for index, node in enumerate(nodes)
+                    if isinstance(node, dict)
+                    and SceneStoreBase.is_scene_carrier(
+                        str(node.get("name") or "").split("|")[-1], index in root_level
+                    )
+                ),
+                None,
+            )
             if carrier is None:
                 # A selection export ships no carrier when the scene has none;
                 # the overlay still has to land where the readers look.

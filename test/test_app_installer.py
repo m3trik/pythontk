@@ -24,6 +24,12 @@ class TestAppInstaller(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="appinstaller_test_")
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        # CI points PYTHONTK_TOOLS_DIR at its tools folder for the whole job;
+        # a test of where a location resolves must not inherit it.
+        env = patch.dict(os.environ)
+        env.start()
+        self.addCleanup(env.stop)
+        os.environ.pop("PYTHONTK_TOOLS_DIR", None)
 
     # ------------------------------------------------------------------
     # Helpers

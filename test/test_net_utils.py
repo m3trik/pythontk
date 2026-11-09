@@ -22,15 +22,58 @@ class TestCredentials(unittest.TestCase):
     @patch("pythontk.net_utils.credentials.keyring")
     def test_keyring_priority(self, mock_keyring):
         """Test that keyring is tried first if available."""
-        mock_keyring.get_password.return_value = "keyring_pass"
+        # A password stored before the username was kept: no username entry.
+        mock_keyring.get_password.side_effect = lambda s, n: (
+            "keyring_pass" if n == "some_target" else None
+        )
 
         # Act
         result = Credentials.get_credential("some_target")
 
         # Assert
         self.assertEqual(result["password"], "keyring_pass")
-        self.assertEqual(result["username"], "keyring_user")  # Default for now
-        mock_keyring.get_password.assert_called_with("pythontk", "some_target")
+        self.assertEqual(result["username"], "keyring_user")  # none stored
+        mock_keyring.get_password.assert_any_call("pythontk", "some_target")
+
+    @patch("pythontk.net_utils.credentials.keyring")
+    def test_keyring_keeps_the_username(self, mock_keyring):
+        """A keyring store keeps the username it was given beside the password:
+        it kept only the password, so every read named ``keyring_user`` and a
+        caller that needs the account (Unity's ``-username``) could not get it.
+        Added: 2026-11-04"""
+        store = {}
+        mock_keyring.set_password.side_effect = lambda s, n, v: store.__setitem__((s, n), v)
+        mock_keyring.get_password.side_effect = lambda s, n: store.get((s, n))
+
+        self.assertTrue(Credentials.set_credential("svc", "me@example.com", "fake-pass"))
+        result = Credentials.get_credential("svc")
+
+        self.assertEqual(result, {"username": "me@example.com", "password": "fake-pass"})
+
+    @patch("pythontk.net_utils.credentials.keyring")
+    def test_resaving_without_a_username_drops_the_old_one(self, mock_keyring):
+        """Saved again with no username, a target keeps no username: the old
+        ``#username`` entry goes, never read back beside the new password; a
+        target that had none saves as before. Added: 2026-11-08"""
+        store = {}
+
+        def delete(service, name):
+            if (service, name) not in store:
+                raise KeyError(name)  # keyring's PasswordDeleteError: none stored
+            del store[(service, name)]
+
+        mock_keyring.set_password.side_effect = lambda s, n, v: store.__setitem__((s, n), v)
+        mock_keyring.get_password.side_effect = lambda s, n: store.get((s, n))
+        mock_keyring.delete_password.side_effect = delete
+
+        self.assertTrue(Credentials.set_credential("svc", "me@example.com", "old-pass"))
+        self.assertTrue(Credentials.set_credential("svc", "", "new-pass"))
+        self.assertEqual(
+            Credentials.get_credential("svc"),
+            {"username": "keyring_user", "password": "new-pass"},
+        )
+        self.assertNotIn(("pythontk", "svc" + Credentials.KEYRING_USERNAME_SUFFIX), store)
+        self.assertTrue(Credentials.set_credential("other", "", "pass"))
 
     @patch("pythontk.net_utils.credentials.keyring", None)  # Simulate keyring missing
     @patch("platform.system")

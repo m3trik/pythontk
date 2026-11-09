@@ -729,9 +729,11 @@ class MapRegistry(SingletonMixin):
         ),
         "Emissive_Mask": MapType(
             name="Emissive_Mask",
-            # Region-group gate mask (see engines/textures/region_masks.py):
-            # per-channel group coverage, not color data — linear, never packed
-            # into other maps, and safe to scale down with the other masks.
+            # The retired emissive-group gate mask (``_EMask``: per-channel
+            # group coverage, not colour data). Kept as a type so an old
+            # scene's mask still classifies as a linear mask -- never packed,
+            # never wired as an emission colour map -- after its groups
+            # became materials (``EmissiveGroupsModel.convert_legacy``).
             aliases=[
                 "EmissiveMask",
                 "EmissiveGroups",

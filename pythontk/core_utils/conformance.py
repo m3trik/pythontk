@@ -26,7 +26,7 @@ class Conformance:
     #: Model name -> ``(module, class)`` of its provider, imported on first
     #: use: listing what is pinned never imports a model.
     PROVIDERS: Dict[str, Tuple[str, str]] = {
-        # ArticulationModel: pose, world, read, solve and scale.
+        # ArticulationModel: pose, world, read and solve, anchored rigs included.
         "articulation": (
             "pythontk.geo_utils.articulation.conformance",
             "ArticulationConformance",
@@ -35,6 +35,16 @@ class Conformance:
         "shadow_projection": (
             "pythontk.geo_utils.shadow_projection",
             "ShadowConformance",
+        ),
+        # ShadowHorizon.bake's packed map and HeightFieldMap.alpha.
+        "shadow_horizon": (
+            "pythontk.geo_utils.shadow_horizon",
+            "ShadowHorizonConformance",
+        ),
+        # _Media.resolve_entries: a record's names resolved to the file's nodes.
+        "record_names": (
+            "pythontk.file_utils.mesh_convert._media_conformance",
+            "RecordNamesConformance",
         ),
     }
 

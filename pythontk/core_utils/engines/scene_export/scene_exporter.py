@@ -285,8 +285,8 @@ class SceneExporterBase(LoggingMixin):
         messages carry paths and node names, never markup. Built without
         newlines: the box's rich-text pipeline turns each one into a break.
         """
-        error = self.LOG_COLORS.get("ERROR", "#FFCCCC")
-        muted = self.LOG_COLORS.get("DEBUG", "#AAAAAA")
+        error = self.LOG_COLORS["ERROR"]
+        muted = self.LOG_COLORS["DEBUG"]
 
         def esc(text) -> str:
             # Whitespace collapsed: a newline inside a label or message is a
@@ -595,6 +595,86 @@ class SceneExporterBase(LoggingMixin):
         if output_format:
             config["tasks"]["output_format"] = output_format
         return config
+
+    #: How a row's spec reads at rest, ``spec -> (found, value)``: a host's
+    #: configuration, as a ``"module:qualified.name"`` target imported on use
+    #: (uitk's ``"uitk.managers.widget_spec:WidgetSpec.default"``) or the
+    #: callable itself. ``None``: :meth:`panel_defaults` is unavailable.
+    #: pythontk knows no widget, so it never reads a spec itself.
+    ROW_DEFAULT: Any = None
+
+    def panel_defaults(self) -> Dict[str, Any]:
+        """``{objectName: value}`` a fresh panel of this exporter holds: every row
+        of :meth:`definition_tables` at rest (:attr:`ROW_DEFAULT`).
+
+        Raises:
+            NotImplementedError: The host configured no :attr:`ROW_DEFAULT`.
+        """
+        reader = self.ROW_DEFAULT
+        if reader is None:
+            raise NotImplementedError(
+                f"{type(self).__name__} reads no panel defaults: a host's exporter sets ROW_DEFAULT"
+            )
+        if isinstance(reader, str):
+            reader = ptk.Operation.resolve_target(reader)
+        values: Dict[str, Any] = {}
+        for table in self.definition_tables():
+            for name, spec in table.items():
+                found, value = reader(spec)
+                if found:
+                    values[ptk.ExportProfile.widget_key(name, spec)] = value
+        return values
+
+    def export_with_values(
+        self,
+        export_dir: str,
+        objects: Any,
+        values: Dict[str, Any],
+        output_name: Optional[str] = None,
+        overrides: Optional[Dict[str, Any]] = None,
+        output_format: str = "fbx",
+    ) -> Optional[str]:
+        """Export *objects* with a panel's *values*, a few rows changed: the run
+        a hand-off makes (a host's bridge into another app exports what the Scene
+        Exporter writes, with its checks, records and finishing pass). A fresh
+        panel's values are uitk's to read off the definitions
+        (``ValueManager.spec_values``): pythontk knows no widget.
+
+        Parameters:
+            export_dir: The folder to write into.
+            objects: The scope, resolved (the given objects are exported, as a
+                panel's export-selected run does).
+            values: ``{objectName: value}``, as :meth:`run_config_from_values` takes.
+            output_name: The file's name (no extension); ``None``: the exporter's.
+            overrides: ``{row name: value}`` over *values*, by the row's task or
+                check name (``False`` switches a task off).
+            output_format: The deliverable's format (``tasks["output_format"]``).
+
+        Returns:
+            The written file's path, or ``None`` when the run stopped (said in
+            its log: a failed check, nothing to export, a cancel).
+
+        Raises:
+            KeyError: An override names no row.
+        """
+        tasks_def, checks_def = self.definition_tables()
+        values = dict(values)
+        for name, value in (overrides or {}).items():
+            spec = tasks_def.get(name) or checks_def.get(name)
+            if spec is None:
+                raise KeyError(f"{name!r} is no Scene Exporter row")
+            values[ptk.ExportProfile.widget_key(name, spec)] = value
+        config = self.run_config_from_values(values)
+        config["tasks"]["output_format"] = output_format
+        exported = self.perform_export(
+            export_dir=export_dir,
+            objects=objects,
+            output_name=output_name,
+            export_visible=False,
+            create_log_file=True,
+            tasks=config["tasks"],
+        )
+        return getattr(self, "export_path", None) if exported else None
 
     def note_retired_preset_rows(
         self, name: str, stored: Optional[Dict[str, Any]]
@@ -943,3 +1023,62 @@ class SceneExporterBase(LoggingMixin):
                 "run log is one file per scene now."
             )
         return removed
+
+
+class SceneExportHandoff(object):
+    """A hand-off bridge whose payload is the Scene Exporter's deliverable.
+
+    Mixed in over a :class:`HandoffBridge`: :meth:`produce_scene_export` exports
+    the resolved scope with the host's exporter (:attr:`SCENE_EXPORTER`) as a
+    fresh panel would (:meth:`SceneExporterBase.panel_defaults`), a few rows
+    changed (:attr:`SCENE_EXPORT_OVERRIDES`), into the run's scratch folder; the
+    deliverer takes it from there. What the target app gets is then exactly what
+    the Scene Exporter writes -- its tasks, checks, records and finishing pass --
+    with no second export path to keep in step. Written once here: a host's
+    bridge configures the two attributes and calls it from its ``_produce``.
+    """
+
+    #: The host's Scene Exporter class, or its ``"module:qualified.name"``
+    #: target, imported on use (so naming it costs the bridge no import).
+    SCENE_EXPORTER: Any = None
+    #: ``{row name: value}`` the hand-off changes from a fresh panel's.
+    SCENE_EXPORT_OVERRIDES: Dict[str, Any] = {}
+    #: What to do when a check fails mid-export (the exporter's
+    #: ``decide_check_failure`` seam: a panel's dialog); ``None``: the
+    #: exporter's own, which asks the console and stops when nobody answers.
+    decide_check_failure: Optional[Callable[[str, List[str], List[str]], str]] = None
+    #: The Scene Exporter of the send under way (after it, the last one's): what
+    #: a :attr:`decide_check_failure` dialog words itself with, as the Scene
+    #: Exporter's own panel does (``check_failure_html``, ``CHECK_FAILURE_CHOICES``).
+    exporter: Optional["SceneExporterBase"] = None
+
+    def scene_exporter(self) -> "SceneExporterBase":
+        """The host's Scene Exporter (:attr:`SCENE_EXPORTER`), logging into this
+        bridge's log and asking :attr:`decide_check_failure` on a failed check;
+        kept as :attr:`exporter`."""
+        cls = self.SCENE_EXPORTER
+        if cls is None:
+            raise NotImplementedError(f"{type(self).__name__} sets no SCENE_EXPORTER")
+        if isinstance(cls, str):
+            cls = ptk.Operation.resolve_target(cls)
+        self.exporter = cls(log_level=None, logger=self.logger, decide_check_failure=self.decide_check_failure)
+        return self.exporter
+
+    def produce_scene_export(self, objects, request):
+        """The scope as the Scene Exporter writes it, the payload a bridge's
+        ``_produce`` returns; ``None`` when the export stopped (said in its log:
+        a failed check, nothing to export)."""
+        from pythontk.core_utils.handoff.app_handoff import Payload
+
+        exporter = self.scene_exporter()
+        name = self._default_asset_name(objects)
+        path = exporter.export_with_values(
+            self._scratch_dir(request, "export"),
+            objects,
+            exporter.panel_defaults(),
+            output_name=name,
+            overrides=self.SCENE_EXPORT_OVERRIDES,
+        )
+        if not path:
+            return None
+        return Payload(primary=path, extras={"default_asset_name": name})

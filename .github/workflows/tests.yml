@@ -44,6 +44,18 @@ jobs:
           pip install pymeshlab
           pip install -e .
 
+      - name: Install the Khronos glTF Validator (a tools folder of the job's own)
+        # The open-format rule's proof (CODE_STANDARD section 15): the record
+        # and GLB tests run the reference validator. Installed into the
+        # runner's temp, never a user's ~/.pythontk/tools, and named for the
+        # later steps through PYTHONTK_TOOLS_DIR (AppInstaller's target). A
+        # failed install fails here; a test that still finds none fails too
+        # (conftest.gltf_validator, under CI), so the proof never skips.
+        shell: bash
+        run: |
+          echo "PYTHONTK_TOOLS_DIR=${RUNNER_TEMP}/pythontk-tools" >> "$GITHUB_ENV"
+          PYTHONTK_TOOLS_DIR="${RUNNER_TEMP}/pythontk-tools" python -c "import sys; from pythontk import GltfValidator; exe = GltfValidator.resolve(auto_install=True, prompt=False); print(exe); sys.exit(0 if exe else 'the glTF Validator could not be installed')"
+
       - name: Run tests with coverage (Windows)
         if: runner.os == 'Windows'
         run: |

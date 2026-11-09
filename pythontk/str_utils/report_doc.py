@@ -75,9 +75,7 @@ class ReportDoc:
         "info": Palette.status()["info"][0],
         "warn": Palette.status()["warn"][0],
         "error": Palette.status()["error"][0],
-        # The status palette has no success tier; a muted green of the same
-        # weight as its warn/error pastels.
-        "ok": "#9CC69B",
+        "ok": Palette.status()["success"][0],
         "dim": Palette.ui()["text_dim"].hex,
         "strong": Palette.ui()["text_bright"].hex,
         # Light blue, as MatReport's path links -- readable on a dark viewer.

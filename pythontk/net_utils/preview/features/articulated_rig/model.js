@@ -1,10 +1,14 @@
 /*
   pythontk's `ArticulationModel` (geo_utils/articulation/model.py), ported
-  operation for operation: one rig's joints, channels and limits, forward
-  kinematics, reading a state back from local transforms, and the grab solver.
-  Plain arrays in and out, no three.js -- the articulated_rig feature poses
-  the page's nodes with it, and an app on any framework can vendor this file
-  with kernel/math.js. Pinned against the reference by
+  operation for operation: one rig's joints, channels, anchors and limits,
+  forward kinematics, reading a state back from local transforms, and the
+  grab solver. A joint's local is `rest . A . pose(channels) . A^-1`, A its
+  anchor (the identity: `rest . pose(channels)`, the anchorless path bit for
+  bit), and its pose is its parent JOINT's times that local -- `world` --
+  whatever node its part hangs under. Plain arrays in and out, metres and
+  degrees, no three.js -- the articulated_rig feature poses the page's nodes
+  with it, and an app on any framework can vendor this file with
+  kernel/math.js. Pinned against the reference by
   `ptk.Conformance.cases("articulation")` in test_articulated_rig_web.py:
   change a constant or a step there, and here, together.
 */
@@ -54,6 +58,13 @@ function matrixEuler(order, m) {
   out['r' + order[0]] = angleC * TO_DEG;
   return out;
 }
+// *turn* about *frame*'s axes, stated in *frame*'s parent: frame (x) turn (x) frame^-1.
+const conjugated = (frame, turn) => qmul(qmul(frame, turn), qconj(frame));
+// Whether an anchor's point and orientation are exactly the identity: the
+// anchor of a joint whose part nests on its pivot -- t exactly 0, q the
+// identity rotation either sign, (0, 0, 0, w) for any w but 0, which
+// normalizes to +-1 (the reference's `is_identity`).
+const isIdentity = (t, q) => t.every((v) => v === 0) && q[0] === 0 && q[1] === 0 && q[2] === 0 && q[3] !== 0 && Number.isFinite(q[3]);
 const unwrap = (value, reference) => value + 360.0 * Math.floor((reference - value) / 360.0 + 0.5);
 function eulerFor(order, m, channels, reference) {
   const first = matrixEuler(order, m);
@@ -98,12 +109,12 @@ function solve3(a, e) {
 }
 
 /**
- * One rig's joints, channels and limits, and the solver that poses them --
- * pythontk's `ArticulationModel`, ported. Built from one rig of the
- * `articulation` record (`{name, joints: [{name, parent, t, q, rotate_order,
- * channels: [{channel, min, max, weight}]}], grab}`); a state is one number
- * per channel, joint by joint, degrees for rotations and record units for
- * slides. Vectors are `[x, y, z]`, rotations `[x, y, z, w]`.
+ * One rig's joints, channels, anchors and limits, and the solver that poses
+ * them -- pythontk's `ArticulationModel`, ported. Built from one rig of the
+ * `articulation` record (`{name, joints: [{name, parent, t, q, anchor: {t, q},
+ * rotate_order, channels: [{channel, min, max, weight}]}], grab}`); a state is
+ * one number per channel, joint by joint, degrees for rotations and metres
+ * for slides. Vectors are `[x, y, z]`, rotations `[x, y, z, w]`.
  */
 export class ArticulationModel {
   static ITERATIONS = 32;
@@ -139,6 +150,8 @@ export class ArticulationModel {
     if (!ROTATE_ORDERS.includes(order)) throw new Error(`Joint ${name}: unknown rotate order ${order}.`);
     const t = (spec.t || ORIGIN).map(Number);
     const q = qnormalize((spec.q || IDENTITY).map(Number));
+    const anchorT = (spec.anchor?.t || ORIGIN).map(Number);
+    const anchorQ = qnormalize((spec.anchor?.q || IDENTITY).map(Number));
     const slots = [];
     const seen = new Set();
     for (const entry of spec.channels || []) {
@@ -158,7 +171,9 @@ export class ArticulationModel {
       this._weights.push(Math.max(0.0, weight));
       slots.push([slot, channel]);
     }
-    this.joints.push({ name, parent, t, q, rotate_order: order });
+    // `anchor` null for the identity: the anchorless path, bit for bit.
+    const anchor = isIdentity(anchorT, anchorQ) ? null : [anchorT, anchorQ];
+    this.joints.push({ name, parent, t, q, anchor, rotate_order: order });
     this._slots.push(slots);
   }
 
@@ -203,10 +218,15 @@ export class ArticulationModel {
   local(state, joint) {
     const spec = this.joints[joint];
     const values = this._values(state, joint);
-    const rotation = qmul(spec.q, eulerQuat(spec.rotate_order, values));
+    const turn = eulerQuat(spec.rotate_order, values);
     const slide = [values.tx ?? 0.0, values.ty ?? 0.0, values.tz ?? 0.0];
-    const translation = add(spec.t, qrot(spec.q, slide));
-    return [translation, rotation];
+    if (spec.anchor === null) {
+      return [add(spec.t, qrot(spec.q, slide)), qmul(spec.q, turn)];
+    }
+    const [at, aq] = spec.anchor;
+    const turned = conjugated(aq, turn);
+    const offset = add(sub(at, qrot(turned, at)), qrot(aq, slide));
+    return [add(spec.t, qrot(spec.q, offset)), qmul(spec.q, turned)];
   }
 
   pose(state) { return this.joints.map((_j, index) => this.local(state, index)); }
@@ -242,15 +262,25 @@ export class ArticulationModel {
       if (!slots.length) return;
       const spec = this.joints[index];
       const relative = qmul(qconj(spec.q), qnormalize(q));
+      const offset = qrot(qconj(spec.q), sub(t, spec.t));
+      let turn = relative;
+      let slide = offset;
+      if (spec.anchor !== null) {
+        // Undo the anchor: the turn about its axes, and the slide along them
+        // once the turn's swing of its point is taken out.
+        const [at, aq] = spec.anchor;
+        const back = qconj(aq);
+        turn = conjugated(back, relative);
+        slide = qrot(back, add(sub(offset, at), qrot(relative, at)));
+      }
       const reference = {};
       for (const [slot, channel] of slots) reference[channel] = state[slot];
       const angles = eulerFor(
         spec.rotate_order,
-        qmatrix(relative),
+        qmatrix(turn),
         slots.map(([, c]) => c).filter((c) => ROTATE_CHANNELS.includes(c)),
         reference,
       );
-      const slide = qrot(qconj(spec.q), sub(t, spec.t));
       for (const [slot, channel] of slots) {
         state[slot] = ROTATE_CHANNELS.includes(channel)
           ? angles[channel]
@@ -258,20 +288,6 @@ export class ArticulationModel {
       }
     });
     return state;
-  }
-
-  scaleOf(locals) {
-    const ratios = [];
-    locals.forEach(([t], index) => {
-      if (this._slots[index].some(([, c]) => TRANSLATE_CHANNELS.includes(c))) return;
-      const rest = norm(this.joints[index].t);
-      const got = norm(t);
-      if (rest > ArticulationModel.EPS && got > ArticulationModel.EPS) ratios.push(got / rest);
-    });
-    if (!ratios.length) return 1.0;
-    ratios.sort((a, b) => a - b);
-    const mid = Math.floor(ratios.length / 2);
-    return ratios.length % 2 ? ratios[mid] : 0.5 * (ratios[mid - 1] + ratios[mid]);
   }
 
   solve(state, joint, localPoint, target, rotation = null) {
@@ -287,26 +303,48 @@ export class ArticulationModel {
     const own = new Set(this._slots[joint].filter(([, c]) => ROTATE_CHANNELS.includes(c)).map(([s]) => s));
     const placed = slots.filter((s) => !own.has(s));
     let held = wanted;
+    // The ball's centre is its anchor's point (its origin, for the identity),
+    // which its own turn leaves where it is: the chain above places that point.
+    const anchor = this.joints[joint].anchor;
+    const pivot = anchor === null ? ORIGIN : anchor[0];
+    const lever = anchor === null ? localPoint : sub(localPoint, pivot);
     for (let pass = 0; pass < ArticulationModel.PASSES; pass += 1) {
-      const centre = sub(target, qrot(held, localPoint));
-      current = this._dls(current, placed, joint, ORIGIN, centre, reach);
+      const centre = sub(target, qrot(held, lever));
+      current = this._dls(current, placed, joint, pivot, centre, reach);
       current = this._turn(current, joint, wanted);
       held = this.world(current)[joint][1];
     }
     return this._dls(current, slots, joint, localPoint, target, reach);
   }
 
+  // The chain's length: its bones (pivot to pivot) plus the held point's
+  // lever from its joint's pivot -- a pivot is a joint's anchor point (its
+  // origin, for the identity), so a flat model's bones have their length too.
   _reach(chain, localPoint) {
-    let length = norm(localPoint);
-    for (const index of chain.slice(1)) length += norm(this.joints[index].t);
+    const anchor = this.joints[chain[chain.length - 1]].anchor;
+    let length = norm(anchor === null ? localPoint : sub(localPoint, anchor[0]));
+    for (const index of chain.slice(1)) length += norm(this._bone(index));
     return Math.max(length, ArticulationModel.EPS);
+  }
+
+  // Joint *index*'s pivot from its parent's, at rest, in the parent's frame.
+  _bone(index) {
+    const spec = this.joints[index];
+    const above = spec.parent === null ? null : this.joints[spec.parent].anchor;
+    if (spec.anchor === null && above === null) return spec.t;
+    let bone = spec.t;
+    if (spec.anchor !== null) bone = add(bone, qrot(spec.q, spec.anchor[0]));
+    if (above !== null) bone = sub(bone, above[0]);
+    return bone;
   }
 
   _turn(state, joint, rotation) {
     const spec = this.joints[joint];
     const parentQ = spec.parent === null ? IDENTITY : this.world(state)[spec.parent][1];
     const frame = qmul(parentQ, spec.q);
-    const local = qmul(qconj(frame), rotation);
+    let local = qmul(qconj(frame), rotation);
+    // The link's turn in its rest frame, read about the anchor's axes.
+    if (spec.anchor !== null) local = conjugated(qconj(spec.anchor[1]), local);
     const out = state.slice();
     const reference = {};
     for (const [slot, channel] of this._slots[joint]) reference[channel] = out[slot];
@@ -322,6 +360,13 @@ export class ArticulationModel {
     const spec = this.joints[joint];
     const parentQ = spec.parent === null ? IDENTITY : world[spec.parent][1];
     let frame = qmul(parentQ, spec.q);
+    // A turn's pivot: the joint's origin, or its anchor's point (where the
+    // slide puts it; the joint's own turn leaves it there).
+    let pivot = world[joint][0];
+    if (spec.anchor !== null) {
+      frame = qmul(frame, spec.anchor[1]);
+      pivot = add(pivot, qrot(world[joint][1], spec.anchor[0]));
+    }
     if (TRANSLATE_CHANNELS.includes(channel)) {
       const axis = [0, 0, 0];
       axis[TRANSLATE_CHANNELS.indexOf(channel)] = 1.0;
@@ -333,7 +378,7 @@ export class ArticulationModel {
       if (AXIS[c] === wanted) {
         const axis = [0, 0, 0];
         axis[wanted] = 1.0;
-        return cross(qrot(frame, axis), sub(point, world[joint][0]));
+        return cross(qrot(frame, axis), sub(point, pivot));
       }
       frame = qmul(frame, qaxis(AXIS[c], values['r' + c] ?? 0.0));
     }

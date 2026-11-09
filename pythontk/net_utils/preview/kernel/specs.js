@@ -1,6 +1,6 @@
 import { el } from './dom.js';
 import { plural } from './format.js';
-import { bakedMaterials } from './lightmaps.js';
+import { bakedMaterials, bindingOf, fileMaterialKey } from './lightmaps.js';
 import { materialsOf, modelBounds } from './model.js';
 import { probeEnvironment, probeState } from './probe.js';
 
@@ -16,8 +16,10 @@ import { probeEnvironment, probeState } from './probe.js';
 //     one Mesh per glTF PRIMITIVE, so a machine body with glass and metal is two
 //     "meshes", and the count tracks materials per object, not objects.
 //   * MATERIALS are the file's, by glTF index. GLTFLoader clones a material per
-//     vertex-colour / tangent variant, and the lightmap pass clones one per baked
-//     object (`<name>~lm<N>`), so the count grows with the bake, not the scene.
+//     vertex-colour / tangent variant, which counts as its original; the
+//     lightmap bind gives objects that light unlike another wearer of their
+//     material a copy of it (lightmaps.js), which counts as a material of its
+//     own, as the copies the GLB itself once carried did (`<name>~lm<N>`).
 //   * LIGHTMAPPED is said of objects. The HUD once read "51/57 lightmapped
 //     materials": a fraction of those inflated instances, against a denominator
 //     that included every material nobody meant to bake, and blind to an object
@@ -27,13 +29,13 @@ import { probeEnvironment, probeState } from './probe.js';
 //     the DCC panel's push report (`PreviewBridge.lightmap_summary`) uses.
 //
 // What the bake meant to light is held against what bound. A finished file
-// states its bake in its lightmaps block alone -- each object's `lightmapInfo`
-// marker leaves it on the way out -- so a baked file is one whose extras carry
-// that block, and an object of it was BAKED when it wears a material the block
-// names (the applier gives each baked object its own copy, `<name>~lm<N>`;
-// bindLightmaps collects them, `bakedMaterials`). A baked object with no
-// lightmap bound renders unlit, exactly like one never baked -- a plausible,
-// merely-wrong room -- so it is an issue, by name.
+// states its bake in its `lightmaps` record alone -- each object's
+// `lightmapInfo` marker leaves it on the way out -- so an object of it was
+// BAKED when the record resolves an entry to it whose map rides the file and
+// a UV set of it reads (bindLightmaps collects the materials it wears,
+// `bakedMaterials`). A baked object with no lightmap bound renders unlit,
+// exactly like one never baked -- a plausible, merely-wrong room -- so it is an
+// issue, by name.
 export let specs = null;
 // The first frame after a load compiles its programs and uploads its textures;
 // the loop times it into `specs.load.firstFrameMs` (see the render loop).
@@ -93,6 +95,7 @@ export function measureModel(gltf, load, issues) {
   const materials = new Set();
   const instances = new Set();
   const lightmaps = new Set();
+  const views = new Set();  // the lightmaps' bufferViews, for Inspect's file share
   const noBakeUv = new Set();
   let bakeChannel = 1;
   let meshes = 0;
@@ -115,11 +118,13 @@ export function measureModel(gltf, load, issues) {
     }
     for (const material of materialsOf(node)) {
       instances.add(material);
-      materials.add(associations?.get(material)?.materials ?? material);
+      materials.add(fileMaterialKey(material, associations));
       if (bakedMaterials.has(material)) entry.baked = true;
       if (!material.lightMap) continue;
       entry.lit = true;
       lightmaps.add(material.lightMap.source ?? material.lightMap);
+      const binding = bindingOf(material);
+      if (binding && binding.file === (load.primary ?? gltf)) views.add(binding.view);
       // three.js samples a lightMap on the UV set its channel names -- `uv`
       // for 0, `uvN` past it -- which the loader set from the bound
       // texture's own texCoord. Without that attribute every fragment reads
@@ -143,6 +148,10 @@ export function measureModel(gltf, load, issues) {
       // Whether the room the bake lit is on screen as the environment
       // (probe.js): the light on every unbaked object and every reflection.
       probe: Boolean(probeEnvironment()),
+      // The bufferViews the bound maps ride in the primary file (records.js
+      // GLB_MEDIA): what Inspect counts as its images, as it counted them
+      // when a map was one.
+      views: [...views].sort((a, b) => a - b),
     }
     : null;
   if (coverage) retireForeign(coverage);

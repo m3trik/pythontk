@@ -1206,6 +1206,40 @@ class ImgTest(BaseTestCase):
         )
         self.assertEqual(out.getpixel((0, 0)), (245, 200, 0))
 
+    def test_pack_channels_scales_high_bit_sources_to_8_bits(self):
+        """A 16-bit, a 32-bit integer and a float grayscale map pack at their
+        value, scaled to 8 bits: Pillow's own ``convert("L")`` CLIPS an
+        ``I;16`` or ``I`` image at 255 (a 16-bit 30000 packed as 255, a
+        roughness map fully rough) and truncates an ``F`` one. Constant and
+        varying maps alike (the packer takes a constant map's value apart)."""
+        flat16 = Image.fromarray(np.full((4, 4), 30000, dtype=np.uint16))
+        ramp16 = np.tile(np.array([0, 30000, 65535, 65535], dtype=np.uint16), (4, 1))
+        wide = Image.fromarray(np.full((4, 4), 2**31 - 1, dtype=np.int32), mode="I")
+        half = Image.fromarray(np.full((4, 4), 0.5, dtype=np.float32), mode="F")
+        out = ImgUtils.pack_channels(
+            {"R": flat16, "G": Image.fromarray(ramp16), "B": wide}, out_mode="RGB"
+        )
+        self.assertEqual(out.getpixel((0, 0)), (117, 0, 255))
+        self.assertEqual(out.getpixel((1, 0))[1], 117)
+        out = ImgUtils.pack_channels({"R": half}, out_mode="RGB")
+        self.assertEqual(out.getpixel((0, 0))[0], 128)
+
+    def test_ensure_image_scales_a_high_bit_source_to_an_8_bit_mode(self):
+        """The one place a source is normalised to a mode: an 8-bit target
+        takes a 16-bit or float image at its value, never clipped."""
+        flat16 = Image.fromarray(np.full((2, 2), 30000, dtype=np.uint16))
+        self.assertEqual(ImgUtils.ensure_image(flat16, mode="L").getpixel((0, 0)), 117)
+        self.assertEqual(
+            ImgUtils.ensure_image(flat16, mode="RGB").getpixel((0, 0)), (117, 117, 117)
+        )
+        self.assertEqual(ImgUtils.ensure_image(flat16, mode="I;16").mode, "I;16")
+
+    def test_convert_i_to_l_reads_a_16_bit_image_by_its_mode(self):
+        """A dark 16-bit map (every value below 256 of 65535) is near black,
+        not its values read as 8-bit: the mode says the scale."""
+        dark = Image.fromarray(np.full((2, 2), 200, dtype=np.uint16))
+        self.assertEqual(ImgUtils.convert_i_to_l(dark).getpixel((0, 0)), 1)
+
     # -------------------------------------------------------------------------
     # Image Comparison Tests
     # -------------------------------------------------------------------------

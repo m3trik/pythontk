@@ -22,6 +22,7 @@ from typing import (
     Any,
     Callable,
     Dict,
+    Iterable,
     List,
     Mapping,
     Optional,
@@ -39,6 +40,13 @@ from pythontk.core_utils.engines.scene_export.record_transfer import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class StoreWriteRefused(RuntimeError):
+    """A store refused a write it cannot make without writing over another's
+    carrier (:attr:`SceneStoreBase.WriteRefused`); the message says why and
+    what fixes it. An export's commit says it once and notes it, never
+    raising (``ExportSnapshot.commit``)."""
 
 
 class SceneStoreBase:
@@ -88,16 +96,97 @@ class SceneStoreBase:
         )
 
     @classmethod
+    def is_scene_carrier(
+        cls,
+        node_name: Any,
+        root_level: bool = True,
+        scope: Scope = Scope.DELIVERABLE,
+    ) -> bool:
+        """Whether a node named *node_name* is the scene's own carrier of
+        *scope* in a written file: named exactly :meth:`name` (no namespace,
+        no number) and at the root of the file's hierarchy.
+
+        Every other carrier (:meth:`is_carrier`) is a module's: a referenced
+        module's ``NS:data_export``, an imported one's numbered copy, and a
+        grouped module's own-named ``data_export`` under a group -- the root
+        of the file is the scene's, a group in it a module's. A reader takes
+        each record from the scene's own carrier, and a module's only where
+        the scene's carries none (the first in file order); a module's
+        ``handoff`` never describes the file. A writer writes only the
+        scene's own, created at the root when the scene has none.
+
+        Parameters:
+            node_name: The node's name, or its path with the nodes above it
+                (``Module|data_export``, a Maya DAG path): a path through a
+                parent is not root level.
+            root_level: Whether the node sits at the root of the file's
+                hierarchy (an FBX Model wired to the scene root; a glTF scene
+                root, or a child of the converter's ``RootNode``; an
+                imported model's top-level child), for a reader that knows it
+                apart from the name.
+        """
+        path = str(node_name or "").strip("|")
+        return bool(root_level) and path == cls.name(scope)
+
+    @classmethod
+    def reader_values(
+        cls,
+        rows: Iterable[Tuple[Any, bool, str, Any]],
+        scope: Scope = Scope.DELIVERABLE,
+    ) -> Dict[str, Tuple[Any, bool]]:
+        """The value a reader of a written file applies for each channel: the
+        one place the reader's precedence lives.
+
+        Each channel is the scene's own carrier's (:meth:`is_scene_carrier`),
+        else the first module's in file order; a module's ``handoff`` is never
+        chosen (it describes that module, not the file), and a node that is
+        no carrier (:meth:`is_carrier`: an artist's property of a record's
+        name) never.
+
+        Parameters:
+            rows: ``(node name or path, root level, channel, value)`` for each
+                channel a node holds, in file order -- the name as
+                :meth:`is_scene_carrier` takes it, *value* whatever the reader
+                keeps (a payload, the node holding it).
+            scope: The carriers' scope.
+
+        Returns:
+            ``{channel: (value, whether the scene's own carrier holds it)}``.
+        """
+        handoff = SceneRecords.HANDOFF.key
+        chosen: Dict[str, Tuple[Any, bool]] = {}
+        for name, root_level, channel, value in rows:
+            if not cls.is_carrier(name, scope):
+                continue
+            own = cls.is_scene_carrier(name, root_level, scope)
+            held = chosen.get(channel)
+            if held is not None and (held[1] or not own):
+                continue
+            if own or channel != handoff:
+                chosen[channel] = (value, own)
+        return chosen
+
+    @classmethod
     def read(cls, scope: Scope, key: str) -> Optional[str]:
         """The string channel *key* in *scope*, or ``None`` when the carrier,
         the channel or a value is absent (a cleared channel reads as ``None``;
         a non-string attribute is not a channel)."""
         raise NotImplementedError
 
+    #: Raised by :meth:`write` when the scene's carrier cannot be written or
+    #: made without writing over another's (a module's carrier holding its
+    #: name, where a host's names are unique): the message says the fix.
+    WriteRefused = StoreWriteRefused
+
     @classmethod
     def write(cls, scope: Scope, key: str, text: Optional[str]) -> Optional[str]:
         """Store *text* on *key*; ``None`` clears without creating a carrier.
-        Returns the carrier's name, or ``None`` when a clear had nothing to do."""
+        Returns the carrier's name, or ``None`` when a clear had nothing to do.
+
+        Raises:
+            WriteRefused: The scene's carrier cannot be written without
+                writing over another's.
+        """
         raise NotImplementedError
 
     @classmethod

@@ -289,6 +289,13 @@
   {
     "kind": "function",
     "module": "pythontk.img_utils._img_utils",
+    "name": "convert_mode",
+    "qualname": "ImgUtils.convert_mode",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
     "name": "convert_rgb_to_gray",
     "qualname": "ImgUtils.convert_rgb_to_gray",
     "tier": "bare"
@@ -2032,13 +2039,6 @@
   {
     "kind": "class",
     "module": "pythontk.core_utils.engines.shots.animation_record",
-    "name": "AnimationBlock",
-    "qualname": "AnimationBlock",
-    "tier": "root"
-  },
-  {
-    "kind": "class",
-    "module": "pythontk.core_utils.engines.shots.animation_record",
     "name": "AnimationRecord",
     "qualname": "AnimationRecord",
     "tier": "root"
@@ -2080,13 +2080,6 @@
   },
   {
     "kind": "class",
-    "module": "pythontk.geo_utils.articulation.record",
-    "name": "ArticulationBlock",
-    "qualname": "ArticulationBlock",
-    "tier": "root"
-  },
-  {
-    "kind": "class",
     "module": "pythontk.geo_utils.articulation.conformance",
     "name": "ArticulationConformance",
     "qualname": "ArticulationConformance",
@@ -2115,9 +2108,30 @@
   },
   {
     "kind": "class",
-    "module": "pythontk.geo_utils.articulation.record",
+    "module": "pythontk.geo_utils.articulation._retired",
     "name": "ArticulationWeb",
     "qualname": "ArticulationWeb",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.geo_utils.articulation._retired",
+    "name": "ArticulationWebGrab",
+    "qualname": "ArticulationWebGrab",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.geo_utils.articulation._retired",
+    "name": "ArticulationWebJoint",
+    "qualname": "ArticulationWebJoint",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.geo_utils.articulation._retired",
+    "name": "ArticulationWebRig",
+    "qualname": "ArticulationWebRig",
     "tier": "root"
   },
   {
@@ -2479,13 +2493,6 @@
   },
   {
     "kind": "class",
-    "module": "pythontk.core_utils.engines.textures.region_masks",
-    "name": "EmissiveGroupsRecord",
-    "qualname": "EmissiveGroupsRecord",
-    "tier": "root"
-  },
-  {
-    "kind": "class",
     "module": "pythontk.core_utils.execution_monitor._execution_monitor",
     "name": "ExecutionMonitor",
     "qualname": "ExecutionMonitor",
@@ -2584,6 +2591,13 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.core_utils.handoff.folder_delivery",
+    "name": "FileDeliveryBridge",
+    "qualname": "FileDeliveryBridge",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.file_utils.file_dependencies",
     "name": "FileDependencies",
     "qualname": "FileDependencies",
@@ -2608,6 +2622,13 @@
     "module": "pythontk.file_utils._file_utils",
     "name": "FileUtils",
     "qualname": "FileUtils",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.handoff.folder_delivery",
+    "name": "FolderDeliverer",
+    "qualname": "FolderDeliverer",
     "tier": "root"
   },
   {
@@ -2640,7 +2661,7 @@
   },
   {
     "kind": "class",
-    "module": "pythontk.core_utils.engines.scene_export.scene_records",
+    "module": "pythontk.core_utils.engines.scene_export._retired",
     "name": "GlbBlock",
     "qualname": "GlbBlock",
     "tier": "root"
@@ -2664,6 +2685,13 @@
     "module": "pythontk.file_utils.mesh_convert.glb.reader",
     "name": "GlbReader",
     "qualname": "GlbReader",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.file_utils.mesh_convert.gltf_validator",
+    "name": "GltfValidator",
+    "qualname": "GltfValidator",
     "tier": "root"
   },
   {
@@ -2993,13 +3021,6 @@
     "module": "pythontk.core_utils.engines.scene_export.lightmap_record",
     "name": "LightmapRecord",
     "qualname": "LightmapRecord",
-    "tier": "root"
-  },
-  {
-    "kind": "class",
-    "module": "pythontk.core_utils.engines.scene_export.lightmap_record",
-    "name": "LightmapsBlock",
-    "qualname": "LightmapsBlock",
     "tier": "root"
   },
   {
@@ -3817,29 +3838,8 @@
   {
     "kind": "class",
     "module": "pythontk.core_utils.engines.textures.region_masks",
-    "name": "RegionGroup",
-    "qualname": "RegionGroup",
-    "tier": "root"
-  },
-  {
-    "kind": "class",
-    "module": "pythontk.core_utils.engines.textures.region_masks",
-    "name": "RegionGroupRegistry",
-    "qualname": "RegionGroupRegistry",
-    "tier": "root"
-  },
-  {
-    "kind": "class",
-    "module": "pythontk.core_utils.engines.textures.region_masks",
     "name": "RegionMaskManifest",
     "qualname": "RegionMaskManifest",
-    "tier": "root"
-  },
-  {
-    "kind": "class",
-    "module": "pythontk.core_utils.engines.textures.region_masks",
-    "name": "RegionMaskPacker",
-    "qualname": "RegionMaskPacker",
     "tier": "root"
   },
   {
@@ -3977,6 +3977,13 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.net_utils.rpc.plugin_core",
+    "name": "RpcInstances",
+    "qualname": "RpcInstances",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.net_utils.rpc.job",
     "name": "RpcJob",
     "qualname": "RpcJob",
@@ -3987,6 +3994,13 @@
     "module": "pythontk.net_utils.rpc.plugin_core",
     "name": "RpcPlugin",
     "qualname": "RpcPlugin",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.net_utils.rpc.installer",
+    "name": "RpcPluginSpec",
+    "qualname": "RpcPluginSpec",
     "tier": "root"
   },
   {
@@ -4043,6 +4057,13 @@
     "module": "pythontk.core_utils.engines.scene_export.scene_data_sidecar",
     "name": "SceneDataSidecarBase",
     "qualname": "SceneDataSidecarBase",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.scene_export.scene_exporter",
+    "name": "SceneExportHandoff",
+    "qualname": "SceneExportHandoff",
     "tier": "root"
   },
   {
@@ -4222,13 +4243,6 @@
   },
   {
     "kind": "class",
-    "module": "pythontk.geo_utils.shadow_record",
-    "name": "ShadowBlock",
-    "qualname": "ShadowBlock",
-    "tier": "root"
-  },
-  {
-    "kind": "class",
     "module": "pythontk.geo_utils.shadow_projection",
     "name": "ShadowConformance",
     "qualname": "ShadowConformance",
@@ -4239,6 +4253,13 @@
     "module": "pythontk.geo_utils.shadow_horizon",
     "name": "ShadowHorizon",
     "qualname": "ShadowHorizon",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.geo_utils.shadow_horizon",
+    "name": "ShadowHorizonConformance",
+    "qualname": "ShadowHorizonConformance",
     "tier": "root"
   },
   {
@@ -4705,7 +4726,7 @@
   },
   {
     "kind": "class",
-    "module": "pythontk.core_utils.engines.scene_export.scene_records",
+    "module": "pythontk.core_utils.engines.scene_export._retired",
     "name": "WebProjection",
     "qualname": "WebProjection",
     "tier": "root"

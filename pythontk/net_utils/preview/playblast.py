@@ -139,12 +139,13 @@ class PreviewPlayblast(SequenceEncoder):
         Parameters:
             name: Clip name, used for the output basename. Sanitized -- it
                 comes off a page and reaches a filesystem.
-            fps: The clip's authoring frame rate; the movie's rate.
-            start_frame: Authoring frame the first captured frame IS, in the
-                numbers the DCC's timeline and the picker's shot ranges quote.
-                Carried for :meth:`finish` to report; the frames on disk are
-                numbered from zero regardless (see :meth:`add_frame`). May be
-                negative -- a scene with pre-roll declares shots there.
+            fps: The movie's frame rate: the rate the caller stepped the clip
+                at (the page's playblast prompt names it; a glTF states none).
+            start_frame: Frame number the first captured frame IS, in the
+                caller's numbering (the page sends 0: a clip counts from its
+                first frame). Carried for :meth:`finish` to report; the frames
+                on disk are numbered from zero regardless (see
+                :meth:`add_frame`). May be negative.
             frames: How many frames the page intends to send. Checked against
                 :attr:`max_frames` up front, so a mistake costs one request
                 instead of a full capture.

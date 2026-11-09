@@ -1,6 +1,17 @@
 # !/usr/bin/python
 # coding=utf-8
-"""Shadow rigs: bind the planes' maps and publish the viewer manifest.
+"""Shadow rigs: carry the ``shadows`` record and the files it names into the GLB.
+
+One layout, two containers: the GLB carries the ``shadows`` record as the
+FBX's carrier holds it, in its root ``extras``, and every file the record
+names -- each plane's horizon map, its silhouette and the silhouette atlas --
+as the bufferView named by that file (``SceneRecords.GLB_MEDIA``), through
+the media part every record shares (``_media.py``). Nothing is bound to a material or a node
+and no glTF image or sampler is made: a reader resolves each plane, its
+source and its contact by name in the file's own scene, decodes each map off
+its view and samples it as the record says (a horizon map is data: its
+texels read whole -- the WebXR viewer's own texture takes no mipmaps and
+clamps).
 
 One job of :class:`MeshConvert`, composed in ``_mesh_convert.py``; it reaches
 the other passes through the facade it holds (``self._mc``).
@@ -8,9 +19,9 @@ the other passes through the facade it holds (``self._mc``).
 
 import logging
 import os
-from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-# Eager: the signatures name GlbTarget; SceneRecords is the light
+# Eager: the signatures name GlbEdit / GlbTarget; SceneRecords is the light
 # declaration module every pass reads.
 from pythontk.core_utils.engines.scene_export.scene_records import SceneRecords
 from pythontk.file_utils.mesh_convert.glb.edit import GlbEdit, GlbTarget
@@ -19,398 +30,216 @@ logger = logging.getLogger(__name__)
 
 
 class _ShadowRigs:
-    """Shadow rigs: plane maps and the ``extras.shadows`` manifest.
+    """Shadow rigs: the ``shadows`` record and its files, carried.
 
     A private part of :class:`MeshConvert`; call it through the facade.
     """
 
-    #: Sampler a horizon DATA map is bound with: no mipmaps (9729 = LINEAR
-    #: for both filters -- a mip would average span heights, distances and
-    #: pyramid bounds across texels; the shader reads texels whole, so the
-    #: filter itself never applies) and clamped (33071 = CLAMP_TO_EDGE).
-    SHADOW_DATA_SAMPLER = {
-        "magFilter": 9729,
-        "minFilter": 9729,
-        "wrapS": 33071,
-        "wrapT": 33071,
-    }
+    #: The media type a file the record names rides as, by its extension:
+    #: each is an image a glTF reader reads, so its bytes ride as they are,
+    #: never re-encoded (a horizon map is data) and with no scale.
+    MIME_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg"}
 
     def __init__(self, mc: type) -> None:
         self._mc = mc  # the facade class: every name it exposes is read through it
 
-    @staticmethod
-    def _nodes_named(gltf: dict, name: Any, mesh_only: bool = False) -> List[int]:
-        """Indices of the nodes *name* denotes: exact matches, else every node
-        whose namespace-stripped leaf matches (``NS:name`` binds ``name``).
-
-        Every leaf match is returned rather than the first: the same rig can
-        sit under two namespaces in one file, and both planes are real.
-        """
-        if not isinstance(name, str) or not name:
-            return []
-        nodes = gltf.get("nodes") or []
-
-        def _eligible(node: dict) -> bool:
-            return not mesh_only or "mesh" in node
-
-        exact = [
-            i for i, n in enumerate(nodes) if n.get("name") == name and _eligible(n)
-        ]
-        if exact:
-            return exact
-        leaf = name.rsplit(":", 1)[-1]
-        return [
-            i
-            for i, n in enumerate(nodes)
-            if str(n.get("name") or "").rsplit(":", 1)[-1] == leaf and _eligible(n)
-        ]
-
-    def _shadow_single_node(
-        self, gltf: dict, name: Any, plane: str, role: str
-    ) -> Optional[int]:
-        """The one node *name* denotes, or ``None`` -- absent (logged at debug:
-        a selection export routinely leaves the source behind) or ambiguous
-        (warned: a plane must never follow a guess)."""
-        if not isinstance(name, str) or not name:
-            return None
-        found = self._nodes_named(gltf, name)
-        if len(found) == 1:
-            return found[0]
-        if found:
+    def _shadow_record(self, gltf: dict, warn: bool = False) -> Optional[dict]:
+        """The ``shadows`` record *gltf* carries in its current shape: its root
+        ``extras``' (the record as the file ships it), else its carrier's
+        (before the carry; :meth:`_current_record`); ``None`` without one, and
+        -- said when *warn* -- for one the declaration refuses, either
+        container's (``SceneRecords.problems``: another version, or a field
+        the current shape requires missing): a reader refuses rather than
+        guesses, and the cure is a re-export."""
+        spec = SceneRecords.SHADOWS
+        extras = gltf.get("extras") if isinstance(gltf, dict) else None
+        carried = extras.get(spec.key) if isinstance(extras, dict) else None
+        problems = [] if carried is None else SceneRecords.problems(spec, carried)
+        if carried is not None and not problems:
+            return carried
+        # Before the carry -- or past a root copy the shape refuses -- the
+        # carrier's, refused (and said) as every pass refuses it.
+        record = self._mc.data_export_channel(gltf, spec.key)
+        if record is not None:
+            if warn:
+                return self._mc._current_record(gltf, spec)
+            return record if not SceneRecords.problems(spec, record) else None
+        if problems and warn:
+            more = f" (+{len(problems) - 3} more)" if len(problems) > 3 else ""
             logger.warning(
-                "Shadow plane %r: its %s %r matches several GLB nodes (%s) -- "
-                "ambiguous, the plane keeps its imported keys.",
-                plane,
-                role,
-                name,
-                ", ".join(str(i) for i in found),
-            )
-        else:
-            logger.debug(
-                "Shadow plane %r: no GLB node named %r for its %s.", plane, name, role
+                "%s record not applied -- %s%s; re-export the file.",
+                spec.key,
+                "; ".join(problems[:3]),
+                more,
             )
         return None
 
     @staticmethod
-    def _shadow_plane_material(
-        gltf: dict, node: dict
-    ) -> Tuple[Optional[int], Optional[int]]:
-        """``(material index, base-colour texture index)`` of a plane node's
-        first primitive -- either ``None`` when the file has no such thing."""
-        meshes = gltf.get("meshes") or []
-        materials = gltf.get("materials") or []
-        textures = gltf.get("textures") or []
-        mesh_index = node.get("mesh")
-        if not isinstance(mesh_index, int) or not 0 <= mesh_index < len(meshes):
-            return None, None
-        primitives = meshes[mesh_index].get("primitives") or []
-        material = primitives[0].get("material") if primitives else None
-        if not isinstance(material, int) or not 0 <= material < len(materials):
-            return None, None
-        pbr = materials[material].get("pbrMetallicRoughness") or {}
-        index = (pbr.get("baseColorTexture") or {}).get("index")
-        if not isinstance(index, int) or not 0 <= index < len(textures):
-            index = None
-        return material, index
+    def plane_files(plane: Any) -> List[str]:
+        """The file names one plane of the record names, folder-less, each
+        once: its silhouette, the silhouette atlas, its horizon map
+        (``FbxMedia.DEPENDENCY_FIELDS``, the walk the FBX embeds them by)."""
+        from pythontk.file_utils.mesh_convert.fbx_media import FbxMedia
 
-    def _bind_shadow_texture(
-        self, edit: "GlbEdit", src: str, raw: bytes, data: bool
-    ) -> int:
-        """Embed the already-encoded bytes of *src*; return a texture index.
+        if not isinstance(plane, dict):
+            return []
+        return FbxMedia.named_files({SceneRecords.SHADOWS.key: [{"planes": [plane]}]})
 
-        The bytes go in as they are -- never decoded, never re-encoded: a
-        horizon map is DATA (span heights, a distance field and a pyramid
-        packed into its channels) and a silhouette was sized by the rasterizer. *data* binds
-        through :attr:`SHADOW_DATA_SAMPLER`; a colour map takes the clamp
-        sampler the atlas precedent uses. A texture this call appended is
-        simply retargeted (nothing else samples through it yet); a texture
-        the embed deduped onto -- the file already held these bytes -- is
-        left as it is and a data texture over the same image is found or
-        added beside it, so a material sharing that image keeps its sampler.
-        """
-        mime = "image/jpeg" if src.lower().endswith((".jpg", ".jpeg")) else "image/png"
-        name = os.path.basename(src)
-        textures = edit.gltf.setdefault("textures", [])
-        before = len(textures)
-        index = self._mc._images._embed_image_bytes(
-            edit, src, raw, mime=mime, name=name, clamp=True
-        )
-        if not data:
-            return index
-        samplers = edit.gltf.setdefault("samplers", [])
-        wanted = dict(self._mc.SHADOW_DATA_SAMPLER)
-        sampler = next((i for i, s in enumerate(samplers) if s == wanted), None)
-        if sampler is None:
-            samplers.append(wanted)
-            sampler = len(samplers) - 1
-        if index >= before:
-            textures[index]["sampler"] = sampler
-            return index
-        image = textures[index].get("source")
-        for i, texture in enumerate(textures):
-            if texture.get("source") == image and texture.get("sampler") == sampler:
-                return i
-        textures.append(
-            {"source": image, "sampler": sampler, "name": os.path.splitext(name)[0]}
-        )
-        return len(textures) - 1
+    @classmethod
+    def _mime_type(cls, name: str) -> str:
+        """The media type the file *name* rides as (:attr:`MIME_TYPES`; PNG,
+        what the rigs write, for any other extension)."""
+        return cls.MIME_TYPES.get(os.path.splitext(name)[1].lower(), "image/png")
 
     @staticmethod
-    def _texture_for_named_image(edit: "GlbEdit", basename: Any) -> Optional[int]:
-        """Index of a texture sampling the image *basename* names, or ``None``.
-
-        The atlas a record names is normally ALREADY in the GLB -- the FBX
-        embedded it, because the DCC's plane material points its file node at
-        it -- so it is found here before any directory is searched. Matched on
-        the image's glTF name, then on its ``uri``'s basename, case-folded
-        (the converter names an embedded image by its source file). An image
-        no texture samples gets one appended, inheriting the file's own
-        sampler for it where there is one.
-        """
-        if not isinstance(basename, str) or not basename:
-            return None
-        wanted = os.path.basename(basename).casefold()
+    def _image_bytes(edit: GlbEdit, name: str) -> Optional[bytes]:
+        """The bytes of the glTF image *edit* already holds as the file *name*,
+        or ``None``: an FBX that embedded a plane's map for its material
+        arrives with it as an image the converter named by its source file
+        (matched on the image's name, with or without its extension, or its
+        ``uri``'s file name, without case) -- the FBX's own copy, which the
+        pass carries before any loose one."""
+        media = SceneRecords.GLB_MEDIA
+        wanted = media.fold(name)
         stem = os.path.splitext(wanted)[0]
-        for index, image in enumerate(edit.images):
-            name = str(image.get("name") or "")
-            uri = os.path.basename(str(image.get("uri") or "").split("?", 1)[0])
-            candidates = {name.casefold(), os.path.splitext(name)[0].casefold()}
-            if uri:
-                candidates.add(uri.casefold())
+        for image in edit.images:
+            label = str(image.get("name") or "").lower()
+            uri = str(image.get("uri") or "")
+            candidates = {label, os.path.splitext(label)[0]}
+            if uri and not uri.startswith("data:"):
+                candidates.add(media.fold(uri.split("?", 1)[0]))
             if wanted in candidates or stem in candidates:
-                return edit.texture_for_image(index)
+                return edit.image_bytes(image)
         return None
-
-    def _shadow_texture_slots(self, block: Any) -> List[Dict[str, Any]]:
-        """Every dict in an ``extras.shadows`` block holding a
-        ``texture_index``: a projected plane's colour map (its atlas once
-        packed) and a horizon plane's map.
-
-        Yields the CONTAINERS rather than the values, so one walk serves both
-        readers of this block: the optimiser asks which textures are bound
-        and must be kept byte for byte, and the prune has to REWRITE those
-        numbers when it renumbers the survivors. Anything but a block yields
-        nothing.
-        """
-        slots: List[Dict[str, Any]] = []
-        for plane in block.get("planes") or [] if isinstance(block, dict) else []:
-            if not isinstance(plane, dict):
-                continue
-            horizon = (
-                plane.get("horizon") if isinstance(plane.get("horizon"), dict) else {}
-            )
-            for holder in (plane, horizon):
-                value = holder.get("texture_index")
-                if isinstance(value, int) and not isinstance(value, bool):
-                    slots.append(holder)
-        return slots
-
-    def _shadow_texture_indices(self, block: Any) -> Set[int]:
-        """Every texture index an ``extras.shadows`` block binds: a projected
-        plane's colour map and a horizon plane's map -- the set the texture
-        optimiser keeps byte for byte."""
-        return {h["texture_index"] for h in self._shadow_texture_slots(block)}
 
     def apply_glb_shadows(
         self, glb: GlbTarget, *, search_dirs: Sequence[str] = ()
     ) -> Optional[Dict[str, Any]]:
-        import copy
-
-        from pythontk.geo_utils.shadow_record import ShadowBlockPlane
-        from pythontk.img_utils._img_utils import ImgUtils
-
-        identity = [1.0, 1.0, 0.0, 0.0]
-
-        def _rect(value: Any) -> List[float]:
-            try:
-                rect = [float(v) for v in value]
-            except (TypeError, ValueError):
-                rect = []
-            return ImgUtils.flip_rect_v(rect if len(rect) == 4 else identity)
-
+        media = SceneRecords.GLB_MEDIA
+        shared = self._mc._media  # the resolution and transport every record shares
+        # ONE session for the read and the write: the record is read from the
+        # very GLB being edited.
         with self._mc.open_glb(glb) as edit:
             gltf = edit.gltf
-            payload = self._mc._current_record(gltf, SceneRecords.SHADOWS)
-            if payload is None:
+            # A plane drawn from a misread record looks like a bad bake rather
+            # than a version problem: another schema -- or a record the
+            # current shape refuses, in either container -- is refused, said.
+            record = self._shadow_record(gltf, warn=True)
+            if not record:
                 return None
-            try:
-                unit_scale = float(payload.get("unit_scale", 1.0))
-            except (TypeError, ValueError):
-                unit_scale = 0.0
-            if not unit_scale > 0.0:
-                logger.warning(
-                    "%s: unit_scale %r is not a positive number; read as 1.0.",
-                    SceneRecords.SHADOWS.key,
-                    payload.get("unit_scale"),
-                )
-                unit_scale = 1.0
-            records = [r for r in (payload.get("planes") or []) if isinstance(r, dict)]
+            # The record as it stands, under its key in the root extras: one
+            # layout, two containers (``RecordSpec.glb_verbatim``).
+            record = SceneRecords.put_glb_block(gltf, SceneRecords.SHADOWS, record)
+            edit.dirty = True
+            planes = [p for p in record.get("planes") or [] if isinstance(p, dict)]
 
+            # The FBX's own copy first, as the atlas always was: an image the
+            # GLB holds under the file's name, then the caller's search paths
+            # in its order -- the conversion hands the files the FBX embeds
+            # first -- then the file's own folder.
             dirs = [d for d in search_dirs if d]
             dirs.append(os.path.dirname(os.path.abspath(edit.path)))
-            #: (basename, data) -> texture index, or None once warned missing.
-            bound: Dict[Tuple[str, bool], Optional[int]] = {}
 
-            def _bind(basename: Any, data: bool) -> Optional[int]:
-                """Texture index for the loose file *basename*, embedded on
-                first use; a file that is nowhere is warned once."""
-                if not isinstance(basename, str) or not basename:
-                    return None
-                key = (basename, data)
-                if key in bound:
-                    return bound[key]
-                src = next(
-                    (
-                        p
-                        for d in dirs
-                        for p in [os.path.join(d, basename)]
-                        if os.path.isfile(p)
-                    ),
-                    None,
-                )
-                if src is None:
+            #: folded file name -> (the record's spelling, the planes naming
+            #: it): each file rides once, however many planes share it (an
+            #: atlas), and only for a plane this file carries -- a plane
+            #: elsewhere would ship dead bytes.
+            wanted: Dict[str, Tuple[str, List[str]]] = {}
+            out_of_scope = 0
+            for plane, nodes, status, leaves in shared.resolved(gltf, planes):
+                name = plane.get("name")
+                if status == "ambiguous":
                     logger.warning(
-                        "Shadow map %r not found in %s -- the plane(s) using it "
-                        "keep their DCC material.",
-                        basename,
-                        dirs,
-                    )
-                    bound[key] = None
-                    return None
-                with open(src, "rb") as fh:
-                    raw = fh.read()
-                bound[key] = self._bind_shadow_texture(
-                    edit, os.path.abspath(src), raw, data=data
-                )
-                return bound[key]
-
-            nodes = gltf.get("nodes") or []
-            planes: List[Dict[str, Any]] = []
-            out_of_scope: List[str] = []
-            skipped = 0
-            for record in records:
-                plane = copy.deepcopy(record)
-                name, kind = plane.get("name"), plane.get("type")
-                if not isinstance(name, str) or not name:
-                    logger.warning(
-                        "%s: a plane record has no name; skipped.",
-                        SceneRecords.SHADOWS.key,
-                    )
-                    skipped += 1
-                    continue
-                node_indices = self._nodes_named(gltf, name, mesh_only=True)
-                if not node_indices:
-                    out_of_scope.append(name)
-                    logger.debug(
-                        "Shadow plane %r: no mesh node by that name in the GLB.", name
-                    )
-                    continue
-                source_node = self._shadow_single_node(
-                    gltf, plane.get("source"), name, "source"
-                )
-                contact_node = self._shadow_single_node(
-                    gltf, plane.get("contact"), name, "contact"
-                )
-                atlas = (
-                    plane.get("atlas") if isinstance(plane.get("atlas"), dict) else None
-                )
-                horizon = (
-                    plane.get("horizon")
-                    if isinstance(plane.get("horizon"), dict)
-                    else None
-                )
-                horizon_texture = (
-                    _bind(horizon.get("texture"), data=True) if horizon else None
-                )
-                # The ATLAS is the plane's colour map once the rig is packed:
-                # its rect names a tile OF THAT IMAGE, so a manifest pointing
-                # at the plane's own full-frame PNG instead makes the rect
-                # meaningless (and, in the viewer, unbatchable -- planes batch
-                # by the texture they sample). Resolved from the file first,
-                # then from the search dirs; a record with no atlas, or one
-                # whose atlas is nowhere, keeps the old chain below. A horizon
-                # plane samples no colour map (the march shades it), so none
-                # is looked up -- or embedded -- for it.
-                atlas_texture = None
-                if atlas and kind == "projected":
-                    atlas_texture = self._texture_for_named_image(
-                        edit, atlas.get("texture")
-                    )
-                    if atlas_texture is None:
-                        atlas_texture = _bind(atlas.get("texture"), data=False)
-                if kind == "horizon" and horizon_texture is None:
-                    logger.warning(
-                        "Shadow plane %r: its horizon map is not bound; skipped "
-                        "(the silhouette fallback stays).",
+                        "Shadow plane %r: nothing tells its plane apart among the "
+                        "GLB node(s) %s -- ambiguous, its maps not embedded.",
                         name,
+                        ", ".join(sorted(leaves)),
                     )
-                    skipped += 1
                     continue
-                for node_index in node_indices:
-                    texture_index = None
-                    if kind == "projected":
-                        _material, base_texture = self._shadow_plane_material(
-                            gltf, nodes[node_index]
-                        )
-                        texture_index = atlas_texture
-                        if texture_index is None:
-                            texture_index = (
-                                base_texture
-                                if base_texture is not None
-                                else _bind(plane.get("texture"), data=False)
-                            )
-                    if kind == "projected" and texture_index is None:
-                        logger.warning(
-                            "Shadow plane %r (node %d): no colour map -- neither the "
-                            "material's base colour nor %r in %s; skipped.",
-                            name,
-                            node_index,
-                            plane.get("texture"),
-                            dirs,
-                        )
-                        skipped += 1
-                        continue
-                    # The block's plane: the record's, bound by index -- the
-                    # names the indices replace, and the atlas tile the quad's
-                    # own UVs already address, pruned by the block's shape.
-                    entry = copy.deepcopy(plane)
-                    entry.update(
-                        {
-                            "node": node_index,
-                            "source_node": source_node,
-                            "contact_node": contact_node,
-                            "texture_index": texture_index,
-                        }
-                    )
-                    if horizon:
-                        entry["horizon"] = {
-                            **horizon,
-                            "rect": _rect(horizon.get("rect")),
-                            "texture_index": horizon_texture,
-                        }
-                    planes.append(ShadowBlockPlane.prune(entry))
+                if status == "absent" or not nodes:
+                    out_of_scope += 1
+                    continue
+                for file in self.plane_files(plane):
+                    entry = wanted.setdefault(media.fold(file), (file, []))
+                    entry[1].append(str(name))
 
-            extras = gltf.get("extras")
-            if not isinstance(extras, dict):
-                extras = gltf["extras"] = {}
+            missing: List[Tuple[str, List[str]]] = []
+            for file, names in wanted.values():
+                if media.views(gltf, file):
+                    # The file's own (a second pass adds nothing) -- or a
+                    # tie no reader binds, which this says.
+                    shared.held(gltf, file, "Shadow map")
+                    continue
+                data = self._image_bytes(edit, file)
+                if data is None:
+                    path = shared.locate(dirs, file)
+                    if path is not None:
+                        with open(path, "rb") as fh:
+                            data = fh.read()
+                if data is None:
+                    missing.append((file, names))
+                    continue
+                # As it is: a horizon map is data, a silhouette was sized by
+                # the rasterizer -- neither is decoded or re-encoded.
+                shared.put(edit, file, data, self._mime_type(file), kind="Shadow map")
+
+            for file, names in missing:
+                logger.warning(
+                    "Shadow map %r not found in the file or %s -- the plane(s) "
+                    "naming it (%s) draw without it.",
+                    file,
+                    dirs,
+                    ", ".join(names),
+                )
             if out_of_scope:
                 logger.info(
-                    "Shadow metadata covers %d plane(s) not in this export "
-                    "(scene-wide channel, exported subset); ignored.",
-                    len(out_of_scope),
+                    "Shadow record covers %d plane(s) not in this export "
+                    "(scene-wide record, exported subset); ignored.",
+                    out_of_scope,
                 )
-            if planes:
-                edit.dirty = True
-                return SceneRecords.put_glb_block(
-                    gltf,
-                    SceneRecords.SHADOWS,
-                    {"unit_scale": unit_scale, "planes": planes},
-                )
-            if extras.pop(SceneRecords.SHADOWS.key, None) is not None:
-                edit.dirty = True
-            if skipped:
-                logger.warning(
-                    "Shadow rigs NOT wired: %d plane(s) in this GLB, none bound.",
-                    skipped,
-                )
-            return None
+            return record
+
+    def media_findings(self, gltf: dict) -> Tuple[List[str], List[str]]:
+        """``(problems, notes)``: the files *gltf*'s ``shadows`` record names,
+        held to the media transport (``SceneRecords.GLB_MEDIA``).
+
+        A file several bufferViews hold is held by none; a view a named file
+        rides must state the image it is (:attr:`MIME_TYPES`) and no scale --
+        a reader decodes by what the view states. A map a plane here reads
+        that rides nothing is a note (the build warned of it: that plane draws
+        without it).
+        """
+        from pythontk.file_utils.mesh_convert.fbx_media import FbxMedia
+
+        record = SceneRecords.glb_block(gltf, SceneRecords.SHADOWS)
+        if not record:
+            return [], []
+        media = SceneRecords.GLB_MEDIA
+        images = sorted(set(self.MIME_TYPES.values()))
+
+        def an_image(extras: Dict[str, Any]) -> Optional[str]:
+            mime = extras.get(media.mime_type)
+            if mime in images and media.scale not in extras:
+                return None
+            return (
+                f"states {mime!r}"
+                + (" with a scale" if media.scale in extras else "")
+                + f", not the image it is ({', '.join(images)}, no scale)"
+            )
+
+        named = FbxMedia.named_files({SceneRecords.SHADOWS.key: [record]})
+        planes = [p for p in record.get("planes") or [] if isinstance(p, dict)]
+        reading = {
+            file
+            for plane, nodes, status, _leaves in self._mc._media.resolved(gltf, planes)
+            if nodes and status not in ("ambiguous", "absent")
+            for file in self.plane_files(plane)
+        }
+        return self._mc._media.findings(
+            gltf,
+            SceneRecords.SHADOWS,
+            {name: an_image for name in named},
+            reading,
+            readers="planes",
+            without="draw without them",
+        )

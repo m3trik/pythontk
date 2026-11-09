@@ -86,6 +86,17 @@ class TestJobQueue(unittest.TestCase):
         self.assertEqual(self.queue.status(bad), "failed")
         self.assertEqual(self.queue.wait(good, timeout=10), {"ok": True})
 
+    def test_a_finished_jobs_whole_record_reads_back(self):
+        """What a worker wrote beside the result (a non-Python worker's extra
+        fields: the lines its host's console printed) reads back with its state."""
+        job = self.queue.submit({})
+        self.assertIsNone(self.queue.outcome(job), "not finished")
+        with open(os.path.join(self.root, job + JobQueue.SUFFIXES["failed"]), "w", encoding="utf-8") as f:
+            json.dump({"error": "no shape", "console": [{"type": "Error", "message": "x"}]}, f)
+        record = self.queue.outcome(job)
+        self.assertEqual(record["state"], "failed")
+        self.assertEqual(record["console"], [{"type": "Error", "message": "x"}])
+
     def test_stop_ends_the_worker_and_says_so(self):
         thread = self.serve(lambda j: {})
         self.queue.wait(self.queue.submit({}), timeout=10)

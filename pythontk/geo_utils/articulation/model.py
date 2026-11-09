@@ -3,25 +3,42 @@
 """The articulated-rig joint model and its grab solver -- pure math, no DCC.
 
 A rig is a tree of joints in RIG SPACE (the space the root joints' parent
-defines). Each joint carries a rest frame -- ``t``, its translate in the
-parent's space, and ``q``, its rotation (the DCC's joint orient) -- and a set
-of CHANNELS, the only values an animator or a grab ever changes:
+defines). Each joint carries a rest frame -- ``t``, its translate in its
+parent joint's frame, and ``q``, its rotation (the DCC's joint orient) -- an
+ANCHOR frame ``A`` in that rest frame (``anchor``: a point ``a.t`` and an
+orientation ``a.q``) and a set of CHANNELS, the only values an animator or a
+grab ever changes:
 
 ``rx`` / ``ry`` / ``rz``
-    degrees about the rest frame's own axes, composed in the joint's
-    ``rotate_order`` exactly as Maya composes them (``"xyz"`` applies x first);
+    degrees about the anchor's axes through its point, composed in the
+    joint's ``rotate_order`` exactly as Maya composes them (``"xyz"`` applies
+    x first);
 ``tx`` / ``ty`` / ``tz``
-    a slide along the rest frame's axes, in the parent's units.
+    a slide along the anchor's axes, in the rig's units (a record's metres).
 
-so a joint's local transform is::
+A joint's local transform is ``rest . A . pose(channels) . A^-1``, where
+``pose`` is the slide after the turn ``E = R(rotate_order; rx, ry, rz)``::
 
-    rotation    = q (x) R(rotate_order; rx, ry, rz)
+    C           = a.q (x) E (x) a.q^-1          (the turn, in the rest frame)
+    rotation    = q (x) C
+    translation = t + q . (a.t - C . a.t + a.q . (tx, ty, tz))
+
+With the identity anchor (``a.t = 0``, ``a.q = (0, 0, 0, 1)``) that is::
+
+    rotation    = q (x) E
     translation = t + q . (tx, ty, tz)
 
 which is Maya's ``[R][JO][T]`` for a joint whose ``jointOrient`` is ``q`` --
 and, identically, the local TRS the FBX hop delivers (Unity folds the orient
-into ``localRotation``, FBX2glTF into the node's ``rotation``). A joint whose
-channels are all 0 stands at rest.
+into ``localRotation``, FBX2glTF into the node's ``rotation``). The model takes
+that path for an identity anchor, so it poses, reads and solves such a rig bit
+for bit as it did before anchors (version 1). An anchor lets a part turn about
+a point and axes other than its own pivot's: a flat model (every part a child
+of the root, its pivot anywhere) is a rig of identity rests whose hinges are
+its anchors. Either way a joint's pose is its parent JOINT's times its local
+(:meth:`ArticulationModel.world`), never its node's scene parent's: a runtime
+places each part from the joint chain. A joint whose channels are all 0 stands
+at rest.
 
 The STATE is one float per channel, joint by joint in channel order
 (:attr:`ArticulationModel.channels`). Everything here maps a state to poses
@@ -34,7 +51,24 @@ and back, and solves the state that brings a grabbed point to a target:
 - :meth:`ArticulationModel.solve` -- the grab: damped least squares over the
   channels between the root and the grabbed link, with limits never left. A
   grabbed link hanging off a ball joint takes the hand's rotation, and the
-  rest of the chain places the ball's centre (the wrist split).
+  rest of the chain places the ball's centre -- its anchor's point -- (the
+  wrist split).
+
+Prior art for the anchor frame (CODE_STANDARD §15), weighed before it was
+declared: USD Physics joints state each body's joint frame as a point and an
+orientation in that body's space (``UsdPhysicsJoint`` ``localPos0`` /
+``localRot0``, ``localPos1`` / ``localRot1``), their axis named in it; Unity's
+``ArticulationBody`` the same (``anchorPosition`` / ``anchorRotation``, with
+the parent's ``parentAnchorPosition`` / ``parentAnchorRotation``); glTF's
+``KHR_physics_rigid_bodies`` (a draft) a joint's frames as nodes it connects.
+FBX has a pivot POINT (``RotationPivot`` / ``RotationOffset``) and pre- and
+post-rotations, but no pivot frame a channel turns in, and FBX2glTF bakes the
+pivots into the nodes' TRS, so nothing of them reaches a GLB. The anchor is
+the USD / ``ArticulationBody`` frame on the child's side alone -- a point and
+an orientation in the joint's REST frame -- since the parent's side is the
+rest itself (``t``, ``q``) and the rig's joints are kinematic (no drive, no
+mass): what an importer of either fills one from (ArticulationBody stays a
+later door).
 
 Every runtime runs a PORT of this module and is pinned against it by golden
 cases (pythontk ``test_articulated_rig_web.py``, unitytk
@@ -197,13 +231,16 @@ class ArticulationModel(_ArticulationModelInternal):
         {"name": "magnifier",
          "joints": [{"name": "magnifier_base_jnt", "parent": null,
                      "t": [x, y, z], "q": [x, y, z, w],
+                     "anchor": {"t": [0, 0, 0], "q": [0, 0, 0, 1]},
                      "rotate_order": "zyx",
                      "channels": [{"channel": "rx", "min": -180, "max": 180,
                                    "weight": 1.0}, ...]}, ...],
          "grab": [...]}
 
     ``parent`` is an earlier joint's index or null (a root: its parent is the
-    rig space); ``min`` / ``max`` are null for an unbounded channel;
+    rig space); ``anchor`` is ``{"t": [x, y, z], "q": [x, y, z, w]}`` in the
+    rest frame (the identity for a joint on its pivot);
+    ``min`` / ``max`` are null for an unbounded channel;
     ``weight`` is how readily the grab moves that channel against the others.
     ``grab`` is the runtimes' business and read here only by
     :meth:`from_record`. A rig is the shape the record declares
@@ -217,8 +254,10 @@ class ArticulationModel(_ArticulationModelInternal):
         rig: One rig mapping, as above.
 
     Raises:
-        ValueError: A rig its declared shape refuses (each problem named), a
-            joint whose parent is not an earlier joint, an unknown channel or
+        ValueError: A rig its declared shape refuses (each problem named; a
+            joint with no anchor is a version 1 record's, which is
+            re-exported), a joint whose parent is not an earlier joint, an
+            unknown channel or
             rotate order, a channel named twice on one joint, or a limit whose
             ``min`` exceeds its ``max``.
     """
@@ -256,10 +295,16 @@ class ArticulationModel(_ArticulationModelInternal):
         problems = ArticulationRig.validate(rig).errors
         if problems:
             label = rig.get("name") if isinstance(rig, Mapping) else None
+            fix = (
+                " A joint without an anchor is a version 1 record's: re-export it."
+                if any("'anchor'" in p for p in problems)
+                else ""
+            )
             raise ValueError(
                 f"Rig {label!r} is not the shape a reader reads: "
                 + "; ".join(problems)
                 + "."
+                + fix
             )
         self.name = str(rig.get("name") or "")
         self.joints: List[Dict[str, Any]] = []
@@ -285,6 +330,11 @@ class ArticulationModel(_ArticulationModelInternal):
             raise ValueError(f"Joint {name!r}: unknown rotate order {order!r}.")
         t = tuple(float(v) for v in (spec.get("t") or _ORIGIN))
         q = Quaternion.normalize(tuple(float(v) for v in (spec.get("q") or _IDENTITY)))
+        anchor = spec.get("anchor") or {}
+        anchor_t = tuple(float(v) for v in (anchor.get("t") or _ORIGIN))
+        anchor_q = Quaternion.normalize(
+            tuple(float(v) for v in (anchor.get("q") or _IDENTITY))
+        )
         slots: List[Tuple[int, str]] = []
         seen = set()
         for entry in spec.get("channels") or []:
@@ -308,7 +358,19 @@ class ArticulationModel(_ArticulationModelInternal):
             self._weights.append(max(0.0, 1.0 if weight is None else float(weight)))
             slots.append((slot, channel))
         self.joints.append(
-            {"name": name, "parent": parent, "t": t, "q": q, "rotate_order": order}
+            {
+                "name": name,
+                "parent": parent,
+                "t": t,
+                "q": q,
+                # ``None`` for the identity: the anchorless path, bit for bit.
+                "anchor": (
+                    None
+                    if self.is_identity({"t": anchor_t, "q": anchor_q})
+                    else (anchor_t, anchor_q)
+                ),
+                "rotate_order": order,
+            }
         )
         self._slots.append(slots)
 
@@ -326,6 +388,26 @@ class ArticulationModel(_ArticulationModelInternal):
             if name is None or rig.get("name") == name:
                 return cls(rig)
         raise KeyError(f"No articulated rig {name!r} in the record.")
+
+    @staticmethod
+    def is_identity(anchor: Optional[Mapping[str, Any]]) -> bool:
+        """Whether *anchor* (``{"t", "q"}``, as a record states it) is the
+        identity -- ``t`` exactly 0, ``q`` exactly the identity rotation once
+        normalised, either sign (``(0, 0, 0, 1)``, ``(0, 0, 0, -1)``,
+        ``(0, 0, 0, 2)``: the model normalises every quaternion it reads, and
+        ``q`` and ``-q`` are one rotation) -- the anchor of a joint whose part
+        nests on its pivot. ``None`` (no anchor stated) is not: a record
+        states every joint's."""
+        if not isinstance(anchor, Mapping):
+            return False
+        try:
+            t = tuple(float(v) for v in anchor.get("t"))
+            q = tuple(float(v) for v in anchor.get("q"))
+        except (TypeError, ValueError):
+            return False
+        if len(t) != 3 or len(q) != 4 or t != _ORIGIN:
+            return False
+        return q[:3] == _ORIGIN and q[3] != 0.0 and math.isfinite(q[3])
 
     # ---------------------------------------------------------------- queries
     def joint_index(self, name: str) -> int:
@@ -373,16 +455,33 @@ class ArticulationModel(_ArticulationModelInternal):
 
     # ---------------------------------------------------------------- forward
     def local(self, state: Sequence[float], joint: int) -> Tuple[Vec, Quat]:
-        """Joint *joint*'s local ``(translation, rotation)`` at *state*."""
+        """Joint *joint*'s local ``(translation, rotation)`` at *state*: ``rest
+        . A . pose(channels) . A^-1`` (this module's docstring)."""
         spec = self.joints[joint]
         values = self._values(state, joint)
-        rotation = Quaternion.multiply(
-            spec["q"],
-            Quaternion.from_euler(spec["rotate_order"], self._degrees(values)),
-        )
+        turn = Quaternion.from_euler(spec["rotate_order"], self._degrees(values))
         slide = (values.get("tx", 0.0), values.get("ty", 0.0), values.get("tz", 0.0))
-        translation = self._add(spec["t"], Quaternion.rotate(spec["q"], slide))
+        anchor = spec["anchor"]
+        if anchor is None:
+            rotation = Quaternion.multiply(spec["q"], turn)
+            translation = self._add(spec["t"], Quaternion.rotate(spec["q"], slide))
+            return translation, rotation
+        at, aq = anchor
+        turned = self._conjugated(aq, turn)
+        offset = self._add(
+            self._sub(at, Quaternion.rotate(turned, at)), Quaternion.rotate(aq, slide)
+        )
+        rotation = Quaternion.multiply(spec["q"], turned)
+        translation = self._add(spec["t"], Quaternion.rotate(spec["q"], offset))
         return translation, rotation
+
+    @staticmethod
+    def _conjugated(frame: Sequence[float], turn: Sequence[float]) -> Quat:
+        """*turn* about *frame*'s axes, stated in *frame*'s parent: ``frame
+        (x) turn (x) frame^-1``."""
+        return Quaternion.multiply(
+            Quaternion.multiply(frame, turn), Quaternion.conjugate(frame)
+        )
 
     def pose(self, state: Sequence[float]) -> List[Tuple[Vec, Quat]]:
         """Every joint's local ``(translation, rotation)`` at *state*."""
@@ -446,14 +545,25 @@ class ArticulationModel(_ArticulationModelInternal):
             relative = Quaternion.multiply(
                 Quaternion.conjugate(spec["q"]), Quaternion.normalize(q)
             )
+            offset = Quaternion.rotate(
+                Quaternion.conjugate(spec["q"]), self._sub(t, spec["t"])
+            )
+            anchor = spec["anchor"]
+            if anchor is None:
+                turn, slide = relative, offset
+            else:
+                # Undo the anchor: the turn about its axes, and the slide
+                # along them once the turn's swing of its point is taken out.
+                at, aq = anchor
+                back = Quaternion.conjugate(aq)
+                turn = self._conjugated(back, relative)
+                swung = self._add(self._sub(offset, at), Quaternion.rotate(relative, at))
+                slide = Quaternion.rotate(back, swung)
             angles = self._euler_for(
                 spec["rotate_order"],
-                Quaternion.to_matrix(relative),
+                Quaternion.to_matrix(turn),
                 [c for _s, c in slots if c in ROTATE_CHANNELS],
                 {c: state[s] for s, c in slots},
-            )
-            slide = Quaternion.rotate(
-                Quaternion.conjugate(spec["q"]), self._sub(t, spec["t"])
             )
             for slot, channel in slots:
                 if channel in ROTATE_CHANNELS:
@@ -461,31 +571,6 @@ class ArticulationModel(_ArticulationModelInternal):
                 else:
                     state[slot] = slide[TRANSLATE_CHANNELS.index(channel)]
         return state
-
-    def scale_of(
-        self, locals_: Sequence[Tuple[Sequence[float], Sequence[float]]]
-    ) -> float:
-        """How many of the runtime's units one of the record's makes, measured
-        on joints that cannot slide: the median ratio of their imported rest
-        translation to the recorded one (1.0 when none can say).
-
-        A runtime measures this rather than trusting its import settings: FBX
-        unit conversion, glTF's metres and a scaled rig parent all land in the
-        same number.
-        """
-        ratios = []
-        for index, (t, _q) in enumerate(locals_):
-            if any(c in TRANSLATE_CHANNELS for _s, c in self._slots[index]):
-                continue
-            rest = self._norm(self.joints[index]["t"])
-            got = self._norm(t)
-            if rest > self.EPS and got > self.EPS:
-                ratios.append(got / rest)
-        if not ratios:
-            return 1.0
-        ratios.sort()
-        mid = len(ratios) // 2
-        return ratios[mid] if len(ratios) % 2 else 0.5 * (ratios[mid - 1] + ratios[mid])
 
     # ------------------------------------------------------------------ solve
     def solve(
@@ -537,9 +622,15 @@ class ArticulationModel(_ArticulationModelInternal):
         rotation = Quaternion.normalize(rotation)
         placed = [s for s in slots if self.channels[s] not in self._rotations(joint)]
         held = rotation
+        # The ball's centre is its anchor's point (its origin, for the
+        # identity), which its own turn leaves where it is: the chain above
+        # places that point.
+        anchor = self.joints[joint]["anchor"]
+        pivot = _ORIGIN if anchor is None else anchor[0]
+        lever = local_point if anchor is None else self._sub(local_point, pivot)
         for _ in range(self.PASSES):
-            centre = self._sub(target, Quaternion.rotate(held, local_point))
-            current = self._dls(current, placed, joint, _ORIGIN, centre, reach)
+            centre = self._sub(target, Quaternion.rotate(held, lever))
+            current = self._dls(current, placed, joint, pivot, centre, reach)
             current = self._turn(current, joint, rotation)
             held = self.world(current)[joint][1]
         # Position wins: a hand turned further than the ball's limits allow
@@ -556,13 +647,33 @@ class ArticulationModel(_ArticulationModelInternal):
 
     def _reach(self, chain: Sequence[int], local_point: Sequence[float]) -> float:
         """The chain's length: its bones (every joint's rest offset below the
-        first) plus the held point's lever -- the scale the solver's damping,
-        tolerance and step are fractions of, so a rig in millimetres and one
-        in metres solve alike."""
-        length = self._norm(local_point)
+        first, pivot to pivot) plus the held point's lever from its joint's
+        pivot -- the scale the solver's damping, tolerance and step are
+        fractions of, so a rig in millimetres and one in metres solve alike.
+        A pivot is a joint's anchor point (its origin, for the identity), so
+        a flat model's bones -- identity rests, anchored hinges -- have their
+        length too."""
+        anchor = self.joints[chain[-1]]["anchor"]
+        lever = local_point if anchor is None else self._sub(local_point, anchor[0])
+        length = self._norm(lever)
         for index in chain[1:]:
-            length += self._norm(self.joints[index]["t"])
+            length += self._norm(self._bone(index))
         return max(length, self.EPS)
+
+    def _bone(self, index: int) -> Sequence[float]:
+        """Joint *index*'s pivot from its parent's, at rest, in the parent's
+        frame: its rest translate where neither carries an anchor."""
+        spec = self.joints[index]
+        parent = spec["parent"]
+        above = None if parent is None else self.joints[parent]["anchor"]
+        if spec["anchor"] is None and above is None:
+            return spec["t"]
+        bone = spec["t"]
+        if spec["anchor"] is not None:
+            bone = self._add(bone, Quaternion.rotate(spec["q"], spec["anchor"][0]))
+        if above is not None:
+            bone = self._sub(bone, above[0])
+        return bone
 
     def _turn(self, state: List[float], joint: int, rotation: Quat) -> List[float]:
         """*state* with *joint*'s rotation channels set so its link's rig-space
@@ -572,6 +683,9 @@ class ArticulationModel(_ArticulationModelInternal):
         parent_q = _IDENTITY if parent is None else self.world(state)[parent][1]
         frame = Quaternion.multiply(parent_q, spec["q"])
         local = Quaternion.multiply(Quaternion.conjugate(frame), rotation)
+        if spec["anchor"] is not None:
+            # The link's turn in its rest frame, read about the anchor's axes.
+            local = self._conjugated(Quaternion.conjugate(spec["anchor"][1]), local)
         out = list(state)
         angles = self._euler_for(
             spec["rotate_order"],
@@ -600,6 +714,13 @@ class ArticulationModel(_ArticulationModelInternal):
         parent = spec["parent"]
         parent_q = _IDENTITY if parent is None else world[parent][1]
         frame = Quaternion.multiply(parent_q, spec["q"])
+        # A turn's pivot: the joint's origin, or its anchor's point (where
+        # the slide puts it; the joint's own turn leaves it there).
+        pivot = world[joint][0]
+        anchor = spec["anchor"]
+        if anchor is not None:
+            frame = Quaternion.multiply(frame, anchor[1])
+            pivot = self._add(pivot, Quaternion.rotate(world[joint][1], anchor[0]))
         if channel in TRANSLATE_CHANNELS:
             axis = [0.0, 0.0, 0.0]
             axis[TRANSLATE_CHANNELS.index(channel)] = 1.0
@@ -613,7 +734,7 @@ class ArticulationModel(_ArticulationModelInternal):
                 axis = [0.0, 0.0, 0.0]
                 axis[wanted] = 1.0
                 world_axis = Quaternion.rotate(frame, axis)
-                return self._cross(world_axis, self._sub(point, world[joint][0]))
+                return self._cross(world_axis, self._sub(point, pivot))
             frame = Quaternion.multiply(
                 frame, Quaternion.from_axis_angle(_AXIS[c], values.get("r" + c, 0.0))
             )

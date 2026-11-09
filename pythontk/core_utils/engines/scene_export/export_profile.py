@@ -164,8 +164,9 @@ class ExportProfile:
         on beside its fix row off (the released default for two pairs) loses
         the check (:attr:`VERIFYING_CHECKS`), a check row off beside its fix
         on gains it, a Baked Reflections level other than the recipe's own
-        stops shipping, and a writability check turned off runs anyway
-        (:attr:`ALWAYS_CHECKS`). A row this panel still offers, or a fix it
+        stops shipping, an Animation Clips mode (retired 2026-11-05) is one
+        take per shot whatever it says, and a writability check turned off
+        runs anyway (:attr:`ALWAYS_CHECKS`). A row this panel still offers, or a fix it
         never had, is not retired here and says nothing.
 
         Parameters:
@@ -235,6 +236,16 @@ class ExportProfile:
                         "where it carries one).",
                     )
                 )
+        clips = stored.get(cls.RETIRED_CLIPS_ROW)
+        if clips not in (None, "") and "apply_declared_takes" not in task_definitions:
+            notes.append(
+                (
+                    "info",
+                    f"it sets Animation Clips to {clips}: the row is retired, and "
+                    "every export ships one take per shot (one whole-timeline "
+                    "take when the scene has no shots).",
+                )
+            )
         for check in cls.ALWAYS_CHECKS:
             if check in stored and not stored[check] and check not in check_definitions:
                 label = check[len("check_") :].replace("_", " ").title()
@@ -262,7 +273,8 @@ class ExportProfile:
 
         Returns:
             The retired keys, in :attr:`VERIFYING_CHECKS` order, then Baked
-            Reflections, then :attr:`ALWAYS_CHECKS`.
+            Reflections, then Animation Clips (:attr:`RETIRED_CLIPS_ROW`),
+            then :attr:`ALWAYS_CHECKS`.
         """
         keys = [
             check
@@ -271,6 +283,8 @@ class ExportProfile:
         ]
         if "baked_reflections" not in task_definitions:
             keys.append("baked_reflections")
+        if "apply_declared_takes" not in task_definitions:
+            keys.append(cls.RETIRED_CLIPS_ROW)
         keys += [c for c in cls.ALWAYS_CHECKS if c not in check_definitions]
         return tuple(keys)
 
@@ -722,6 +736,12 @@ class ExportProfile:
     #: held open fails the write whatever else is overridden, and finding that
     #: out first costs milliseconds instead of the whole pipeline.
     ALWAYS_CHECKS: Tuple[str, ...] = ("check_output_writable",)
+    #: The objectName the Animation Clips row saved its mode under (full /
+    #: shots / both), retired 2026-11-05: every export ships one take per shot
+    #: (:meth:`ExportRun.from_tasks`), so a preset or a panel state still
+    #: carrying it loads with the key ignored, said once
+    #: (:meth:`retired_row_notes`, :meth:`retired_row_keys`).
+    RETIRED_CLIPS_ROW = "animation_clips"
 
     @classmethod
     def scoped_tables(cls, manager: type) -> type:
@@ -811,13 +831,6 @@ class ExportProfile:
         "Auto (Shots → Keyframes)": "auto",
         "Keyframe Extent": "keys",
         "Scene Animation Range": "scene",
-    }
-    #: Animation Clips -- WHAT the deliverable ships. Ordered least-to-most,
-    #: ``both`` LAST so the historical shape keeps the highest index.
-    ANIMATION_CLIPS_OPTIONS: Dict[str, str] = {
-        "Full Sequence Only": "full",
-        "Shots Only": "shots",
-        "Shots + Full Sequence": "both",
     }
     #: Optimize Keys -- the pass switch and its aggressiveness in ONE combo.
     #: The SEMANTICS live in each DCC's ``AnimUtils.OPTIMIZE_LEVELS`` (one
@@ -1094,22 +1107,18 @@ class ExportRun:
     #: Whether convert_to_relative_paths runs, so a write-back texture
     #: conversion relativizes what it rewired (derived: :meth:`with_tasks`).
     relative_paths: bool = False
-    #: The Animation Clips row's own value (``full`` / ``shots`` / ``both``, or
-    #: the boolean a pre-combo preset stored), unresolved -- the exporter
-    #: normalises it once, and hands it to the shots producer as INPUT through
-    #: the export context, so the shot record is declared, never patched
-    #: (derived: :meth:`with_tasks`; ``"both"`` when the row is absent, the
-    #: mode a run that never realizes takes still converts its GLB under).
-    animation_clips_mode: Any = "both"
-    #: The write splits the scene's declared takes: the Animation Clips row ran
-    #: in a shot-bearing mode (derived: :meth:`with_tasks`). Whether the scene
-    #: declares any takes is the DCC's read, off its carrier.
+    #: The write splits the scene's declared takes, one per shot: the
+    #: ``apply_declared_takes`` task runs, which :meth:`from_tasks` arms on
+    #: every FBX write (derived: :meth:`with_tasks`). Whether the scene
+    #: declares any takes is the DCC's read, off its shot store.
     splits_takes: bool = False
     #: The Bake Range row's own value (``auto`` / ``keys`` / ``scene``, the
     #: ``True`` a pre-combo preset stored, or ``None`` for OFF), unresolved:
-    #: the range is set last, and a DCC that must say where its whole-timeline
-    #: take will start before then -- the clip origin -- reads the row from
-    #: here (derived: :meth:`with_tasks`).
+    #: the range is set last, and a DCC that must plan the write before
+    #: then -- the range it bakes, which the bracket's producers read (a
+    #: shotless file's audio cues count from where its one take starts) --
+    #: reads the row
+    #: from here (derived: :meth:`with_tasks`).
     bake_range_mode: Any = None
     #: The Output Filename carried a version counter, so the sidecar routes
     #: through the base stem and a series shares one manifest.
@@ -1283,32 +1292,6 @@ class ExportRun:
         """A copy with *changes* applied (``dataclasses.replace``)."""
         return dataclasses.replace(self, **changes)
 
-    @staticmethod
-    def clip_mode(value: Any) -> str:
-        """An Animation Clips row value as one of its modes (``full`` /
-        ``shots`` / ``both``) -- the one resolver both DCC exporters use.
-
-        Accepts the boolean a pre-combo preset stored: a stored preset is a
-        contract, and a widget-type change must not silently re-point it at a
-        different deliverable. ``True`` kept the whole-timeline stack beside
-        the split takes, so it is ``both``; every FALSY value (the unticked
-        box, and the ``None`` a headless caller passes for OFF) split nothing
-        and shipped the sequence alone, so it is ``full``.
-
-        Raises:
-            ValueError: An unknown mode.
-        """
-        if not value or isinstance(value, bool):
-            return "both" if value else "full"
-        resolved = str(value).strip().lower()
-        modes = tuple(ExportProfile.ANIMATION_CLIPS_OPTIONS.values())
-        if resolved not in modes:
-            raise ValueError(
-                f"Unknown animation clips mode {value!r}; expected one of "
-                f"{', '.join(modes)}."
-            )
-        return resolved
-
     def with_tasks(self, tasks: Mapping[str, Any]) -> "ExportRun":
         """A copy carrying the modes derived from the dispatched *tasks*.
 
@@ -1317,20 +1300,12 @@ class ExportRun:
         its ``AnimUtils.OPTIMIZE_LEVELS``, so there is one table); a
         write-back texture conversion relativizes its rewired paths only when
         ``convert_to_relative_paths`` is on; ``splits_takes`` is whether the
-        Animation Clips row runs in a shot-bearing mode (an unknown mode reads
-        False here -- the task itself raises, naming it).
+        take split (``apply_declared_takes``) runs.
         """
-        try:
-            splits = "apply_declared_takes" in tasks and (
-                self.clip_mode(tasks["apply_declared_takes"]) != "full"
-            )
-        except ValueError:
-            splits = False
         return self.replace(
             optimize_keys_level=tasks.get("optimize_keys", False),
             relative_paths=bool(tasks.get("convert_to_relative_paths", False)),
-            animation_clips_mode=tasks.get("apply_declared_takes", "both"),
-            splits_takes=splits,
+            splits_takes=bool(tasks.get("apply_declared_takes")),
             bake_range_mode=tasks.get("set_bake_animation_range"),
         )
 
@@ -1567,6 +1542,24 @@ class ExportRun:
                     "(its own reflection probe whole, where it carries one).",
                 )
             )
+        # One form: every FBX write splits the scene's shots into one take
+        # each (a scene with none ships one whole-timeline take). The Animation
+        # Clips row (full / shots / both) retired 2026-11-05; a preset or a
+        # headless caller still naming a mode has it ignored, said once.
+        clips = tasks.get("apply_declared_takes", True)
+        if clips is not True:
+            notes.append(
+                (
+                    "info",
+                    f"Animation Clips {clips!r} ignored: the row is retired, and "
+                    "every export ships one take per shot (one whole-timeline "
+                    "take when the scene has no shots).",
+                )
+            )
+        if output_format == "usd":
+            tasks.pop("apply_declared_takes", None)  # a USD layer has no takes
+        else:
+            tasks["apply_declared_takes"] = True
         drop_rig_apparatus = bool(tasks.pop("drop_rig_apparatus", False))
         if drop_rig_apparatus and output_format == "usd":
             # The pass edits a written FBX; a USD layer has none, and its

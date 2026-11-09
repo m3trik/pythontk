@@ -56,7 +56,7 @@ import typing
 import weakref
 from dataclasses import dataclass, field, fields
 from pathlib import PurePath
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Type
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple, Type
 
 # Metadata namespace key — keeps schema metadata from colliding with any other
 # library that reads ``dataclasses.field(metadata=...)``.
@@ -102,6 +102,8 @@ class FieldDoc:
     choices: Optional[Sequence[Any]]
     nested: Optional[Type["SchemaSpec"]]
     nested_is_list: bool = False
+    #: The readers an optional extension serves; empty for every reader.
+    readers: Tuple[str, ...] = ()
 
 
 @dataclass
@@ -388,6 +390,8 @@ class _SchemaSpecInternal(object):
                 fragment["enum"] = list(m["choices"])
             if m["help"]:
                 fragment["description"] = m["help"]
+            if m.get("readers"):
+                fragment["x-readers"] = list(m["readers"])
             properties[name] = fragment
             if m["required"]:
                 required.append(name)
@@ -439,6 +443,60 @@ class _SchemaSpecInternal(object):
                 if arg is not type(None) and cls._specs_in(arg):
                     return cls._pruned_value(arg, value, path, dropped)
         return value
+
+    @staticmethod
+    def _for_reader(node: Any, reader: str) -> Any:
+        """*node* with every property another reader's extension holds left
+        out (an ``x-readers`` that does not name *reader*), at any depth."""
+        if isinstance(node, list):
+            return [_SchemaSpecInternal._for_reader(v, reader) for v in node]
+        if not isinstance(node, dict):
+            return node
+        out = {}
+        for key, value in node.items():
+            if key == "properties" and isinstance(value, dict):
+                value = {
+                    name: prop
+                    for name, prop in value.items()
+                    if not isinstance(prop, dict)
+                    or reader in prop.get("x-readers", (reader,))
+                }
+            out[key] = _SchemaSpecInternal._for_reader(value, reader)
+        return out
+
+    @staticmethod
+    def _reachable_defs(document: Dict[str, Any]) -> Dict[str, Any]:
+        """*document* with only the ``$defs`` its other parts still reach by
+        ``$ref`` (through each other too): a definition only a left-out
+        extension used is left out with it."""
+        defs = document.get("$defs")
+        if not defs:
+            return document
+        prefix = "#/$defs/"
+
+        def refs(node: Any):
+            if isinstance(node, dict):
+                ref = node.get("$ref")
+                if isinstance(ref, str) and ref.startswith(prefix):
+                    yield ref[len(prefix):]
+                for value in node.values():
+                    yield from refs(value)
+            elif isinstance(node, list):
+                for value in node:
+                    yield from refs(value)
+
+        body = {k: v for k, v in document.items() if k != "$defs"}
+        kept: set = set()
+        todo = list(refs(body))
+        while todo:
+            name = todo.pop()
+            if name in kept or name not in defs:
+                continue
+            kept.add(name)
+            todo.extend(refs(defs[name]))
+        if kept:
+            body["$defs"] = {k: v for k, v in defs.items() if k in kept}
+        return body
 
     @staticmethod
     def _strip_specs(node: Any) -> Any:
@@ -763,6 +821,7 @@ class SchemaSpec(_SchemaSpecInternal):
                     choices=m["choices"],
                     nested=schema,
                     nested_is_list=is_list,
+                    readers=tuple(m.get("readers") or ()),
                 )
             )
         return docs
@@ -789,6 +848,8 @@ class SchemaSpec(_SchemaSpecInternal):
             desc = fd.help or ""
             if fd.choices is not None:
                 desc = (desc + f" One of: {', '.join(map(str, fd.choices))}.").strip()
+            if fd.readers:
+                desc = (desc + f" Read only by {', '.join(fd.readers)}.").strip()
             # A spec the annotation alone names (a nullable object, a map's
             # values) is a nested block as much as one ``nested=`` names.
             annotated = (
@@ -815,7 +876,7 @@ class SchemaSpec(_SchemaSpecInternal):
         return "\n".join(lines)
 
     @classmethod
-    def json_schema(cls) -> Dict[str, Any]:
+    def json_schema(cls, reader: Optional[str] = None) -> Dict[str, Any]:
         """This schema as a JSON Schema (draft 2020-12) document.
 
         Derived from the same declaration :meth:`validate` enforces: each
@@ -826,6 +887,14 @@ class SchemaSpec(_SchemaSpecInternal):
         Unknown keys are left allowed, as :meth:`validate` tolerates them.
         It is the form a reader in another language generates its types
         from, so the generated types can never drift from this definition.
+        A field only some readers use names them (``spec_field(readers=)``)
+        as ``x-readers``.
+
+        Parameters:
+            reader: A reader's name (``"unity"``, ``"glb"``): its view, which
+                leaves out every extension that names other readers alone, so
+                the types it generates hold nothing it is not meant to read.
+                ``None``: the whole schema.
 
         Returns:
             dict: ``{"$schema", "title", "description", "type": "object",
@@ -843,7 +912,12 @@ class SchemaSpec(_SchemaSpecInternal):
         document.update(_SchemaSpecInternal._object_schema(cls, defs))
         if defs:
             document["$defs"] = defs
-        return _SchemaSpecInternal._strip_specs(document)
+        document = _SchemaSpecInternal._strip_specs(document)
+        if reader is not None:
+            document = _SchemaSpecInternal._reachable_defs(
+                _SchemaSpecInternal._for_reader(document, reader)
+            )
+        return document
 
     @staticmethod
     def annotation_schema(tp: Any) -> Dict[str, Any]:
@@ -880,6 +954,7 @@ class SchemaSpec(_SchemaSpecInternal):
         validate: Optional[Callable[[Any], List[str]]] = None,
         default: Any = MISSING,
         default_factory: Any = MISSING,
+        readers: Sequence[str] = (),
     ):
         """A :func:`dataclasses.field` carrying schema metadata.
 
@@ -901,7 +976,21 @@ class SchemaSpec(_SchemaSpecInternal):
             choices: Allowed values for a scalar field.
             validate: Callable ``(value) -> list[str]`` returning error strings for
                 polymorphic/irregular fields the generic checks can't express.
+            readers: The readers an optional extension serves (``("glb",)``,
+                or one reader's bare name):
+                data beyond what every reader needs, which the others ignore
+                and their generated types leave out (:meth:`json_schema`).
+                Empty: every reader.
+
+        Raises:
+            SchemaError: An extension declared required: what only some
+                readers use cannot be what every file must carry.
         """
+        readers = (readers,) if isinstance(readers, str) else tuple(readers)
+        if readers and required:
+            raise SchemaError(
+                f"an extension for {', '.join(readers)} cannot be required"
+            )
         meta = {
             _META: {
                 "help": help,
@@ -910,6 +999,7 @@ class SchemaSpec(_SchemaSpecInternal):
                 "nested": nested,
                 "choices": choices,
                 "validate": validate,
+                "readers": readers,
             }
         }
         if default is not MISSING:

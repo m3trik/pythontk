@@ -31,6 +31,7 @@ from pythontk.net_utils.rpc.client import RpcClient
 from pythontk.net_utils.rpc.plugin_core import (
     MainThreadMarshaller,
     OpRegistry,
+    RpcInstances,
     RpcPlugin,
 )
 
@@ -495,6 +496,61 @@ class TestWireContract(_EnvGuard):
             self.assertTrue(self.client.ping(timeout=2.0))
         self.assertNotIn("Traceback", captured.getvalue())
 
+    def _raw_post(self, headers, body=b'{"op": "mark"}'):
+        """POST *body* with exactly *headers*: the status, and whether the op ran."""
+        import http.client  # noqa: PLC0415 -- only these tests craft raw requests
+
+        ran = []
+        self.plugin.registry._ops.pop("mark", None)  # one per request
+        self.plugin.registry.register("mark")(lambda: ran.append(True))
+        host, port = self.plugin.address
+        conn = http.client.HTTPConnection(host, port, timeout=5)
+        try:
+            conn.putrequest("POST", "/", skip_host=True, skip_accept_encoding=True)
+            for name, value in headers.items():
+                conn.putheader(name, value)
+            conn.putheader("Content-Length", str(len(body)))
+            conn.endheaders(body)
+            return conn.getresponse().status, bool(ran)
+        finally:
+            conn.close()
+
+    def test_a_browser_page_cannot_call_an_op(self):
+        """A web page may POST to loopback without asking (a "simple" request:
+        text/plain, no preflight), and a page's request carries ``Origin``: an
+        op that evaluates code would run for any site open in the person's
+        browser while the host app is open. Both are refused before the op."""
+        host, port = self.plugin.address
+        loopback = f"{host}:{port}"
+        cases = {
+            "text/plain body": {"Host": loopback, "Content-Type": "text/plain"},
+            "no content type": {"Host": loopback},
+            "an Origin header": {
+                "Host": loopback,
+                "Content-Type": "application/json",
+                "Origin": "https://example.com",
+            },
+            "a rebound host name": {
+                "Host": f"example.com:{port}",
+                "Content-Type": "application/json",
+            },
+        }
+        for case, headers in cases.items():
+            with self.subTest(case):
+                status, ran = self._raw_post(headers)
+                self.assertGreaterEqual(status, 400)
+                self.assertFalse(ran, f"the op ran for {case}")
+
+    def test_a_plain_client_request_still_runs(self):
+        host, port = self.plugin.address
+        for name in (host, "localhost"):
+            with self.subTest(name):
+                status, ran = self._raw_post(
+                    {"Host": f"{name}:{port}", "Content-Type": "application/json; charset=utf-8"}
+                )
+                self.assertEqual(status, 200)
+                self.assertTrue(ran)
+
     def test_stop_releases_the_port(self):
         self.plugin.stop()
         self.assertFalse(self.plugin.is_running())
@@ -569,6 +625,170 @@ class TestWireContract(_EnvGuard):
         self.assertIn(f"serving on http://{host}:{port}", out.getvalue())
 
 
+class TestInstanceRecords(_EnvGuard):
+    """A plugin found by what it is, not by a port: its record, its token."""
+
+    def setUp(self):
+        super().setUp()
+        os.environ["TEST_RPC_DISABLE_MAIN_THREAD"] = "1"
+        self._cache = os.environ.get(RpcInstances.CACHE_ROOT_ENV_VAR)
+        self.root = tempfile.mkdtemp(prefix="rpc_instances_")
+        os.environ[RpcInstances.CACHE_ROOT_ENV_VAR] = self.root
+        self.plugin = _make_plugin(announce=True)
+        self.plugin.registry.register("math.add")(lambda a, b=1: a + b)
+        self.plugin.start()
+
+    def tearDown(self):
+        self.plugin.stop()
+        if self._cache is None:
+            os.environ.pop(RpcInstances.CACHE_ROOT_ENV_VAR, None)
+        else:
+            os.environ[RpcInstances.CACHE_ROOT_ENV_VAR] = self._cache
+        shutil.rmtree(self.root, ignore_errors=True)
+        super().tearDown()
+
+    def test_the_folder_is_the_users_cache_folder(self):
+        """The staged copy has no pythontk, so it resolves the folder itself."""
+        from pythontk import UserConfig
+
+        self.assertEqual(
+            os.path.normcase(str(RpcInstances.folder())),
+            os.path.normcase(str(UserConfig.cache_dir(RpcInstances.SUBDIR))),
+        )
+        os.environ.pop(RpcInstances.CACHE_ROOT_ENV_VAR)
+        self.assertEqual(
+            os.path.normcase(str(RpcInstances.folder())),
+            os.path.normcase(str(UserConfig.cache_dir(RpcInstances.SUBDIR))),
+        )
+
+    def test_a_started_plugin_is_listed_by_its_label_and_unlisted_at_stop(self):
+        (record,) = RpcClient.instances("test_rpc")
+        self.assertEqual(record["id"], self.plugin.instance_id)
+        self.assertEqual(record["pid"], os.getpid())
+        self.assertEqual(record["port"], self.plugin.address[1])
+        self.assertEqual(RpcClient.instances("another_label"), [])
+        self.plugin.stop()
+        self.assertEqual(RpcClient.instances("test_rpc"), [])
+
+    def test_a_call_without_the_token_is_refused(self):
+        host, port = self.plugin.address
+        with self.assertRaises(RuntimeError) as ctx:
+            RpcClient(port=port, host=host).invoke("math.add", a=1)
+        self.assertIn("token", str(ctx.exception))
+        with self.assertRaises(RuntimeError):
+            RpcClient(port=port, host=host, token="a guess").invoke("math.add", a=1)
+        (record,) = RpcClient.instances("test_rpc")
+        self.assertEqual(RpcClient.for_instance(record).invoke("math.add", a=1), 2)
+
+    def test_an_announced_plugin_without_a_token_refuses_every_call(self):
+        """Fails closed: between servings an announced plugin has no token, and
+        then no call passes, with or without one."""
+        (record,) = RpcClient.instances("test_rpc")
+        token, self.plugin.token = self.plugin.token, None
+        try:
+            for client in (RpcClient.for_instance(record), RpcClient(port=record["port"])):
+                with self.assertRaises(RuntimeError):
+                    client.invoke("math.add", a=1)
+        finally:
+            self.plugin.token = token
+
+    def test_the_hosts_state_is_in_the_record_and_its_identity(self):
+        self.plugin.set_state(project={"path": "C:/a.spp", "uuid": "u1"}, busy=False)
+        (record,) = RpcClient.instances("test_rpc")
+        self.assertEqual(record["state"]["project"]["uuid"], "u1")
+        identity = RpcClient.for_instance(record).invoke("system.identity")
+        self.assertEqual(identity["id"], self.plugin.instance_id)
+        self.assertEqual(identity["state"], record["state"])
+        self.assertNotIn("token", identity)
+
+    def test_a_labelled_client_connects_to_an_announced_plugin_by_its_record(self):
+        client = RpcClient(label="test_rpc", app_label="stub")
+        self.assertTrue(client.connect(timeout=1.0))
+        self.assertEqual((client.port, client.token), (self.plugin.address[1], self.plugin.token))
+        self.assertEqual(client.record["pid"], os.getpid())
+        self.assertIsNone(client._launched_process)
+        self.assertEqual(client.invoke("math.add", a=1), 2)
+
+    def test_a_labelled_launch_binds_the_record_of_the_process_it_started(self):
+        """Never the instance already serving (a person's): the record whose
+        PID is the process this connect launched."""
+        import subprocess
+        import unittest.mock
+
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+        self.addCleanup(child.wait, 10)
+        self.addCleanup(child.kill)
+        (theirs,) = RpcInstances.read("test_rpc")
+        mine = dict(theirs, id="launched", pid=child.pid)
+        threading.Timer(0.3, RpcInstances.write, args=(mine,)).start()
+        client = RpcClient(label="test_rpc", app_label="stub")
+        with unittest.mock.patch("pythontk.AppLauncher.launch", return_value=child):
+            self.assertTrue(client.connect(exe="stub.exe", force_new=True, timeout=5.0, poll_interval=0.05))
+        self.assertEqual(client.record["id"], "launched")
+        self.assertIs(client._launched_process, child)
+
+    def test_a_labelled_client_with_nothing_announced_does_not_reach_a_port(self):
+        self.plugin.stop()
+        client = RpcClient(label="test_rpc", app_label="stub")
+        with self.assertRaises(FileNotFoundError):
+            client.connect(timeout=0.5)
+
+    def test_a_pumped_plugin_serves_from_the_hosts_loop_with_no_thread(self):
+        """A host whose Python cannot keep a thread running (Toolbag ends when a
+        plugin's script returns with one alive) serves from its own update
+        callback: each tick handles what is waiting, on the host's thread."""
+        self.plugin.stop()
+        ticks = []
+        plugin = _make_plugin(announce=True, pump=ticks.append)
+        seen = []
+        plugin.registry.register("where.am_i")(lambda: seen.append(threading.current_thread()) or "here")
+        address = plugin.start()
+        self.addCleanup(plugin.stop)
+        (tick,) = ticks
+        self.assertEqual([t.name for t in threading.enumerate() if t.name.startswith("test_rpc")], [], "no server thread")
+        (record,) = RpcInstances.read("test_rpc")
+        self.assertEqual(record["port"], address[1])
+        answer = {}
+        caller = threading.Thread(
+            target=lambda: answer.update(value=RpcClient.for_instance(record).invoke("where.am_i", timeout=10))
+        )
+        caller.start()
+        deadline = time.monotonic() + 10
+        while caller.is_alive() and time.monotonic() < deadline:
+            tick()  # the host's loop
+            time.sleep(0.01)
+        caller.join(1)
+        self.assertEqual(answer.get("value"), "here")
+        self.assertIs(seen[0], threading.current_thread(), "the op ran on the host's (ticking) thread")
+        started = time.monotonic()
+        plugin.stop()
+        self.assertLess(time.monotonic() - started, 2.0, "a pumped server stops at once")
+        self.assertEqual(RpcInstances.read("test_rpc"), [])
+        tick()  # a tick after stop is harmless
+
+    def test_a_dead_process_record_is_pruned(self):
+        import json
+        import subprocess
+
+        gone = subprocess.Popen([sys.executable, "-c", "pass"])
+        gone.wait()
+        dead = RpcInstances.folder("test_rpc") / "dead.json"
+        dead.write_text(json.dumps({"id": "dead", "pid": gone.pid, "port": 1}))
+        ids = [r["id"] for r in RpcClient.instances("test_rpc")]
+        self.assertEqual(ids, [self.plugin.instance_id])
+        self.assertFalse(dead.exists())
+
+    def test_an_unannounced_plugin_writes_nothing_and_needs_no_token(self):
+        other = _make_plugin(label="other_rpc", env_prefix="TEST_RPC_OTHER")
+        os.environ["TEST_RPC_OTHER_DISABLE_MAIN_THREAD"] = "1"
+        host, port = other.start()
+        try:
+            self.assertEqual(RpcClient.instances("other_rpc"), [])
+            self.assertTrue(RpcClient(port=port, host=host).list_ops())
+        finally:
+            other.stop()
+
+
 class TestRootExport(unittest.TestCase):
     def test_registered_on_package_root(self):
         import pythontk as ptk
@@ -576,6 +796,7 @@ class TestRootExport(unittest.TestCase):
         self.assertTrue(hasattr(ptk, "RpcPlugin"))
         self.assertTrue(hasattr(ptk, "OpRegistry"))
         self.assertTrue(hasattr(ptk, "MainThreadMarshaller"))
+        self.assertTrue(hasattr(ptk, "RpcInstances"))
 
 
 class TestDisconnectPolicy(unittest.TestCase):

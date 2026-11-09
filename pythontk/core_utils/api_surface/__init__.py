@@ -11,6 +11,8 @@ agents call, m3trik's release checks and the runtime-vs-static drift gate.
 * :mod:`.package_surface` -- ``PackageSurface``, ``ModuleSurface``,
   ``ClassSurface``: the static shape, kept in the per-user cache.
 * :mod:`._source_reader` -- the static walk itself (``ast``, nothing imported).
+* :mod:`._csharp_reader` -- the C# a package declares, read the same way (no
+  editor, nothing compiled), as the same shape.
 
 The root registers every public name (``from pythontk import ApiSurface``);
 this package declares none of its own (CODE_STANDARD sections 3 and 4).

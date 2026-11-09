@@ -2,23 +2,27 @@
   Relighting a loaded model in place -- the seam lighting work drives.
 
   A lighting tool (pythontk's look match) tries a lighting in seconds by
-  swapping the bake itself: each lightmapped material's map, and the
-  reflection probe, replaced by linear half-float data the tool sends -- no
-  re-publish, no reload. `restoreLighting` puts the file's own bake back.
-  `renderLinear` reads a view as linear light, before the tone map and
-  without the background: the frame a layer of light is measured in. A swap
-  that brings the bake's lights (`highlights`, layers drawn as the deliverable
-  draws them: MeshConvert.highlight_probe_layers) builds the probe's highlight
-  copies from them, as a load does from the file's -- the frame is what ships.
+  swapping the bake itself: each lightmap, and the reflection probe, replaced
+  by linear half-float data the tool sends -- no re-publish, no reload.
+  `restoreLighting` puts the file's own bake back. `renderLinear` reads a view
+  as linear light, before the tone map and without the background: the frame
+  a layer of light is measured in. A swap that brings the bake's lights
+  (`highlights`) brings the probe's highlight copies with it: complete copies
+  for the nodes each names, as a delivery ships them (pythontk's LookCapture
+  draws them as MeshConvert.highlight_probe_layers does), or layers added to
+  the probe for the materials each names -- the frame is what ships.
 
   Exposed as `viewer.lighting` (api.js).
 */
 
 import * as THREE from 'three';
-import { applyLighting, lightmappedMaterials } from './lightmaps.js';
-import { current } from './model.js';
+import {
+  applyLighting, bindingOf, copyReaders, LIGHTMAP_AS_STORED, lightmappedMaterials, nodeObjects,
+} from './lightmaps.js';
+import { current, materialsOf } from './model.js';
 import { parts } from './parts.js';
 import { addProbe, disposeProbe, loadProbe, prefilterEquirect, releaseProbe, useProbe } from './probe.js';
+import { resolveEntries } from './resolve.js';
 import { renderer, scene } from './scene.js';
 
 //: material -> the map and intensity its file bound, kept at its first swap.
@@ -52,10 +56,14 @@ function halfTexture(image) {
  *   maps: Object<string, string>,
  *   images?: Object<string, HalfImage>,
  *   probe?: (HalfImage & {position: number[], box?: {min: number[], max: number[]} | null}) | null,
- *   highlights?: (HalfImage & {materials: string[]})[],
- * }} lighting `maps`: material name -> image name; `images`: image name -> data;
- *   `highlights`: the probe's highlight layers, each added to `probe` for its
- *   materials (a swap without a probe keeps the one up, copies and all).
+ *   highlights?: (HalfImage & {objects?: {name: string, hierarchy?: string[]}[], materials?: string[]})[],
+ * }} lighting `maps`: the map a material binds -- by the `lightmaps` record's
+ *   file name for it, else by the material's own name -- -> image name;
+ *   `images`: image name -> data; `highlights`: the probe's highlight copies,
+ *   each a COMPLETE copy of `probe` for the nodes `objects` names (as the
+ *   record's highlights name them), or a layer added to `probe` for the
+ *   materials `materials` names (a swap without a probe keeps the one up,
+ *   copies and all).
  * @returns {number} How many materials took a map.
  */
 export function relight({ maps, images = {}, probe = null, highlights = [] }) {
@@ -67,8 +75,11 @@ export function relight({ maps, images = {}, probe = null, highlights = [] }) {
   const previous = made;
   made = Object.values(sources);
   let bound = 0;
+  // The record's file names, joined without regard to case.
+  const byMap = new Map(Object.entries(maps || {}).map(([key, image]) => [key.toLowerCase(), image]));
   for (const material of lightmappedMaterials) {
-    const source = sources[maps[material.name]];
+    const map = bindingOf(material)?.map;
+    const source = sources[(map && byMap.get(map.toLowerCase())) ?? maps[material.name]];
     if (!source || !material.lightMap) {
       // Left out of this swap: the file's own map again, never the texture of
       // an earlier swap, which is freed below.
@@ -94,7 +105,9 @@ export function relight({ maps, images = {}, probe = null, highlights = [] }) {
     if (!own.matrixAutoUpdate) texture.matrix.copy(own.matrix);
     texture.needsUpdate = true;
     material.lightMap = texture;
-    material.lightMapIntensity = 1;  // the data is linear light: no encode scalar to undo
+    // The data is linear light, no encode scalar to undo: drawn as stored,
+    // as the file's own maps are (lightmaps.js LIGHTMAP_AS_STORED).
+    material.lightMapIntensity = LIGHTMAP_AS_STORED;
     made.push(texture);
     bound += 1;
   }
@@ -105,6 +118,14 @@ export function relight({ maps, images = {}, probe = null, highlights = [] }) {
     if (highlights.length) {
       const base = { width: probe.width, height: probe.height, data: floats(probe.data) };
       for (const layer of highlights) {
+        if (Array.isArray(layer.objects)) {
+          // Complete: the nodes it names read it in the probe's place.
+          copies.push({
+            prefiltered: prefilterEquirect(layer.data, layer.width, layer.height, THREE.HalfFloatType),
+            readers: readersOf(layer.objects),
+          });
+          continue;
+        }
         const data = addProbe(base, { width: layer.width, height: layer.height, data: floats(layer.data) });
         if (!data) continue;
         copies.push({
@@ -117,6 +138,31 @@ export function relight({ maps, images = {}, probe = null, highlights = [] }) {
   }
   applyLighting();
   return bound;
+}
+
+/**
+ * The materials the nodes *objects* name wear, in every part on screen:
+ * each resolved in its part's own scene by the record's rule (resolve.js).
+ * @param {{name: string, hierarchy?: string[]}[]} objects
+ * @returns {Set<any>}
+ */
+function readersOf(objects) {
+  const readers = new Set();
+  for (const part of parts) {
+    const parser = part.gltf?.parser;
+    if (!parser?.json) continue;
+    const nodes = new Set(resolveEntries(parser.json, objects).flatMap((found) => found.nodes || []));
+    const byIndex = nodeObjects(part.gltf);
+    for (const node of nodes) {
+      // The loader's own node, not its association map (see lightmaps.js).
+      const object = byIndex[node];
+      if (!object) continue;
+      const meshes = object.isMesh ? [object] : object.children.filter(
+        (child) => child.isMesh && parser.associations.get(child)?.nodes === undefined);
+      for (const mesh of meshes) for (const material of materialsOf(mesh)) readers.add(material);
+    }
+  }
+  return readers;
 }
 
 /** @param {Uint16Array} half RGBA half floats @returns {Float32Array} */
@@ -141,6 +187,7 @@ export async function restoreLighting() {
     own = await loadProbe(part.gltf);
     if (own) break;
   }
+  for (const copy of own?.copies || []) copy.readers = copyReaders(own.gltf, copy.index);
   if (current !== model) {
     // A newer load took the page while the probe decoded: its probe is up,
     // not this file's.
