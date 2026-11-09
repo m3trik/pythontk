@@ -414,8 +414,115 @@ class TestRecord(unittest.TestCase):
         )
         self.assertEqual(sorted(g["node"] for g in entry["grab"]), sorted(PARTS[1:]))
         self.assertEqual(len(ArticulationModel(entry).channels), 2 + 1 + 1 + 1 + 3)
-        res = ptk.ArticulationRecord.validate({"version": 1, "rigs": [entry]})
+        res = ptk.ArticulationRecord.validate({"version": 2, "rigs": [entry]})
         self.assertEqual(res.errors, [])
+
+    def test_the_record_writes_identity_anchors_and_metres(self):
+        """Articulation v2 (2026-11-08): a DCC rig nests its joints on their
+        pivots, so every joint's anchor is the identity; and the record is in
+        metres -- *unit_scale* metres per plan unit, every length scaled (each
+        rest translate and slide limit), no rotation or angle. Added:
+        2026-11-08"""
+        spec, _placed, _planned = _magnifier()
+        plan_units = ArticulationPlan.record(spec)
+        metres = ArticulationPlan.record(spec, unit_scale=0.01)
+        identity = {"t": [0.0, 0.0, 0.0], "q": [0.0, 0.0, 0.0, 1.0]}
+        self.assertTrue(all(j["anchor"] == identity for j in metres["joints"]))
+        slid = 0
+        for a, b in zip(plan_units["joints"], metres["joints"]):
+            _close(self, [v * 0.01 for v in a["t"]], b["t"], 1e-15)
+            self.assertEqual(a["q"], b["q"])
+            for ca, cb in zip(a["channels"], b["channels"]):
+                scale = 0.01 if ca["channel"].startswith("t") else 1.0
+                slid += scale != 1.0 and ca["min"] is not None
+                for key in ("min", "max"):
+                    if ca[key] is None:
+                        self.assertIsNone(cb[key])
+                    else:
+                        self.assertAlmostEqual(cb[key], ca[key] * scale, places=15)
+                self.assertEqual(ca["weight"], cb["weight"])
+        self.assertTrue(slid, "the magnifier has a limited slide")
+        # The same rig, in metres: its pose is the plan's, a hundredth the size.
+        state = [7.0] * len(ArticulationModel(metres).channels)
+        for (p, q), (pm, qm) in zip(
+            ArticulationModel(plan_units).world(state),
+            ArticulationModel(metres).world([
+                v * (0.01 if c.startswith("t") else 1.0)
+                for v, (_j, c) in zip(state, ArticulationModel(metres).channels)
+            ]),
+        ):
+            _close(self, [v * 0.01 for v in p], pm, 1e-12)
+            self.assertTrue(_same_turn(q, qm))
+
+    def test_a_producer_refuses_an_anchor_its_solver_cannot_turn(self):
+        """A DCC's solver (an expression, a driver) turns
+        each joint about its own origin: a rig whose anchor is not the
+        identity is refused, naming its joints and the fix. Added:
+        2026-11-08"""
+        spec, _placed, _planned = _magnifier()
+        entry = ArticulationPlan.record(spec)
+        self.assertIs(ArticulationPlan.refuse_anchors(entry), entry)
+        moved = copy.deepcopy(entry)
+        moved["joints"][2]["anchor"]["t"] = [0.0, 1.0, 0.0]
+        turned = copy.deepcopy(entry)
+        turned["joints"][4]["anchor"]["q"] = [0.0, 0.0, math.sqrt(0.5), math.sqrt(0.5)]
+        for rig, joint in ((moved, 2), (turned, 4)):
+            with self.subTest(joint=joint):
+                with self.assertRaises(ValueError) as raised:
+                    ArticulationPlan.refuse_anchors(rig)
+                message = str(raised.exception)
+                self.assertIn(rig["joints"][joint]["name"], message)
+                self.assertIn("anchor", message)
+
+    def test_a_plan_joint_stating_an_anchor_is_refused_not_dropped(self):
+        """A plan joint carrying an ``anchor`` that is not the identity is
+        refused by the plan itself -- its record, its check -- naming the
+        joint and the fix: the record wrote every joint's identity anchor
+        whatever the plan said, so the anchor was dropped silently and the
+        producers' refusal could never fire. The identity, however spelt
+        (``-q``, an unnormalised ``q``), stands. Added: 2026-11-08"""
+        spec, _placed, _planned = _magnifier()
+        for anchor in (
+            {"t": [0.0, 0.0, 0.0], "q": [0.0, 0.0, 0.0, 1.0]},
+            {"t": [0.0, 0.0, 0.0], "q": [0.0, 0.0, 0.0, -1.0]},
+            {"t": [0.0, 0.0, 0.0], "q": [0.0, 0.0, 0.0, 2.0]},
+        ):
+            with self.subTest(identity=anchor):
+                held = copy.deepcopy(spec)
+                held["joints"][2]["anchor"] = anchor
+                ArticulationPlan.record(held)
+                ArticulationPlan.check(held)
+        for anchor in (
+            {"t": [0.0, 1.0, 0.0], "q": [0.0, 0.0, 0.0, 1.0]},
+            {"t": [0.0, 0.0, 0.0], "q": [0.0, 0.0, math.sqrt(0.5), math.sqrt(0.5)]},
+        ):
+            held = copy.deepcopy(spec)
+            held["joints"][2]["anchor"] = anchor
+            for step in (ArticulationPlan.record, ArticulationPlan.check):
+                with self.subTest(anchor=anchor, step=step.__name__):
+                    with self.assertRaises(ValueError) as raised:
+                        step(copy.deepcopy(held))
+                    message = str(raised.exception)
+                    self.assertIn(held["joints"][2]["id"], message)
+                    self.assertIn("pivot", message)
+
+    def test_the_identity_anchor_is_the_identity_however_it_is_spelt(self):
+        """``is_identity``: ``t`` exactly 0 and ``q`` the identity rotation
+        once normalised, either sign -- what the model reads as the identity
+        (it normalises every quaternion; ``q`` and ``-q`` are one rotation).
+        A hair off either is not. Added: 2026-11-08"""
+        same = ArticulationModel.is_identity
+        for q in ([0, 0, 0, 1], [0, 0, 0, -1], [0, 0, 0, 2], [0.0, 0.0, 0.0, 0.5]):
+            self.assertTrue(same({"t": [0, 0, 0], "q": q}), q)
+        for anchor in (
+            {"t": [1e-12, 0, 0], "q": [0, 0, 0, 1]},
+            {"t": [0, 0, 0], "q": [1e-9, 0, 0, 1]},
+            {"t": [0, 0, 0], "q": [0, 0, 0, 0]},
+            {"t": [0, 0, 0], "q": [0, 0, 0, float("nan")]},
+            {"t": [0, 0], "q": [0, 0, 0, 1]},
+            None,
+        ):
+            self.assertFalse(same(anchor), anchor)
 
     def test_the_grab_names_a_part_as_the_host_names_it_now(self):
         """A runtime binds a grab by the part's name: the record carries the

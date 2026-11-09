@@ -12,12 +12,6 @@ shows X but the export ships Y" of the last month was a gap between those two.
 
 :class:`GlbPipeline` is the single chain, and the callers hand it dials only:
 
-    takes     -- ``FbxMedia.drop_takes`` the shot takes the FBX DECLARES from
-                 a scratch copy, when a whole-timeline stack is left to cut
-                 the clips from: FBX2glTF bakes every node at every frame of
-                 every take, and the clip rebuild discards the converter's own
-                 split takes (measured on a production assembly: 1377 s ->
-                 537 s of conversion);
     downsize  -- ``FbxMedia.downsize`` the FBX's embedded textures to the
                  texture ceiling FIRST, so the converter and every pass after
                  it read a 2K file rather than a 4K one (measured on a
@@ -26,7 +20,7 @@ shows X but the export ships Y" of the last month was a gap between those two.
                  folders and a *report*: one edit session running the alpha
                  repair, image dedupe, the materials record, the handoff the
                  FBX's own record implies, the dead-texture sweep, lightmaps,
-                 shadow rigs, curve-proxy strip, clips, visibility gates,
+                 shadow rigs, curve-proxy strip, visibility gates,
                  fades, the skin and tangent repairs and the animation
                  manifest, in the order their own docstrings justify;
     reduce    -- ``MeshConvert.reduce_glb_animations`` when the caller names a
@@ -40,10 +34,13 @@ shows X but the export ships Y" of the last month was a gap between those two.
 A failed conversion or texture pass raises: a deliverable that silently shipped
 280 MB where the preview showed 8.71 is the outcome one of the old chains
 actually produced, and the callers' own logs are where the reason belongs. The
-two payload stages are the exception -- the take strip and the downsize are
-speed wins whose output the conversion would reach anyway (the clip rebuild
-discards the split takes, the texture ceiling re-applies the size), so their
-failure is a warning and the unstripped / original FBX is read.
+payload stage is the exception -- the downsize is a speed win whose output
+the conversion would reach anyway (the texture ceiling re-applies the size),
+so its failure is a warning and the original FBX is read.
+
+The GLB's clips are its FBX's takes: one per shot, named after it, each
+converted as it stands -- the takes are the clips, so none is stripped from
+the converter's input and none rebuilt after it.
 
 The GLB says what its FBX says: the materials its ``materials`` record
 states, the handoff -- source and lighting -- its ``handoff`` record states,
@@ -160,7 +157,6 @@ class GlbPipeline(LoggingMixin):
         lightmap_dirs: Sequence[str] = (),
         shadow_dirs: Sequence[str] = (),
         texture_params: Optional[Dict[str, Any]] = None,
-        clip_mode: str = "both",
         key_tolerance: Optional[float] = None,
         downsize: bool = True,
         scratch_path: Optional[Callable[[str], str]] = None,
@@ -183,11 +179,6 @@ class GlbPipeline(LoggingMixin):
                 in-band channels before any pass reads them
                 (:meth:`MeshConvert.overlay_data_export`). ``None`` builds from
                 what the FBX carried.
-            clip_mode: Which animation clips the GLB ships -- ``both`` (the
-                declared shots AND the whole-timeline stack they were cut
-                from), ``shots``, or ``full``. The two halves hold the same
-                performance, so a consumer that plays one never reads the
-                other; on a production assembly the stack alone was 66.5 MB.
             key_tolerance: Reduce every clip's keys to what reproduces its
                 samples within this bound (``MeshConvert.reduce_glb_animations``;
                 meters for translation / scale, quaternion components for
@@ -197,8 +188,8 @@ class GlbPipeline(LoggingMixin):
                 lightmap and shadow appliers as their search directories --
                 after the folder holding the files the FBX itself embeds for
                 its records (a delivered FBX ships nothing beside it).
-            shadow_dirs: Searched first for a shadow rig's loose maps,
-                forwarded to :meth:`MeshConvert.fbx_to_glb` -- a host building
+            shadow_dirs: Searched for a shadow rig's maps after the copies the
+                FBX embeds, forwarded to :meth:`MeshConvert.fbx_to_glb` -- a host building
                 from a STAGED copy passes the deliverable's own folders
                 (:meth:`MeshConvert.fbx_media_dirs`), which "beside the FBX"
                 no longer reaches.
@@ -226,14 +217,12 @@ class GlbPipeline(LoggingMixin):
                 :class:`ImgUtils` (cv2).
 
         Returns:
-            ``{"glb", "src", "scratch", "takes", "downsized", "materials",
+            ``{"glb", "src", "scratch", "downsized", "materials",
             "sidecar", "lightmaps", "lightmap_manifest", "animation",
             "textures", "data_export", "dependencies", "timings"}`` -- the
             GLB written, the FBX the
             converter actually read, the
-            scratch files minted, the split-take strip's
-            :meth:`FbxMedia.drop_takes` report (``None`` when the strip did
-            not run), the downsize report (or ``None``), what each material
+            scratch files minted, the downsize report (or ``None``), what each material
             took from the ``materials`` record
             (:meth:`MeshConvert.apply_glb_materials`; ``[]`` for a file the
             reader cannot parse), an old envelope's per-section outcome
@@ -247,7 +236,7 @@ class GlbPipeline(LoggingMixin):
             none landed), the files the FBX embeds for its records that the
             appliers read from it (``[]`` when none), and the seconds each
             stage took, in the order they
-            ran and never overlapping: ``"takes"``, ``"downsize"``,
+            ran and never overlapping: ``"downsize"``,
             ``"fbx2gltf"`` and ``"passes"`` (the conversion's two halves --
             ``"convert"`` whole when the converter reports no split),
             ``"reduce"``, ``"textures"``, and ``"total"``. A ``.glb`` source
@@ -265,7 +254,6 @@ class GlbPipeline(LoggingMixin):
             "glb": None,
             "src": src,
             "scratch": [],
-            "takes": None,
             "downsized": None,
             "materials": [],
             "sidecar": {},
@@ -353,10 +341,6 @@ class GlbPipeline(LoggingMixin):
                 elif own_scratch is not None:
                     own_scratch.release(path)  # our intermediate: peak is one copy
 
-            # Timed whether or not it strips anything: deciding means reading
-            # the FBX's take list, which is not free on a production payload.
-            with cls._timed(timings, "takes"):
-                cls._drop_split_takes(src, allocate, supersede, report, log, _say)
             if downsize:
                 with cls._timed(timings, "downsize"):
                     cls._downsize(
@@ -383,7 +367,6 @@ class GlbPipeline(LoggingMixin):
                 data_export=data_export,
                 lightmap_dirs=lightmap_dirs,
                 shadow_dirs=shadow_dirs,
-                clip_mode=clip_mode,
                 report=conversion,
                 hdr_codec=hdr_codec,
             )
@@ -514,88 +497,3 @@ class GlbPipeline(LoggingMixin):
             outcome["before"] / 1e6,
             outcome["after"] / 1e6,
         )
-
-    @classmethod
-    def _drop_split_takes(cls, src, allocate, supersede, report, log, say) -> None:
-        """Read *src* through a scratch copy without the shot takes it DECLARES.
-
-        FBX2glTF bakes every node at every frame of every take, and a Maya take
-        split writes each shot as its own stack beside the whole-timeline one.
-        The clip rebuild inside the conversion (``MeshConvert.apply_glb_clips``)
-        cuts every shot from that whole-timeline stack and discards the
-        converter's split takes -- so a declared take is pure converter cost.
-        Only takes the file's own shots record names are dropped, and
-        only while a stack those names do not cover survives to cut from; a
-        file that declares nothing is read as is. Never the caller's file.
-
-        The rebuild never lacks the origin it cuts against: the conversion
-        measures it from the file it reads (``MeshConvert._stamp_clip_spans``),
-        whatever the producer published.
-        """
-        from pythontk.file_utils.mesh_convert.fbx_file import FbxFile
-        from pythontk.file_utils.mesh_convert.fbx_media import FbxMedia
-
-        if not FbxFile.is_fbx(src):
-            return
-        try:
-            fbx = FbxFile.load(src, raw_payloads=False)
-        except (OSError, ValueError) as error:
-            log.debug("Split-take strip skipped (unreadable FBX): %s", error)
-            return
-        declared = cls._declared_takes(fbx)
-        present = fbx.take_names()
-        drop = [name for name in present if name in declared]
-        if not drop or len(drop) == len(present):
-            return
-        say("GLB: dropping the shot takes the clips are cut without…")
-        scratch = allocate(".fbx")
-        try:
-            outcome = FbxMedia.drop_takes(src, scratch, names=drop)
-        except Exception as error:  # noqa: BLE001 -- a speed win, never the build
-            log.warning("Split-take strip skipped: %s", error)
-            return
-        report["takes"] = outcome
-        if not outcome["takes"]:
-            return
-        report["scratch"].append(scratch)
-        report["src"] = scratch
-        supersede(src)
-        log.info(
-            "Converter input: dropped %d declared shot take(s) (%d animation "
-            "object(s)) -- the clips are cut from the whole-timeline stack, so "
-            "FBX2glTF no longer bakes every shot a second time.",
-            len(outcome["takes"]),
-            sum(outcome["objects"].values()),
-        )
-
-    @classmethod
-    def _declared_takes(cls, fbx) -> set:
-        """Take names *fbx* declares; empty when none.
-
-        Each carrier's shots record read through ``SceneRecords.declared_takes``
-        -- each clip's own range. Unioned across carriers: a file can hold
-        more than one (an imported reference brings its own).
-        """
-        from pythontk.core_utils.engines.scene_export.scene_records import SceneRecords
-
-        key = SceneRecords.SHOTS.key
-        return {
-            str(take["name"])
-            for payload in cls._carrier_payloads(fbx, key)
-            for take in SceneRecords.declared_takes({key: payload}.get)
-            if take.get("name")
-        }
-
-    @staticmethod
-    def _carrier_payloads(fbx, key: str) -> Iterator[Any]:
-        """Each carrier's *key* channel in *fbx*, decoded; a blank or
-        malformed one is skipped."""
-        import json
-
-        for value in fbx.user_properties(key):
-            if not isinstance(value, (bytes, bytearray)) or not value.strip():
-                continue
-            try:
-                yield json.loads(bytes(value).decode("utf-8"))
-            except (ValueError, UnicodeDecodeError):
-                continue

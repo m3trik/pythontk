@@ -46,7 +46,10 @@ import io
 import json
 import logging
 import mmap
+import ntpath
 import os
+import posixpath
+import re
 import struct
 import zlib
 from concurrent.futures import ThreadPoolExecutor
@@ -612,10 +615,6 @@ class _FbxMediaInternal:
         cls._shift_definitions(sections, {b"Video": len(report["embedded"])}, hlen)
         return report
 
-    #: The scene's own carrier node; a module's is ``NS:data_export`` (or a
-    #: renamed ``data_export1``).
-    _OWN_CARRIER = SceneStoreBase.name(Scope.DELIVERABLE)
-
     @classmethod
     def _models(
         cls, roots: Iterable[_Record]
@@ -640,11 +639,19 @@ class _FbxMediaInternal:
         property of a record's name on another node is an artist's (Maya's FBX
         exporter writes every custom string attribute), read by no reader --
         the materials reader (``MeshConvert._carried_record``) and unitytk's
-        ``CarrierFile`` take carriers alone."""
+        ``CarrierFile`` take carriers alone. One wired under another Model is
+        named with its parent's name (``Module|data_export``): a grouped
+        module's own, never the scene's (``SceneStoreBase.is_scene_carrier``)."""
         wanted = {key.encode("utf-8"): key for key in keys}
+        roots = list(roots)
+        parents = cls._model_parents(roots)
         for name, record in cls._models(roots):
             if not SceneStoreBase.is_carrier(name):
                 continue
+            head = cls._scalars(record)
+            parent = parents.get(head[0]) if head else None
+            if parent is not None:
+                name = f"{parent}|{name}"
             for child in record.children:
                 if child.name != b"Properties70":
                     continue
@@ -660,6 +667,32 @@ class _FbxMediaInternal:
                     except (ValueError, UnicodeDecodeError):
                         continue
                     yield name, wanted[head[0]], payload, prop
+
+    @classmethod
+    def _model_parents(cls, roots: Iterable[_Record]) -> Dict[int, str]:
+        """Each Model's parent Model's display name, by the child's id: an
+        ``OO`` link between two Models (one wired to the scene root, id 0,
+        has none)."""
+        roots = list(roots)
+        names: Dict[int, str] = {}
+        for name, record in cls._models(roots):
+            head = cls._scalars(record)
+            if head and isinstance(head[0], int):
+                names[head[0]] = name or ""
+        parents: Dict[int, str] = {}
+        for root in roots:
+            if root.name != b"Connections":
+                continue
+            for record in root.children:
+                row = cls._scalars(record)
+                if (
+                    len(row) >= 3
+                    and row[0] == b"OO"
+                    and row[1] in names
+                    and row[2] in names
+                ):
+                    parents[row[1]] = names[row[2]] or str(row[2])  # unnamed: still a parent
+        return parents
 
     @classmethod
     def _carrier_channels(
@@ -686,18 +719,17 @@ class _FbxMediaInternal:
         cls, roots: Iterable[_Record], keys: Iterable[str]
     ) -> Dict[str, Tuple[_Record, Any]]:
         """``{key: (P record, payload)}`` for each of *keys* a reader applies,
-        in one walk: the scene's own carrier's, else the first module's in
-        file order -- the copy :meth:`FbxMedia.reader_records` takes. The
-        handoff is the scene's own alone: one on a module's carrier describes
-        that module, never the file (the FBX handoff's own rule)."""
-        own: Dict[str, Tuple[_Record, Any]] = {}
-        first: Dict[str, Tuple[_Record, Any]] = {}
-        for name, key, payload, prop in cls._carrier_props(roots, tuple(keys)):
-            if name == cls._OWN_CARRIER:
-                own.setdefault(key, (prop, payload))
-            elif key != SceneRecords.HANDOFF.key:
-                first.setdefault(key, (prop, payload))
-        return {**first, **own}
+        in one walk: the scene's own carrier's (the root-level ``data_export``,
+        ``SceneStoreBase.is_scene_carrier``), else the first module's in file
+        order -- the copy :meth:`FbxMedia.reader_records` takes. The handoff
+        is the scene's own alone: one on a module's carrier describes that
+        module, never the file (the FBX handoff's own rule): the precedence
+        is ``SceneStoreBase.reader_values``."""
+        chosen = SceneStoreBase.reader_values(
+            (name, True, key, (prop, payload))
+            for name, key, payload, prop in cls._carrier_props(roots, tuple(keys))
+        )
+        return {key: value for key, (value, _own) in chosen.items()}
 
     @staticmethod
     def _scalars(record: _Record) -> List[Any]:
@@ -1240,23 +1272,63 @@ class _FbxMediaInternal:
             entry = cls._new_record(b"Take", [s(b"")], [], hlen)
             takes.children.append(entry)
         entry.replaced = s(new.encode("utf-8"))
-        fields = {
-            b"FileName": [s(new.replace(" ", "_").encode("utf-8") + b".tak")],
-            **({b"LocalTime": times, b"ReferenceTime": times} if times else {}),
-        }
-        for child in entry.children:
-            if child.name in fields:
-                props = fields.pop(child.name)
-                child.replaced, child.prop_count = b"".join(props), len(props)
-        if fields and not entry.children and not entry.tail:
-            entry.tail = b"\0" * (hlen + 1)
-        for tag, props in fields.items():
-            entry.children.append(cls._new_record(tag, props, (), hlen))
+        cls._set_entry_fields(
+            entry,
+            {
+                b"FileName": [s(new.replace(" ", "_").encode("utf-8") + b".tak")],
+                **({b"LocalTime": times, b"ReferenceTime": times} if times else {}),
+            },
+            hlen,
+        )
         current = next((c for c in takes.children if c.name == b"Current"), None)
         if current is None:
             current = cls._new_record(b"Current", [s(b"")], (), hlen)
             takes.children.insert(0, current)
         current.replaced = s(new.encode("utf-8"))
+
+    @classmethod
+    def _set_entry_fields(
+        cls, entry: _Record, fields: Mapping[bytes, List[bytes]], hlen: int
+    ) -> None:
+        """Set each ``{tag: packed props}`` child of a ``Takes/Take`` *entry*,
+        adding any it lacks."""
+        pending = dict(fields)
+        for child in entry.children:
+            if child.name in pending:
+                props = pending.pop(child.name)
+                child.replaced, child.prop_count = b"".join(props), len(props)
+        if pending and not entry.children and not entry.tail:
+            entry.tail = b"\0" * (hlen + 1)
+        for tag, props in pending.items():
+            entry.children.append(cls._new_record(tag, props, (), hlen))
+
+    @classmethod
+    def _take_entry(
+        cls, sections: Mapping[bytes, _Record], name: str
+    ) -> Optional[_Record]:
+        """The ``Takes/Take`` entry of the take *name*, or None."""
+        takes = sections.get(b"Takes")
+        return next(
+            (
+                c
+                for c in (takes.children if takes is not None else ())
+                if c.name == b"Take" and cls._head_string(c) == name
+            ),
+            None,
+        )
+
+    @classmethod
+    def _named_times(cls, record: _Record) -> Dict[bytes, int]:
+        """``{name: KTime}`` of a stack's ``Properties70``."""
+        found: Dict[bytes, int] = {}
+        for child in record.children:
+            if child.name != b"Properties70":
+                continue
+            for prop in child.children:
+                head = cls._scalars(prop)
+                if len(head) >= 5 and head[1] == b"KTime" and isinstance(head[4], int):
+                    found[head[0]] = head[4]
+        return found
 
     @classmethod
     def _stack_times(cls, record: _Record) -> List[int]:
@@ -1471,13 +1543,12 @@ class FbxMedia(_FbxMediaInternal):
             ("probe", "highlights", "*", "map"),
         ),
         SceneRecords.SHADOWS.key: (
-            ("planes", "*", "texture"),
-            ("planes", "*", "atlas", "texture"),
+            ("planes", "*", "silhouette", "texture"),
+            ("planes", "*", "silhouette", "atlas", "texture"),
             ("planes", "*", "horizon", "texture"),
         ),
-        SceneRecords.MATERIALS.key: tuple(
-            ("materials", "*", field) for field in MaterialFamilies.TEXTURE_FIELDS
-        ),
+        # Literal glTF: every map a material binds is one of its images.
+        SceneRecords.MATERIALS.key: (("images", "*", "uri"),),
     }
 
     @classmethod
@@ -1498,14 +1569,18 @@ class FbxMedia(_FbxMediaInternal):
     ) -> Dict[str, Any]:
         """Each scene record as a reader of the file applies it.
 
-        A file carries the scene's own ``data_export`` and, from an assembly
-        export, one ``NS:data_export`` per referenced module: that module's
+        A file carries the scene's own ``data_export`` at its root and, from
+        an assembly export, one ``NS:data_export`` per referenced module (or a
+        grouped module's ``data_export`` under its group): that module's
         records as it was last exported alone -- its whole bake, whatever the
-        export set. A reader takes each record from the scene's own carrier,
-        and a module's only where the scene's carries none, the first in file
-        order (unitytk ``CarrierImport.Collect``,
-        ``_Sidecar._data_export_carrier``), so a module's copy beside the
-        scene's is never applied. A module's copy read alone keeps only the
+        export set. A reader takes each record from the scene's own carrier
+        (``SceneStoreBase.is_scene_carrier``), and a module's only where the
+        scene's carries none, the first in file order (unitytk
+        ``CarrierImport.Collect``,
+        ``_Sidecar._data_export_carrier``; the precedence is
+        ``SceneStoreBase.reader_values``), so a module's copy beside the
+        scene's is never applied, and a module's ``handoff`` never: it
+        describes that module, not the file. A module's copy read alone keeps only the
         entries whose node the file carries (``RecordSpec.narrowed``, by the
         record's ``nodes``: the name exactly, else its namespace-stripped leaf
         -- the appliers' match), and
@@ -1520,7 +1595,9 @@ class FbxMedia(_FbxMediaInternal):
 
         Parameters:
             channels: ``(carrier name, record key, decoded payload)`` for each
-                carrier's channel, in file order.
+                carrier's channel, in file order; a carrier under a group named
+                with the nodes above it (``Module|data_export``,
+                ``FbxFile.object_path``).
             nodes: The names of the nodes the file carries; ``None`` takes a
                 module's copy whole.
 
@@ -1528,15 +1605,12 @@ class FbxMedia(_FbxMediaInternal):
             ``{record key: payload}`` -- a module's copy narrowed to the nodes
             the file carries, and left out when none is.
         """
-        read: Dict[str, Tuple[bool, Any]] = {}
-        for carrier, key, payload in channels:
-            own = carrier == cls._OWN_CARRIER
-            held = read.get(key)
-            if held is None or (own and not held[0]):
-                read[key] = (own, payload)
+        read = SceneStoreBase.reader_values(
+            (carrier, True, key, payload) for carrier, key, payload in channels
+        )
         nodes = None if nodes is None else [name for name in nodes if name]
         records: Dict[str, Any] = {}
-        for key, (own, payload) in read.items():
+        for key, (payload, own) in read.items():
             spec = SceneRecords.by_key(key, Scope.DELIVERABLE)
             if not own and nodes is not None and spec is not None:
                 payload = spec.narrowed(payload, nodes)
@@ -1608,26 +1682,28 @@ class FbxMedia(_FbxMediaInternal):
             return cls._dependency_names(roots)
 
     @classmethod
-    def audio_events(cls, path: str) -> List[str]:
-        """The tracks the FBX's ``audio`` events play, by event name.
+    def audio_sounds(cls, path: str) -> List[str]:
+        """The sounds the FBX's ``audio`` cues play, by the file names they
+        are delivered under.
 
-        An audio event names its TRACK, not a file (``SceneRecords.AUDIO``),
-        so the host resolves each name to its file and hands it to
-        :meth:`embed_dependencies` as ``files=[(name + ext, path)]`` -- the
-        name the consumer matches the clip by. Read off the ONE carrier its
-        readers take: the scene's own, else the first that carries the
-        record (:meth:`reader_records`: the GLB applier's precedence,
-        unitytk's ``CarrierImport.Collect``) -- the scene's own record is
-        re-derived from the whole merged scene, so a module's or a stray
-        ``data_export1``'s events are stale and their clips are not shipped.
-        In event order, each name once; a blank or ``"none"`` name names
-        nothing.
+        A cue names its sound by the file the delivery carries
+        (``SceneRecords.AUDIO``), so the host resolves each name to its source
+        and hands it to :meth:`embed_dependencies` as ``files=[(name, path)]``
+        -- the name the consumer matches the sound by. Read off the ONE
+        carrier its readers take: the scene's own, else the first that
+        carries the record (:meth:`reader_records`: the GLB applier's
+        precedence, unitytk's ``CarrierImport.Collect``) -- the scene's own
+        record is re-derived from the whole merged scene, so a module's or a
+        stray ``data_export1``'s cues are stale and their sounds are not
+        shipped. In cue order, each name once. A record of another version
+        names nothing (a reader reads one version; the cure is a re-export),
+        and says so.
 
         Parameters:
             path: The FBX to read.
 
         Returns:
-            The event names; empty when the file carries no audio events.
+            The sounds' file names; empty when the file carries no cue.
 
         Raises:
             ValueError: *path* is not a binary FBX this writer can read.
@@ -1638,18 +1714,69 @@ class FbxMedia(_FbxMediaInternal):
         ):
             _version, roots, _fid, _magic = cls._load(buf)
             key = SceneRecords.AUDIO.key
-            # The carrier precedence alone: an event names a track and its
-            # clip, never a node, so there is nothing to narrow it by.
+            # The carrier precedence alone: a cue names a sound and its clip,
+            # never a node, so there is nothing to narrow it by.
             payload = cls.reader_records(cls._carrier_channels(roots, (key,))).get(key)
+        if not isinstance(payload, Mapping):
+            return []
+        if not SceneRecords.AUDIO.is_current(payload):
+            logger.warning(
+                "%s: its %r record is version %r, and this reader reads version "
+                "%d: its sounds are not shipped -- re-export the file.",
+                os.path.basename(path),
+                key,
+                payload.get("version"),
+                SceneRecords.AUDIO.version,
+            )
+            return []
         names: List[str] = []
-        events = payload.get("events") if isinstance(payload, Mapping) else None
-        for event in events if isinstance(events, list) else ():
-            if not isinstance(event, Mapping):
+        cues = payload.get("cues")
+        for cue in cues if isinstance(cues, list) else ():
+            if not isinstance(cue, Mapping):
                 continue
-            name = str(event.get("name") or "").strip()
-            if name and name.lower() != "none" and name not in names:
+            name = str(cue.get("sound") or "").strip()
+            if name and name not in names:
                 names.append(name)
         return names
+
+    @classmethod
+    def audio_files(
+        cls,
+        path: str,
+        track_files: Callable[[List[str]], Iterable[Tuple[str, str]]],
+        log: Optional[logging.Logger] = None,
+    ) -> List[Tuple[str, str]]:
+        """``(file name, path)`` of each sound the FBX's cues play
+        (:meth:`audio_sounds`), resolved by the host: what
+        :meth:`embed_dependencies` takes as ``files``.
+
+        A cue's sound is the file name its host delivers a track under -- the
+        track's id with its file's extension -- so each name's stem is asked of
+        *track_files*, the host's ``AudioUtils.track_files`` (track ids in,
+        ``(track id + extension, path)`` out, a track with no file left out),
+        and the file goes in under the record's own spelling, the join key. A
+        sound no file answers is warned once and left out.
+
+        Parameters:
+            path: The FBX to read.
+            track_files: The host's resolver of track ids to their files.
+            log: Where the warning goes; this module's logger otherwise.
+
+        Returns:
+            ``[(sound, path), ...]`` in cue order.
+        """
+        names = cls.audio_sounds(path)
+        stems = list(dict.fromkeys(os.path.splitext(n)[0] for n in names))
+        sources = {name.casefold(): source for name, source in track_files(stems)}
+        found = [(n, sources[n.casefold()]) for n in names if n.casefold() in sources]
+        missing = [n for n in names if n.casefold() not in sources]
+        if missing:
+            (log or logger).warning(
+                "FBX dependencies: no audio file for sound(s) %s; the "
+                "deliverable ships without them.",
+                ", ".join(missing),
+            )
+        return found
 
     @classmethod
     def embed(
@@ -1706,8 +1833,8 @@ class FbxMedia(_FbxMediaInternal):
     def record(cls, path: str, key: str) -> Optional[Any]:
         """The scene record *key* the FBX carries, as a reader applies it.
 
-        Read off the file's ``data_export`` carriers: the scene's own, else a
-        referenced module's, the first in file order -- the copy
+        Read off the file's ``data_export`` carriers: the scene's own (at the
+        file's root), else a module's, the first in file order -- the copy
         :meth:`reader_records` takes (whole here, not narrowed to the nodes
         the file carries). ``None`` when no carrier holds one.
 
@@ -1950,25 +2077,30 @@ class FbxMedia(_FbxMediaInternal):
     _COMPUTED_MATERIAL_ROWS = frozenset({"Diffuse", "Emissive"})
 
     @staticmethod
-    def legacy_material_values(entry: Mapping[str, Any]) -> Dict[str, Tuple[float, ...]]:
-        """A ``materials`` record entry in FBX's legacy terms -- what a stock
-        reader of the file's own material reads: the base colour as
-        ``DiffuseColor`` x ``DiffuseFactor`` (white times the factor's mean
-        over a colour map, which the reader multiplies in), the emission
-        likewise, and the alpha as Maya writes a transparent Lambert
-        (``TransparentColor`` one minus it, ``TransparencyFactor`` 1,
-        ``Opacity`` it). Read back through ``MaterialFamilies``' ``legacy``
-        family: the same colour, emission and alpha."""
-        base = MaterialFamilies.as_floats(entry.get("baseColorFactor"), 4, 1.0)
-        glow = MaterialFamilies.as_floats(entry.get("emissiveFactor"), 3, 0.0)
-
+    def legacy_material_values(
+        entry: Mapping[str, Any], record: Optional[Mapping[str, Any]] = None
+    ) -> Dict[str, Tuple[float, ...]]:
+        """A ``materials`` record material (one of *record*'s, a glTF
+        material) in FBX's legacy terms -- what a stock reader of the file's
+        own material reads: the base colour as ``DiffuseColor`` x
+        ``DiffuseFactor`` (white times the factor's mean over a colour map,
+        which the reader multiplies in), the emission likewise (the factor
+        times its ``KHR_materials_emissive_strength``), and the alpha as Maya
+        writes a transparent Lambert (``TransparentColor`` one minus it,
+        ``TransparencyFactor`` 1, ``Opacity`` it). Read back through
+        ``MaterialFamilies``' ``legacy`` family: the same colour, emission and
+        alpha."""
+        pbr = entry.get("pbrMetallicRoughness") or {}
+        base = MaterialFamilies.as_floats(pbr.get("baseColorFactor"), 4, 1.0)
+        glow = MaterialFamilies.emission(entry)
+        files = MaterialFamilies.material_files(record, entry)
         def colour(rgb, mapped):
             if mapped:
                 return (1.0, 1.0, 1.0), sum(rgb) / 3.0
             return tuple(rgb), 1.0
 
-        diffuse, diffuse_factor = colour(base[:3], entry.get("baseColorTexture"))
-        emissive, emissive_factor = colour(glow, entry.get("emissiveTexture"))
+        diffuse, diffuse_factor = colour(base[:3], files.get("baseColorTexture"))
+        emissive, emissive_factor = colour(glow, files.get("emissiveTexture"))
         alpha = min(1.0, max(0.0, base[3]))
         return {
             "DiffuseColor": diffuse,
@@ -1984,7 +2116,7 @@ class FbxMedia(_FbxMediaInternal):
 
     @classmethod
     def state_materials(cls, src: str, dst: Optional[str] = None) -> Dict[str, Any]:
-        """Write each ``materials`` record entry onto its FBX material's legacy
+        """Write each ``materials`` record material onto its FBX material's legacy
         properties (:meth:`legacy_material_values`), so a reader that knows
         only the file's own materials -- an engine's stock FBX import -- sees
         the colour, emission and opacity the record states.
@@ -2017,6 +2149,13 @@ class FbxMedia(_FbxMediaInternal):
         ):
             version, roots, footer_id, magic = cls._load(buf)
             record = cls.reader_records(cls._carrier_channels(roots, (key,))).get(key)
+            if record is not None and SceneRecords.problems(SceneRecords.MATERIALS, record):
+                # Another version (the flat version 1): a reader refuses it.
+                logger.warning(
+                    "FBX materials not stated: the file's materials record is "
+                    "not one this reader reads -- re-export the file."
+                )
+                return {"materials": stated}
             entries: Dict[str, Mapping[str, Any]] = {}
             for entry in (record or {}).get("materials") or ():
                 if isinstance(entry, Mapping) and isinstance(entry.get("name"), str):
@@ -2041,7 +2180,7 @@ class FbxMedia(_FbxMediaInternal):
                     if entry is None:
                         continue
                     cls._set_material_rows(
-                        material, cls.legacy_material_values(entry), hlen
+                        material, cls.legacy_material_values(entry, record), hlen
                     )
                     stated.append(name)
             if not stated:
@@ -2364,6 +2503,309 @@ class FbxMedia(_FbxMediaInternal):
         cls._promote(part, target)
         return report
 
+    # ---- machine paths ----------------------------------------------------
+
+    #: The fields naming a ``Video``'s file, and its ``Properties70`` rows that do.
+    _VIDEO_FIELDS = (b"Filename", b"RelativeFilename")
+    _VIDEO_ROWS = (b"Path", b"RelPath")
+    #: The fields naming a ``Texture``'s file.
+    _TEXTURE_FIELDS = (b"FileName", b"RelativeFilename")
+
+    @classmethod
+    def strip_machine_paths(
+        cls, src: str, dst: Optional[str] = None
+    ) -> Dict[str, List[str]]:
+        """Remove the folders of the machine that wrote an FBX from a delivery.
+
+        A writer stamps where it ran: Maya the staging file's path in the
+        header's document URLs, its project folder and each map's absolute
+        source; Blender its source ``.blend``. A delivery then carries its
+        producer's user name and folders to whoever opens it (measured on
+        Maya 2025's and Blender 5.1's writes, 2026-11-08). No reader needs
+        them: Unity's importer and FBX2glTF read an embedded map from its
+        ``Content``. So each absolute path in the header's ``SceneInfo`` is
+        blanked, and every field naming an embedded map's file -- its
+        ``Video`` (``Filename``, ``RelativeFilename``, ``Path``, ``RelPath``),
+        the SDK's content-less second ``Video`` for a file it embedded once,
+        and the ``Texture`` each is wired under -- names the bare file name,
+        the spelling :meth:`embed_dependencies` writes and Unity extracts
+        under. A map the file does not carry keeps its path: it is how a
+        reader finds the file. A binary FBX is rewritten through its records,
+        an ASCII one (a Maya preset can write it) as text, line endings kept.
+
+        Weighed: the writers' own path settings -- each governs how a host
+        names its map references, never the header's document URLs, and a
+        delivery's rule has to hold for every host's file alike; the FBX
+        SDK's own property edits, Autodesk's native binding, a dependency
+        pythontk cannot take; and a general FBX library -- none maintained
+        reads and re-emits a binary FBX in pure Python. So the paths are
+        rewritten by the record reader and writer the other post-write passes
+        use (:meth:`embed_dependencies`, :meth:`drop_takes`), and an ASCII
+        file, which has no maintained parser either, as text.
+
+        Parameters:
+            src: The FBX to read.
+            dst: Where to write; ``None`` rewrites *src* in place.
+
+        Returns:
+            ``{"document", "media", "kept"}`` -- the header rows blanked, the
+            embedded maps' file names whose fields changed, and the maps the
+            file only references, whose absolute paths stay (each sorted).
+            When nothing changes the file is not written at all.
+
+        Raises:
+            ValueError: *src* is neither a binary FBX this writer can re-emit
+                nor an ASCII FBX.
+        """
+        report: Dict[str, Any] = {"document": set(), "media": set(), "kept": set()}
+        target = dst or src
+        if not FbxFile.is_fbx(src):
+            with open(src, "rb") as fh:
+                data = fh.read()
+            text = data.decode("utf-8", "surrogateescape")
+            if not text.lstrip("\ufeff").startswith("; FBX"):
+                raise ValueError("not an FBX")
+            stripped = cls._strip_ascii(text, report)
+            if stripped != text:
+                encoded = stripped.encode("utf-8", "surrogateescape")
+
+                def write(part: str) -> None:
+                    with open(part, "wb") as out:
+                        out.write(encoded)
+
+                FileUtils.atomic_write(target, write)
+            return {key: sorted(names) for key, names in report.items()}
+        with (
+            open(src, "rb") as fh,
+            mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ) as buf,
+        ):
+            version, roots, footer_id, magic = cls._load(buf)
+            if not cls._strip_records(roots, report):
+                return {key: sorted(names) for key, names in report.items()}
+            part = cls._write_part(target, version, roots, footer_id, magic)
+        cls._promote(part, target)
+        return {key: sorted(names) for key, names in report.items()}
+
+    @staticmethod
+    def _is_absolute(text: str) -> bool:
+        """Whether *text* is an absolute path on any system (``C:\\``, a UNC
+        share, ``/home``), whichever system reads it."""
+        return bool(text) and (ntpath.isabs(text) or posixpath.isabs(text))
+
+    @staticmethod
+    def _carried(files: Mapping[Any, str], content: Iterable[Any]) -> Dict[Any, str]:
+        """``{media id: bare file name}`` of the media whose file the FBX
+        carries: its own ``Content``, or another ``Video``'s naming the same
+        file (the SDK embeds a file's bytes once, in the first naming it)."""
+
+        def key(text: str) -> str:
+            return text.replace("\\", "/").casefold()
+
+        content = set(content)
+        held = {key(files[oid]) for oid in content if files.get(oid)}
+        return {
+            oid: FileDependencies.file_name(text)
+            for oid, text in files.items()
+            if FileDependencies.file_name(text) and (oid in content or key(text) in held)
+        }
+
+    @classmethod
+    def _strip_records(cls, roots: List[_Record], report: Dict[str, set]) -> bool:
+        """:meth:`strip_machine_paths` over a binary FBX's *roots*, in place;
+        whether anything changed."""
+        changed = False
+        sections = {record.name: record for record in roots}
+        header = sections.get(b"FBXHeaderExtension")
+        for info in header.children if header is not None else ():
+            if info.name != b"SceneInfo":
+                continue
+            for block in info.children:
+                if block.name != b"Properties70":
+                    continue
+                for row in block.children:
+                    head = cls._scalars(row)
+                    value = head[4] if len(head) >= 5 else None
+                    if isinstance(value, bytes) and cls._is_absolute(
+                        value.decode("utf-8", "replace")
+                    ):
+                        cls._replace_prop(row, 4, cls._pack_string(b""))
+                        report["document"].add(head[0].decode("utf-8", "replace"))
+                        changed = True
+        objects = sections.get(b"Objects")
+        records: Dict[bytes, Dict[int, _Record]] = {b"Video": {}, b"Texture": {}}
+        for record in objects.children if objects is not None else ():
+            if record.name in records:
+                head = cls._scalars(record)
+                if head and isinstance(head[0], int):
+                    records[record.name][head[0]] = record
+
+        def text(record: _Record, index: int = 0) -> str:
+            head = cls._scalars(record)
+            value = head[index] if len(head) > index else None
+            return value.decode("utf-8", "replace") if isinstance(value, bytes) else ""
+
+        def fields(record: _Record, names, rows=()) -> List[Tuple[_Record, int]]:
+            """``(record, property index)`` of each field naming a file."""
+            found = [(child, 0) for child in record.children if child.name in names]
+            for child in record.children:
+                if child.name == b"Properties70":
+                    found += [
+                        (row, 4)
+                        for row in child.children
+                        if cls._scalars(row)[:1] and cls._scalars(row)[0] in rows
+                    ]
+            return found
+
+        videos = records[b"Video"]
+        files = {
+            oid: next((text(c) for c in video.children if c.name == b"Filename"), "")
+            for oid, video in videos.items()
+        }
+        content = [
+            oid
+            for oid, video in videos.items()
+            if any(
+                child.name == b"Content"
+                and bytes(child.payload[:1]) == b"R"
+                and struct.unpack_from("<I", bytes(child.payload), 1)[0] > 0
+                for child in video.children
+                if len(child.payload) >= 5
+            )
+        ]
+        carried = cls._carried(files, content)
+
+        def rename(found, name: str) -> bool:
+            renamed = False
+            for record, index in found:
+                value = text(record, index)
+                if value and value != name:
+                    cls._replace_prop(record, index, cls._pack_string(name.encode("utf-8")))
+                    renamed = True
+            return renamed
+
+        for oid, video in videos.items():
+            found = fields(video, cls._VIDEO_FIELDS, cls._VIDEO_ROWS)
+            if oid in carried:
+                if rename(found, carried[oid]):
+                    report["media"].add(carried[oid])
+                    changed = True
+            elif any(cls._is_absolute(text(record, index)) for record, index in found):
+                report["kept"].add(FileDependencies.file_name(files[oid]))
+        connections = sections.get(b"Connections")
+        for row in connections.children if connections is not None else ():
+            link = cls._scalars(row)
+            if len(link) >= 3 and link[0] == b"OO" and link[1] in carried:
+                texture = records[b"Texture"].get(link[2])
+                if texture is not None and rename(
+                    fields(texture, cls._TEXTURE_FIELDS), carried[link[1]]
+                ):
+                    report["media"].add(carried[link[1]])
+                    changed = True
+        return changed
+
+    #: An ASCII FBX line opening a block (``Video: 101, "Video::wood", "Clip" {``),
+    #: a ``C: "OO",child,parent`` connection, and a quoted value.
+    _ASCII_OPEN = re.compile(r'^\s*([\w|]+):\s*(-?\d+)?')
+    _ASCII_LINK = re.compile(r'^\s*C:\s*"OO"\s*,\s*(-?\d+)\s*,\s*(-?\d+)')
+    _ASCII_QUOTED = re.compile(r'"([^"]*)"')
+
+    @classmethod
+    def _strip_ascii(cls, text: str, report: Dict[str, set]) -> str:
+        """:meth:`strip_machine_paths` over an ASCII FBX's *text*."""
+        lines = text.splitlines(keepends=True)
+
+        def quoted(index: int) -> List[Any]:
+            return list(cls._ASCII_QUOTED.finditer(lines[index]))
+
+        def put(index: int, nth: int, value: str) -> None:
+            match = quoted(index)[nth]
+            line = lines[index]
+            lines[index] = line[: match.start(1)] + value + line[match.end(1) :]
+
+        stack: List[str] = []
+        objects: Dict[str, Dict[int, Dict[str, Any]]] = {"Video": {}, "Texture": {}}
+        current: Optional[Dict[str, Any]] = None
+        links: List[Tuple[int, int]] = []
+        awaiting = None  # the object whose ``Content:`` value may be on the next line
+        for index, line in enumerate(lines):
+            body = line.rstrip("\r\n")
+            bare = cls._ASCII_QUOTED.sub('""', body).strip()
+            head = cls._ASCII_OPEN.match(body)
+            field = head.group(1) if head else None
+            if awaiting is not None:
+                if bare.startswith('""') and any(m.group(1) for m in quoted(index)):
+                    awaiting["content"] = True
+                awaiting = None
+            if bare.endswith("{"):
+                if (
+                    stack == ["Objects"]
+                    and field in objects
+                    and head.group(2) is not None
+                ):
+                    current = {"fields": [], "content": False, "file": ""}
+                    objects[field][int(head.group(2))] = current
+                stack.append(field or "")
+                continue
+            if bare == "}":
+                if stack:
+                    stack.pop()
+                if len(stack) < 2:
+                    current = None
+                continue
+            if stack[-3:] == ["FBXHeaderExtension", "SceneInfo", "Properties70"] and field == "P":
+                values = quoted(index)
+                if len(values) >= 5 and cls._is_absolute(values[4].group(1)):
+                    put(index, 4, "")
+                    report["document"].add(values[0].group(1))
+                continue
+            link = cls._ASCII_LINK.match(body)
+            if link:
+                links.append((int(link.group(1)), int(link.group(2))))
+                continue
+            if current is None or field is None:
+                continue
+            values = quoted(index)
+            if field in ("Filename", "FileName", "RelativeFilename") and values:
+                current["fields"].append((index, 0))
+                if field in ("Filename", "FileName"):
+                    current["file"] = values[0].group(1)
+            elif field == "P" and len(values) >= 5 and values[0].group(1) in ("Path", "RelPath"):
+                current["fields"].append((index, 4))
+            elif field == "Content":
+                if any(m.group(1) for m in values):
+                    current["content"] = True
+                else:
+                    awaiting = current
+
+        videos = objects["Video"]
+        carried = cls._carried(
+            {oid: video["file"] for oid, video in videos.items()},
+            [oid for oid, video in videos.items() if video["content"]],
+        )
+
+        def rename(record: Dict[str, Any], name: str) -> bool:
+            renamed = False
+            for index, nth in record["fields"]:
+                value = quoted(index)[nth].group(1)
+                if value and value != name:
+                    put(index, nth, name)
+                    renamed = True
+            return renamed
+
+        for oid, video in videos.items():
+            if oid in carried:
+                if rename(video, carried[oid]):
+                    report["media"].add(carried[oid])
+            elif any(
+                cls._is_absolute(quoted(index)[nth].group(1)) for index, nth in video["fields"]
+            ):
+                report["kept"].add(FileDependencies.file_name(video["file"]))
+        for child, parent in links:
+            texture = objects["Texture"].get(parent)
+            if child in carried and texture is not None and rename(texture, carried[child]):
+                report["media"].add(carried[child])
+        return "".join(lines)
+
     @classmethod
     def embed_dependencies(
         cls,
@@ -2388,14 +2830,16 @@ class FbxMedia(_FbxMediaInternal):
         (left as it is); one its slots cannot carry -- an openPBRSurface's --
         goes in here.
         The ``audio`` record then states what went in: its ``media`` is the
-        SHA-256 of each audio file the FBX now carries, by the event name that
-        is its stem (:meth:`AudioUtils.media_digests
+        SHA-256 of each audio file the FBX now carries, by the cue's 'sound'
+        that names it (:meth:`AudioUtils.media_digests
         <pythontk.AudioUtils.media_digests>`), the bytes Unity compares a
-        same-named clip against before it reuses one; a digest of a file no
+        same-named sound against before it reuses one; a digest of a file no
         longer inside is dropped. Only this pass knows what was embedded, so a
         write without it carries no digest -- a raw export reads as one from
         before them, and Unity binds its clips as it did.
-        Each name is resolved the way the GLB appliers resolve it: the first
+        Each name is resolved the way the GLB appliers resolve it: a packed
+        metal / roughness image the export's ``materials`` producer wrote
+        into the pack store (``MaterialFamilies.packed_file``), else the first
         of *search_dirs* holding that file (the host's own answer to where
         its maps live), then the FBX's own folder, then -- for what those miss
         -- anywhere under *walk_root* (:meth:`FileDependencies.find_files`; a
@@ -2415,19 +2859,24 @@ class FbxMedia(_FbxMediaInternal):
             files: Further files to embed, for a host whose records name
                 their files by something other than a file name: a path (it
                 goes in under its file name) or a ``(name, path)`` pair -- an
-                audio event names its track, so the track's file rides under
-                the name the consumer matches it by.
+                audio cue names its sound by the file the delivery carries,
+                which the host resolves to its source (:meth:`audio_sounds`).
             logger: Where the outcome goes; this module's logger otherwise.
 
         Returns:
             ``{"named", "embedded", "present", "missing", "bytes"}`` -- the
             names the records give, the file names added, the ones already
             in the file, the named files found nowhere, and the bytes added.
-            When nothing is added the file is not written at all.
+            When nothing is added the file is not written at all. A file
+            without the binary-FBX magic (an ASCII FBX, another format) is
+            no file this pass can carry anything in: it is left as it is and
+            the report is empty, so a caller handing every delivered file
+            here needs no gate of its own.
 
         Raises:
-            ValueError: *src* is not a binary FBX this writer can re-emit.
-            OSError: A file found or named cannot be read.
+            ValueError: *src* has the binary-FBX magic but this writer cannot
+                re-emit it (truncated, corrupt).
+            OSError: *src*, or a file found or named, cannot be read.
         """
         log = logger or logging.getLogger(__name__)
         report: Dict[str, Any] = {
@@ -2437,6 +2886,10 @@ class FbxMedia(_FbxMediaInternal):
             "missing": [],
             "bytes": 0,
         }
+        with open(src, "rb") as fh:
+            if fh.read(len(FBX_MAGIC)) != FBX_MAGIC:
+                log.debug("FBX dependencies: %s is not a binary FBX; left as it is.", src)
+                return report
         dirs = [d for d in search_dirs if d]
         dirs.append(os.path.dirname(os.path.abspath(src)))
         walk_root = walk_root if walk_root and os.path.isdir(walk_root) else ""
@@ -2453,7 +2906,11 @@ class FbxMedia(_FbxMediaInternal):
                 if name.casefold() in inside:
                     report["present"].append(name)
                     continue
-                path = next(
+                # A packed metal / roughness image the export's producer wrote
+                # first: a delivery file of the pack store, in no scene folder
+                # (``MaterialFamilies.packed_file``), and fresher than any
+                # same-named file a folder holds.
+                path = MaterialFamilies.packed_file(name) or next(
                     (
                         p
                         for d in dirs
@@ -2532,13 +2989,15 @@ class FbxMedia(_FbxMediaInternal):
         if found is None or not isinstance(found[1], dict):
             return False
         prop, payload = found
-        events = payload.get("events")
+        if not SceneRecords.AUDIO.is_current(payload):
+            return False
+        cues = payload.get("cues")
         files = {
             name: cls._raw(record)
             for name, record in cls._video_records(roots)
             if os.path.splitext(name)[1].lower() in AudioUtils.SOURCE_EXTENSIONS
         }
-        media = AudioUtils.media_digests(events if isinstance(events, list) else [], files)
+        media = AudioUtils.media_digests(cues if isinstance(cues, list) else [], files)
         updated = {k: v for k, v in payload.items() if k != "media"}
         if media:
             updated["media"] = media
@@ -2637,14 +3096,14 @@ class FbxMedia(_FbxMediaInternal):
         left. Geometry, materials, media and the surviving takes are copied
         byte for byte.
 
-        Why it exists: FBX2glTF bakes EVERY node at EVERY frame of EVERY take.
-        A Maya take split writes each shot as its own stack beside the
-        whole-timeline one, and the GLB's clips are then cut from that
-        whole-timeline stack -- so the converter was baking the entire
-        performance a second time, shot by shot, for animations the clip
-        rebuild throws away. Measured on a production assembly (18 shots, 3723
-        exported nodes): 1377 s -> 537 s of conversion, 491 MB -> 385 MB of
-        converter input.
+        Why it exists: a file of shots ships one take per shot and no other,
+        but a DCC's take split can write its whole-timeline take beside the
+        shots' takes, so the exporters drop it after the write -- and
+        FBX2glTF bakes EVERY node
+        at EVERY frame of EVERY take, so a take left in costs the GLB build
+        the whole performance a second time (measured on a production
+        assembly, 18 shots, 3723 exported nodes: 1377 s -> 537 s of
+        conversion, 491 MB -> 385 MB of converter input).
 
         Parameters:
             src: The FBX to read.
@@ -2685,6 +3144,186 @@ class FbxMedia(_FbxMediaInternal):
             part = cls._write_part(target, version, roots, footer_id, magic)
         cls._promote(part, target)
         return report
+
+    @classmethod
+    def keep_takes(
+        cls,
+        path: str,
+        names: Iterable[str],
+        logger: Any = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Leave the written FBX at *path* only the takes *names* declares.
+
+        A file of shots ships one take per shot and no other, but a DCC's
+        take split can write its whole-timeline take beside them (Maya's
+        ``Take 001``); every take *names* does not hold (case aside) is dropped, in place
+        (:meth:`drop_takes`). Run right after the write and before anything
+        reads the file -- a GLB is converted from its takes. Nothing is
+        dropped when *names* is empty (a scene with no shots: its one
+        whole-timeline take ships), when every take is declared, or when
+        none is (a file the split never reached keeps the one take it has).
+        Never raises: the file is already written, and a take left in it is
+        the file as written, not a broken one (``ExportVerifier``'s
+        ``check_fbx_takes`` names it).
+
+        Weighed: asking the writer not to write the take -- Maya's FBX plug-in
+        writes its whole-timeline take beside every split and has no switch
+        for it (``FBXExportSplitAnimationIntoTakes`` adds takes, never
+        removes that one); the FBX SDK's own take removal
+        (``FbxScene.RemoveAnimStack``), Autodesk's native binding, a
+        dependency pythontk cannot take; and leaving it for each reader to
+        skip -- Unity's importer and FBX2glTF make a clip of every take, the
+        GLB build paying for it in time and size (:meth:`drop_takes`). So the
+        take is dropped from the written file by the binary writer the other
+        post-write passes use.
+
+        Parameters:
+            path: The FBX just written.
+            names: The declared take names: one per shot.
+            logger: Where the outcome goes; this module's logger otherwise.
+
+        Returns:
+            The :meth:`drop_takes` report, or ``None`` when nothing was
+            dropped.
+        """
+        log = logger or logging.getLogger(__name__)
+        # The shot/take join ignores case, as every reader of it does.
+        declared = {str(name).casefold() for name in names or ()}
+        if not declared or not os.path.isfile(path or ""):
+            return None
+        try:
+            present = FbxFile.load(path, raw_payloads=False).take_names()
+            drop = [name for name in present if name.casefold() not in declared]
+            if not drop or len(drop) == len(present):
+                return None
+            report = cls.drop_takes(path, names=drop)
+        except Exception:  # noqa: BLE001 - the write already happened
+            log.warning(
+                "The takes no shot names could not be dropped; the FBX ships "
+                "them beside the shot takes.",
+                exc_info=True,
+            )
+            return None
+        log.info(
+            f"Dropped {', '.join(report['takes'])} from the FBX: it ships "
+            f"{len(present) - len(report['takes'])} take(s), one per shot."
+        )
+        return report
+
+    @classmethod
+    def fit_take_windows(
+        cls, path: str, logger: Any = None
+    ) -> Dict[str, Tuple[float, float]]:
+        """Make each take of the written FBX at *path* declare exactly the keys
+        it holds, in place.
+
+        A take declares its window twice -- its ``Takes`` entry's
+        ``LocalTime`` / ``ReferenceTime`` and its ``AnimationStack``'s
+        ``LocalStart`` / ``LocalStop`` / ``ReferenceStart`` /
+        ``ReferenceStop`` -- and holds its curves' keys
+        (:meth:`FbxFile.take_ticks`). Readers disagree on which they follow:
+        Unity's model importer cuts a take's clip by the declared window, a
+        GLB converted from the file (FBX2glTF) runs over the keys. Maya's
+        writer declares a take with no shots over the playback range whatever
+        it holds (measured on Maya 2025 / FBX 2020.3.6, 2026-11-05: keys
+        10-100 under a 1-120 playback range, the bake on or off, declared
+        1-120; a resampled -10-130 bake held -10-130), so one file gave Unity
+        and the GLB two clips. Every declared time is set to the take's key
+        extent, measured off the file itself: whatever the writer was asked,
+        the file is the account of what it holds (an ancestor the writer
+        carried along, keys a bake widened). A take with no keys keeps the
+        window it declares; a file whose windows already fit is not
+        rewritten. Run on a file whose takes are meant to span what they hold:
+        a file of shots declares each shot's own range and is left alone.
+
+        Weighed: moving the host's playback range around the write so its
+        writer declares the span itself (a host's retired take fit) is a
+        suspend / restore of the artist's scene (CODE_STANDARD section 13),
+        and it had to PREDICT the span before the write -- it missed the
+        ancestors the plug-in carries along and modelled only keyed curves.
+        The FBX SDK's own take API (``FbxAnimStack.SetLocalTimeSpan``) is
+        Autodesk's native binding, a dependency pythontk cannot take. A take
+        split over a predicted extent (``FBXExportSplitAnimationIntoTakes``)
+        predicts as well, and bakes. Unity's ``ModelImporter`` clip settings
+        would make Unity the authority and leave every other reader of the
+        file wrong. So the file is rewritten by the binary writer the other
+        post-write passes use (:meth:`keep_takes`, :meth:`drop_takes`). Never
+        raises: the file is already written, and a take still declaring its
+        writer's window is the file as written, warned.
+
+        Parameters:
+            path: The FBX just written.
+            logger: Where a failure is warned; this module's logger otherwise.
+
+        Returns:
+            ``{take: (start, end)}`` in SECONDS, the window each take declares
+            once the pass has run; ``{}`` when *path* is missing or cannot be
+            read (an ASCII FBX).
+        """
+        log = logger or logging.getLogger(__name__)
+        if not os.path.isfile(path or ""):
+            return {}
+        rate = FbxFile.TICKS_PER_SECOND
+        try:
+            fbx = FbxFile.load(path, raw_payloads=False, span_arrays=("KeyTime",))
+            held = fbx.take_ticks()
+            windows = dict(fbx.take_windows())
+            part = None
+            with (
+                open(path, "rb") as fh,
+                mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ) as buf,
+            ):
+                version, roots, footer_id, magic = cls._load(buf)
+                sections = {record.name: record for record in roots}
+                hlen = cls._header_fmt(version >= 7500)[1]
+                objects = sections.get(b"Objects")
+                changed = False
+                for record in objects.children if objects is not None else ():
+                    if record.name != b"AnimationStack":
+                        continue
+                    head = cls._scalars(record)
+                    name = FbxFile.display_name(head[1]) if len(head) > 1 else None
+                    if name not in held:
+                        continue
+                    lo, hi = held[name]
+                    windows[name] = (lo / rate, hi / rate)
+                    times = {
+                        b"LocalStart": lo,
+                        b"LocalStop": hi,
+                        b"ReferenceStart": lo,
+                        b"ReferenceStop": hi,
+                    }
+                    if cls._named_times(record) != times:
+                        cls._set_times(record, times, hlen)
+                        changed = True
+                    entry = cls._take_entry(sections, name)
+                    if entry is None:
+                        continue
+                    stated = {
+                        child.name: list(cls._scalars(child)[:2])
+                        for child in entry.children
+                    }
+                    if any(
+                        stated.get(tag) != [lo, hi]
+                        for tag in (b"LocalTime", b"ReferenceTime")
+                    ):
+                        span = [cls._pack_long(lo), cls._pack_long(hi)]
+                        cls._set_entry_fields(
+                            entry, {b"LocalTime": span, b"ReferenceTime": span}, hlen
+                        )
+                        changed = True
+                if changed:
+                    part = cls._write_part(path, version, roots, footer_id, magic)
+            if part is not None:
+                cls._promote(part, path)
+        except Exception:  # noqa: BLE001 - the write already happened
+            log.warning(
+                "The FBX's takes could not be fitted to what they hold; each "
+                "ships the window its writer declared.",
+                exc_info=True,
+            )
+            return {}
+        return windows
 
     #: The name :meth:`merge_takes` gives the one take it leaves: the take an
     #: unsplit export carries, so an importer meets the plain one-take file

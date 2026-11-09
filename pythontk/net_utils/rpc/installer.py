@@ -30,6 +30,13 @@ reserved for rebuilding an install that already matches.
 host DCC's Python runtime may not match the workspace's Python that last
 imported the source -- shipping stale bytecode causes obscure import
 failures inside the DCC.
+
+A bridge declares its plugin once, as data (:class:`RpcPluginSpec`: its name,
+its app, where that app looks for plugins), and every bridge's install,
+refresh and removal is the same code (:meth:`PluginInstaller.install`,
+:meth:`~PluginInstaller.refresh`, :meth:`~PluginInstaller.uninstall`,
+:meth:`~PluginInstaller.status`) -- and a panel's *Install in <app>* is one
+action over the same spec, for whichever bridge declares one.
 """
 
 from __future__ import annotations
@@ -38,10 +45,42 @@ import filecmp
 import fnmatch
 import os
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator, Optional, Union
+from typing import Any, Callable, Iterator, Optional, Union
 
-__all__ = ["PluginInstaller"]
+__all__ = ["PluginInstaller", "RpcPluginSpec"]
+
+
+@dataclass(frozen=True)
+class RpcPluginSpec:
+    """One bridge's plugin in its app, as data: what :class:`PluginInstaller`
+    installs, refreshes and removes, and what a panel's *Install in <app>*
+    names.
+
+    Parameters:
+        name: The plugin's folder (its package) in the app's plugins folder.
+        app: The app's name as a person reads it (in *Install in <app>*).
+        source: The plugin's source folder (holding its ``__init__.py``).
+        user_dir: Where the app looks for a person's plugins (``None`` when
+            it cannot be found here).
+        enable: Turns on the app's own switch to start the plugin, on a
+            person's install only (never a refresh); ``None`` when the app has
+            none.
+        after_install: What a person does for an open app to load it.
+    """
+
+    name: str
+    app: str
+    source: Path
+    user_dir: Callable[[], Optional[Path]]
+    enable: Optional[Callable[[], Any]] = None
+    after_install: str = ""
+
+    def destination(self) -> Optional[Path]:
+        """The plugin's folder in the app's plugins folder, or ``None``."""
+        root = self.user_dir()
+        return Path(root) / self.name if root else None
 
 
 class _PluginInstallerInternal(object):
@@ -196,3 +235,58 @@ class PluginInstaller(_PluginInstallerInternal):
         """True if *dest* looks like an installed plugin (has ``__init__.py``)."""
         dest = Path(dest)
         return (dest / "__init__.py").is_file()
+
+    # ------------------------------------------------------- by a bridge's spec
+    @staticmethod
+    def status(spec: RpcPluginSpec) -> str:
+        """*spec*'s plugin in its app: ``"current"``, ``"stale"`` (an older
+        copy), ``"absent"`` or ``"unresolved"`` (its app's folder not found)."""
+        dest = spec.destination()
+        if dest is None:
+            return "unresolved"
+        if not PluginInstaller.is_plugin_installed(dest):
+            return "absent"
+        return "current" if PluginInstaller.is_plugin_current(spec.source, dest) else "stale"
+
+    @staticmethod
+    def install(spec: RpcPluginSpec, force: bool = False, logger: Any = None) -> Optional[Path]:
+        """A person's install of *spec*'s plugin in its app (a panel's *Install
+        in <app>*): installed or brought up to date, the app's switch to start
+        it turned on (:attr:`RpcPluginSpec.enable`), and said to *logger* with
+        what loads it in an open app. The plugin's folder, or ``None``."""
+        dest = spec.destination()
+        if dest is None:
+            if logger is not None:
+                logger.warning(f"Could not find {spec.app}'s plugins folder: the {spec.name} plugin was not installed.")
+            return None
+        installed = PluginInstaller.install_plugin(spec.source, dest, force=force)
+        if installed is None:
+            if logger is not None:
+                logger.warning(f"The {spec.name} plugin's source is missing: {spec.source}.")
+            return None
+        if spec.enable is not None:
+            spec.enable()
+        if logger is not None:
+            logger.info(f"Installed {spec.app}'s {spec.name} plugin: {installed}. {spec.after_install}".rstrip())
+        return installed
+
+    @staticmethod
+    def refresh(spec: RpcPluginSpec) -> Optional[Path]:
+        """Bring an install of *spec*'s plugin that is there up to date (an
+        older copy serves stale ops); never install one that is not, nor touch
+        the app's switch. The plugin's folder when it was rewritten, else ``None``."""
+        if PluginInstaller.status(spec) != "stale":
+            return None
+        return PluginInstaller.install_plugin(spec.source, spec.destination())
+
+    @staticmethod
+    def uninstall(spec: RpcPluginSpec, logger: Any = None) -> bool:
+        """Remove *spec*'s plugin from its app's plugins folder, said to
+        *logger*. True when something was removed."""
+        dest = spec.destination()
+        removed = dest is not None and PluginInstaller.uninstall_plugin(dest)
+        if logger is not None:
+            logger.info(
+                f"Removed {spec.app}'s {spec.name} plugin: {dest}." if removed else f"{spec.app}'s {spec.name} plugin is not installed."
+            )
+        return removed

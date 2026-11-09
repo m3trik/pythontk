@@ -270,10 +270,10 @@
 <div id="panels"></div>
 
 <div id="anim" hidden>
-  <select class="ui" id="clipSelect" title="Which animation clip to play. Shots declared in the DCC are listed first; a clip marked (full range) is the whole timeline the exporter kept alongside them. On a deliverable that ships only shots, FULL SEQUENCE plays them all in order on the timeline they were cut from."></select>
+  <select class="ui" id="clipSelect" title="Which animation clip to play: one clip per shot declared in the DCC, each named after its shot (a scene with no shots ships one clip of its whole timeline). FULL SEQUENCE plays the shots' clips in turn, in the order of the timeline they were cut from."></select>
   <button class="ui" id="playToggle" title="Play / pause (space)">Pause</button>
   <input id="scrub" type="range" min="0" max="1000" value="0" step="1"
-         title="Scrub the current clip. On FULL SEQUENCE the readout beside it names the shot the playhead is standing in, and marks a gap between shots as a hold.">
+         title="Scrub the current clip. On FULL SEQUENCE the readout beside it names the shot whose clip is playing.">
   <span id="clipTime"></span>
 </div>
 

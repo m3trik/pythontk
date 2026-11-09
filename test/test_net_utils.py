@@ -50,6 +50,31 @@ class TestCredentials(unittest.TestCase):
 
         self.assertEqual(result, {"username": "me@example.com", "password": "fake-pass"})
 
+    @patch("pythontk.net_utils.credentials.keyring")
+    def test_resaving_without_a_username_drops_the_old_one(self, mock_keyring):
+        """Saved again with no username, a target keeps no username: the old
+        ``#username`` entry goes, never read back beside the new password; a
+        target that had none saves as before. Added: 2026-11-08"""
+        store = {}
+
+        def delete(service, name):
+            if (service, name) not in store:
+                raise KeyError(name)  # keyring's PasswordDeleteError: none stored
+            del store[(service, name)]
+
+        mock_keyring.set_password.side_effect = lambda s, n, v: store.__setitem__((s, n), v)
+        mock_keyring.get_password.side_effect = lambda s, n: store.get((s, n))
+        mock_keyring.delete_password.side_effect = delete
+
+        self.assertTrue(Credentials.set_credential("svc", "me@example.com", "old-pass"))
+        self.assertTrue(Credentials.set_credential("svc", "", "new-pass"))
+        self.assertEqual(
+            Credentials.get_credential("svc"),
+            {"username": "keyring_user", "password": "new-pass"},
+        )
+        self.assertNotIn(("pythontk", "svc" + Credentials.KEYRING_USERNAME_SUFFIX), store)
+        self.assertTrue(Credentials.set_credential("other", "", "pass"))
+
     @patch("pythontk.net_utils.credentials.keyring", None)  # Simulate keyring missing
     @patch("platform.system")
     @patch("pythontk.net_utils.credentials.win32cred")

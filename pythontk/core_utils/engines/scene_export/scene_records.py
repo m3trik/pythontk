@@ -13,8 +13,8 @@ engine (``scene_records`` / ``scene_store`` / ``export_snapshot`` /
 
 - **Declare once, derive everything.** :class:`RecordSpec` is the declaration:
   key, scope, version, description, kind and dependencies -- and, where
-  another language reads it, its payload's shape and the block a GLB
-  carries it as (:class:`GlbBlock`).  Nothing else spells a channel name,
+  another language reads it, its payload's shape and whether a GLB carries
+  it as it stands (:attr:`RecordSpec.glb_verbatim`).  Nothing else spells a channel name,
   and the other languages' types are generated from the shapes.
 - **Storage is dumb, records are smart.** :class:`SceneStoreBase` is the whole
   contract a DCC implements: ``read`` / ``write`` / ``keys`` / ``values`` per
@@ -45,11 +45,26 @@ The DCC picks the primitive that makes each guarantee structural (Maya: a
 ``network`` node and a hidden transform; Blender: a scene ID property group
 and an Empty) -- this module never knows.
 
+Which deliverable carrier is the scene's: in a written file every node
+``SceneStoreBase.is_carrier`` names is a carrier, and the scene's own is the
+one named exactly ``data_export`` at the root of the file's hierarchy
+(``SceneStoreBase.is_scene_carrier``). A referenced module's
+``NS:data_export``, a numbered copy an import made, and a grouped module's
+own-named ``data_export`` under a group are modules'. A writer writes only the
+scene's own, made at the root when the scene has none, and never writes over
+or deletes a module's; a reader takes each record from the scene's own, a
+module's only where the scene's carries none (the first in file order), and
+never a module's ``handoff`` (``SceneStoreBase.reader_values``, the one
+statement of that precedence). A build's overlay of a converted file
+(``MeshConvert.overlay_data_export``) states a channel for that one build: it
+takes the channel off every carrier, a module's included, so no reader falls
+back to a module's stale copy, and writes it onto the scene's own.
+
 Zero-dep and DCC-agnostic, like everything in ``pythontk``.
 """
 
-import copy
 import json
+import math
 import logging
 import re
 import sys
@@ -64,6 +79,7 @@ from typing import (
     List,
     Mapping,
     Optional,
+    Sequence,
     Set,
     Tuple,
     Union,
@@ -99,6 +115,43 @@ class NodeNames:
             return False
         name = name.rsplit("|", 1)[-1]
         return name in self.names or self.leaf(name) in self.leaves
+
+    @staticmethod
+    def resolve(
+        name: Optional[str],
+        nodes_by_name: Mapping[str, Sequence[Any]],
+        leaf_index: Mapping[str, Sequence[str]],
+    ) -> Tuple[Optional[List[Any]], str, List[str]]:
+        """The nodes a record names *name*, by name alone: the one ladder
+        every reader binds a name by -- exact first, then the one name its
+        namespace-stripped leaf matches, a leaf several names share never
+        guessed. ``MeshConvert``'s record resolver (``_Media.resolve_node``),
+        the transport's name fallback (:meth:`Transport.join`) and the WebXR
+        viewer's ``kernel/resolve.js`` read it so.
+
+        Parameters:
+            name: The name as the record states it.
+            nodes_by_name: ``{node name: [node, ...]}`` -- names are not
+                unique, so a name holds every node of it.
+            leaf_index: ``{leaf: [node name, ...]}``, each name's leaf the
+                part after its last ``:``.
+
+        Returns:
+            ``(nodes, status, leaves)``: *status* is ``"exact"``, ``"leaf"``,
+            ``"ambiguous"`` (in the file, unbindable; *leaves* names the
+            candidates) or ``"absent"``.
+        """
+        if not name:
+            return None, "absent", []  # "" indexes the file's NAMELESS nodes
+        nodes = nodes_by_name.get(name)
+        if nodes:
+            return list(nodes), "exact", []
+        leaves = list(leaf_index.get(name.rsplit(":", 1)[-1]) or [])
+        if len(leaves) == 1:
+            return list(nodes_by_name[leaves[0]]), "leaf", leaves
+        if len(leaves) > 1:
+            return None, "ambiguous", leaves
+        return None, "absent", []
 
 
 class Scope(str, Enum):
@@ -151,8 +204,7 @@ class Merge(str, Enum):
     #: LIFO stack's newest entry stays on top.
     UNION = "union"
     #: A domain merge owns it (:meth:`SceneRecords.codec`): the shot store
-    #: renumbers shots, the emissive registry re-slots a group whose slot is
-    #: taken.
+    #: renumbers shots.
     CODEC = "codec"
 
 
@@ -274,78 +326,6 @@ class Clause:
 
 
 @dataclass(frozen=True)
-class GlbBlock:
-    """How a deliverable record rides a GLB: a block in its root ``extras``.
-
-    A GLB conversion (``MeshConvert``) reads the record off the carrier, binds
-    it to the file -- names resolved to glTF node indices, maps to texture
-    indices -- and writes the result in the root ``extras`` under the
-    record's own key (:attr:`RecordSpec.key`): one name for the record in
-    every file, the key ``PreviewServer.AUTO_SCRIPTS`` activates a viewer
-    script on.
-
-    Declared here, beside the record, for the same reason the record is: one
-    statement of each block, whichever exporter writes it -- the GLB's
-    handoff takes its ``assembly`` row from these.
-
-    Parameters:
-        version: The block's own schema version, which its writer stamps
-            (independent of the record's: the binding can change alone).
-        shape: ``(module, class)`` of the :class:`~pythontk.SchemaSpec`
-            declaring the block (:meth:`SceneRecords.glb_shape`); ``None``
-            while it is undeclared.
-        assembly: What the block makes of the approved scene: its row's
-            ``spec`` in the GLB handoff's ``assembly``, before its
-            *clauses* (:meth:`assembly_for`).
-        node_fields: Where the block binds by glTF NODE INDEX, as paths
-            (``("planes", "node")``: each plane's ``node``) -- what a pass
-            that renumbers the file's nodes follows.
-        clauses: The :class:`Clause` s of the assembly that only some blocks
-            need, tested against the block.
-    """
-
-    version: int = 1
-    shape: Optional[Tuple[str, str]] = None
-    assembly: str = ""
-    node_fields: Tuple[Tuple[str, ...], ...] = ()
-    clauses: Tuple[Clause, ...] = ()
-
-    def assembly_for(self, payload: Any = None) -> str:
-        """The assembly a block *payload* needs (:meth:`Clause.join`)."""
-        return Clause.join(self.assembly, self.clauses, payload)
-
-    @property
-    @Deprecation.symbol(
-        "RecordSpec.key -- a block takes its record's key",
-        remove_in="0.18.0",
-        since="2026-10-24",
-    )
-    def key(self) -> str:
-        """The record's key, which the block is written under; empty for a
-        block no :class:`RecordSpec` holds."""
-        return self.__dict__.get("_record_key", "")
-
-
-@Deprecation.symbol(
-    "GlbBlock -- a record's block is named for the file it rides",
-    remove_in="0.18.0",
-    since="2026-10-24",
-)
-class WebProjection(GlbBlock):
-    """Retired 2026-10-20 (removed in 0.18.0): :class:`GlbBlock`.
-
-    Builds as it did in 0.16.1 -- ``WebProjection(key, version=1,
-    shape=None)`` -- its *key* what :attr:`GlbBlock.key` reads until a
-    :class:`RecordSpec` holds it."""
-
-    def __init__(
-        self, key: str, version: int = 1, shape: Optional[Tuple[str, str]] = None
-    ) -> None:
-        super().__init__(version=version, shape=shape)
-        object.__setattr__(self, "_record_key", key)
-
-
-@dataclass(frozen=True)
 class Record:
     """One produced value of a :class:`RecordSpec`, ready to store."""
 
@@ -432,8 +412,14 @@ class RecordSpec:
             another language reads it through are generated from it
             (``m3trik/scripts/sync_scene_records.py``). ``None`` while the
             payload is described only in prose.
-        glb: The record's :class:`GlbBlock` -- the block a GLB carries it
-            as; ``None`` when a GLB carries none.
+        glb_verbatim: Whether a GLB carries the record: ITSELF, as the FBX's
+            carrier holds it, under its key in the root ``extras``, in the
+            record's own version and shape, its names resolved by each reader
+            in its own scene (one layout, two containers) -- the one way a
+            GLB carries a record, none bound to the file's indices. False for
+            a deliverable record a GLB does not carry: one the GLB states in
+            glTF's own terms (the ``materials`` record: the GLB's materials
+            are what it describes) or carries otherwise (the ``handoff``).
         export_scoped: Whether the record is narrowed to the export set
             (:attr:`ExportContext.scope`): its entries describe scene nodes,
             and an entry for a node the write leaves out ships that node's
@@ -448,8 +434,8 @@ class RecordSpec:
             ``(list field, name field)``, one entry per node -- the name field
             a key, or a path into the entry (``"*"`` walking a list), an entry
             kept when any node it names ships (:meth:`narrowed`). ``None``
-            when the payload names no node a reader could narrow it by (the
-            emissive groups name faces through their host's stores).
+            when the payload names no node a reader could narrow it by (a
+            material entry names a material, not a node).
         assembly: What the record makes of the approved scene, field by field
             -- the handoff block's ``assembly`` row for it, so a reader holding
             nothing but the deliverable rebuilds what the record describes
@@ -493,7 +479,7 @@ class RecordSpec:
     paths: Union[bool, Tuple[str, ...]] = False
     stamps: Union[bool, Tuple[str, ...]] = False
     shape: Optional[Tuple[str, str]] = None
-    glb: Optional[GlbBlock] = None
+    glb_verbatim: bool = False
     export_scoped: bool = False
     assembly: str = ""
     transient: bool = False
@@ -501,6 +487,20 @@ class RecordSpec:
     clauses: Tuple[Clause, ...] = ()
     nodes: Optional[Tuple[str, Union[str, Tuple[str, ...]]]] = None
     in_frame: bool = False
+
+    @property
+    @Deprecation.symbol(
+        "RecordSpec.glb_verbatim -- a GLB carries each record as it stands",
+        remove_in="0.18.0",
+        since="2026-10-24",
+    )
+    def web(self) -> Optional[Any]:
+        """Held until 0.22.0: the record's GLB block, a ``GlbBlock`` keyed by
+        the record in its own version and shape where a GLB carries it
+        (:attr:`glb_verbatim`), else ``None``."""
+        from pythontk.core_utils.engines.scene_export._retired import record_block
+
+        return record_block(self)
 
     def narrowed(self, payload: Any, nodes: Iterable[str]) -> Any:
         """*payload* with only the entries (:attr:`nodes`) describing a node
@@ -544,25 +544,6 @@ class RecordSpec:
                 f"{self.key!r} is transient, so it is produced for every write: "
                 "declare it Kind.DERIVED."
             )
-        if self.glb is not None:
-            # What the retired ``GlbBlock.key`` serves until its removal, on a
-            # block of this record's own: stamped on the one handed over, a
-            # ``dataclasses.replace`` of this record would re-key the
-            # original's. A copy, not a ``replace``, which would rebuild a
-            # ``WebProjection`` through an ``__init__`` that wants its key.
-            glb = copy.copy(self.glb)
-            object.__setattr__(glb, "_record_key", self.key)
-            object.__setattr__(self, "glb", glb)
-
-    @property
-    @Deprecation.symbol(
-        "RecordSpec.glb -- a record's block is named for the file it rides",
-        remove_in="0.18.0",
-        since="2026-10-24",
-    )
-    def web(self) -> Optional[GlbBlock]:
-        """The record's GLB block (:attr:`glb`)."""
-        return self.glb
 
     @property
     @Deprecation.symbol(
@@ -695,43 +676,48 @@ class RecordSpec:
         return bool(self.read_text(store))
 
 
-# The texts a record and its block share, stated once. The shadows record's
-# runtime restates pythontk's ShadowProjection.model / ShadowModel.placement
-# and the horizon map's layout and march (HeightFieldMap.to_rgba / .alpha, the
-# reference every engine shader is pinned to) so a reader with only the file
-# rebuilds every plane: change them together. test_scene_records pins the
-# constants quoted here to the code's and implements the text cold.
-_LIGHTMAP_PROBE = Clause(
-    "'probe' is the reflection probe the bake captured: the scene's "
-    "environment (rendering.environment).",
-    ("probe",),
-)
+# The shadows record's runtime, stated once: pythontk's ShadowProjection.model /
+# ShadowModel.placement, the fade (ShadowProjection.fade) and the horizon map's
+# layout and march (HeightFieldMap.to_rgba / .alpha, the reference every engine
+# shader is pinned to), so a reader with only the file rebuilds every plane:
+# change them together. test_scene_records pins the constants quoted here to
+# the code's and implements the text cold.
 _SHADOW_PLANE = (
-    "Each plane is a ground quad, centred on its node's origin, showing the "
-    "shadow its source casts from the prop standing on its contact; every "
-    "length in the record times 'unit_scale' is metres, and up is +Y. It "
-    "draws in its "
-    "material's colour at alpha = shadow * min(the material's opacity, "
-    "'intensity'). Its source places the shadow alone and lights nothing."
+    "A plane, its source and its contact are the nodes named 'name', "
+    "'source' and 'contact'. Each plane is a ground quad, centred on its "
+    "node's origin, showing the shadow its source casts from the prop "
+    "standing on its contact; every length in the record times 'unit_scale' "
+    "is metres, and up is +Y. It draws in its material's colour at alpha = "
+    "shadow * fade (both below), its shadow marched from its horizon map. "
+    "Its source places the shadow alone and lights nothing."
 )
-_SHADOW_PROJECTED = (
-    "A projected plane's shadow is the alpha of {map} through the quad's own "
-    "UVs, which then address its tile; its colour is the material's times "
-    "that map's."
-)
-_SHADOW_PLACEMENT = Clause(
-    "With 'follow_source' a runtime re-places the quad every frame (otherwise "
-    "its imported keys stand). All in metres, with .xz a point's horizontal "
-    "(x, z) part, C the contact's position and L the source's -- a "
-    "directional source's is "
+_SHADOW_MODEL = (
+    "All in metres, with .xz a point's horizontal (x, z) part, C the "
+    "contact's position and L the source's -- a directional source's is "
     "C - s*1e6*max(height, 2*radius), s the unit direction it shines, its "
     "node's local -Y: d = C.xz - L.xz, dist = |d|, u = d/dist ((0, 1) when "
     "dist < 1e-6), k_max = 1 + max_stretch, k_base = clamp((L.y - "
     "ground)/max(1e-4, L.y - C.y), 0, k_max), k_top = clamp((L.y - "
     "ground)/max(1e-4, L.y - C.y - height), 0, min(k_max, k_base + "
     "max_stretch*height/max(dist, 1e-6))), reach = max(0, dist*(k_top - "
-    "k_base)), width = 2*radius*max(k_top, k_base), anchor = L.xz + d*k_base "
-    "and far = max(reach + canvas[1]*radius*k_top, 0). Turn the quad so its "
+    "k_base)), width = 2*radius*max(k_top, k_base) and anchor = L.xz + "
+    "d*k_base."
+)
+_SHADOW_FADE = (
+    "Every plane fades, evaluated each frame from those terms whether or not "
+    "it follows its source: fade = clamp(intensity/max(0.001, "
+    "stretch^falloff_power) * clamp((L.y - C.y)/source_ramp, 0, 1) * "
+    "clamp(1 - max(0, C.y - ground)/max(0.001, fade_height), 0, 1), 0, 1), "
+    "with stretch = max(1, (reach + radius*(k_base + k_top))/max(1e-4, "
+    "2*radius)): the shadow lightens as it stretches, ramps in over "
+    "'source_ramp' as the source rises over the contact, and fades out as "
+    "the prop rises off the ground. A plane whose source or contact does not "
+    "resolve draws at 'intensity'."
+)
+_SHADOW_PLACEMENT = Clause(
+    "With 'follow_source' a runtime re-places the quad every frame (otherwise "
+    "its imported keys stand), from its 'canvas' and far = max(reach + "
+    "canvas[1]*radius*k_top, 0). Turn the quad so its "
     "along axis -- local +Z on a quad lying in its local X/Z, +Y on one lying "
     "in X/Y (a Z-up exporter's) -- runs along u and its normal (+Y, or +Z) "
     "up, which puts its own +X along up x u (X/Z) or u x up (X/Y); then scale "
@@ -744,9 +730,10 @@ _SHADOW_PLACEMENT = Clause(
     True,
 )
 _SHADOW_HORIZON = (
-    "A horizon plane's shadow is marched from its map, {map}, at "
+    "A plane's shadow is marched from its map, the image 'horizon.texture' "
+    "names, at "
     "'horizon.rect' ([scale_u, scale_v, offset_u, offset_v] of the image from "
-    "its {origin}). The map is data, its texels read whole (never filtered or "
+    "its bottom-left). The map is data, its texels read whole (never filtered or "
     "colour-decoded; what is interpolated below is decoded values): S = "
     "'size' texels tall and S*(K + 2) wide, K = 'spans', S x S tiles side by "
     "side whose texel (i, j) -- column i, row j counted from the map's top "
@@ -794,25 +781,18 @@ _SHADOW_HORIZON = (
     "texel per 3 map pixels, sampled bilinearly, again only when the source, "
     "the quad or the ground moves relative to the contact."
 )
-
-
-def _shadow_clauses(projected_map: str, horizon_map: str, origin: str):
-    """The shadows assembly's clauses in one carrier's addresses: a plane
-    type's clause where some plane is of it, the placement where some plane
-    follows its source."""
-    return (
-        Clause(
-            _SHADOW_PROJECTED.format(map=projected_map),
-            ("planes", "type"),
-            "projected",
-        ),
-        _SHADOW_PLACEMENT,
-        Clause(
-            _SHADOW_HORIZON.format(map=horizon_map, origin=origin),
-            ("planes", "type"),
-            "horizon",
-        ),
-    )
+#: Only a plane that carries one: the projected silhouette, an extension.
+_SHADOW_SILHOUETTE = Clause(
+    "'silhouette' is the plane's projected silhouette, an extension a reader "
+    "may ignore (it then draws the horizon). With 'silhouette.draw' a reader "
+    "holding it draws the plane's shadow as the alpha of the image "
+    "'silhouette.texture' names ('silhouette.atlas.texture' once packed) "
+    "through the quad's own UVs, which then address its tile, its colour the "
+    "material's times that map's; without it, the silhouette is the "
+    "fallback of a reader that cannot march the horizon.",
+    ("planes", "silhouette"),
+)
+_SHADOW_CLAUSES = (_SHADOW_PLACEMENT, _SHADOW_SILHOUETTE)
 
 
 @dataclass(frozen=True)
@@ -848,38 +828,293 @@ class Transport:
     """How a value animated over time rides a file, one way for every record
     (:attr:`SceneRecords.TRANSPORT`).
 
-    Unity's FBX import flattens every animated custom property onto the root,
+    An FBX importer may flatten every animated custom property onto the root,
     so objects sharing a property's name collapse into one curve, while a
     transform's own animation keeps its node. So in an FBX a curve rides a
-    child transform of the object it animates, named
-    ``<object><separator><channel>`` and carrying the :attr:`marker` user
-    property, its :attr:`curve` holding the values; a reader rebinds it and
-    drops the node. A GLB states the same curve on the property itself,
-    through :attr:`glb`.
+    transform of its own, a curve proxy, named
+    ``<target><separator><channel>`` and carrying the :attr:`marker` user
+    property, its :attr:`curve` holding the values, in each take the clip
+    plays; a reader rebinds it and drops the node. Its target is a NODE (the
+    proxy a child of that node, for :attr:`node_channels`) or a MATERIAL (the
+    proxy a child of the export's carrier node, for
+    :attr:`material_channels`). A node channel's node is the proxy's PARENT
+    wherever the file carries the proxy; only a target with no proxy is
+    joined by name (:meth:`join`). A GLB states the same curve per clip on the
+    property itself, through :attr:`glb` -- the presence channels
+    (:attr:`stepped`) as a stepped ``scale`` of the node, which glTF can
+    play.
 
-    It carries the :attr:`channels` named here, a material's animated values;
-    a record that animates anything else states its own carrier in its
-    assembly (the emissive groups' weights, until that record retires).
+    A record that animates anything else states its own carrier in its
+    assembly.
     """
 
     marker: str = "curveProxy"
     separator: str = "__"
     curve: str = "scale.x"
     glb: str = "KHR_animation_pointer"
-    #: The channels that ride it (``render_effects``' material values).
-    channels: Tuple[str, ...] = ("opacity", "highlight")
+    #: The channels a node's proxy carries (``render_effects``' tracks).
+    node_channels: Tuple[str, ...] = ("visibility", "opacity", "highlight")
+    #: The channels a material's proxy carries (``render_effects``' materials).
+    material_channels: Tuple[str, ...] = ("emission",)
+    #: The channels read as steps (on at 1, off at 0), every key a cut.
+    stepped: Tuple[str, ...] = ("visibility",)
+
+    @property
+    def channels(self) -> Tuple[str, ...]:
+        """Every channel that rides the transport, node channels first."""
+        return self.node_channels + self.material_channels
+
+    @staticmethod
+    def target_name(name: str) -> str:
+        """*name* -- a node or material as a record or a host names it -- as
+        the transport names a curve's target: its leaf, with no DAG path and
+        no namespace (``|grp|ns:Box`` -> ``Box``). A proxy is named by it
+        (:meth:`proxy_name`) and a curve is keyed by it (:meth:`parse`), so a
+        reader joins a record's target to its CURVE by it: a record names a
+        material as the delivery does, namespace included, and a node as its
+        host does. The leaf names a curve, never a node: two nodes may share
+        it (``a:Box``, ``b:Box``), and the node a curve plays on is its
+        proxy's parent (:meth:`join`)."""
+        return str(name).split("|")[-1].split(":")[-1]
+
+    def join(
+        self,
+        name: str,
+        paths: Sequence[str],
+        carriers: Iterable[int] = (),
+    ) -> Tuple[List[int], str]:
+        """The node a record's track *name* plays on, among a file's nodes.
+
+        The one rule every reader and producer of a node channel shares: the
+        node is the PARENT of the track's curve proxy (``<leaf>__<channel>``,
+        :meth:`proxy_name`) wherever the file carries one -- *carriers*, the
+        indices of the nodes such a proxy sits under. Several carriers (two
+        proxies of one name) narrow to those the name states exactly, else to
+        those of its leaf. Only a track with no proxy falls back to its name,
+        by the one ladder every reader binds a name by (:meth:`NodeNames.resolve`:
+        exact, then the one name its leaf matches), a DAG path in the name
+        narrowing the nodes it names. Nodes sharing one name are one name
+        (glTF names are not unique: every one plays it); a tie between names
+        is never guessed: it is ``"ambiguous"``, which a reader says.
+
+        Parameters:
+            name: The track's node as the record names it (a host's name: a
+                leaf, a namespaced name or a DAG path).
+            paths: Every node of the file, by index, as its path from the root
+                (``"|grp|a:Box"``); a node's name alone is a one-step path.
+            carriers: The indices of the nodes a proxy of the track's sits
+                under.
+
+        Returns:
+            ``(indices, status)``: *status* is ``"proxy"``, ``"exact"``,
+            ``"leaf"``, ``"ambiguous"`` or ``"absent"`` (no node).
+        """
+        steps = [step for step in str(name or "").split("|") if step]
+        if not steps:
+            return [], "absent"
+
+        def exact(index: int) -> bool:
+            own = [step for step in str(paths[index] or "").split("|") if step]
+            return own[-len(steps):] == steps
+
+        def named(index: int) -> str:
+            return str(paths[index] or "").split("|")[-1]
+
+        carried = sorted({i for i in carriers if 0 <= i < len(paths)})
+        if carried:
+            if len(carried) == 1:
+                return carried, "proxy"
+            narrowed = [i for i in carried if exact(i)] or [
+                i for i in carried if self.target_name(paths[i]) == self.target_name(steps[-1])
+            ]
+            if narrowed and len({named(i) for i in narrowed}) == 1:
+                return narrowed, "proxy"
+            return [], "ambiguous"
+        by_name: Dict[str, List[int]] = {}
+        for index in range(len(paths)):
+            if paths[index]:
+                by_name.setdefault(named(index), []).append(index)
+        leaf_index: Dict[str, List[str]] = {}
+        for full in by_name:
+            leaf_index.setdefault(full.rsplit(":", 1)[-1], []).append(full)
+        nodes, status, _leaves = NodeNames.resolve(steps[-1], by_name, leaf_index)
+        if not nodes:
+            return [], status
+        if len(steps) > 1:  # a DAG path narrows the nodes its name names
+            nodes = [i for i in nodes if exact(i)] or nodes
+        return sorted(nodes), status
+
+    def proxy_name(self, target: str, channel: str) -> str:
+        """The proxy carrying *target*'s *channel*: ``<target>__<channel>``,
+        the target by :meth:`target_name` -- a child of the node it animates
+        for a node channel (its node is its proxy's parent, :meth:`join`), of
+        the export's carrier node for a material channel.
+
+        Raises:
+            ValueError: A channel the transport does not carry.
+        """
+        if channel not in self.channels:
+            raise ValueError(
+                f"{channel!r} is no transport channel; expected one of "
+                f"{', '.join(self.channels)}."
+            )
+        return f"{self.target_name(target)}{self.separator}{channel}"
+
+    def parse(self, name: str) -> Optional[Tuple[str, str]]:
+        """``(target, channel)`` a proxy named *name* carries, or ``None``
+        for a name no channel ends; the target by :meth:`target_name`."""
+        leaf = self.target_name(name)
+        target, sep, channel = leaf.rpartition(self.separator)
+        if not sep or not target or channel not in self.channels:
+            return None
+        return target, channel
 
     @property
     def text(self) -> str:
         """The transport in one phrase, for the generated references."""
         return (
-            f"An animated material value ({', '.join(self.channels)}) rides "
-            f"on a child transform of the animated object in an FBX, named "
-            f"`<object>{self.separator}<channel>` and carrying the "
+            f"An animated value rides, in an FBX, on a curve proxy per take: a "
+            f"transform named `<target>{self.separator}<channel>`, the target by "
+            f"its leaf name (no path, no namespace: a reader joins a record's node "
+            f"or material to its curve by that leaf), carrying the "
             f"`{self.marker}` user property, whose `{self.curve}` holds the "
-            f"curve, and on the property itself in a GLB, through "
-            f"`{self.glb}` channels. A record animating anything else states "
-            f"its own carrier in its assembly"
+            f"curve -- a child of the node for a node channel "
+            f"({', '.join(self.node_channels)}), of the export's carrier node "
+            f"for a material channel ({', '.join(self.material_channels)}). "
+            f"A node channel plays on its proxy's parent wherever the file "
+            f"carries the proxy; only a track with no proxy joins a node by "
+            f"name, the exact name first, then the one node of its leaf, a "
+            f"tie never guessed; "
+            f"{', '.join(self.stepped)} steps. In a GLB it rides on the property "
+            f"itself, per clip, through `{self.glb}` channels, presence as a "
+            f"stepped scale of the node. A record animating anything else "
+            f"states its own carrier in its assembly"
+        )
+
+
+
+@dataclass(frozen=True)
+class GlbMedia:
+    """How a file a record names rides a GLB, one way for every record whose
+    files ride one (:attr:`SceneRecords.GLB_MEDIA`).
+
+    A record names its files by FILE NAME. An FBX embeds each file itself
+    under that name; a GLB holds each as a bufferView whose glTF ``name`` is
+    the file's name, joined to the record's name by file name -- no folder on
+    either side -- lower-cased on both (:meth:`fold`: Python's ``str.lower``,
+    JavaScript's ``toLowerCase``); two views that fold alike hold neither file
+    (:meth:`views`, a tie a reader reports). The bufferView's ``extras``
+    state its bytes: always their :attr:`mime_type`; where a glTF reader
+    cannot read the file's own format, the bytes are a web encoding of it --
+    an HDR lightmap as 8-bit sRGB (:attr:`hdr_web`) whose decoded linear
+    texels times :attr:`scale` are the map, an HDR probe or highlight copy as
+    Radiance RGBE (:attr:`radiance`). The files that ride a GLB this way are
+    the ``lightmaps`` record's (its maps, its probe and the probe's copies)
+    and the ``shadows`` record's (each plane's horizon map, silhouette and
+    atlas: PNG, a format a glTF reader reads, so ``image/png`` with no
+    scale); the ``audio`` record's sounds ride none yet.
+
+    Weighed before it (CODE_STANDARD section 15): glTF's own
+    ``images[].bufferView`` + ``mimeType`` embed image bytes, but an image is
+    there for a texture to sample -- one no texture samples is dead to every
+    reader, glTF has no image type for Radiance, and the texture passes
+    re-encode images by the slot that samples them; ``KHR_texture_basisu``
+    carries KTX2 for a texture likewise. A record's file has no texture: the
+    record names it, and its reader decodes it by what its view states. The
+    Khronos glTF Validator (2.0.0-dev.3.10, measured 2026-11-07) reports such a
+    view as ``UNUSED_OBJECT``, an info, never an error or a warning.
+    """
+
+    #: The glTF field of a bufferView that holds the file's name.
+    name: str = "name"
+    #: The ``extras`` key stating the bytes' media type.
+    mime_type: str = "mimeType"
+    #: The ``extras`` key an 8-bit web encoding of an HDR map states its
+    #: range by: decoded linear texels times it are the map.
+    scale: str = "scale"
+    #: The web encodings of an HDR lightmap: 8-bit sRGB (a WebP delivery's
+    #: lossless WebP, a KTX2 delivery's UASTC).
+    hdr_web: Tuple[str, ...] = ("image/png", "image/webp", "image/ktx2")
+    #: The encoding of an HDR probe or highlight copy: Radiance RGBE.
+    radiance: str = "image/vnd.radiance"
+
+    @staticmethod
+    def file_name(name: Any) -> str:
+        """*name* as a record names a file: its file name, no folder."""
+        return str(name or "").replace("\\", "/").rsplit("/", 1)[-1]
+
+    @classmethod
+    def fold(cls, name: Any) -> str:
+        """*name* as a join compares it: its file name (:meth:`file_name`),
+        lower-cased -- ``str.lower`` here, ``toLowerCase`` in JavaScript, the
+        one fold both languages spell alike."""
+        return cls.file_name(name).lower()
+
+    def views(self, gltf: Any, name: Any) -> List[int]:
+        """The indices of every bufferView of *gltf* (a parsed glTF document)
+        holding the file *name*, joined by :meth:`fold` on both sides."""
+        wanted = self.fold(name)
+        views = gltf.get("bufferViews") if isinstance(gltf, Mapping) else None
+        if not wanted or not isinstance(views, list):
+            return []
+        return [
+            index
+            for index, view in enumerate(views)
+            if isinstance(view, Mapping)
+            and isinstance(view.get(self.name), str)
+            and self.fold(view[self.name]) == wanted
+        ]
+
+    def view(self, gltf: Any, name: Any) -> Optional[int]:
+        """The index of the one bufferView of *gltf* holding the file *name*
+        (:meth:`views`); ``None`` when none does, and when several do -- a tie
+        is never guessed (:meth:`views` says which)."""
+        found = self.views(gltf, name)
+        return found[0] if len(found) == 1 else None
+
+    def extras(self, mime_type: str, scale: Optional[float] = None) -> Dict[str, Any]:
+        """The ``extras`` of a bufferView holding bytes of *mime_type*: with
+        *scale* for an 8-bit web encoding of an HDR map (:attr:`hdr_web`).
+
+        Raises:
+            ValueError: A *scale* on bytes that are no such encoding, or one
+                that is not a finite positive number (glTF JSON holds no NaN
+                or infinity, and no map is scaled by zero or less).
+        """
+        extras: Dict[str, Any] = {self.mime_type: mime_type}
+        if scale is not None:
+            if mime_type not in self.hdr_web:
+                raise ValueError(
+                    f"{mime_type!r} is no 8-bit web encoding of an HDR map "
+                    f"({', '.join(self.hdr_web)}): it states no scale."
+                )
+            value = float(scale)
+            if not (math.isfinite(value) and value > 0.0):
+                raise ValueError(f"A map's scale is a finite positive number, not {scale!r}.")
+            extras[self.scale] = value
+        return extras
+
+    @property
+    def text(self) -> str:
+        """The media transport in one phrase, for the generated references."""
+        return (
+            "The files the lightmaps record names -- its maps, its probe and "
+            "the probe's highlight copies -- and the shadows record names -- "
+            "each plane's horizon map, silhouette and atlas -- ride a GLB "
+            "that carries the record, each "
+            f"as the bufferView whose glTF `{self.name}` is the file's name "
+            "(the audio record's sounds ride none yet). A reader joins the "
+            "record's name to that view by file name, both lower-cased "
+            "(str.lower, toLowerCase); two views that join one name hold "
+            "neither. The bufferView's "
+            f"`extras.{self.mime_type}` states its bytes -- the file itself "
+            "where a glTF reader reads its format, else a web encoding of "
+            "it: an HDR lightmap as 8-bit sRGB ("
+            + ", ".join(f"`{m}`" for m in self.hdr_web)
+            + f") whose decoded linear texels times `extras.{self.scale}` (a "
+            "finite positive number) are the map, an HDR probe or highlight "
+            f"copy as Radiance RGBE (`{self.radiance}`). An FBX embeds each "
+            "file itself, under the same name"
         )
 
 
@@ -902,27 +1137,43 @@ class SceneRecords:
     FRAME = Frame()
     #: How a value animated over time rides a file (:class:`Transport`).
     TRANSPORT = Transport()
+    #: How a file a record names rides a GLB that carries the record as it
+    #: stands (:class:`GlbMedia`).
+    GLB_MEDIA = GlbMedia()
 
     # -- deliverable ---------------------------------------------------------
     #: Produced from the scene as staged for each write (the hosts'
     #: ``MaterialRecords.export_record``, through ``MaterialFamilies``) and
-    #: never held by it: the export's own converted maps are what the record
-    #: names, and the restore that puts the scene back clears it. The GLB is
-    #: built from the file that carries it (``MeshConvert.fbx_materials``), so
-    #: the two deliverables state every material alike; a file without one
-    #: (a File > Export) is read into the same families from its own
-    #: materials.
+    #: never held by it: the export's own converted maps -- and the
+    #: metallicRoughness image it packs from them -- are what the record
+    #: names, and the restore that puts the scene back clears it. Version 2
+    #: (2026-11-05): literal glTF 2.0 -- a glTF document of materials,
+    #: textures, images and samplers -- so the Khronos validator checks it,
+    #: the GLB build copies it (``MeshConvert.apply_glb_materials``) and any
+    #: glTF reader reads it. One layout, two containers: the FBX carries it
+    #: by name on its carrier; a GLB's materials ARE its native materials,
+    #: built from it, so a GLB repeats no copy. A file without one (a
+    #: File > Export) is read into the same families from its own materials.
+    #: Version 1 (the flat shape: separate metal and roughness maps, emission
+    #: above 1 in its factor) is refused: re-export.
     MATERIALS = RecordSpec(
         "materials",
         Scope.DELIVERABLE,
-        1,
+        2,
         owner="Export",
         description=(
-            "every material as glTF 2.0 states it: its factors, the embedded "
-            "map behind each, alpha mode, double-sidedness and unlit"
+            "every material as glTF 2.0 states it, literally: a glTF document "
+            "of the file's materials, textures, images (by file name) and "
+            "samplers -- metal and roughness packed into one image, "
+            "KHR_texture_transform, KHR_materials_unlit and "
+            "KHR_materials_emissive_strength"
         ),
         kind=Kind.DERIVED,
         transient=True,
+        # Its producer reads the lightmaps the write ships: a material only
+        # their objects wear states no occlusion map (``MaterialFamilies.
+        # export_record``).
+        after=("lightmaps",),
         consumers=("unity", "glb"),
         shape=(
             "pythontk.core_utils.engines.scene_export.material_record",
@@ -932,27 +1183,34 @@ class SceneRecords:
         assembly=(
             "Every material's inputs are exactly as its 'materials' entry "
             "states them, whatever an importer makes of the file's own "
-            "material (how each is lit is the lighting parts'): glTF 2.0 "
-            "metallic-roughness, each factor linear and multiplied by its map, "
-            "every map on UV set 0, colour and emission maps sRGB, the others "
-            "linear with metal, roughness and occlusion read from R, opacity "
-            "the base colour's alpha (MASK cuts at 'alphaCutoff', BLEND "
-            "blends), 'unlit' shows the base colour alone. An entry's 'name' "
-            "is the material's in the file, namespace included; where an "
-            "import drops the namespace, the name after the last ':' joins."
+            "material (how each is lit is the lighting parts'): the record is "
+            "a glTF 2.0 document -- the record's 'version' aside -- read as "
+            "glTF reads one: metallic-roughness, each factor linear and "
+            "multiplied by its map, every map on UV set 0 through its "
+            "KHR_texture_transform, colour and emission maps sRGB, the others "
+            "linear, metal from B and roughness from G of the one packed "
+            "image (occlusion from R), opacity the base colour's alpha (MASK "
+            "cuts at 'alphaCutoff', BLEND blends), emission the factor times "
+            "KHR_materials_emissive_strength, KHR_materials_unlit the base "
+            "colour alone. Each image is the file the delivery carries under "
+            "its 'uri'. An entry's 'name' is the material's in the file, "
+            "namespace included; where an import drops the namespace, the "
+            "name after the last ':' joins. A GLB's materials are the record's "
+            "own, so it carries no copy."
         ),
     )
     SHOTS = RecordSpec(
         "animation",
         Scope.DELIVERABLE,
-        1,
+        3,
         owner="Shots",
         renamed_from=("shot_metadata",),
         description=(
-            "shot definitions -- per clip its frame range ('start'/'end', the "
-            "take the clip is cut from) and any description; the scene fps and "
-            "the declared clip mode; the clip name is the join key to the "
-            "imported animation clip"
+            "shot definitions -- per shot its clip name, the name of the "
+            "file's take for it, and what a clip cannot hold: its description "
+            "and its metadata -- and the scene's frame rate (a scene that "
+            "animates and declares no shot states the rate alone); the clip "
+            "name is the join key to the imported animation clip"
         ),
         # DERIVED, so every write refreshes it, hand-offs included: the shot
         # store is its one authority and it reads the live scene (which shots
@@ -961,41 +1219,31 @@ class SceneRecords:
         kind=Kind.DERIVED,
         consumers=("unity", "glb", "verifier"),
         shape=("pythontk.core_utils.engines.shots.animation_record", "AnimationRecord"),
-        # The record's shots inherited whole, and the file's clips by glTF
-        # animation index (MeshConvert.apply_glb_animations). Version 2
-        # (2026-10-21): the shots ride whatever clips the file holds -- v1
-        # listed only the clips, so a shot with none (a 'full' file) was lost.
-        glb=GlbBlock(
-            version=2,
-            shape=(
-                "pythontk.core_utils.engines.shots.animation_record",
-                "AnimationBlock",
-            ),
-            assembly=(
-                "The clips, by glTF animation index, open on 'default_clip'. "
-                "'shots' are the scene's shots whatever clips the file holds: "
-                "a shot plays the clip its 'clip' names, else (a 'full' file, "
-                "or a take that was not cut) its window 'start'..'end' of the "
-                "whole-timeline clip, the one no shot names. A clip's "
-                "'zero_frame' is the authoring frame its t=0 sits on, so a "
-                "frame f is (f - zero_frame) / fps seconds into it. A STEP "
-                "'scale' channel driving a "
-                "node to zero is its keyed visibility, not authored scale: glTF "
-                "has no visibility channel. KHR_animation_pointer channels on a "
-                "material are its authored opacity fade (baseColorFactor alpha) "
-                "and highlight (emissiveFactor, added to the material's own); a "
-                "runtime without the extension plays a fade by binding each "
-                "channel to that material's alpha."
-            ),
-        ),
+        # Version 3 (2026-11-05): one take per shot, so the takes are the
+        # timing and the record keeps only what a clip cannot hold -- v1's
+        # 'start', 'end' and 'clip_mode' restated the takes -- and the frame
+        # rate, which glTF cannot hold. The GLB carries the record itself
+        # (one layout, two containers), under the key HEAD's published GLB
+        # block rode at version 2 -- so 2 is skipped: two shapes under one
+        # key and version would be read half-way. Version 1 (HEAD's FBX
+        # record) and 2 (HEAD's GLB block) are refused: re-export. The
+        # block retired; a reader joins a shot to the animation of its
+        # clip's name.
+        glb_verbatim=True,
         assembly=(
-            "The animation is the file's takes, each shot joined to its take "
-            "by 'clip', the take's name. 'clip_mode' says how the takes "
-            "were cut: 'shots', one take per shot; 'full', one whole-timeline "
-            "take in which a shot is the window 'start'..'end'; 'both' (or "
-            "absent), both, the whole-timeline take being the longest one no "
-            "shot names. 'start' and 'end' are frames of the authoring "
-            "timeline at 'fps'; 'description' says what a shot shows."
+            "The animation is the file's takes, one per shot, each named after "
+            "its shot and spanning its range on the timeline; a file with no "
+            "shots carries one take of the whole timeline, and a record with "
+            "no shots stating its rate (none when nothing is animated). Each "
+            "shot joins its take by 'clip', the take's name: 'description' "
+            "says what it shows and 'metadata' is the key/value data its author "
+            "wrote for it (the Shot Manifest's keys; the tools' bookkeeping "
+            "stays in the scene). 'fps' is the scene's frame rate, for a "
+            "reader of a format that holds none (a glTF, whose animations are "
+            "in seconds); a reader of one that states its own (an FBX's time "
+            "mode) uses that. In a GLB the record rides as it stands, under "
+            "its key in the root extras, and each take is the glTF animation "
+            "of its name: the takes played in turn are the whole sequence."
         ),
     )
     #: Retired 2026-10-20 (removed in 0.18.0): the take list a file written
@@ -1014,259 +1262,245 @@ class SceneRecords:
         remove_in="0.18.0",
         since="2026-10-24",
     )
+    #: Version 3 (2026-11-05): cues per clip, in seconds from the clip's
+    #: start, each with its sound (the delivered file's name), its offset
+    #: into the sound and its stop -- a sound across a cut is cut per clip --
+    #: and no frame or rate: the 'animation' record keeps the scene's rate
+    #: for a reader that needs one. Version 2 (frames at the record's 'fps',
+    #: one event per start, no stop) and version 1 (the flat wire string)
+    #: are refused: re-export. One layout, two containers: a GLB carries the
+    #: record as it stands. The WebXR viewer plays no audio and reads none
+    #: of it; the GLB build carries it (its 'glb' reader).
     AUDIO = RecordSpec(
         "audio",
         Scope.DELIVERABLE,
-        2,
+        3,
         owner="Audio Clips",
         renamed_from=("audio_manifest",),
         description=(
-            "audio events with the frames they fire on, scoped to their clip, "
-            "and 'fps', the rate those frames count at"
+            "the scene's sounds cut into cues per clip: each the sound (the "
+            "delivered audio file's name), when it starts and stops in seconds "
+            "from the clip's start, and where in the sound it starts; the "
+            "cues are the source's, and what a Unity user adds in the model "
+            "importer's Events tab is Unity's"
         ),
         # Read off the keyed tracks / sound strips an artist moves between one
         # push and the next, so every write refreshes it, a hand-off included
         # (a Unity-bridge FBX shipped the last export's events otherwise).
         kind=Kind.DERIVED,
         after=("animation",),
-        consumers=("unity",),
+        consumers=("unity", "glb"),
         shape=("pythontk.audio_utils.audio_record", "AudioRecord"),
+        glb_verbatim=True,
         assembly=(
-            "Each event plays its audio track 'frame' frames into its 'clip' "
-            "(at the record's 'fps'); an event whose 'clip' is empty plays in "
-            "every clip, its frame counted from the first frame the file's "
-            "animation holds. The track's file rides the file as media of its "
-            "own, joined to the event's 'name' by file stem without regard "
-            "to case; 'media', where the file states it, gives the SHA-256 of "
-            "the bytes it carries by that name, and a same-named file found "
-            "elsewhere stands in for it only when its bytes hash alike."
+            "Each cue plays its 'sound' in its 'clip' -- the file's take of "
+            "that name, or the file's one take when 'clip' is empty (a file "
+            "with no shots) -- from 'time' to 'stop', seconds from the clip's "
+            "start, starting 'offset' seconds into the sound; a sound also "
+            "ends when the clip that started it stops playing. A sound that "
+            "spans several clips has a cue in each, its offset carrying on "
+            "where the cut left it. The cues are the source's, rewritten at "
+            "every delivery like the keys they time; what a Unity user adds "
+            "in the model importer's Events tab is Unity's and stays. The "
+            "sound's file rides the file as media of its own, joined to "
+            "'sound' by file name without regard to case; 'media', where the "
+            "file states it, gives the SHA-256 of the bytes it carries by "
+            "that name, and a same-named file found elsewhere stands in for "
+            "it only when its bytes hash alike. In a GLB the record rides as "
+            "it stands, under its key in the root extras, each clip the glTF "
+            "animation of its name."
         ),
     )
     #: The payload's model is ``LightmapRecord``: one ``unit_scale`` for every
     #: length, the probe's box as ``{min, max}``, no direction on a point light.
+    #: Version 3 (2026-11-07): one layout, two containers -- a GLB carries the
+    #: record as it stands (the index-bound v2 block, its carrier slot, its
+    #: materials by name and its probe by bufferView, retired), each file it
+    #: names riding as media (:attr:`SceneRecords.GLB_MEDIA`); no entry names
+    #: a UV set, the contract reading every map through the second (a producer
+    #: whose set sits elsewhere publishes none: ``LightmapRecord.
+    #: check_uv_sets``); the probe's map holds the bake's lights as its
+    #: capture point sees them, and its highlights are complete copies of it.
+    #: Version 2 is refused: re-export.
     LIGHTMAPS = RecordSpec(
         "lightmaps",
         Scope.DELIVERABLE,
-        2,
+        3,
         owner="Lightmap Baker",
         renamed_from=("lightmap_metadata",),
         description=(
-            "per-object baked-lightmap records: map file name, uvIndex, "
-            "scaleOffset, and the object's scene hierarchy (which "
-            "tells apart objects that share a name); and the bake's reflection "
-            "probe, when it captured one: its HDR's file name, capture point and "
-            "projection box; and the lights the maps were baked from, for the "
-            "highlights a lightmap cannot hold -- every length times "
-            "unit_scale is metres"
+            "per-object baked-lightmap records: map file name, scaleOffset, and "
+            "the object's scene hierarchy (which tells apart objects that share "
+            "a name); the bake's reflection probe, when it captured one -- its "
+            "HDR's file name, capture point and projection box -- with copies "
+            "of it for groups of receivers; and the lights the maps were baked "
+            "from -- every length times unit_scale is metres"
         ),
         consumers=("unity", "glb"),
         shape=(
             "pythontk.core_utils.engines.scene_export.lightmap_record",
             "LightmapRecord",
         ),
-        # Per material its intensity alone -- its map is its bound texture, its
-        # UV set that texture's texCoord -- and the embedded probe with its
-        # highlight copies (MeshConvert.apply_glb_lightmaps).
-        glb=GlbBlock(
-            version=2,
-            shape=(
-                "pythontk.core_utils.engines.scene_export.lightmap_record",
-                "LightmapsBlock",
-            ),
-            assembly=(
-                "Each material in 'materials' carries a baked lightmap in the "
-                "texture slot 'carrier' names (occlusion: occlusionTexture) -- "
-                "its RGB, read through that texture's texCoord and "
-                "KHR_texture_transform, not glTF's red-only occlusion -- 8-bit "
-                "sRGB decoded to linear, times its 'intensity': the "
-                "surface's diffuse light, direct and indirect, and not ambient "
-                "occlusion."
-            ),
-            clauses=(_LIGHTMAP_PROBE,),
-        ),
+        glb_verbatim=True,
         export_scoped=True,
         nodes=("objects", "name"),
         assembly=(
             "Each 'objects' entry lights one object with a baked lightmap: "
-            "the image 'map' names, wired to no material, read through UV set "
-            "'uvIndex' (0-based: "
-            "1 is the second UV set) at uv * [scaleX, scaleY] + [offsetX, "
-            "offsetY] from 'scaleOffset' (in the file's own V-up UVs), "
-            "non-directional and applied as "
-            "stored, linear. The object is the node 'name' names (its "
-            "namespace aside), 'hierarchy' -- its path from the scene root, "
-            "namespaces kept, its own name last -- "
-            "telling apart objects that share a name; a tie nothing settles "
-            "is left unlit rather than guessed. The map is the object's whole "
-            "diffuse light and its material stays as authored "
-            "(rendering.lightmappedMaterials). Every length in the record "
-            "times 'unit_scale' is metres."
+            "the image 'map' names, wired to no material, read through the "
+            "object's second UV set (index 1) -- where Unity's lightmaps and "
+            "glTF's TEXCOORD_1 read one -- at uv * [scaleX, scaleY] + "
+            "[offsetX, offsetY] from 'scaleOffset' (in the file's own V-up "
+            "UVs), non-directional and applied as stored, linear. The object "
+            "is the node 'name' names (its namespace aside), 'hierarchy' -- "
+            "its path from the scene root, namespaces kept, its own name "
+            "last -- telling apart objects that share a name; a tie nothing "
+            "settles is left unlit rather than guessed. The map is the "
+            "object's whole diffuse light, its occlusion included ('materials' "
+            "says what that leaves of its material's occlusion map). Every "
+            "length in the record times 'unit_scale' is metres."
         ),
         clauses=(
-            _LIGHTMAP_PROBE,
             Clause(
-                "'lights' are the "
-                "lights the maps were baked from, for their HIGHLIGHTS alone -- "
-                "the diffuse light of each is already in the maps, so a reader "
-                "that lights them must light their specular only, or the scene "
-                "is lit twice. Each is 'type' point, spot or rect at 'position', a "
-                "spot or rect facing 'direction' (a rect's width along 'right'), "
-                "its 'color' linear Rec.709, "
-                "'intensity' its radiant intensity for a point or spot (the "
-                "irradiance it gives one unit away) and its radiance for a rect, "
-                "a spot's "
-                "half 'angle' (radians) and soft 'penumbra' share, a rect's "
-                "'width' and 'height', a source's 'radius'.",
+                "'probe' is the reflection probe the bake captured: the "
+                "scene's environment (rendering.environment). Its 'map' holds "
+                "the bake's lights as well, drawn in as the capture point sees "
+                "them.",
+                ("probe",),
+            ),
+            Clause(
+                "'lights' are the lights the maps were baked from, for a "
+                "delivery with no probe: while the record has one, a reader "
+                "lights none of them -- the probe's map holds their highlights, "
+                "which would count twice. Otherwise their HIGHLIGHTS alone: the "
+                "diffuse light of each is already in the maps, so a reader that "
+                "lights them must light their specular only, or the scene is "
+                "lit twice. Each is 'type' point, spot or rect at 'position', a "
+                "spot or rect facing 'direction' (a rect's width along "
+                "'right'), its 'color' linear Rec.709, 'intensity' its radiant "
+                "intensity for a point or spot (the irradiance it gives one "
+                "unit away) and its radiance for a rect, a spot's half 'angle' "
+                "(radians) and soft 'penumbra' share, a rect's 'width' and "
+                "'height', a source's 'radius'.",
                 ("lights",),
             ),
             Clause(
-                "'probe.highlights' "
-                "are the bake's lights already drawn for groups of "
-                "receivers, so a reader that uses them lights none of 'lights' "
-                "(the highlights would count twice): each names a 'map', a "
-                "Radiance layer in the probe's layout and units to add to the "
-                "probe (box-filtered down to the layer's size) and prefilter as "
-                "the probe is, and the 'objects' ('name' and 'hierarchy', as above) "
-                "that take that sum in the probe's place (diffuse irradiance "
-                "and reflections alike), box-projected from the same 'position' "
-                "and 'box'.",
+                "'probe.highlights' are COMPLETE copies of the probe, one per "
+                "group of receivers: each names a 'map', the environment with "
+                "the bake's lights drawn where box projection shows them true "
+                "for that group, and the 'objects' ('name' and 'hierarchy', as above) "
+                "that take it in the probe's place (diffuse irradiance and "
+                "reflections alike), box-projected from the same 'position' "
+                "and 'box'; a node is under one copy at most.",
                 ("probe", "highlights"),
             ),
         ),
     )
+    #: The payload's model is ``ShadowRecord``. Version 3 (2026-11-07): one
+    #: layout, two containers -- a GLB carries the record as it stands (the
+    #: index-bound v2 block, its planes, sources, contacts and maps by index,
+    #: retired), each file it names riding as media (:attr:`GLB_MEDIA`);
+    #: every plane carries its horizon map and its fade's terms, which every
+    #: reader evaluates each frame (``ShadowProjection.fade``) where v2's
+    #: readers played baked opacity keys; the projected silhouette is an
+    #: extension, the plane's draw choice in it (a rig's type is its own).
+    #: Version 2 is refused: re-export.
     SHADOWS = RecordSpec(
         "shadows",
         Scope.DELIVERABLE,
-        2,
+        3,
         owner="Shadow Rig",
         renamed_from=("shadow_metadata",),
         description=(
-            "projected-shadow planes: per plane its node name, type, "
-            "silhouette texture and intensity, the source and contact it "
-            "follows and the projection model's constants, and, when packed "
-            "or baked, its atlas rect and horizon map -- every length times "
-            "unit_scale is metres"
+            "shadow planes: per plane its node name, the source and contact it "
+            "follows, its horizon map, the projection model's constants and "
+            "its fade's terms, and its projected silhouette (an extension) -- "
+            "every length times unit_scale is metres"
         ),
         consumers=("unity", "glb"),
         shape=("pythontk.geo_utils.shadow_record", "ShadowRecord"),
-        # Each plane, its source and contact as node indices, its maps as
-        # texture indices (MeshConvert.apply_glb_shadows).
-        glb=GlbBlock(
-            version=2,
-            shape=("pythontk.geo_utils.shadow_record", "ShadowBlock"),
-            node_fields=(
-                ("planes", "node"),
-                ("planes", "source_node"),
-                ("planes", "contact_node"),
-            ),
-            assembly=(
-                "A plane, its source and its contact are the glTF nodes "
-                "'node', 'source_node' and 'contact_node' (null where the file "
-                "holds no single node of that name). " + _SHADOW_PLANE
-            ),
-            clauses=_shadow_clauses(
-                "texture 'texture_index' (its atlas once packed)",
-                "texture 'horizon.texture_index'",
-                "top-left",
-            ),
-        ),
+        glb_verbatim=True,
         export_scoped=True,
         nodes=("planes", "name"),
-        assembly=(
-            "A plane, its source and its contact are the nodes named 'name', "
-            "'source' and 'contact'. " + _SHADOW_PLANE
+        assembly=" ".join(
+            (_SHADOW_PLANE, _SHADOW_MODEL, _SHADOW_FADE, _SHADOW_HORIZON)
         ),
-        clauses=_shadow_clauses(
-            "the image 'texture' names ('atlas.texture' once packed)",
-            "the image 'horizon.texture' names",
-            "bottom-left",
-        ),
+        clauses=_SHADOW_CLAUSES,
     )
+    #: The payload's model is ``ArticulationRecord``. Version 2 (2026-11-08):
+    #: one layout, two containers -- a GLB carries the record as it stands
+    #: (the index-bound v1 block, its joints and grabbed parts by node index,
+    #: retired), each reader resolving the joints and parts by name; the
+    #: record is stated in glTF's frame (:attr:`FRAME`: metres, where v1's
+    #: lengths were the file's own and a runtime measured their unit off the
+    #: rest pose); and every joint carries an anchor frame its channels turn
+    #: and slide in, the identity where a DCC rig nests the joint on its
+    #: pivot. Version 1 is refused: re-export.
     ARTICULATION = RecordSpec(
         "articulation",
         Scope.DELIVERABLE,
-        1,
+        2,
         owner="Articulated Rig",
         description=(
-            "articulated rigs: per rig its joints (node name, parent, rest "
-            "translate and orient, rotate order, channels with limits and "
-            "grab weights) and the parts a hand grabs, each with the joint "
-            "it rides"
+            "articulated rigs: per rig its joints (node name, parent joint, "
+            "rest translate and rotation, the anchor frame its channels turn "
+            "and slide in, rotate order, channels with limits and grab "
+            "weights) and the parts a hand grabs, each with the joint it "
+            "rides -- in metres"
         ),
         consumers=("unity", "glb"),
         shape=("pythontk.geo_utils.articulation.record", "ArticulationRecord"),
-        # Every joint and grabbed part bound to its glTF node
-        # (MeshConvert.apply_glb_articulation).
-        glb=GlbBlock(
-            shape=("pythontk.geo_utils.articulation.record", "ArticulationBlock"),
-            node_fields=(("rigs", "joints", "node"), ("rigs", "grab", "node")),
-            assembly=(
-                "Per rig its joints -- the glTF node index, the parent joint, "
-                "the rest translate and rotation in the parent's space, the "
-                "rotate order and the channels (rx/ry/rz degrees, tx/ty/tz a "
-                "slide along the rest axes) with their limits -- and the parts "
-                "a hand grabs, each with its node index and the joint it "
-                "rides. A joint poses as rotation = rest (x) Euler(channels) "
-                "and translation = rest + rest.(tx, ty, tz), every channel "
-                "within its limits: the built state is that pose at the clips' "
-                "keys, the rest pose without them. A hand that grabs a part "
-                "moves the channels of the joints from it up to the rig's "
-                "root, each in proportion to its 'weight' and within its "
-                "limits; a runtime measures its unit factor off the rest "
-                "translations."
-            ),
-        ),
+        glb_verbatim=True,
+        in_frame=True,
         # A rig ships when any of its joints does: an export of one prop of a
         # scene of rigs states that prop's rig alone.
         export_scoped=True,
         nodes=("rigs", ("joints", "*", "name")),
         assembly=(
-            "Each rig poses its joints as rotation = rest (x) Euler(channels) "
-            "and translation = rest + rest.(tx, ty, tz), every channel within "
-            "its limits (degrees), and a grabbed part rides its joint; a "
+            "Each rig poses its joints along its joint chain: a joint's pose "
+            "is its 'parent' joint's -- for a root, the space that root's own "
+            "node hangs in, so each root's chain poses in its own root's "
+            "space (a rig's roots may hang under different nodes) -- times "
+            "rest . A . pose(channels) . "
+            "A^-1, where rest is the joint's 't' and 'q' in its parent "
+            "joint's frame, A its 'anchor' ('t' and 'q', in the rest frame) "
+            "and pose(channels) the slide (tx, ty, tz) along A's axes after "
+            "the turn Euler(rotate_order; rx, ry, rz) about them in degrees, "
+            "every channel within its limits. The identity anchor -- 't' 0, "
+            "'q' (0, 0, 0, 1), a joint whose part nests on its pivot -- poses "
+            "rest . pose(channels). A part is placed at its joint's pose "
+            "whatever node it hangs under (a flat model's parts all under "
+            "the root chain alike), and a grabbed part rides its joint; a "
             "grab moves the channels of the joints from the part up to the "
             "rig's root, each in proportion to its 'weight' and within its "
-            "limits. Joints are found by "
-            "node name; the rest translations are in the file's own axes, "
-            "their unit the ratio of the imported rest translations to them. "
-            "The imported pose is the rest pose, and the takes play the "
-            "joints' own keys."
+            "limits. Joints and grabbed parts are found by node name (the "
+            "name after the last ':' where an import drops the namespace; a "
+            "name two nodes answer binds neither). Every value is in its "
+            "parent joint's frame as the file holds that node: lengths (the "
+            "rest and anchor translations, a slide and its limits) in metres "
+            "as glTF frames the file -- an FBX's own value x 0.01 whatever its "
+            "UnitScaleFactor, a GLB node's local exactly -- and rotations as "
+            "quaternions (x, y, z, w); a scale a node above carries (a "
+            "writer's unit on the export's root, a scaled prop) scales the "
+            "rig with it. A reader whose import converts the file's unit into "
+            "the locals (an FBX importer applying the file's UnitScaleFactor "
+            "and its own global scale) "
+            "scales every length by that conversion x 100. The imported pose "
+            "is the rest pose, and the takes play the joints' own keys."
         ),
     )
-    EMISSIVE_GROUPS = RecordSpec(
-        "emissive_groups",
-        Scope.DELIVERABLE,
-        2,
-        owner="Emissive Groups",
-        description="named emissive material groups and their weights",
-        # The payload is a RegionMaskManifest document (its VERSION is this).
-        # DERIVED, as the shots are: its registry is its one authority and the
-        # producer reads it pure, so every write refreshes it, a hand-off
-        # included -- the one way it is narrowed to what the write ships, since
-        # a group names its faces through the host's stores, not in the
-        # payload (no ``nodes``). Authored, a Unity push of one prop shipped
-        # every group in the scene (measured 2026-10-31).
-        kind=Kind.DERIVED,
-        export_scoped=True,
-        consumers=("unity",),
-        shape=(
-            "pythontk.core_utils.engines.textures.region_masks",
-            "EmissiveGroupsRecord",
-        ),
-        assembly=(
-            "Each group gates the emission of the region its 'slot' selects "
-            "(0-3: R, G, B, A of the mask 'encoding' names -- the vertex "
-            "colours 'color_set', or the texture 'mask' read through UV set "
-            "'uv_channel'), its weight starting at 'default'. A group naming "
-            "'attr' has that weight animated: a keyed property of that name "
-            "on the model's root, or a child node named 'attr' whose scale.x "
-            "carries the curve."
-        ),
-    )
+    #: Version 2 (2026-11-05): the record names which nodes and materials
+    #: carry which animated channels and the colours their curves scale; the
+    #: curves themselves ride the transport (:attr:`TRANSPORT`), in the takes,
+    #: so they scope to clips by construction. v1's ramps (frames at the
+    #: record's 'fps', placed on a whole-timeline clip origin) are refused:
+    #: re-export. One layout, two containers: a GLB carries the record as it
+    #: stands, its curves as the clips' own pointer channels. (No file ever
+    #: carried another version under this key or 'visibility_tracks', so the
+    #: number is the next one.)
     VISIBILITY = RecordSpec(
         "render_effects",
         Scope.DELIVERABLE,
-        1,
+        2,
         owner="Render Effects",
         renamed_from=("visibility_tracks",),
         shape=(
@@ -1274,31 +1508,38 @@ class SceneRecords:
             "RenderEffectsRecord",
         ),
         description=(
-            "each node's keyed render effects: 'visibility' as stepped on/off "
-            "frames, the authored 'opacity' ramp, and the 'highlight' ramp "
-            "with its colour stops ('highlight_color', 'highlight_color_dim'); "
-            "with 'fps' and each take's first/last authored frame "
-            "('clip_span'); on a shot scene keying none, the exporter's "
-            "measured whole-timeline clip origin alone"
+            "which nodes carry an animated render effect -- 'visibility', "
+            "'opacity', 'highlight' with its colour stops 'highlight_color' and "
+            "'highlight_color_dim' -- and which materials an animated "
+            "'emission'; each curve rides the file's animated-value transport, "
+            "per clip"
         ),
         kind=Kind.DERIVED,
         after=("animation",),
-        consumers=("glb", "verifier"),
-        # Narrowed by its producer alone (no ``nodes``): with its tracks, the
-        # take spans it states are the shipped curves', and a record with no
-        # track still carries the measured clip origin.
+        consumers=("unity", "glb", "verifier"),
+        # Narrowed by its producer alone (no ``nodes``): a material entry
+        # names no node a reader could narrow it by.
         export_scoped=True,
+        glb_verbatim=True,
         assembly=(
-            "Render effects over time, per 'tracks' entry and the subtree "
-            "under its 'node', each a list of [frame, value] keys: "
-            "'visibility' shows (1) or hides (0) it, stepped; 'opacity' is "
-            "its materials' alpha, hidden at 0; 'highlight' adds an emission "
-            "to its materials' own, blended from 'highlight_color_dim' at 0 "
-            "to 'highlight_color' at 1. The same curves ride the file itself: "
-            "each affected object carries 'opacity' / 'highlight' (and "
-            "'highlightColor' / 'highlightColorDim') properties, keyed "
-            "through a child '<object>__opacity' / '<object>__highlight' "
-            "node whose scale.x holds the curve -- transport, not content."
+            "Render effects over time, per 'tracks' entry on the subtree under "
+            "its 'node' and per 'materials' entry on every material of that "
+            "name, each channel it names a curve the file carries on its "
+            "animated-value transport, in each clip it plays in (a clip with "
+            "no curve for it holds the rest value). 'visibility' shows the "
+            "subtree at 1 and hides it at 0, stepped. 'opacity' is its "
+            "materials' alpha: a material keeps its authored alpha mode "
+            "(opaque, sorted, shadowed, writing depth) while its opacity is 1, "
+            "is blended only while its opacity is below 1, and its renderer is "
+            "hidden at 0. 'highlight' is a glow, blended from "
+            "'highlight_color_dim' (default black) at 0 to 'highlight_color' "
+            "(default white) at 1: while it is above 0 the material's emission "
+            "is the glow added to its uniform emission, and a mapped emission "
+            "is set aside for those moments only -- at rest the map is back. "
+            "'emission' is a material's emission weight, 0 to 1, scaling "
+            "'emission_color' times 'emission_strength' (the material's own "
+            "where absent), its map kept. In an FBX each curve is the "
+            "'<target>__<channel>' proxy's scale.x: transport, not content."
         ),
     )
     #: Version 2 (2026-10-14) added ``assembly`` and published ``rendering``
@@ -1322,9 +1563,10 @@ class SceneRecords:
             "and the lighting it was approved under"
         ),
         kind=Kind.DERIVED,
-        # Unity's importer reads its lighting recipe; the GLB build reads the
-        # FBX's to state the GLB's, and the glTF runtimes the GLB's.
-        consumers=("unity", "glb"),
+        # The GLB build reads the FBX's to state the GLB's, and the glTF
+        # runtimes the GLB's. Unity lights with its pipeline's own Lit and
+        # reads none of it.
+        consumers=("glb",),
         shape=(
             "pythontk.core_utils.engines.scene_export.handoff_record",
             "HandoffBlock",
@@ -1334,7 +1576,20 @@ class SceneRecords:
     #: reads: cleared from a carrier (:meth:`SceneStoreBase.migrate`) and
     #: dropped from a written deliverable. A renamed record names its old keys
     #: itself (:attr:`RecordSpec.renamed_from`).
-    RETIRED: Tuple[str, ...] = ("fbx_takes",)
+    RETIRED: Tuple[str, ...] = ("fbx_takes", "emissive_groups")
+    #: What a reader of an old scene or file is told for a retired key it
+    #: finds (``ExportVerifier.check_fbx_records`` names it with this fix).
+    #: ``emissive_groups`` retired 2026-11-07: a group is materials, its faces
+    #: wearing a copy of their material per group whose emission the
+    #: ``render_effects`` record's material entries animate, so the mask
+    #: encodings, the slots and this record went with it.
+    RETIRED_FIXES: Dict[str, str] = {
+        "emissive_groups": (
+            "emissive groups are materials now: open the scene, convert its "
+            "groups in one action (Emissive Groups > Convert Old Groups, "
+            "EmissiveGroups.convert_legacy), then re-export"
+        ),
+    }
     #: Root-``extras`` keys a GLB written before 0.17.0 carries for a block
     #: since renamed (the ``*_web`` blocks, now under their record's key) or
     #: retired whole (the ``scene_sidecar`` envelope), which nothing reads: a
@@ -1407,18 +1662,29 @@ class SceneRecords:
         paths=("scene",),
         stamps=("scene",),
     )
+    #: Version 2 (2026-11-07): a group is materials, each copy tagged on the
+    #: material itself, so nothing is stored here any more; the key is the
+    #: hand-off's: what crosses a bridge for the groups (per copy its group,
+    #: base, strength and emission keys -- an interchange file carries the
+    #: materials and their faces, never the tags or the material animation),
+    #: produced by the owner's ``transfer_out`` and landed by its
+    #: ``transfer_in``. A scene the old tool authored still holds version 1
+    #: (slots, defaults, encoding), which ``EmissiveGroups.convert_legacy``
+    #: reads and removes; an imported scene's is adopted where this scene has
+    #: none (``UNION``), so a referenced old-style module converts too.
     EMISSIVE_REGISTRY = RecordSpec(
         "emissive_registry",
         Scope.PRIVATE,
-        1,
+        2,
         owner="Emissive Groups",
         description=(
-            "the group registry: per group its slot, default weight and keyed "
-            "attr, the membership encoding and the retired slots"
+            "what crosses a hand-off for the emissive groups: per group copy "
+            "its group, base material, emission strength and emission keys "
+            "(the old tool's slot registry, version 1, is converted and removed)"
         ),
         renamed_from=("emissive_groups",),
         envelope=False,
-        merge=Merge.CODEC,
+        merge=Merge.UNION,
         respell=False,
         portable=True,
     )
@@ -1580,10 +1846,6 @@ class SceneRecords:
         KEY_STASH.key: (
             "pythontk.core_utils.engines.key_stash.key_stash_model",
             "KeyStash",
-        ),
-        EMISSIVE_REGISTRY.key: (
-            "pythontk.core_utils.engines.textures.region_masks",
-            "RegionGroupRegistry",
         ),
     }
 
@@ -1925,6 +2187,15 @@ class SceneRecords:
             return None
         return cls.resolve_class(*row)
 
+    # Held until 0.22.0 (noticed for 0.18.0 on 2026-10-24, its window closing
+    # 2026-11-23): a GLB carries each record as it stands, so its block's shape
+    # is the record's.
+    @classmethod
+    @Deprecation.symbol("SceneRecords.shape", remove_in="0.18.0", since="2026-10-24")
+    def web_shape(cls, item: Union[RecordSpec, str]) -> Optional[Any]:
+        """:meth:`shape`."""
+        return cls.shape(item)
+
     @classmethod
     def shape(cls, item: Union[RecordSpec, str]) -> Optional[Any]:
         """The :class:`~pythontk.SchemaSpec` declaring *item*'s payload
@@ -1934,28 +2205,29 @@ class SceneRecords:
         return cls.resolve_class(*spec.shape) if spec.shape else None
 
     @classmethod
-    def glb_shape(cls, item: Union[RecordSpec, str]) -> Optional[Any]:
-        """The :class:`~pythontk.SchemaSpec` declaring *item*'s GLB block
-        (:attr:`GlbBlock.shape`), or ``None``."""
-        block = cls.resolve(item).glb
-        return cls.resolve_class(*block.shape) if block and block.shape else None
-
-    @classmethod
     def put_glb_block(
         cls,
         gltf: Dict[str, Any],
         item: Union[RecordSpec, str],
         block: Mapping[str, Any],
     ) -> Dict[str, Any]:
-        """Write *block* as *item*'s block in the glTF document *gltf* -- its
-        root ``extras``, under the record's key -- the block's version
-        stamped (a writer's own wins) and pruned to its declared shape, as
-        :meth:`RecordSpec.make` does a record. The one writer of every block,
-        beside :meth:`glb_block`, its one reader. Returns the block written."""
+        """Write *block* -- *item*'s record as a GLB carries it
+        (:attr:`RecordSpec.glb_verbatim`) -- in the glTF document *gltf*: its
+        root ``extras``, under the record's key, the record's version stamped
+        (a writer's own wins) and pruned to its declared shape, as
+        :meth:`RecordSpec.make` does a record. The one writer of every
+        record a GLB carries, beside :meth:`glb_block`, its one reader.
+        Returns the block written.
+
+        A "block" is the GLB's word for a root-``extras`` entry, and every
+        one is now its record itself (no index-bound projection is left,
+        articulation v2): the name stays, as the viewer's ``readBlock`` /
+        ``BLOCKS`` and :attr:`RETIRED_BLOCKS` do, for the root-extras entry
+        it writes, and what it writes is the record."""
         spec = cls.resolve(item)
-        body: Dict[str, Any] = {"version": spec.glb.version}
+        body: Dict[str, Any] = {"version": spec.version}
         body.update(block)
-        shape = cls.glb_shape(spec)
+        shape = cls.shape(spec)
         if shape is not None:
             body = _declared(f"extras.{spec.key}", shape, body)
         extras = gltf.get("extras")
@@ -1968,42 +2240,36 @@ class SceneRecords:
     def glb_block(
         cls, gltf: Any, item: Union[RecordSpec, str]
     ) -> Optional[Dict[str, Any]]:
-        """*item*'s block in the glTF document *gltf* -- its root ``extras``,
-        under the record's key -- in the current schema
-        (:attr:`GlbBlock.version`); ``None`` otherwise. The block itself, so
-        a pass that edits it edits the document."""
+        """*item*'s record in the glTF document *gltf* -- its root ``extras``,
+        under the record's key -- in the current schema (the record's
+        version); ``None`` otherwise, and for a record a GLB does not carry
+        (:attr:`RecordSpec.glb_verbatim`). The block itself -- the record as
+        it stands under its key (a "block" is a root-``extras`` entry,
+        :meth:`put_glb_block`) -- so a pass that edits it edits the document."""
         spec = cls.resolve(item)
         extras = gltf.get("extras") if isinstance(gltf, Mapping) else None
-        if not spec.glb or not isinstance(extras, Mapping):
+        if not spec.glb_verbatim or not isinstance(extras, Mapping):
             return None
         block = extras.get(spec.key)
-        current = isinstance(block, dict) and block.get("version") == spec.glb.version
+        current = isinstance(block, dict) and block.get("version") == spec.version
         return block if current else None
 
     @classmethod
     def glb_records(cls) -> List[RecordSpec]:
-        """The records a GLB carries a block for (:attr:`RecordSpec.glb`), in
-        declaration order."""
-        return [s for s in cls.all() if s.glb]
+        """The records a GLB carries in its root ``extras``, each as it stands
+        (:attr:`RecordSpec.glb_verbatim`), in declaration order: the records
+        themselves, the blocks :meth:`glb_block` reads."""
+        return [s for s in cls.all() if s.glb_verbatim]
 
     @classmethod
     def problems(cls, item: Union[RecordSpec, str], payload: Any) -> List[str]:
         """What *payload* breaks of *item*'s declaration, one line each: a
         version other than the declared one (:meth:`RecordSpec.is_current`),
         or what its declared shape refuses (``SchemaSpec.validate``); empty
-        when a reader reads it."""
+        when a reader reads it. The same lines hold a GLB's copy, said where
+        the file holds it (``extras.`` before each)."""
         spec = cls.resolve(item)
         return cls._problems(spec.key, spec.version, cls.shape(spec), payload)
-
-    @classmethod
-    def block_problems(cls, item: Union[RecordSpec, str], block: Any) -> List[str]:
-        """What *block* -- *item*'s GLB block -- breaks of its declaration
-        (:attr:`RecordSpec.glb`), as :meth:`problems` says it of a record."""
-        spec = cls.resolve(item)
-        if not spec.glb:
-            return [f"extras.{spec.key}: {spec.key!r} declares no GLB block"]
-        shape = cls.glb_shape(spec)
-        return cls._problems(f"extras.{spec.key}", spec.glb.version, shape, block)
 
     @staticmethod
     def _problems(where: str, version: int, shape: Any, payload: Any) -> List[str]:
@@ -2019,14 +2285,6 @@ class SceneRecords:
 
     # Retired 2026-10-20 (removed in 0.18.0): a record's block is named for
     # the file it rides, not for one of its readers.
-    @classmethod
-    @Deprecation.symbol(
-        "SceneRecords.glb_shape", remove_in="0.18.0", since="2026-10-24"
-    )
-    def web_shape(cls, item: Union[RecordSpec, str]) -> Optional[Any]:
-        """:meth:`glb_shape`."""
-        return cls.glb_shape(item)
-
     @classmethod
     @Deprecation.symbol(
         "SceneRecords.glb_records", remove_in="0.18.0", since="2026-10-24"
@@ -2274,9 +2532,10 @@ class SceneRecords:
         deliverable record under its key, a ``$ref`` to its declared shape,
         with its version (``x-version``) and readers (``x-readers``).
         ``$defs`` holds every shape, and ``GlbExtras`` the blocks a GLB's
-        root ``extras`` holds, by the same keys. ``x-frame`` and
-        ``x-transport`` state :attr:`FRAME` and :attr:`TRANSPORT`, and each
-        record's ``x-in-frame`` whether its version is in the frame. A
+        root ``extras`` holds, by the same keys. ``x-frame``,
+        ``x-transport`` and ``x-media`` state :attr:`FRAME`,
+        :attr:`TRANSPORT` and :attr:`GLB_MEDIA`, and each record's
+        ``x-in-frame`` whether its version is in the frame. A
         reader in any language validates a delivery against it or generates
         its types from it (``m3trik/scripts/sync_scene_records.py`` publishes
         it). A shape one record holds whole and another nests is defined once.
@@ -2320,7 +2579,7 @@ class SceneRecords:
             records[spec.key] = entry(spec, cls.shape(spec), spec.version)
             records[spec.key]["x-in-frame"] = spec.in_frame
         blocks = {
-            spec.key: entry(spec, cls.glb_shape(spec), spec.glb.version)
+            spec.key: entry(spec, cls.shape(spec), spec.version)
             for spec in cls.glb_records()
         }
         handoff = cls.HANDOFF
@@ -2339,12 +2598,14 @@ class SceneRecords:
                 "What a deliverable's data_export node holds: each record's "
                 "JSON under its key. A record whose x-in-frame is true "
                 f"states its values in {cls.FRAME.text}; any other states its "
-                f"units in its assembly. {cls.TRANSPORT.text}. A field naming "
+                f"units in its assembly. {cls.TRANSPORT.text}. "
+                f"{cls.GLB_MEDIA.text}. A field naming "
                 "its readers (x-readers) is an optional extension the others "
                 "ignore."
             ),
             "x-frame": asdict(cls.FRAME),
             "x-transport": asdict(cls.TRANSPORT),
+            "x-media": asdict(cls.GLB_MEDIA),
             "type": "object",
             "properties": records,
             "$defs": defs,
@@ -2442,29 +2703,6 @@ class SceneRecords:
             specs.append(spec)
         return specs
 
-    @classmethod
-    def declared_takes(cls, read: Callable[[str], Any]) -> List[Dict[str, Any]]:
-        """The take list a deliverable declares.
-
-        The one reader of the take list, as ``{"name", "start", "end"}``
-        entries: each clip of the shots record that carries its range.
-
-        Parameters:
-            read: Channel key -> that channel's DECODED payload, ``None`` when
-                absent -- ``dict.get`` over a decoded carrier, a GLB channel
-                reader, a context's ``record``.
-
-        Returns:
-            The take entries, empty when none are declared.
-        """
-        meta = read(cls.SHOTS.key)
-        shots = meta.get("shots") if isinstance(meta, Mapping) else None
-        return [
-            {"name": s["clip"], "start": s["start"], "end": s["end"]}
-            for s in (shots if isinstance(shots, list) else ())
-            if isinstance(s, Mapping) and s.get("clip") and "start" in s and "end" in s
-        ]
-
     # ---------------------------------------------------------------- handoff
     @classmethod
     @Deprecation.symbol(
@@ -2503,8 +2741,16 @@ class SceneRecords:
                 "merge": s.merge.value,
                 "portable": s.portable,
                 "transient": s.transient,
-                "glb": s.glb.version if s.glb else None,
+                "glb": s.version if s.glb_verbatim else None,
                 "description": s.description,
             }
             for s in cls.all()
         ]
+
+
+# Held until 0.22.0 (``pythontk/__init__.py``, "Held until 0.22.0"): the GLB
+# block names v0.20.0 noticed for removal, whose window closes 2026-11-23.
+from pythontk.core_utils.engines.scene_export._retired import (  # noqa: E402
+    GlbBlock,
+    WebProjection,
+)

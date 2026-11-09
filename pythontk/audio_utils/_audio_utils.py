@@ -258,110 +258,149 @@ class AudioUtils(HelpMixin):
         return output
 
     @staticmethod
-    def scope_events(
-        events: Iterable[Tuple[float, str]],
+    def clip_cues(
+        sounds: Iterable[Mapping[str, Any]],
         takes: Iterable[Mapping[str, Any]],
-        origin: float = 0.0,
+        fps: float,
+        window: Optional[Tuple[float, float]] = None,
     ) -> Tuple[List[Dict[str, Any]], List[str]]:
-        """Scope timed audio events to the takes that play them.
+        """Cut each sound on the timeline into the cues of the clips that
+        play it: the ``audio`` record's ``cues`` (``SceneRecords.AUDIO``), one
+        rule for every DCC's producer.
 
-        The events of the ``audio`` record (``SceneRecords.AUDIO``),
-        one rule for every DCC's producer. An event lands in every take whose
-        inclusive ``start``..``end`` range holds it, its frame rebased to that
-        take's start -- the frame the imported clip counts from. A take
-        missing its name or range scopes nothing: defaulted, it would be a
-        phantom take swallowing frame-0 events. With no usable take every
-        event ships unscoped (``clip: ""``, played by every clip), rebased to
-        *origin*, the scene frame the single clip starts at; one before it
-        can never fire, and is dropped as one outside every take is.
+        A clip is a take the file declares: one per shot (*takes*), or, in a
+        file with no shots, its one take (``clip: ""``) over *window* -- the
+        window the file declares for it, which is what an engine's importer
+        cuts the clip by: measured off the written file
+        (``FbxMedia.fit_take_windows``, which makes it the keys it holds), or,
+        before a write, what the host's writer declares by itself. A take
+        missing its name or range cuts nothing: defaulted, it would be a
+        phantom take swallowing frame-0 sounds.
+
+        A sound plays from ``start`` to ``stop`` (timeline frames, the stop
+        exclusive; ``None`` when no end is known: it plays to its clip's
+        end), heard from ``offset`` seconds into its file. Each clip whose
+        take (``start``..``end``, inclusive) overlaps it gets one cue: the
+        sound starts at the later of the two starts, ``offset`` further into
+        the sound for each frame it began before the clip, and stops at the
+        earlier of the two ends -- so a sound across a cut stops at the cut
+        and the next clip plays it on from there. A cue of no length is none.
+        Times are seconds from the clip's start (frames over *fps*), rounded
+        to the microsecond.
+
+        Weighed: FBX's own audio (``FbxAudio`` / ``FbxAudioLayer``, SDK 2017)
+        is written by neither DCC's exporter and read by no engine importer;
+        OpenTimelineIO models clips and markers on an editorial timeline, not
+        sounds timed inside an animation clip, and no reader of the delivery
+        reads it; glTF's ``KHR_audio_emitter`` places emitters on nodes and
+        times nothing per animation; Unity's ``AnimationEvent`` (a time, a
+        function, an object) is the shape adopted: each cue is what one
+        ``PlayAudio`` / ``StopAudio`` event pair holds, and a Unity user with
+        no DCC authors the same events.
 
         Parameters:
-            events: ``(frame, name)`` pairs, ``name`` the event's track.
-            takes: ``{"name", "start", "end"}`` entries
-                (``SceneRecords.declared_takes``).
-            origin: The frame an unscoped event counts from.
+            sounds: ``{"sound", "start", "stop", "offset"?}`` -- the delivered
+                file's name, its span in timeline frames, and seconds into the
+                file it is heard from at ``start`` (0 when absent).
+            takes: ``{"name", "start", "end"}`` entries, timeline frames
+                (``ShotStore.declared_takes``: one per shot).
+            fps: The scene's frame rate.
+            window: For a file with no usable take, the ``(start, end)``
+                frames its one take declares; None, and it has no clip to cue.
 
         Returns:
-            ``(scoped, dropped)``: the record's ``{"clip", "frame", "name"}``
-            events, and ``"name@frame"`` for each event outside every take
-            (it can never fire in a clip).
+            ``(cues, dropped)``: the record's ``{"clip", "sound", "time",
+            "offset", "stop"}`` cues, clip by clip in *takes*' order and by
+            time within each; and ``"sound@frame"`` for each sound no clip
+            plays.
         """
-        usable = [
-            t
+        sounds = list(sounds)
+        clips = [
+            (str(t["name"]), float(t["start"]), float(t["end"]))
             for t in takes
             if t.get("name") is not None
             and t.get("start") is not None
             and t.get("end") is not None
         ]
-        scoped: List[Dict[str, Any]] = []
-        dropped: List[str] = []
-        if not usable:
-            for frame, name in events:
-                rebased = int(round(frame - origin))
-                if rebased < 0:
-                    dropped.append(f"{name}@{frame}")
-                else:
-                    scoped.append({"clip": "", "frame": rebased, "name": name})
-            return scoped, dropped
-        for frame, name in events:
-            hits = [t for t in usable if t["start"] <= frame <= t["end"]]
-            scoped.extend(
-                {
-                    "clip": str(t["name"]),
-                    "frame": int(round(frame - t["start"])),
-                    "name": name,
-                }
-                for t in hits
-            )
-            if not hits:
-                dropped.append(f"{name}@{frame}")
-        return scoped, dropped
+        if not clips and window:
+            clips = [("", float(window[0]), float(window[1]))]
+        rate = float(fps)
+        cues: List[Dict[str, Any]] = []
+        heard = set()
+        for name, clip_start, clip_end in clips:
+            within = []
+            for index, sound in enumerate(sounds):
+                start = float(sound["start"])
+                stop = sound.get("stop")
+                end = clip_end if stop is None else min(float(stop), clip_end)
+                begin = max(start, clip_start)
+                if end <= begin:
+                    continue
+                heard.add(index)
+                offset = float(sound.get("offset") or 0.0) + (begin - start) / rate
+                within.append(
+                    {
+                        "clip": name,
+                        "sound": str(sound["sound"]),
+                        "time": round((begin - clip_start) / rate, 6),
+                        "offset": round(offset, 6),
+                        "stop": round((end - clip_start) / rate, 6),
+                    }
+                )
+            within.sort(key=lambda cue: cue["time"])
+            cues.extend(within)
+        dropped = [
+            f"{sound['sound']}@{sound['start']:g}"
+            for index, sound in enumerate(sounds)
+            if index not in heard
+        ]
+        return cues, dropped
 
     @classmethod
     def media_digests(
         cls,
-        events: Iterable[Mapping[str, Any]],
+        cues: Iterable[Mapping[str, Any]],
         files: Mapping[str, bytes],
     ) -> Dict[str, str]:
-        """The content digest of each audio file of *files* an event plays,
-        by the event's name.
+        """The content digest of each audio file of *files* a cue plays, by
+        the cue's ``sound``.
 
-        The ``audio`` record's ``media`` (``SceneRecords.AUDIO``). An event
-        names its track and a reader finds the clip by that name, so two
-        deliverables can name different files alike -- two models each
-        embedding their own ``door.wav`` -- and the second bound the first's
-        (2026-10-19). A reader stands a same-named clip in for the track only
-        when its bytes hash to this; else it takes the deliverable's own. So
-        it is digested from the bytes the deliverable carries, never a source
-        that may not be in it: the FBX dependency pass writes it from what it
-        embedded (``FbxMedia.embed_dependencies``), and Unity extracts those
-        bytes byte for byte, so both hash one string of bytes.
+        The ``audio`` record's ``media`` (``SceneRecords.AUDIO``). A cue names
+        its sound by the file the delivery carries, and a reader finds the
+        sound by that name, so two deliveries can name different files alike
+        -- two models each embedding their own ``door.wav`` -- and the second
+        bound the first's (2026-10-19). A reader stands a same-named sound in
+        for the delivery's only when its bytes hash to this; else it takes
+        the delivery's own. So it is digested from the bytes the delivery
+        carries, never a source that may not be in it: the FBX dependency
+        pass writes it from what it embedded (``FbxMedia.embed_dependencies``),
+        and Unity extracts those bytes byte for byte, so both hash one string
+        of bytes.
 
-        An event's file is the audio file (:attr:`SOURCE_EXTENSIONS`) whose
-        stem is its name, ignoring case -- the reader's join; a stem two audio
-        files share tells the reader nothing, so that name gets no digest.
+        A cue's file is the audio file (:attr:`SOURCE_EXTENSIONS`) of its
+        ``sound``'s name, ignoring case -- the reader's join; a name two files
+        share ignoring case tells the reader nothing, so it gets no digest.
 
         Parameters:
-            events: The record's events (``{"name", ...}``).
-            files: ``{file name: bytes}`` -- what the deliverable embeds.
+            cues: The record's cues (``{"sound", ...}``).
+            files: ``{file name: bytes}`` -- what the delivery embeds.
 
         Returns:
-            ``{event name: SHA-256 of its file's bytes, lowercase hex}``, in
-            event order; a name with no file among *files* is left out.
+            ``{sound: SHA-256 of its file's bytes, lowercase hex}``, in cue
+            order; a sound with no file among *files* is left out.
         """
-        by_stem: Dict[str, List[bytes]] = {}
+        by_name: Dict[str, List[bytes]] = {}
         for file_name, data in files.items():
-            stem, ext = os.path.splitext(file_name)
-            if ext.lower() in cls.SOURCE_EXTENSIONS:
-                by_stem.setdefault(stem.casefold(), []).append(data)
+            if os.path.splitext(file_name)[1].lower() in cls.SOURCE_EXTENSIONS:
+                by_name.setdefault(file_name.casefold(), []).append(data)
         media: Dict[str, str] = {}
-        for event in events:
-            name = event.get("name") if isinstance(event, Mapping) else None
-            if not isinstance(name, str) or not name or name in media:
+        for cue in cues:
+            sound = cue.get("sound") if isinstance(cue, Mapping) else None
+            if not isinstance(sound, str) or not sound or sound in media:
                 continue
-            found = by_stem.get(name.casefold(), [])
+            found = by_name.get(sound.casefold(), [])
             if len(found) == 1:
-                media[name] = hashlib.sha256(found[0]).hexdigest()
+                media[sound] = hashlib.sha256(found[0]).hexdigest()
         return media
 
     @classmethod

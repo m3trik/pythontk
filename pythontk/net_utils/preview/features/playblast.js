@@ -1,16 +1,20 @@
 /*
   Export Playblast — record the clip the transport is on to a movie file.
 
-  Whatever the picker is showing: one declared shot, the whole-timeline clip, or
-  FULL SEQUENCE (every shot laid back onto the timeline it was cut from), which
-  records as one continuous movie exactly as it plays.
+  Whatever the picker is showing: one shot's clip, or FULL SEQUENCE (the shots'
+  clips played in turn, in the takes' order), which records as one continuous
+  movie exactly as it plays.
 
   This is a PLAYBLAST, not a screen recording. The clip is stepped: the page
   poses frame N, renders it, and hands the pixels over before asking for N+1.
   A throttled tab, a slow headset and a desktop therefore all produce the same
-  file, at the deliverable's own authoring frame rate — which is the property
-  that makes the result comparable with a viewport playblast of the same shot
-  rather than merely similar to it. Sampling the display instead would drop and
+  file, at the scene's own frame rate (the `animation` record's `fps`, which
+  the deliverable states because glTF cannot) — which is the property that
+  makes the result comparable with a viewport playblast of the same shot
+  rather than merely similar to it. Only a file that states no rate (an older
+  or a foreign GLB) is asked for one (`DEFAULT_RATE` unless chosen): glTF is in
+  seconds, and a rate measured off a clip's key spacing is wrong wherever key
+  reduction left a gap. Sampling the display instead would drop and
   duplicate frames wherever the device was busy, and the busiest moment is
   always the one worth reviewing.
 
@@ -88,6 +92,14 @@ const QUALITY_PRESETS = [
 //: High, not Draft: a playblast is most often looked at on the screen it was
 //: made on, where a 720p-class file reads as soft next to the page itself.
 const DEFAULT_PRESET = 'high';
+
+//: The movie's frame rates the prompt offers a file that states none (an
+//: older or a foreign GLB; glTF is in seconds). The recording steps the clip
+//: at the chosen one (frame i posed at i / rate seconds).
+const FRAME_RATES = [23.976, 24, 25, 29.97, 30, 48, 50, 59.94, 60];
+
+//: 24: film's rate, and the one a DCC scene starts at by default.
+const DEFAULT_RATE = 24;
 
 function presetFor(key) {
   return QUALITY_PRESETS.find((preset) => preset.key === key)
@@ -206,7 +218,7 @@ export default function playblast(viewer) {
   //: Both burn-ins OFF by default, because a burn-in is drawn into the movie and
   //: cannot be taken out again: unless someone asks for the annotation, the
   //: recording is what the reviewer saw.
-  let options = { stamp: false, describe: false, preset: DEFAULT_PRESET };
+  let options = { stamp: false, describe: false, preset: DEFAULT_PRESET, rate: DEFAULT_RATE };
 
   //: Asked BEFORE the recording rather than armed by a switch beside the
   //: item. A burn-in is a property of the file about to be written, so the
@@ -223,13 +235,26 @@ export default function playblast(viewer) {
       title: 'Export Playblast',
       fields: [
         // What is about to be written, stated rather than offered: the clip is
-        // the picker's to choose and the rate is the deliverable's, so the one
-        // thing this prompt can usefully do about them is show them.
+        // the picker's to choose and the rate the scene's, so the one thing
+        // this prompt can usefully do about them is show them. The rate is
+        // asked only of a file that states none.
         {
           key: 'summary',
           type: 'note',
-          label: `${clip.name} · ${frameCount(clip)} frames · ${clip.fps} fps`,
+          label: clip.fps
+            ? `${clip.name} · ${frameCount(clip, clip.fps)} frames · ${clip.fps} fps`
+            : `${clip.name} · ${clip.duration.toFixed(2)}s`,
         },
+        ...(clip.fps ? [] : [{
+          key: 'rate',
+          type: 'choice',
+          label: 'Frame rate',
+          value: String(options.rate),
+          choices: FRAME_RATES.map((rate) => ({ value: String(rate), label: `${rate} fps` })),
+          title: 'The movie\'s frame rate: the clip is stepped at it. This file '
+            + 'states no frame rate of its own (it predates the one the '
+            + 'exporters write, or another tool wrote it).',
+        }]),
         {
           key: 'preset',
           type: 'choice',
@@ -242,11 +267,10 @@ export default function playblast(viewer) {
         },
         {
           key: 'stamp',
-          label: 'Burn in shot name and frame',
+          label: 'Burn in shot name and time',
           value: options.stamp,
-          title: 'Draw the shot name, the DCC frame number and the time into '
-            + 'the movie itself. On FULL SEQUENCE the name follows the '
-            + 'playhead across shots, marking a gap as a hold.',
+          title: 'Draw the shot name and the time into the movie itself. On '
+            + 'FULL SEQUENCE the name follows the playhead across shots.',
         },
         {
           key: 'describe',
@@ -260,7 +284,12 @@ export default function playblast(viewer) {
       confirm: 'Record',
     });
     if (!answer) return;   // cancelled
-    options = { stamp: answer.stamp, describe: answer.describe, preset: answer.preset };
+    options = {
+      stamp: answer.stamp,
+      describe: answer.describe,
+      preset: answer.preset,
+      rate: Number(answer.rate) || options.rate,
+    };
     // Re-resolved from scratch by `start`, never carried from the prompt: a
     // push can land while the dialog is open, and recording the clip object
     // that check produced would record a model the page no longer has.
@@ -309,28 +338,26 @@ export default function playblast(viewer) {
       viewer.setStatus('nothing to record — this model has no clips', 'error');
       return null;
     }
-    if (!clip.fps) {
-      // The manifest is where the authoring rate lives; without it the frames
-      // could still be captured but not placed in time, and a movie at a guessed
-      // rate is worse than none — it plays at the wrong speed and looks correct.
-      viewer.setStatus('cannot record — the deliverable states no frame rate', 'error');
-      return null;
-    }
+    // A clip with no length (a shot that holds still bakes no curve) is
+    // still recordable: its movie is the one pose it holds, one frame
+    // (frameCount).
     return clip;
   }
 
-  //: Frames INCLUSIVE of both bounds, which is the count `clipInfo` builds its
-  //: two frame numbers to satisfy -- the same arithmetic for a single shot and
-  //: for the reconstructed sequence.
-  function frameCount(clip) {
-    return Math.max(1, Math.round(clip.endFrame - clip.startFrame) + 1);
+  //: Frames INCLUSIVE of both ends at *fps*: a duration is the span BETWEEN
+  //: the outer frames, so the last is duration*fps and the count one more --
+  //: the same arithmetic for a single shot and for the sequence.
+  function frameCount(clip, fps) {
+    return Math.max(1, Math.round(clip.duration * fps) + 1);
   }
 
   function start() {
     const clip = recordable();
     if (!clip) return;
-    const fps = clip.fps;
-    const frames = frameCount(clip);
+    // The scene's own rate whenever the file states one; the prompt's only
+    // for a file that states none.
+    const fps = clip.fps || options.rate;
+    const frames = frameCount(clip, fps);
 
     // Measured ONCE, here. Every frame of a movie must be the same size, and
     // the canvas is not: resizing the window mid-recording (or rotating a
@@ -398,7 +425,9 @@ export default function playblast(viewer) {
     post('begin', {
       name: clip.name,
       fps,
-      start_frame: Math.round(clip.startFrame),
+      // Frames count from the clip's first, 0: a shot is named, and need not
+      // start at any frame.
+      start_frame: 0,
       frames,
       content_type: FRAME_TYPE,
       quality: job.quality,
@@ -448,7 +477,7 @@ export default function playblast(viewer) {
         job.width,
         job.height,
         leftLines(seconds),
-        job.stamp ? stamp(index, seconds) : null,
+        job.stamp ? stamp(seconds) : null,
       );
       source = job.pad;
     }
@@ -461,28 +490,24 @@ export default function playblast(viewer) {
 
   /* ------------------------------------------------------------- burn-in --- */
 
-  //: What the frame is OF. On the whole-timeline clip that is the shot the
-  //: playhead is inside -- the same name, and the same `(hold)` for a gap, that
-  //: the transport readout shows, so the movie and the page agree. On a single
-  //: shot the sequence has nothing to say and the clip's own name is the answer.
+  //: What the frame is OF. On the sequence that is the shot whose clip plays
+  //: there -- the same name the transport readout shows, so the movie and the
+  //: page agree. On a single shot the sequence has nothing to say and the
+  //: clip's own name is the answer.
   function shotName(seconds) {
     return viewer.shotAt(seconds) || job.clip.name;
   }
 
-  //: WHERE in the shot. The frame number is the DCC's own -- the clip's start
-  //: frame plus the offset -- so a note about "frame 112" means the frame the
-  //: animator will open. Zero-padded to keep the line still, except on a
-  //: negative frame, where padding the digits would bury the sign.
+  //: WHEN in the clip: the time into it -- no frame number, since a shot is
+  //: named and need not start at any frame.
   //:
   //: The time is the one the frame was POSED at, not `index / fps` recomputed:
   //: the pose is clamped to the clip's duration, so on a clip whose frame count
   //: and duration disagree by a rounding remainder the two part company at the
   //: end -- and the stamp would then label a held last frame with a time past
   //: the clip it is holding on.
-  function stamp(index, seconds) {
-    const frame = Math.round(job.clip.startFrame) + index;
-    const padded = frame < 0 ? String(frame) : String(frame).padStart(4, '0');
-    return `${padded}  ${seconds.toFixed(2)}s`;
+  function stamp(seconds) {
+    return `${seconds.toFixed(2)}s`;
   }
 
   //: The left-hand column, BOTTOM-UP: the name sits on the frame's foot beside

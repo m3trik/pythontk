@@ -20,21 +20,50 @@ from PIL import Image
 
 from pythontk.net_utils.preview.look_capture import LookCapture
 
-#: A template's ``lightmaps`` block: each lightmapped material's level, and
-#: the probe; a material's map is the texture it binds (:data:`MAPS`).
+#: A template's ``lightmaps`` record, as its GLB carries it: two objects baked
+#: into a map each, and the probe -- every length in the record's units
+#: (centimetres) beside its ``unit_scale``.
 MANIFEST = {
-    "version": 2,
-    "carrier": "occlusion",
-    "materials": {"MAT_ROOM": {"intensity": 1.0}, "MAT_DESK": {"intensity": 1.0}},
+    "version": 3,
+    "unit_scale": 0.01,
+    "objects": [
+        {
+            "name": name,
+            "map": f"{name}_Lightmap.exr",
+            "scaleOffset": [1.0, 1.0, 0.0, 0.0],
+            "hierarchy": [name],
+        }
+        for name in ("ROOM", "DESK")
+    ],
     "probe": {
-        "bufferView": 0,
-        "position": [0.0, 1.5, 0.0],
-        "box": {"min": [-3, 0, -3], "max": [3, 3, 3]},
+        "map": "SCENE_Probe.hdr",
+        "position": [0.0, 150.0, 0.0],
+        "box": {"min": [-300.0, 0.0, -300.0], "max": [300.0, 300.0, 300.0]},
     },
 }
-#: The image each of those materials binds in its carrier slot, by stem
-#: (``LookCapture.bound_maps``).
-MAPS = {"MAT_ROOM": "ROOM_Lightmap", "MAT_DESK": "DESK_Lightmap"}
+#: The probe as the viewer places it: the record's lengths in metres.
+PLACED = {
+    "position": [0.0, 1.5, 0.0],
+    "box": {"min": [-3.0, 0.0, -3.0], "max": [3.0, 3.0, 3.0]},
+}
+#: The map each of those objects reads, by the record's file name, and the
+#: stem a bake's atlas is matched by (``LookCapture.bound_maps``).
+MAPS = {"ROOM_Lightmap.exr": "ROOM_Lightmap", "DESK_Lightmap.exr": "DESK_Lightmap"}
+
+
+def _media_view(name):
+    """A bufferView holding the file *name* as the media transport names one
+    (``SceneRecords.GLB_MEDIA``): what a template's map rides as."""
+    from pythontk import SceneRecords
+
+    media = SceneRecords.GLB_MEDIA
+    return {
+        "buffer": 0,
+        "byteOffset": 0,
+        "byteLength": 4,
+        media.name: name,
+        "extras": media.extras("image/png", 1.0),
+    }
 
 
 def _require_cv2():
@@ -55,17 +84,16 @@ class TestPayload(unittest.TestCase):
             "SCENE_Probe.exr": np.ones((2, 4, 3), np.float32),
             "STRAY_Lightmap.exr": np.zeros(
                 (2, 2, 3), np.float32
-            ),  # no material wears it
+            ),  # no object reads it
         }
         payload = LookCapture.payload(bakes, MANIFEST, maps=MAPS)
-        self.assertEqual(
-            payload["maps"], {"MAT_ROOM": "ROOM_Lightmap", "MAT_DESK": "DESK_Lightmap"}
-        )
+        self.assertEqual(payload["maps"], MAPS)
         self.assertEqual(sorted(payload["images"]), ["DESK_Lightmap", "ROOM_Lightmap"])
         room = payload["images"]["ROOM_Lightmap"]
         self.assertEqual((room["width"], room["height"]), (8, 4))
-        self.assertEqual(payload["probe"]["position"], [0.0, 1.5, 0.0])
-        self.assertEqual(payload["probe"]["box"], MANIFEST["probe"]["box"])
+        # The record's units are the bake's: the viewer is handed metres.
+        self.assertEqual(payload["probe"]["position"], PLACED["position"])
+        self.assertEqual(payload["probe"]["box"], PLACED["box"])
 
     def test_images_travel_as_rgba_half_floats(self):
         rgb = np.random.default_rng(0).random((3, 5, 3)).astype(np.float32) * 4
@@ -82,7 +110,7 @@ class TestPayload(unittest.TestCase):
         bakes = {"SCENE_Probe.exr": np.ones((2, 4, 3), np.float32)}
         moved = LookCapture.payload(bakes, MANIFEST, probe={"position": [1, 2, 3]})
         self.assertEqual(moved["probe"]["position"], [1, 2, 3])
-        self.assertEqual(moved["probe"]["box"], MANIFEST["probe"]["box"])  # kept
+        self.assertEqual(moved["probe"]["box"], PLACED["box"])  # kept
         unboxed = LookCapture.payload(bakes, MANIFEST, probe={"box": None})
         self.assertIsNone(unboxed["probe"]["box"])
 
@@ -100,31 +128,30 @@ class TestPayload(unittest.TestCase):
         return path
 
     def test_the_manifest_is_the_templates_current_block(self):
-        """The template's ``lightmaps`` block, read as every reader reads it
-        (``SceneRecords.glb_block``): in the root extras, in the schema it
-        declares. One anywhere else, or of another version, is none -- the
-        template is re-exported. Added: 2026-10-20"""
-        from pythontk import MeshConvert, SceneRecords, TempArtifacts
+        """The template's ``lightmaps`` record, read as every reader reads it
+        (``SceneRecords.glb_block``): in the root extras, as the GLB carries
+        it, in the schema it declares. One anywhere else, or of another
+        version, is none -- the template is re-exported. Added: 2026-10-20"""
+        from pythontk import SceneRecords, TempArtifacts
 
         artifacts = TempArtifacts("look_capture_manifest", policy="scoped")
         self.addCleanup(artifacts.cleanup)
         key = SceneRecords.LIGHTMAPS.key
-        block = MeshConvert.lightmaps_block({"MAT_ROOM": 1.0})
         current = self._template(
-            artifacts, {"asset": {"version": "2.0"}, "extras": {key: block}}
+            artifacts, {"asset": {"version": "2.0"}, "extras": {key: MANIFEST}}
         )
-        self.assertEqual(LookCapture(current).manifest, block)
+        self.assertEqual(LookCapture(current).manifest, MANIFEST)
         for name, gltf in (
             (
                 "scene.glb",
                 {
                     "asset": {"version": "2.0"},
-                    "scenes": [{"extras": {key: json.dumps(block)}}],
+                    "scenes": [{"extras": {key: json.dumps(MANIFEST)}}],
                 },
             ),
             (
                 "older.glb",
-                {"asset": {"version": "2.0"}, "extras": {key: dict(block, version=1)}},
+                {"asset": {"version": "2.0"}, "extras": {key: dict(MANIFEST, version=2)}},
             ),
         ):
             with self.subTest(template=name):
@@ -132,84 +159,176 @@ class TestPayload(unittest.TestCase):
                     LookCapture(self._template(artifacts, gltf, name)).manifest, {}
                 )
 
-    def test_a_current_template_maps_each_material_to_its_bound_lightmap(self):
-        """What a relight swaps on a template built today. A version-2 block
-        names no map -- a material's map is the texture it binds in the
-        block's carrier slot -- so each material's image is found through its
-        binding (``LookCapture.maps``). Until 2026-10-20 ``payload`` read
-        ``materials[name]["map"]``, which a current block never carries, so a
-        relight of any current template swapped nothing."""
-        from pythontk import MeshConvert, SceneRecords, TempArtifacts
+    def test_a_current_template_maps_each_map_its_record_lights_with(self):
+        """What a relight swaps on a template built today: each map the
+        template's record lights an object with -- the entry resolved to its
+        node, its map riding the file -- keyed by the record's own file name,
+        which the viewer swaps by (``LookCapture.maps``)."""
+        from pythontk import SceneRecords, TempArtifacts
 
         artifacts = TempArtifacts("look_capture_bound", policy="scoped")
         self.addCleanup(artifacts.cleanup)
-        png = "data:image/png;base64,iVBORw0KGgo="
         path = self._template(
             artifacts,
             {
                 "asset": {"version": "2.0"},
-                "images": [{"name": "ROOM_Lightmap.png", "uri": png}],
-                "textures": [{"source": 0}],
-                "materials": [
-                    {
-                        "name": "MAT_ROOM",
-                        "occlusionTexture": {"index": 0, "texCoord": 1},
-                    }
-                ],
-                "extras": {
-                    SceneRecords.LIGHTMAPS.key: MeshConvert.lightmaps_block(
-                        {"MAT_ROOM": 1.0}
-                    )
-                },
+                "nodes": [{"name": "ROOM", "mesh": 0}],
+                "meshes": [{"primitives": [{"attributes": {"TEXCOORD_1": 0}}]}],
+                "bufferViews": [_media_view("ROOM_Lightmap.exr")],
+                "extras": {SceneRecords.LIGHTMAPS.key: MANIFEST},
             },
         )
         bakes = {"ROOM_Lightmap.exr": np.ones((2, 2, 3), np.float32)}
         capture = LookCapture(path)
-        self.assertEqual(capture.maps, {"MAT_ROOM": "ROOM_Lightmap"})
+        self.assertEqual(capture.maps, {"ROOM_Lightmap.exr": "ROOM_Lightmap"})
         payload = LookCapture.payload(bakes, capture.manifest, maps=capture.maps)
-        self.assertEqual(payload["maps"], {"MAT_ROOM": "ROOM_Lightmap"})
+        self.assertEqual(payload["maps"], {"ROOM_Lightmap.exr": "ROOM_Lightmap"})
 
-    def test_a_materials_map_is_the_image_its_carrier_slot_binds(self):
-        """``bound_maps``: each material the block names, through the slot its
-        ``carrier`` names -- an emissive carrier's ``emissiveTexture`` -- to
-        the image that texture samples, by name or file name, a KTX2 source
-        included; a material the block does not name, or one binding no
-        image, is none. Added: 2026-10-20"""
+    def test_the_retired_block_argument_is_gone(self):
+        """``bound_maps(gltf)`` reads the record the file carries: the block
+        0.20.0 handed it is no parameter of 0.21.0 (no workspace caller passed
+        one, so no deprecation window)."""
+        from pythontk import SceneRecords
+
         gltf = {
-            "images": [
-                {"name": "ROOM_Lightmap.png"},
-                {"uri": "maps/DESK_Lightmap.ktx2"},
-                {"name": "unrelated.png"},
-            ],
-            "textures": [
-                {"source": 0},
-                {"extensions": {"KHR_texture_basisu": {"source": 1}}},
-                {"source": 2},
-            ],
-            "materials": [
-                {"name": "MAT_ROOM", "emissiveTexture": {"index": 0, "texCoord": 1}},
-                {"name": "MAT_DESK", "emissiveTexture": {"index": 1, "texCoord": 1}},
-                {"name": "MAT_SKY", "emissiveTexture": {"index": 2}},
-                {"name": "MAT_BARE"},
-            ],
+            "nodes": [{"name": "ROOM", "mesh": 0}],
+            "meshes": [{"primitives": [{"attributes": {"TEXCOORD_1": 0}}]}],
+            "bufferViews": [_media_view("ROOM_Lightmap.exr")],
+            "extras": {SceneRecords.LIGHTMAPS.key: MANIFEST},
         }
-        block = {
-            "version": 2,
-            "carrier": "emissive",
-            "materials": {"MAT_ROOM": {}, "MAT_DESK": {}, "MAT_BARE": {}},
+        for call in (
+            lambda: LookCapture.bound_maps(gltf, block={"materials": {}}),
+            lambda: LookCapture.bound_maps(gltf, {"materials": {}}),
+        ):
+            with self.assertRaises(TypeError):
+                call()
+        self.assertEqual(
+            LookCapture.bound_maps(gltf), {"ROOM_Lightmap.exr": "ROOM_Lightmap"}
+        )
+
+    def test_a_map_is_bound_where_the_record_lights_a_node_with_it(self):
+        """``bound_maps``: each map the record lights a node of THIS file
+        with, once, under the record's own spelling -- its view joined without
+        case, as every reader joins it. An entry whose node is not here, or
+        whose map rides nothing, binds none. Added: 2026-11-07"""
+        from pythontk import SceneRecords
+
+        record = dict(
+            MANIFEST,
+            objects=[
+                {"name": n, "map": m, "scaleOffset": [1.0, 1.0, 0.0, 0.0], "hierarchy": [n]}
+                for n, m in (
+                    ("ROOM", "ROOM_Lightmap.exr"),
+                    ("CHAIR", "ROOM_Lightmap.exr"),
+                    ("DESK", "DESK_Lightmap.exr"),
+                    ("SKY", "SKY_Lightmap.exr"),
+                    ("BARE", "BARE_Lightmap.exr"),
+                )
+            ],
+        )
+        nodes = ("ROOM", "CHAIR", "DESK", "BARE")
+        gltf = {
+            "nodes": [{"name": n, "mesh": 0} for n in nodes],
+            "meshes": [{"primitives": [{"attributes": {"TEXCOORD_1": 0}}]}],
+            "bufferViews": [
+                _media_view("ROOM_Lightmap.exr"),
+                _media_view("desk_lightmap.EXR"),
+                _media_view("SKY_Lightmap.exr"),
+            ],
+            "extras": {SceneRecords.LIGHTMAPS.key: record},
         }
         self.assertEqual(
-            LookCapture.bound_maps(gltf, block),
-            {"MAT_ROOM": "ROOM_Lightmap", "MAT_DESK": "DESK_Lightmap"},
+            LookCapture.bound_maps(gltf),
+            {"ROOM_Lightmap.exr": "ROOM_Lightmap", "DESK_Lightmap.exr": "DESK_Lightmap"},
         )
-        occlusion = dict(block, carrier="occlusion")
-        self.assertEqual(LookCapture.bound_maps(gltf, occlusion), {})
 
     def test_without_a_probe_bake_no_probe_is_sent(self):
         payload = LookCapture.payload(
             {"ROOM_Lightmap.exr": np.zeros((2, 2, 3), np.float32)}, MANIFEST, maps=MAPS
         )
         self.assertIsNone(payload["probe"])
+
+    def test_a_swap_with_lights_ships_its_probe_lit_and_its_copies_complete(self):
+        """What a relight with lights sends is what a delivery ships
+        (``MeshConvert.embed_fbx_highlight_probes``): the swap's probe with
+        each light drawn in as its capture point sees it, and a COMPLETE copy
+        per group of receivers -- the probe box-filtered to the copy's size
+        plus its layer -- naming the nodes that read it, which the viewer uses
+        in the probe's place. Added: 2026-11-07"""
+        from unittest import mock
+
+        from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
+
+        raw = np.random.default_rng(1).random((4, 8, 3)).astype(np.float32)
+        seen = np.zeros((4, 8, 3), np.float32)
+        seen[0, 0] = 9.0
+        layer = np.full((2, 4, 3), 0.5, np.float32)
+        table = [{"name": "TABLE", "hierarchy": ["TABLE"]}]
+        layers = [
+            {"receivers": "probe", "materials": [], "objects": [], "image": seen},
+            {"receivers": "interior", "materials": ["tableMat"], "objects": table, "image": layer},
+        ]
+        bakes = {"SCENE_Probe.exr": raw}
+        capture = LookCapture("template.glb")
+        capture._manifest = MANIFEST
+        payload = LookCapture.payload(bakes, MANIFEST)
+        with mock.patch.object(MeshConvert, "highlight_probe_layers", return_value=layers):
+            (copy,) = capture._highlights(payload, bakes, [{"type": "point"}])
+
+        def half(entry, shape):
+            data = np.frombuffer(base64.b64decode(entry["b64"]), np.float16)
+            return data.reshape(shape + (4,))[..., :3].astype(np.float32)
+
+        np.testing.assert_allclose(half(payload["probe"], (4, 8)), raw + seen, rtol=2e-3)
+        self.assertEqual(copy["objects"], table)
+        self.assertEqual(copy["materials"], ["tableMat"])
+        self.assertEqual((copy["width"], copy["height"]), (4, 2))
+        boxed = raw.reshape(2, 2, 4, 2, 3).mean((1, 3))
+        np.testing.assert_allclose(half(copy, (2, 4)), boxed + layer, rtol=2e-3)
+
+    def test_a_swap_without_a_probe_builds_its_copies_on_the_raw_environment(self):
+        """Lights over a swap that brings no probe ride the template's own,
+        which ships with its lights drawn in already: the copies are built on
+        the environment WITHOUT them -- as the delivery builds each copy, on
+        the raw probe -- so the capture point's lights are not counted twice,
+        and the probe sent is the environment with the swap's lights drawn in
+        once. Added: 2026-11-07"""
+        from unittest import mock
+
+        from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
+
+        light = {"type": "point", "position": [0.0, 250.0, 0.0], "color": [1.0, 1.0, 1.0], "intensity": 40000.0}
+        manifest = dict(MANIFEST, lights=[light])
+        manifest["probe"] = dict(MANIFEST["probe"], map="SCENE_Probe_Lights.hdr")
+        lights = MeshConvert.lights_in_metres([light], manifest["unit_scale"])
+        lo, hi = (np.asarray(PLACED["box"][k], float) for k in ("min", "max"))
+        C = np.asarray(PLACED["position"], float)
+        seen = MeshConvert._highlight_layer(lights, [C], [1.0], C, lo, hi, 16)
+        self.assertGreater(float(seen.max()), 0.0, "the fixture's light must reach the probe")
+        raw = np.full((8, 16, 3), 0.25, np.float32)
+        layer = np.full((4, 8, 3), 0.5, np.float32)
+        table = [{"name": "TABLE", "hierarchy": ["TABLE"]}]
+        layers = [
+            {"receivers": "probe", "materials": [], "objects": [], "image": seen},
+            {"receivers": "interior", "materials": ["tableMat"], "objects": table, "image": layer},
+        ]
+        capture = LookCapture("template.glb")
+        capture._manifest = manifest
+        capture._probe_pixels = (raw + seen).astype(np.float32)  # as the file ships it
+        capture._probe_payload = dict(PLACED, width=16, height=8, b64=LookCapture._half_b64(capture._probe_pixels))
+        payload = {"maps": {}, "images": {}, "probe": None}
+        with mock.patch.object(MeshConvert, "highlight_probe_layers", return_value=layers):
+            (copy,) = capture._highlights(payload, {}, lights)
+
+        def half(entry, shape):
+            data = np.frombuffer(base64.b64decode(entry["b64"]), np.float16)
+            return data.reshape(shape + (4,))[..., :3].astype(np.float32)
+
+        boxed = raw.reshape(4, 2, 8, 2, 3).mean((1, 3))
+        np.testing.assert_allclose(half(copy, (4, 8)), boxed + layer, rtol=2e-3, atol=2e-3)
+        np.testing.assert_allclose(half(payload["probe"], (8, 16)), raw + seen, rtol=2e-3, atol=2e-3)
+        # The template's own payload is left as the file ships it.
+        np.testing.assert_allclose(capture._probe_pixels, raw + seen)
 
 
 class TestShots(unittest.TestCase):

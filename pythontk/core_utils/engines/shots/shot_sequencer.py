@@ -1868,6 +1868,34 @@ class ShotSequencer(_ShotSequencerHooks):
         """
         return self.fit_shot_to_content(shot_id, mode="trim", edge=edge)
 
+    def content_end(self, shot_id: int) -> Optional[float]:
+        """Where Trim Trailing Space puts *shot_id*'s end, changing nothing
+        (:meth:`trim_shot_to_content`, ``edge="trailing"``): the last frame of
+        its content inside its range -- the sequences it plays and every key
+        it holds (the system's bound samples are no content) -- snapped up
+        as the trim snaps. What Assess reports as the shot's unused tail
+        (``ShotManifest.assess``).
+
+        Returns:
+            The frame, or ``None`` when the shot holds nothing the sequencer
+            reads (a trim leaves it as it is).
+
+        Raises:
+            ValueError: No shot with *shot_id*.
+        """
+        shot = self.shot_by_id(shot_id)
+        if shot is None:
+            raise ValueError(f"No shot with id {shot_id}")
+        _start, inner_end, _out_start, _out_end, _on_bound = self._key_extent(
+            shot, False
+        )
+        ends = [s["end"] for s in self.collect_shot_sequences(shot_id)]
+        if inner_end is not None:
+            ends.append(inner_end)
+        if not ends:
+            return None
+        return self.store.snap(min(shot.end, max(ends)), "up")
+
     def extend_shot_to_fit(
         self, shot_id: int, edge: str = "both", reach: Optional[float] = None
     ) -> Tuple[float, float]:

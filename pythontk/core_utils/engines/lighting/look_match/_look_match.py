@@ -360,7 +360,7 @@ class LookMatch:
     def to_rig(
         self,
         mix: Optional[LightMix] = None,
-        gain: float = math.pi,
+        gain: float = 1.0,
         color_space: str = "ACEScg",
         min_weight: float = 1e-4,
         group: str = "LIGHT_RIG",
@@ -375,8 +375,9 @@ class LookMatch:
 
         Parameters:
             gain: Light units per layer unit -- what a bake multiplies a light
-                by for the viewer to show it at weight 1 (pi for the WebXR
-                viewer, which draws baked light pi below the renderer).
+                by for the viewer to show it at weight 1 (1: the WebXR viewer
+                draws a bake as stored, as the renderer does; pi until
+                2026-11-07, while it drew baked light pi below).
             color_space: The scene's rendering space, for the light colours.
             min_weight: Lights below it are left out.
             group: The scene group the rig's lights live under.
@@ -521,7 +522,7 @@ class LookMatch:
                 cls._cli_rig,
                 [
                     out,
-                    ("--gain", {"type": float, "default": math.pi}),
+                    ("--gain", {"type": float, "default": 1.0}),
                     ("--group", {"default": "LIGHT_RIG"}),
                     ("--color-space", {"default": "ACEScg"}),
                 ],

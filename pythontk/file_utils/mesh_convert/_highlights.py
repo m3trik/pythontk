@@ -12,23 +12,32 @@ it, so its highlight lands nowhere near where the light puts it -- why a moody
 rig of bench lights left its metals dark while a bright office's ceiling
 panels lit them.
 
-So the probe ships COPIES, each for a group of receivers, with the bake's
-lights drawn in where box projection shows them true for that group. For a
-light and a focal point F: a probe texel whose ray leaves the box at B shows
-what F sees of the light along F -> B. A reflection from F that reads B sees
-the light exactly -- direction, size and radiance -- and a surface near F sees
-it nearly so. F is chosen per light and per group, and each light is scaled so
-the light it gives the group's own surfaces is the light's own:
+So a delivery's probe holds the bake's lights twice over. The probe itself
+is the environment with each light drawn in as its capture point sees it --
+what a reader that knows nothing of copies reflects, everywhere. And it ships
+COMPLETE COPIES, each for a group of receivers and used in the probe's place:
+the environment with the lights drawn where box projection shows them true
+for that group. For a light and a focal point F: a probe texel whose ray
+leaves the box at B shows what F sees of the light along F -> B. A reflection
+from F that reads B sees the light exactly -- direction, size and radiance --
+and a surface near F sees it nearly so. F is chosen per light and per group,
+and each light is scaled so the light it gives the group's own surfaces is
+the light's own:
 
-* the room's shell (surfaces on the probe's box: walls, floor, ceiling) keeps
-  the probe as captured -- lights placed for the bench and read from a wall
-  glowed where no light shines;
+* the room's shell (surfaces on the probe's box: walls, floor, ceiling) gets
+  no copy and reads the probe -- lights placed for the bench and read from a
+  wall glowed where no light shines;
 * an object the bake left out (no lightmap, so everything it shows comes from
   the probe) gets a copy of its own: F at the centroid of each light's
   irradiance on it, the irradiance matched over it;
 * the rest of the room's interior shares one: F at each light's highlight hot
   spot as the eye sees it, the highlight matched -- a baked surface shows a
   light only through its highlight, its diffuse being the bake's.
+
+A receiver is a mesh node: the record's lightmapped nodes are told from the
+rest by the rule every reader resolves the record by, so a material baked and
+unbaked nodes share puts each where its own bake calls for. The files are the
+delivery's (:meth:`_deliverable_probes`): an FBX embeds each under its name.
 
 The eye is the deliverable's start camera (:attr:`HIGHLIGHT_EYE_NODE`), else
 the probe's capture point, which the bake places where the room is seen from.
@@ -41,11 +50,12 @@ fifth.
 import logging
 import math
 import os
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 
 from pythontk.core_utils.color import Color
+from pythontk.core_utils.engines.scene_export.lightmap_record import LightmapRecord
 from pythontk.core_utils.engines.scene_export.scene_records import SceneRecords
 from pythontk.math_utils._math_utils import MathUtils
 
@@ -78,6 +88,9 @@ class _Highlights:
     #: The node a view starts at -- the eye the highlights are placed for.
     HIGHLIGHT_EYE_NODE: str = "user_pos"
     _HIGHLIGHT_SCALE_RANGE: Tuple[float, float] = (0.02, 4.0)
+    #: The narrowest copy drawn: three.js' PMREM prefilters nothing narrower
+    #: than 64 texels (a 16-texel cube face), so a smaller copy reflected no map.
+    _HIGHLIGHT_MIN_WIDTH: int = 64
 
     # ------------------------------------------------------------------
     # Public
@@ -101,23 +114,54 @@ class _Highlights:
         if not lights:
             return []
         with self._mc.open_glb(glb) as edit:
-            block = SceneRecords.glb_block(edit.gltf, SceneRecords.LIGHTMAPS) or {}
-            probe = probe if probe is not None else block.get("probe")
+            # The file's own record -- a GLB carries it as it stands -- when
+            # the caller gives no probe or baked materials.
+            record = SceneRecords.glb_block(edit.gltf, SceneRecords.LIGHTMAPS) or {}
+            probe = probe if probe is not None else self._probe_in_metres(record)
             if not isinstance(probe, dict) or not probe.get("position"):
                 return []
-            baked_names = set(
-                baked if baked is not None else (block.get("materials") or {})
-            )
-            meshes = self._mc._highlight_meshes(edit)
+            if baked is None:
+                # Grouped as the delivery's copies are: by receiver, a
+                # material baked and unbaked nodes share two of them.
+                meshes, keys = self._receiver_meshes(edit, record)
+            else:
+                meshes, keys = self._mc._highlight_meshes(edit), set(baked)
             if eye is None:
                 eye = self._mc._highlight_eye(edit)
+            gltf = edit.gltf
         C = np.asarray(probe["position"], float)
         box = probe.get("box")
         lo = np.asarray(box["min"], float) if box else None
         hi = np.asarray(box["max"], float) if box else None
         eye = np.asarray(eye if eye is not None else C, float)
         width = int(width or 1024) // 2 * 2
-        groups = self._mc._highlight_groups(meshes, baked_names, lo, hi)
+        groups = self._mc._highlight_groups(meshes, keys, lo, hi)
+        layers = self._draw_groups(groups, lights, C, lo, hi, width, eye)
+        receivers = self._mc._highlight_receivers(
+            gltf,
+            [set(layer["materials"]) for layer in layers],
+            {(m["node"], m["primitive"]): m["material"] for m in meshes},
+        )
+        out: List[Dict[str, Any]] = []
+        # What the delivery's probe itself adds: each light as the capture
+        # point sees it, read by every receiver in no copy.
+        n = len(lights)
+        seen = self._mc._highlight_layer(lights, [C] * n, [1.0] * n, C, lo, hi, width)
+        if np.any(seen > 0):
+            out.append({"receivers": "probe", "materials": [], "objects": [], "image": seen})
+        for layer, objects in zip(layers, receivers):
+            names = {k[1] if isinstance(k, tuple) else k for k in layer["materials"]}
+            out.append(
+                dict(layer, materials=sorted(n for n in names if n), objects=objects)
+            )
+        return out
+
+    def _draw_groups(self, groups, lights, C, lo, hi, width, eye) -> List[Dict[str, Any]]:
+        """Each group's layer: ``{"materials", "receivers", "image"}`` --
+        every light drawn from that group's focal point at its scale
+        (:meth:`_highlight_placement`), the interior's at *width*, an
+        unbaked group's at :meth:`_copy_width`; a group no light reaches is
+        left out."""
         layers = []
         for group in groups:
             pts, nrm = group["points"], group["normals"]
@@ -129,18 +173,27 @@ class _Highlights:
                 )
                 focal.append(F)
                 scales.append(s)
-            w = width if group["receivers"] == "interior" else max(64, width // 2)
+            w = width if group["receivers"] == "interior" else self._copy_width(width)
             image = self._mc._highlight_layer(lights, focal, scales, C, lo, hi, w)
             if not np.any(image > 0):
                 continue
             layers.append(
                 {
-                    "materials": sorted(group["materials"]),
+                    "materials": list(group["materials"]),
                     "receivers": group["receivers"],
                     "image": image,
                 }
             )
         return layers
+
+    @classmethod
+    def _copy_width(cls, width: int) -> int:
+        """An unbaked group's copy width: half the probe's where that is a
+        whole factor of its rows as well as its columns and no narrower than
+        :attr:`_HIGHLIGHT_MIN_WIDTH`, else the probe's own -- a copy is the
+        probe box-filtered down to it."""
+        half = width // 2
+        return half if width % 4 == 0 and half >= cls._HIGHLIGHT_MIN_WIDTH else width
 
     def lights_in_metres(
         self,
@@ -193,93 +246,15 @@ class _Highlights:
         return out or None
 
     # ------------------------------------------------------------------
-    # Embedding (the lightmap pass's)
+    # The deliverable's probe and copies
     # ------------------------------------------------------------------
 
-    def _embed_highlight_probes(
-        self,
-        edit,
-        probe: Dict[str, Any],
-        baked: Sequence[str],
-        lights: Optional[Sequence[Dict[str, Any]]],
-        unit_scale: Optional[float] = None,
-    ) -> Optional[List[Dict[str, Any]]]:
-        """Embed the probe's highlight copies; the probe entry's ``highlights``
-        -- one ``{"bufferView", "materials"}`` per copy: its Radiance bytes and
-        the materials that read it -- or ``None``.
-
-        *probe* is the embedded probe's ``lightmaps`` entry (its
-        ``bufferView`` is read for the probe's width); *lights* the record's,
-        at its *unit_scale* (:meth:`lights_in_metres` is applied here). A layer that cannot be
-        encoded is warned and left out: its receivers read the probe as
-        captured, as a file without highlights does. A copy's size is its
-        Radiance header's, and the viewpoint and lights it was drawn from are
-        how it was made, not what it is: neither is published.
-        """
-        lights = self._mc.lights_in_metres(lights, unit_scale)
-        if not lights:
-            return None
-        from pythontk.img_utils._img_utils import ImgUtils
-
-        width = self._radiance_width(edit, probe.get("bufferView")) or 1024
-        eye = self._mc._highlight_eye(edit) or list(probe["position"])
-        try:
-            layers = self._mc.highlight_probe_layers(
-                edit, lights, probe=probe, width=width, baked=baked, eye=eye
-            )
-        except Exception as error:  # noqa: BLE001 -- never the bake's cost
-            logger.warning("Probe highlights not drawn: %s", error)
-            return None
-        entries, drawn = [], []
-        for layer in layers:
-            try:
-                raw = ImgUtils.encode_hdr_radiance_pixels(layer["image"])
-            except (ImportError, ValueError) as error:
-                logger.warning("Probe highlight layer not encoded: %s", error)
-                continue
-            views = self._mc._append_bin_views(edit, [raw])
-            if not views:
-                continue
-            # Which group a copy was drawn for is how it was made, not what it
-            # is: the entry is its bytes and the materials that read it.
-            entries.append({"bufferView": views[0], "materials": layer["materials"]})
-            drawn.append(f"{layer['receivers']}: {len(layer['materials'])}")
-        if not entries:
-            return None
-        logger.info(
-            "Probe highlights: %d light(s) drawn into %d probe copy(ies) (%s).",
-            len(lights),
-            len(entries),
-            ", ".join(drawn),
-        )
-        return entries
-
-    @staticmethod
-    def _radiance_width(edit, view: Optional[int]) -> Optional[int]:
-        """The width a Radiance image in bufferView *view* declares (``+X w``), or ``None``."""
-        views = edit.gltf.get("bufferViews") or []
-        blob = edit.bin_data
-        if not isinstance(view, int) or blob is None or not 0 <= view < len(views):
-            return None
-        entry = views[view]
-        start = int(entry.get("byteOffset", 0))
-        head = bytes(blob[start : start + min(int(entry["byteLength"]), 512)])
-        for line in head.split(b"\n"):
-            parts = line.split()
-            if len(parts) == 4 and parts[2] in (b"+X", b"-X"):
-                try:
-                    return int(parts[3])
-                except ValueError:
-                    return None
-        return None
-
-    # ------------------------------------------------------------------
-    # The FBX deliverable's copies
-    # ------------------------------------------------------------------
-
-    #: The name a highlight copy rides inside an FBX under: the probe's stem
-    #: and the copy's place in the record, from 1.
-    FBX_HIGHLIGHT_NAME: str = "{stem}_Highlight{index}.hdr"
+    #: The name the probe a delivery ships rides under once the bake's lights
+    #: are drawn into it: the probe's stem.
+    HIGHLIGHT_PROBE_NAME: str = "{stem}_Lights.hdr"
+    #: The name a complete highlight copy rides under: the probe's stem and
+    #: the copy's place in the record, from 1.
+    HIGHLIGHT_COPY_NAME: str = "{stem}_Highlight{index}.hdr"
 
     def embed_fbx_highlight_probes(
         self,
@@ -287,7 +262,6 @@ class _Highlights:
         glb: Optional[str] = None,
         *,
         search_dirs: Sequence[str] = (),
-        hdr_codec: Any = None,
         logger: Optional[logging.Logger] = None,
     ) -> List[str]:
         from pythontk.file_utils.mesh_convert.fbx_media import FbxMedia
@@ -300,85 +274,280 @@ class _Highlights:
         except (OSError, ValueError) as error:
             log.warning("FBX highlight copies: %s not read (%s).", fbx, error)
             return []
-        current = record if SceneRecords.LIGHTMAPS.is_current(record) else {}
-        probe = current.get("probe")
-        if not (
-            isinstance(probe, dict)
-            and probe.get("map")
-            and self._mc.lights_in_metres(
-                current.get("lights"), current.get("unit_scale")
-            )
-        ):
+        if not self._wants_highlights(record):
             return []
+        dirs = [d for d in search_dirs if d]
+        dirs.append(os.path.dirname(os.path.abspath(fbx)))
         store = TempArtifacts("fbx_highlights", policy="scoped")
         try:
-            copies = self._fbx_highlight_copies(fbx, glb, store, search_dirs, hdr_codec)
-            stem = os.path.splitext(os.path.basename(str(probe["map"])))[0]
-            entries, files = [], []
-            for index, copy in enumerate(copies, 1):
-                name = self._mc.FBX_HIGHLIGHT_NAME.format(stem=stem, index=index)
+            source = glb
+            if source is None:
+                source = self._fbx_geometry(fbx, store)
+            drawn = self._deliverable_probes(source, record, dirs, log)
+            if not drawn:
+                return []
+            files = []
+            for name, data in drawn["files"]:
                 path = os.path.join(store.dir_path(), name)
                 with open(path, "wb") as fh:
-                    fh.write(copy["bytes"])
+                    fh.write(data)
                 files.append((name, path))
-                entries.append({"map": name, "objects": copy["objects"]})
-            if not entries and "highlights" not in probe:
-                return []
-            record = dict(record, probe=dict(probe, highlights=entries))
-            if not entries:
-                del record["probe"]["highlights"]
-            FbxMedia.set_record(fbx, key, record, files=files)
+            FbxMedia.set_record(fbx, key, drawn["record"], files=files)
         except Exception as error:  # noqa: BLE001 -- never the deliverable's cost
             log.warning("FBX highlight copies not shipped: %s", error)
             log.debug("FBX highlight copies failed.", exc_info=True)
             return []
         finally:
             store.cleanup()
-        if entries:
-            log.info(
-                "FBX highlight copies: %d embedded (%s).",
-                len(entries),
-                ", ".join(f"{len(e['objects'])} object(s)" for e in entries),
-            )
-        return [entry["map"] for entry in entries]
+        probe = drawn["record"]["probe"]
+        copies = probe.get("highlights") or []
+        log.info(
+            "FBX probe highlights: %d light(s) drawn into %s and %d complete "
+            "copy(ies) (%s).",
+            drawn["lights"],
+            probe["map"],
+            len(copies),
+            ", ".join(f"{len(c['objects'])} object(s)" for c in copies) or "none",
+        )
+        return [name for name, _data in drawn["files"]]
 
-    def _fbx_highlight_copies(
-        self, fbx: str, glb: Optional[str], store, search_dirs, hdr_codec
-    ) -> List[Dict[str, Any]]:
-        """*glb*'s probe copies -- built into *store* when ``None``, from *fbx*'s
-        scene at rest (:meth:`_fbx_static_scene`) -- each ``{"bytes",
-        "objects"}`` (:meth:`_highlight_receivers`)."""
-        if glb is None:
-            source = self._mc._fbx_static_scene(fbx, store)
-            glb = self._mc.fbx_to_glb(
-                source,
-                os.path.join(store.dir_path(), "highlights.glb"),
-                overwrite=True,
-                auto_install=False,
-                prompt=False,
-                lightmap_dirs=list(search_dirs),
-                hdr_codec=hdr_codec,
-                # A copy without its takes has no shots to cut: the clip pass
-                # would warn that the export was written with animation off.
-                data_export={SceneRecords.SHOTS.key: None} if source != fbx else None,
+    def _fbx_geometry(self, fbx: str, store) -> str:
+        """A GLB of *fbx*'s scene at rest (:meth:`_fbx_static_scene`), built
+        into *store* the way a GLB export builds one, less its lightmap pass:
+        the geometry the copies are drawn for, which the record's files do
+        not change."""
+        source = self._mc._fbx_static_scene(fbx, store)
+        return self._mc.fbx_to_glb(
+            source,
+            os.path.join(store.dir_path(), "highlights.glb"),
+            overwrite=True,
+            auto_install=False,
+            prompt=False,
+            lightmaps=False,
+            # A copy without its takes has no shots to cut: the clip pass
+            # would warn that the export was written with animation off.
+            data_export={SceneRecords.SHOTS.key: None} if source != fbx else None,
+        )
+
+    def _wants_highlights(self, record: Any) -> bool:
+        """Whether *record* -- a ``lightmaps`` record -- calls for the pass:
+        current, with a probe and a light to draw into it, and not drawn
+        already (a probe with copies, or whose map is the name the pass gives
+        a lit probe, :attr:`HIGHLIGHT_PROBE_NAME`)."""
+        if not SceneRecords.LIGHTMAPS.is_current(record):
+            return False
+        probe = record.get("probe")
+        if not (isinstance(probe, dict) and probe.get("map")):
+            return False
+        lit = self._mc.HIGHLIGHT_PROBE_NAME.format(stem="")
+        if probe.get("highlights") or os.path.basename(str(probe["map"])).endswith(lit):
+            return False
+        return bool(self._mc.lights_in_metres(record.get("lights"), record.get("unit_scale")))
+
+    def _deliverable_probes(
+        self,
+        glb,
+        record: Dict[str, Any],
+        search_dirs: Sequence[str],
+        log: Optional[logging.Logger] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """The probe a delivery ships with the bake's lights in it, and its copies.
+
+        *record* is the ``lightmaps`` record the delivery carries
+        (:meth:`_wants_highlights`); *glb* the geometry it shades (a path or
+        an open :class:`GlbEdit`); *search_dirs* where the bake's probe image
+        is. Each file is Radiance bytes in the probe's layout and units:
+
+        - the probe the record names from now on (:attr:`HIGHLIGHT_PROBE_NAME`):
+          the environment plus each light as the capture point sees it, at
+          its own level, at the probe's own size;
+        - a complete copy per receiver group (:attr:`HIGHLIGHT_COPY_NAME`):
+          the environment box-filtered to the copy's size plus that group's
+          layer (:meth:`_draw_groups`) -- what the viewer once summed from
+          the two -- named on the record's ``probe.highlights`` with the mesh
+          nodes it shades (:meth:`_highlight_receivers`), each node under the
+          copy holding most of its triangles.
+
+        Returns:
+            ``{"record", "files", "lights"}`` -- the record naming the files,
+            ``[(name, bytes)]`` (the probe first, then each copy in the
+            record's order) and how many lights were drawn; ``None`` when
+            there is nothing to draw, or the probe cannot be read (warned on
+            *log*).
+        """
+        from pythontk.img_utils._img_utils import ImgUtils
+
+        log = log or logger
+        probe = record["probe"]
+        lights = self._mc.lights_in_metres(record.get("lights"), record.get("unit_scale"))
+        place = self._probe_in_metres(record)
+        if not lights or place is None:
+            return None
+        pixels = self._read_probe(str(probe["map"]), search_dirs, log)
+        if pixels is None:
+            return None
+        h, w = pixels.shape[:2]
+        if w != 2 * h or w % 2:
+            log.warning(
+                "Probe highlights: the probe %r is %d x %d, not an equirectangular "
+                "map twice as wide as tall; its lights are not drawn.",
+                probe["map"],
+                w,
+                h,
             )
+            return None
+        C = np.asarray(place["position"], float)
+        box = place["box"]
+        lo = np.asarray(box["min"], float) if box else None
+        hi = np.asarray(box["max"], float) if box else None
         with self._mc.open_glb(glb) as edit:
-            block = SceneRecords.glb_block(edit.gltf, SceneRecords.LIGHTMAPS) or {}
-            highlights = (block.get("probe") or {}).get("highlights")
-            entries = [
-                e
-                for e in highlights or []
-                if isinstance(e, dict) and isinstance(e.get("bufferView"), int)
-            ]
-            objects = self._mc._highlight_receivers(
-                edit.gltf, [set(e.get("materials") or ()) for e in entries]
+            meshes, baked = self._receiver_meshes(edit, record)
+            eye = self._mc._highlight_eye(edit)
+            gltf = edit.gltf
+        eye = np.asarray(eye if eye is not None else C, float)
+        groups = self._mc._highlight_groups(meshes, baked, lo, hi)
+        layers = self._draw_groups(groups, lights, C, lo, hi, w, eye)
+        keys = {(m["node"], m["primitive"]): m["material"] for m in meshes}
+        receivers = self._mc._highlight_receivers(
+            gltf, [set(layer["materials"]) for layer in layers], keys
+        )
+        stem = os.path.splitext(os.path.basename(str(probe["map"])))[0]
+        encode = ImgUtils.encode_hdr_radiance_pixels
+        files: List[Tuple[str, bytes]] = []
+        copies: List[Dict[str, Any]] = []
+        for layer, objects in zip(layers, receivers):
+            if not objects:
+                continue
+            name = self._mc.HIGHLIGHT_COPY_NAME.format(stem=stem, index=len(copies) + 1)
+            files.append((name, encode(self._complete_copy(pixels, layer["image"]))))
+            copies.append({"map": name, "objects": objects})
+        n = len(lights)
+        seen = self._mc._highlight_layer(lights, [C] * n, [1.0] * n, C, lo, hi, w)
+        shipped = {k: v for k, v in probe.items() if k != "highlights"}
+        if np.any(seen > 0):
+            shipped["map"] = self._mc.HIGHLIGHT_PROBE_NAME.format(stem=stem)
+            files.insert(0, (shipped["map"], encode(pixels + seen)))
+        if copies:
+            shipped["highlights"] = copies
+        if not files:
+            return None
+        return {"record": dict(record, probe=shipped), "files": files, "lights": n}
+
+    @staticmethod
+    def _complete_copy(probe: np.ndarray, layer: np.ndarray) -> np.ndarray:
+        """*probe* box-filtered down to *layer*'s size by a whole factor, plus
+        *layer*: a complete copy (the sum the WebXR viewer once made of the
+        two, ``kernel/probe.js`` ``addProbe``)."""
+        h, w = layer.shape[:2]
+        f = probe.shape[1] // w
+        boxed = probe.reshape(h, f, w, f, 3).mean((1, 3), dtype=np.float64)
+        return (boxed + layer).astype(np.float32)
+
+    @staticmethod
+    def _read_probe(
+        name: str, search_dirs: Sequence[str], log: logging.Logger
+    ) -> Optional[np.ndarray]:
+        """The bake's probe image *name* from the first of *search_dirs*
+        holding it, as linear RGB floats, rows top-down (non-finite and
+        negative texels 0, as Radiance holds them); ``None``, warned, when it
+        is nowhere or unreadable."""
+        from pythontk.img_utils._img_utils import ImgUtils
+
+        basename = os.path.basename(name)
+        path = next(
+            (
+                os.path.join(d, basename)
+                for d in search_dirs
+                if d and os.path.isfile(os.path.join(d, basename))
+            ),
+            None,
+        )
+        if path is None:
+            log.warning(
+                "Probe highlights: the probe %r is in none of %s; its lights are "
+                "not drawn.",
+                basename,
+                list(search_dirs),
             )
-            copies = []
-            for entry, receivers in zip(entries, objects):
-                data = edit.image_bytes(entry)
-                if data and receivers:
-                    copies.append({"bytes": bytes(data), "objects": receivers})
-        return copies
+            return None
+        try:
+            import cv2
+
+            image = ImgUtils.cv2_read(path, cv2.IMREAD_UNCHANGED | cv2.IMREAD_ANYDEPTH)
+        except ImportError as error:
+            log.warning("Probe highlights: %r not read (%s).", basename, error)
+            return None
+        if image is None:
+            log.warning("Probe highlights: %r is no image cv2 reads.", basename)
+            return None
+        pixels = np.asarray(image, np.float32)
+        if pixels.ndim == 2:
+            pixels = np.repeat(pixels[:, :, None], 3, axis=2)
+        pixels = np.ascontiguousarray(pixels[:, :, 2::-1])  # cv2's BGR(A): RGB
+        return np.maximum(np.nan_to_num(pixels, nan=0.0, posinf=0.0, neginf=0.0), 0.0)
+
+    @staticmethod
+    def _probe_in_metres(record: Any) -> Optional[Dict[str, Any]]:
+        """``{"position", "box"}`` of *record*'s probe in metres (its lengths
+        times the record's ``unit_scale``; ``box`` ``{min, max}`` or ``None``
+        for an open scene), or ``None`` without a probe placed in a unit."""
+        probe = record.get("probe") if isinstance(record, Mapping) else None
+        if not isinstance(probe, Mapping):
+            return None
+        try:
+            unit = float(record.get("unit_scale"))
+            position = [float(c) * unit for c in probe.get("position")]
+        except (TypeError, ValueError):
+            return None
+        if unit <= 0.0 or len(position) != 3:
+            return None
+        box = LightmapRecord.box(probe.get("box"))
+        if box:
+            box = {k: [c * unit for c in box[k]] for k in ("min", "max")}
+        return {"position": position, "box": box}
+
+    def _baked_nodes(
+        self, gltf: Dict[str, Any], objects: Sequence[Any]
+    ) -> Dict[int, Tuple[Any, Tuple[float, ...]]]:
+        """``{node index: (map, scaleOffset)}``: the mesh nodes the record's
+        *objects* light, resolved as every reader of the record resolves them
+        (``_Media.resolve_entries``: by name and hierarchy,
+        namespace-tolerant, a tie left out)."""
+        media = self._mc._media
+        by_name, leaves, _users, lineage = media.node_index(gltf)
+        resolved = media.resolve_entries(objects, by_name, leaves, lineage)
+        index = {id(node): i for i, node in enumerate(gltf.get("nodes") or [])}
+        baked: Dict[int, Tuple[Any, Tuple[float, ...]]] = {}
+        for entry, (nodes, status, _leaves) in zip(objects, resolved):
+            if not nodes or status in ("ambiguous", "absent"):
+                continue
+            try:
+                rect = tuple(float(v) for v in entry.get("scaleOffset") or (1, 1, 0, 0))
+            except (TypeError, ValueError):
+                rect = (1.0, 1.0, 0.0, 0.0)
+            for node in nodes:
+                baked.setdefault(index[id(node)], (entry.get("map"), rect))
+        return baked
+
+    def _receiver_meshes(self, edit, record: Mapping[str, Any]):
+        """``(meshes, baked)``: :meth:`_highlight_meshes`, each primitive's
+        ``material`` its RECEIVER key -- a lightmapped node's material, map
+        and rect, an unbaked node's material alone (``None`` without one) --
+        and the keys a lightmap lights. A material baked and unbaked nodes
+        share is two receivers, each grouped as its own bake calls for."""
+        baked = self._baked_nodes(edit.gltf, record.get("objects") or [])
+        meshes, lit = [], set()
+        for mesh in self._mc._highlight_meshes(edit):
+            material = mesh["material"]
+            if material is None:
+                key = None
+            elif mesh["node"] in baked:
+                key = ("baked", material) + baked[mesh["node"]]
+                lit.add(key)
+            else:
+                key = ("unbaked", material)
+            meshes.append(dict(mesh, material=key))
+        return meshes, lit
 
     @staticmethod
     def _fbx_static_scene(fbx: str, store) -> str:
@@ -407,26 +576,34 @@ class _Highlights:
     _CONVERTER_ROOT: str = "RootNode"
 
     def _highlight_receivers(
-        self, gltf: Dict[str, Any], materials: Sequence[set]
+        self,
+        gltf: Dict[str, Any],
+        materials: Sequence[set],
+        keys: Optional[Mapping[Tuple[int, int], Any]] = None,
     ) -> List[List[Dict[str, Any]]]:
         """The mesh nodes each copy shades, ``{"name", "hierarchy"}`` -- a node
         under the copy whose *materials* hold most of its triangles (the first
         on a tie), as the lightmap record names an object: its hierarchy root
-        first, without the converter's root."""
+        first, without the converter's root. A primitive counts by its
+        material's name, or by ``keys[(node, primitive)]`` where *keys* are
+        given (:meth:`_receiver_meshes`' receiver keys)."""
         nodes = gltf.get("nodes") or []
         meshes = gltf.get("meshes") or []
         mats = gltf.get("materials") or []
         accessors = gltf.get("accessors") or []
-        parents = self._mc._lightmaps._node_parents(gltf)
+        parents = self._mc._media.node_parents(gltf)
         out: List[List[Dict[str, Any]]] = [[] for _ in materials]
         for index, node in enumerate(nodes):
             mesh = node.get("mesh")
             if not isinstance(mesh, int) or not 0 <= mesh < len(meshes):
                 continue
             votes = [0] * len(materials)
-            for prim in meshes[mesh].get("primitives") or []:
+            for p, prim in enumerate(meshes[mesh].get("primitives") or []):
                 m = prim.get("material")
-                name = mats[m].get("name") if isinstance(m, int) and 0 <= m < len(mats) else None
+                if keys is not None:
+                    name = keys.get((index, p))
+                else:
+                    name = mats[m].get("name") if isinstance(m, int) and 0 <= m < len(mats) else None
                 acc = prim.get("indices", (prim.get("attributes") or {}).get("POSITION"))
                 count = (
                     int(accessors[acc].get("count", 0))
@@ -440,7 +617,7 @@ class _Highlights:
                 continue
             lineage = [
                 str(nodes[i].get("name") or "")
-                for i in reversed(self._mc._lightmaps._node_lineage(parents, index))
+                for i in reversed(self._mc._media.node_lineage(parents, index))
             ]
             if len(lineage) > 1 and lineage[0] == self._CONVERTER_ROOT:
                 lineage = lineage[1:]
@@ -475,10 +652,13 @@ class _Highlights:
         return list(position) if position else None
 
     def _highlight_meshes(self, edit) -> List[Dict[str, Any]]:
-        """Every triangle primitive in model space: ``{material, triangles, normals}``.
+        """Every triangle primitive in model space: ``{node, primitive,
+        material, triangles, normals}``.
 
-        ``triangles`` ``(n, 3, 3)`` corners and ``normals`` ``(n, 3, 3)`` their
-        vertex normals (or the face's), both through the node's world matrix.
+        ``node`` and ``primitive`` its indices in the file, ``material`` its
+        material's name; ``triangles`` ``(n, 3, 3)`` corners and ``normals``
+        ``(n, 3, 3)`` their vertex normals (or the face's), both through the
+        node's world matrix.
         Read through :class:`GlbReader` -- the one accessor decoder.
         """
         from pythontk.file_utils.mesh_convert.glb.reader import GlbReader
@@ -500,7 +680,7 @@ class _Highlights:
                 normal_matrix = np.linalg.inv(linear).T
             except np.linalg.LinAlgError:
                 continue
-            for prim in meshes[node["mesh"]].get("primitives") or []:
+            for slot, prim in enumerate(meshes[node["mesh"]].get("primitives") or []):
                 if prim.get("mode", 4) != 4:
                     continue
                 attributes = prim.get("attributes") or {}
@@ -530,7 +710,15 @@ class _Highlights:
                     if isinstance(material, int) and 0 <= material < len(materials)
                     else None
                 )
-                out.append({"material": name, "triangles": corners, "normals": vn})
+                out.append(
+                    {
+                        "node": index,
+                        "primitive": slot,
+                        "material": name,
+                        "triangles": corners,
+                        "normals": vn,
+                    }
+                )
         return out
 
     def _highlight_samples(

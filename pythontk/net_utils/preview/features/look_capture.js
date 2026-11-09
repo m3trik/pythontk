@@ -80,9 +80,10 @@ export function status() {
  *   images?: Object<string, {width: number, height: number, b64: string}>,
  *   probe?: {width: number, height: number, b64: string, position: number[], box?: any} | null,
  *   emissive?: {pattern: string, intensity: number} | null,
- *   highlights?: {width: number, height: number, b64: string, materials: string[]}[] | null,
- * }} payload `highlights`: the bake's lights as the deliverable draws them into
- *   the probe's copies (`viewer.lighting.relight`); absent, none.
+ *   highlights?: {width: number, height: number, b64: string, objects?: {name: string, hierarchy?: string[]}[], materials?: string[]}[] | null,
+ * }} payload `highlights`: the bake's lights as the deliverable draws them --
+ *   complete copies of the probe for the nodes each names, or layers added to
+ *   it for the materials each names (`viewer.lighting.relight`); absent, none.
  * @returns {number} How many materials took a map.
  */
 export function setLighting(payload) {
@@ -257,8 +258,10 @@ export function shot({ mode = 'lit', camera = null, black = [], uncap = [], scal
   /** @type {Map<any, [any, any]>} */
   const uncapped = new Map();
   for (const material of materialsMatching(uncap)) {
-    if (!material.userData.lightmapBound) continue;
+    // A baked material is one the page bound a lightmap to (kernel
+    // lightmaps.js), which patched its shader: the normalization to drop.
     const compile = material.onBeforeCompile;
+    if (!material.lightMap || typeof compile !== 'function') continue;
     const key = material.customProgramCacheKey;
     uncapped.set(material, [compile, key]);
     material.onBeforeCompile = (/** @type {any} */ shader, /** @type {any} */ r) => {

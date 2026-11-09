@@ -3,7 +3,7 @@
 """Structured run logs and threshold-based acceptance gates for pipeline
 workflows. Engine-agnostic primitives originally extracted from
 :mod:`extapps.photogrammetry.metashape_workflow` so a second engine
-(RealityCapture, etc.) can reuse them.
+(RealityScan, etc.) can reuse them.
 """
 
 import time

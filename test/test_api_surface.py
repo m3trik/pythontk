@@ -276,6 +276,31 @@ class TestRead(_PackageCase):
             ],
         )
 
+    def test_a_class_attribute_notice_is_named_by_the_attribute_it_retires(self):
+        """A retired class attribute is keyed by its name, never by the value
+        it holds: a value restated in its new home's terms is the same notice.
+        Measured before: ``MeshConvert.ANIMATION_WEB_VERSION`` restored with
+        its value read through ``SceneRecords.SHOTS`` read as removed (its key
+        was the old value's source). Added: 2026-11-08"""
+        self.write(
+            "attrs.py",
+            """\
+            class C:
+                OLD = Deprecation.class_attribute(
+                    Other.thing.version, "Other.version", remove_in="0.21.0", since="2026-10-02"
+                )
+                LOOSE: int = Deprecation.class_attribute(2, "x", remove_in="0.21.0")
+            """,
+        )
+        rows = sorted(r for r in ApiSurface.retirements(PKG) if r[0] == "attrs.py")
+        self.assertEqual(
+            rows,
+            [
+                ("attrs.py", "Deprecation.class_attribute(LOOSE)", "0.21.0", ""),
+                ("attrs.py", "Deprecation.class_attribute(OLD)", "0.21.0", "2026-10-02"),
+            ],
+        )
+
 
 class TestReadCache(_PackageCase):
     """A package read once is read from disk by the next process, and a read

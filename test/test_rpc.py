@@ -24,7 +24,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from pythontk.net_utils.rpc.client import RpcClient
-from pythontk.net_utils.rpc.installer import PluginInstaller
+from pythontk.net_utils.rpc.installer import PluginInstaller, RpcPluginSpec
 from pythontk.net_utils.rpc.job import RpcJob, Call
 
 
@@ -298,6 +298,19 @@ class TestRpcClientConnect(unittest.TestCase):
                 client.connect(timeout=0.5, force_new=True)
             self.assertEqual(called, [True], "force_new must skip the reuse path.")
 
+    def test_a_launch_passes_the_clients_launch_args(self):
+        """A host that loads the plugin only when told (Toolbag: ``-run`` on
+        the plugin's file) gets it on the command line."""
+
+        class _Client(RpcClient):
+            LAUNCH_ARGS = ("-run", "C:/plugin/__main__.py")
+
+        client = _Client(port=_free_port(), app_label="stub", find_exe=lambda: "stub.exe")
+        dead = unittest.mock.MagicMock(pid=1, poll=lambda: 1)
+        with unittest.mock.patch("pythontk.AppLauncher.launch", return_value=dead) as launch:
+            self.assertFalse(client.connect(timeout=0.5, force_new=True))
+        self.assertEqual(launch.call_args.kwargs.get("args"), ["-run", "C:/plugin/__main__.py"])
+
     def test_connect_auto_cleanup_registers_atexit(self):
         """auto_cleanup=True registers an idempotent atexit hook."""
         with _StubServer() as srv:
@@ -532,6 +545,92 @@ class TestRpcInstaller(unittest.TestCase):
     def test_uninstall_missing_is_safe(self):
         # Nothing installed yet.
         self.assertFalse(PluginInstaller.uninstall_plugin(self.dest))
+
+
+class _Said:
+    """A logger that keeps what it was told."""
+
+    def __init__(self):
+        self.lines = []
+
+    def info(self, msg, *a):
+        self.lines.append(("info", msg % a if a else msg))
+
+    def warning(self, msg, *a):
+        self.lines.append(("warning", msg % a if a else msg))
+
+
+class TestRpcPluginSpec(unittest.TestCase):
+    """One installer for every bridge's plugin: the spec says where its app
+    looks; installing, refreshing and removing are the same for all."""
+
+    def setUp(self):
+        self._tmp = Path(tempfile.mkdtemp(prefix="rpc_spec_test_"))
+        self.addCleanup(shutil.rmtree, self._tmp, True)
+        self.src = self._tmp / "src" / "demo_rpc"
+        self.src.mkdir(parents=True)
+        (self.src / "__init__.py").write_text("# plugin", encoding="utf-8")
+        self.plugins = self._tmp / "app" / "plugins"
+        self.enabled = []
+        self.spec = RpcPluginSpec(
+            name="demo_rpc",
+            app="Demo",
+            source=self.src,
+            user_dir=lambda: self.plugins,
+            enable=lambda: self.enabled.append(True) or True,
+            after_install="Reload plugins in Demo.",
+        )
+
+    def test_status_follows_the_install(self):
+        self.assertEqual(PluginInstaller.status(self.spec), "absent")
+        PluginInstaller.install(self.spec)
+        self.assertEqual(PluginInstaller.status(self.spec), "current")
+        with unittest.mock.patch("os.symlink", side_effect=OSError("no symlink")):
+            PluginInstaller.install(self.spec, force=True)
+        (self.src / "new_op.py").write_text("# new", encoding="utf-8")
+        self.assertEqual(PluginInstaller.status(self.spec), "stale")
+        unresolved = RpcPluginSpec(name="demo_rpc", app="Demo", source=self.src, user_dir=lambda: None)
+        self.assertEqual(PluginInstaller.status(unresolved), "unresolved")
+
+    def test_an_install_lands_in_the_apps_folder_turns_it_on_and_says_how_to_load_it(self):
+        said = _Said()
+        dest = PluginInstaller.install(self.spec, logger=said)
+        self.assertEqual(dest, self.plugins / "demo_rpc")
+        self.assertTrue((dest / "__init__.py").is_file())
+        self.assertEqual(self.enabled, [True])
+        (level, line), = said.lines
+        self.assertEqual(level, "info")
+        self.assertIn("Installed Demo's demo_rpc plugin", line)
+        self.assertIn("Reload plugins in Demo.", line)
+
+    def test_a_refresh_updates_an_install_there_and_never_makes_one(self):
+        self.assertIsNone(PluginInstaller.refresh(self.spec))
+        self.assertFalse((self.plugins / "demo_rpc").exists(), "a refresh never installs")
+        with unittest.mock.patch("os.symlink", side_effect=OSError("no symlink")):
+            PluginInstaller.install(self.spec)
+        self.enabled.clear()
+        self.assertIsNone(PluginInstaller.refresh(self.spec), "current: nothing to do")
+        (self.src / "new_op.py").write_text("# new", encoding="utf-8")
+        with unittest.mock.patch("os.symlink", side_effect=OSError("no symlink")):
+            self.assertEqual(PluginInstaller.refresh(self.spec), self.plugins / "demo_rpc")
+        self.assertTrue((self.plugins / "demo_rpc" / "new_op.py").is_file())
+        self.assertEqual(self.enabled, [], "the app's switch is the install's alone, never a refresh's")
+
+    def test_uninstall_removes_it_and_says_so(self):
+        PluginInstaller.install(self.spec)
+        said = _Said()
+        self.assertTrue(PluginInstaller.uninstall(self.spec, logger=said))
+        self.assertEqual(PluginInstaller.status(self.spec), "absent")
+        self.assertIn("Removed Demo's demo_rpc plugin", said.lines[-1][1])
+        self.assertFalse(PluginInstaller.uninstall(self.spec, logger=said))
+        self.assertIn("not installed", said.lines[-1][1])
+
+    def test_an_app_folder_that_cannot_be_found_is_said_not_raised(self):
+        spec = RpcPluginSpec(name="demo_rpc", app="Demo", source=self.src, user_dir=lambda: None)
+        said = _Said()
+        self.assertIsNone(PluginInstaller.install(spec, logger=said))
+        self.assertEqual(said.lines[-1][0], "warning")
+        self.assertIn("Demo's plugins folder", said.lines[-1][1])
 
 
 # ----------------------------------------------------------------------

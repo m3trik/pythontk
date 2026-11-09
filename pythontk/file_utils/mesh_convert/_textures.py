@@ -17,7 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 from pythontk.core_utils.engines.scene_export.scene_records import SceneRecords
-from pythontk.file_utils.mesh_convert.glb.edit import GlbTarget
+from pythontk.file_utils.mesh_convert.glb.edit import GlbEdit, GlbTarget
 
 logger = logging.getLogger(__name__)
 
@@ -251,11 +251,14 @@ class _Textures:
             )
         if dials:
             did += "; " + ", ".join(dials)
+        media = summary.get("media") or 0
         return (
             f"GLB textures delivered as {image_format}: "
             f"{summary['images']} image(s), "
             f"{summary['bytes_before'] / 1e6:.1f} MB -> "
-            f"{summary['bytes_after'] / 1e6:.1f} MB ({did})."
+            f"{summary['bytes_after'] / 1e6:.1f} MB ({did})"
+            + (f"; {media} lightmap(s) re-encoded losslessly" if media else "")
+            + "."
         )
 
     def _reconcile_texture_extensions(self, gltf: Dict[str, Any]) -> None:
@@ -375,6 +378,112 @@ class _Textures:
         """
         return sorted(jobs, key=lambda key: len(jobs[key]), reverse=True)
 
+    def _lightmap_media(
+        self,
+        edit,
+        image_format: str,
+        encoder=None,
+        ktx2_fallback: bool = False,
+        uastc_rdo_dictionary: Optional[int] = None,
+    ) -> int:
+        """Each lightmap riding *edit* as media (``SceneRecords.GLB_MEDIA``: a
+        named bufferView of 8-bit sRGB PNG with its ``scale``) re-encoded for
+        the delivery at the size it has, as an image lightmap is: never
+        resampled, and never lossy (a lightmap round-trips pixel-exact). KTX2
+        mode gives it :attr:`LIGHTMAP_BASIS` (UASTC + sRGB) where its edges
+        are powers of two of at least 4; the rest -- and every map of a WebP
+        delivery -- take lossless WebP where it is smaller (in KTX2 mode, not
+        with ``ktx2_fallback``: the "opens in any reader" mode keeps PNG, as it
+        keeps an image lightmap's). Other formats keep the PNG. The new bytes
+        take the file's name and its ``scale``; the PNG's view is collected.
+        A container fallback has no reader here: a record's media are read by
+        its readers alone, the WebXR viewer decoding each. Returns how many
+        were re-encoded."""
+        basis = self._mc.LIGHTMAP_BASIS if image_format == "KTX2" else None
+        webp = image_format == "WEBP" or (image_format == "KTX2" and not ktx2_fallback)
+        if not (basis or webp):
+            return 0
+        from PIL import Image
+
+        from pythontk.img_utils.ktx2_encoder import Ktx2Encoder
+        from pythontk.file_utils.temp_artifacts import TempArtifacts
+
+        media = SceneRecords.GLB_MEDIA
+        views = edit.gltf.get("bufferViews") or []
+        blob = edit.bin_data
+        if blob is None:
+            return 0
+        done = 0
+        for view in list(views):
+            extras = view.get("extras") if isinstance(view, dict) else None
+            if not (
+                isinstance(extras, dict)
+                and isinstance(view.get(media.name), str)
+                and extras.get(media.mime_type) == "image/png"
+                and media.scale in extras
+            ):
+                continue
+            start = int(view.get("byteOffset", 0))
+            data = bytes(blob[start : start + int(view["byteLength"])])
+            container = None
+            try:
+                with Image.open(io.BytesIO(data)) as pil:
+                    pil.load()
+                    if basis and all(e >= 4 and not e & (e - 1) for e in pil.size):
+                        container = "KTX2"
+                        codec, srgb = basis
+                        with TempArtifacts("glb_ktx2_media", policy="scoped") as tmp:
+                            out = tmp.path(extension=".ktx2")
+                            encoder.encode(
+                                pil,
+                                out,
+                                codec=codec,
+                                srgb=srgb,
+                                quality=None,
+                                **Ktx2Encoder.rdo_kwargs(None, uastc_rdo_dictionary),
+                            )
+                            with open(out, "rb") as fh:
+                                encoded = fh.read()
+                    elif webp:
+                        container = "WEBP"
+                        buffer = io.BytesIO()
+                        pil.save(buffer, format="WEBP", **self._mc.LOSSLESS_WEBP)
+                        encoded = buffer.getvalue()
+                        if len(encoded) >= len(data):
+                            continue  # the PNG is the smaller lossless container
+                    else:
+                        continue
+            except Exception as error:  # noqa: BLE001 -- the map keeps its PNG
+                logger.warning(
+                    "optimize_glb_textures: %s encode failed for %r: %s",
+                    container or "lightmap",
+                    view.get(media.name),
+                    error,
+                )
+                continue
+            (index,) = GlbEdit.append_bin_views(edit, [encoded])
+            new = edit.gltf["bufferViews"][index]
+            new[media.name] = view.pop(media.name)
+            new["extras"] = media.extras(
+                f"image/{container.lower()}", extras[media.scale]
+            )
+            view.pop("extras", None)
+            views = edit.gltf["bufferViews"]
+            blob = edit.bin_data
+            done += 1
+        if done:
+            GlbEdit.compact_bin(edit)
+            edit.dirty = True
+        return done
+
+    @staticmethod
+    def _media_summary(media: int) -> Dict[str, Any]:
+        """:meth:`optimize_glb_textures`' summary when no image changed: the
+        media it re-encoded (empty when none)."""
+        if not media:
+            return {}
+        return {"images": 0, "media": media, "bytes_before": 0, "bytes_after": 0, "resized": 0}
+
     def optimize_glb_textures(
         self,
         glb: GlbTarget,
@@ -416,9 +525,14 @@ class _Textures:
             uastc_rdo_dictionary = Ktx2Encoder.rdo_dictionary(uastc_rdo_dictionary)
         with self._mc.open_glb(glb) as edit:
             gltf = edit.gltf
+            # The lightmaps a record names ride as media, not images: they
+            # take the lossless encode an image lightmap takes.
+            media = self._lightmap_media(
+                edit, image_format, encoder, ktx2_fallback, uastc_rdo_dictionary
+            )
             images = gltf.get("images") or []
             if not images:
-                return {}
+                return self._media_summary(media)
 
             # The bake sized the lightmaps deliberately; never resize them.
             # An image bound as a texCoord-1 occlusion/emissive map IS a
@@ -434,19 +548,13 @@ class _Textures:
                     src = edit.image_for_texture(ref.get("index"))
                     if src is not None:
                         exempt_indices.add(src)
-            # Shadow-rig maps are KEPT AS FOUND -- neither resized nor
-            # re-encoded, in any mode. The horizon map is data (span heights,
-            # a distance field and a pyramid in its channels): a lossy encode
-            # corrupts it outright, and even a lossless one is free to rewrite
-            # the RGB of alpha-0 texels -- which here carry a 16-bit distance
-            # or a span's bottom. The silhouettes and their atlas were sized by the
-            # rasterizer, and the viewer's shim samples them by rect.
-            kept: Set[int] = set()
-            shadows = SceneRecords.glb_block(gltf, SceneRecords.SHADOWS)
-            for t_index in self._mc._shadow_rigs._shadow_texture_indices(shadows):
-                src = edit.image_for_texture(t_index)
-                if src is not None:
-                    kept.add(src)
+            # Shadow-rig maps never reach this pass: they ride as the
+            # bufferViews the record names (``SceneRecords.GLB_MEDIA``), no
+            # image, and :meth:`_lightmap_media` re-encodes a map stating a
+            # scale alone -- so the horizon map, which is data (span heights,
+            # a distance field and a pyramid in its channels, which a lossy
+            # encode corrupts and a lossless one may rewrite under alpha 0),
+            # and the silhouettes the rasterizer sized are kept as found.
 
             # Every image is classified by its SLOT semantic while the glTF
             # structure is in hand: KTX2 picks the codec and transfer by it,
@@ -497,9 +605,6 @@ class _Textures:
                 if not payload:
                     continue
                 before += len(payload)
-                if index in kept:
-                    after += len(payload)
-                    continue
                 is_exempt = index in exempt_indices
                 if non_core_output and not is_exempt and index not in sampled:
                     # No texture samples this image, so nothing can rebind it
@@ -756,7 +861,7 @@ class _Textures:
                 after += len(encoded)
 
             if not replacements:
-                return {}
+                return self._media_summary(media)
 
             # Pass 2: repack the BIN. Existing views keep their INDEX (that is
             # what accessors and images reference); only offsets/lengths move.
@@ -928,6 +1033,7 @@ class _Textures:
 
         summary = {
             "images": len(replacements),
+            "media": media,
             "bytes_before": before,
             "bytes_after": after,
             "resized": sum(

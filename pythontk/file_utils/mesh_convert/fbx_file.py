@@ -1147,6 +1147,48 @@ class FbxFile(_FbxFileInternal):
             None,
         )
 
+    def object_path(self, record: Dict[str, Any]) -> Optional[str]:
+        """An Objects child's display name with the Models above it, ``|``
+        joined: ``Module|data_export`` for a Model wired under ``Module``, the
+        bare name at the scene root (or for a record no Model holds) -- what
+        tells a grouped module's own-named carrier from the scene's
+        (``SceneStoreBase.is_scene_carrier``)."""
+        name = self.object_name(record)
+        if name is None:
+            return None
+        parents = self._model_parents()
+        names = self._model_names()
+        oid = record["props"][0] if record["props"] else None
+        parts, seen = [name], {oid}
+        while oid in parents and parents[oid] not in seen:
+            oid = parents[oid]
+            seen.add(oid)
+            parts.append(names.get(oid) or str(oid))  # unnamed: still a parent
+        return "|".join(reversed(parts))
+
+    def _model_names(self) -> Dict[Any, str]:
+        """Each Model's display name, by its id (read once)."""
+        if getattr(self, "_names_by_id", None) is None:
+            self._names_by_id = {
+                record["props"][0]: self.object_name(record) or ""
+                for record in self.iter_objects()
+                if record["name"] == "Model" and record["props"]
+            }
+        return self._names_by_id
+
+    def _model_parents(self) -> Dict[Any, Any]:
+        """Each Model's parent Model id, by the child's id: an ``OO`` link
+        between two Models (one wired to the scene root, id 0, has none).
+        Read once."""
+        if getattr(self, "_parents_by_id", None) is None:
+            models = self._model_names()
+            self._parents_by_id = {
+                child: parent
+                for kind, child, parent, _prop in self.connections()
+                if kind == "OO" and child in models and parent in models
+            }
+        return self._parents_by_id
+
     def take_names(self) -> List[str]:
         """Animation take names — the ``AnimationStack`` display names."""
         return self.object_names("AnimationStack")
@@ -1247,7 +1289,7 @@ class FbxFile(_FbxFileInternal):
         return found
 
     def user_properties(
-        self, name: str, kind: str = "Model", named: bool = False
+        self, name: str, kind: str = "Model", named: bool = False, paths: bool = False
     ) -> List[Any]:
         """Every value a *kind* object carries for the user property *name*.
 
@@ -1258,14 +1300,20 @@ class FbxFile(_FbxFileInternal):
         for a numeric one, in file order. *named* pairs each with the display
         name of the object carrying it -- ``(object name, value)`` -- which
         tells the scene's own ``data_export`` from a referenced module's
-        ``NS:data_export``.
+        ``NS:data_export``; with *paths* that name carries the Models above
+        it (:meth:`object_path`), which tells the scene's root-level carrier
+        from a grouped module's ``Module|data_export``.
         """
         found: List[Any] = []
         wanted = name.encode("utf-8")
         for record in self.iter_objects():
             if record["name"] != kind:
                 continue
-            owner = self.object_name(record) if named else None
+            owner = (
+                (self.object_path(record) if paths else self.object_name(record))
+                if named
+                else None
+            )
             for child in record["children"]:
                 if child["name"] != "Properties70":
                     continue
@@ -1276,16 +1324,19 @@ class FbxFile(_FbxFileInternal):
                         found.append((owner, value) if named else value)
         return found
 
-    def user_property_items(self, kind: str = "Model") -> List[Tuple[str, str, Any]]:
+    def user_property_items(
+        self, kind: str = "Model", paths: bool = False
+    ) -> List[Tuple[str, str, Any]]:
         """``(object name, property name, value)`` for every user property (a
         ``P`` record flagged ``U``) a *kind* object carries, in file order and
         in one pass -- what :meth:`user_properties` reads by name, listed;
-        values as it returns them."""
+        values as it returns them. With *paths* each name carries the Models
+        above it (:meth:`object_path`)."""
         found: List[Tuple[str, str, Any]] = []
         for record in self.iter_objects():
             if record["name"] != kind:
                 continue
-            owner = self.object_name(record)
+            owner = self.object_path(record) if paths else self.object_name(record)
             for child in record["children"]:
                 if child["name"] != "Properties70":
                     continue
@@ -1417,16 +1468,49 @@ class FbxFile(_FbxFileInternal):
         (:meth:`take_curves`); a take none of whose curves carries them is
         left out rather than guessed.
         """
-        spans: Dict[str, Tuple[float, float]] = {}
+        return {
+            take: (first / self.TICKS_PER_SECOND, last / self.TICKS_PER_SECOND)
+            for take, (first, last) in self.take_ticks().items()
+        }
+
+    def take_ticks(self) -> Dict[str, Tuple[int, int]]:
+        """:meth:`take_spans` in the file's own ``KTime`` ticks
+        (:attr:`TICKS_PER_SECOND`), exact: what a pass rewriting a take's
+        declared window writes (``FbxMedia.fit_take_windows``)."""
+        ticks: Dict[str, Tuple[int, int]] = {}
         for take, curves in self.take_curves().items():
             firsts = [c[0] for c in curves.values() if c[0] is not None]
             lasts = [c[1] for c in curves.values() if c[1] is not None]
             if firsts and lasts:
-                spans[take] = (
-                    min(firsts) / self.TICKS_PER_SECOND,
-                    max(lasts) / self.TICKS_PER_SECOND,
-                )
-        return spans
+                ticks[take] = (min(firsts), max(lasts))
+        return ticks
+
+    def take_windows(self) -> Dict[str, Tuple[float, float]]:
+        """Each take's DECLARED span, ``(start, end)`` in SECONDS -- the
+        ``LocalTime`` of its ``Takes/Take`` record, the range the writer was
+        asked to cut (a shot's own, in a file of one take per shot), where
+        :meth:`take_spans` is the keys' extent. A take that declares none, or
+        an empty one, is left out.
+        """
+        windows: Dict[str, Tuple[float, float]] = {}
+        for take in (self.section("Takes") or {}).get("children", []):
+            props = take.get("props") or [b""]
+            if take.get("name") != "Take" or not isinstance(
+                props[0], (bytes, bytearray)
+            ):
+                continue
+            name = bytes(props[0]).decode("utf-8", "replace")
+            for child in take.get("children", []):
+                values = child.get("props") or []
+                if child.get("name") != "LocalTime" or len(values) < 2:
+                    continue
+                start, end = values[:2]
+                if isinstance(start, int) and isinstance(end, int) and end >= start:
+                    windows[name] = (
+                        start / self.TICKS_PER_SECOND,
+                        end / self.TICKS_PER_SECOND,
+                    )
+        return windows
 
     #: A key's interpolation (the ``KeyAttrFlags`` mode of the segment after
     #: it) in the one vocabulary a key travels with between the DCCs

@@ -120,3 +120,14 @@ order = [
     "iter_utils",
     "core_utils",
 ]
+
+[tool.m3trik.names]
+# pythontk holds pure primitives and host-free models: no DCC, no app SDK, no
+# consumer knowledge (its AGENTS.md). An application's wrapper lives in that
+# application's toolkit, or as a vendored copy in the app that drives it
+# (CODE_STANDARD section 6), so pythontk's code and tests name none of these
+# (check_layers.py rule 6); today's mentions are frozen, and shrink.
+forbid = [
+    "Unity", "Maya", "mayapy", "Blender", "bpy", "Painter", "Substance",
+    "Marmoset", "Toolbag", "Houdini", "Metashape", "Rizom", "Arnold",
+]

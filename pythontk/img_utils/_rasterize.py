@@ -373,6 +373,7 @@ class _ImgRasterizeInternal:
         bounds=None,
         padding: float = 0.02,
         spans: int = 1,
+        merge_gap: float = 1e-9,
     ):
         """Body of :meth:`ImgUtils.rasterize_height_spans`."""
         from pythontk.geo_utils.shadow_projection import ShadowProjection
@@ -413,10 +414,11 @@ class _ImgRasterizeInternal:
         # Which way each face looks along up: a vertical ray ENTERS the solid
         # through a face looking down and LEAVES through one looking up, so
         # the crossings of a closed mesh count in and out whatever its
-        # winding, and a duplicate from a shared edge is a duplicate.
+        # winding.
         normal_up = np.cross(T[:, 1] - T[:, 0], T[:, 2] - T[:, 0])[:, up]
         facing = np.where(normal_up < 0.0, 1, -1).astype(np.int8)
-        # -- surface crossings at pixel centres, per triangle
+        # -- surface crossings at pixel centres, per triangle, watertight: a
+        #    centre on an edge two triangles share is one triangle's
         cross_px: list = []
         cross_z: list = []
         cross_sign: list = []
@@ -437,12 +439,12 @@ class _ImgRasterizeInternal:
             yy, xx = np.mgrid[y0 : y1 + 1, x0 : x1 + 1]
             xx = xx + 0.5
             yy = yy + 0.5
+            inside = cls._covers(xs, ys, denom > 0.0, xx, yy)
+            if not inside.any():
+                continue
             l1 = ((by_ - cy_) * (xx - cx_) + (cx_ - bx_) * (yy - cy_)) / denom
             l2 = ((cy_ - ay_) * (xx - cx_) + (ax_ - cx_) * (yy - cy_)) / denom
             l3 = 1.0 - l1 - l2
-            inside = (l1 >= 0) & (l2 >= 0) & (l3 >= 0)
-            if not inside.any():
-                continue
             zz = l1 * zs[0] + l2 * zs[1] + l3 * zs[2]
             cross_px.append(((yy - 0.5) * size + (xx - 0.5))[inside].astype(np.int64))
             cross_z.append(zz[inside].astype(np.float64))
@@ -484,10 +486,11 @@ class _ImgRasterizeInternal:
             sg = np.concatenate(cross_sign).astype(np.int64)
             order = np.lexsort((sg, zc, px))
             px, zc, sg = px[order], zc[order], sg[order]
-            # a shared edge reports the same surface twice at a pixel centre
-            # (the two triangles interpolate one edge, equal to rounding --
-            # a bit-exact compare let the pair through, and an unmatched
-            # entry fills the gap up to the next crossing solid)
+            # one surface reported twice at a pixel centre (a face doubled,
+            # two meshes meeting on one face) is one crossing, equal to
+            # rounding -- a bit-exact compare let the pair through, and an
+            # unmatched entry fills the gap up to the next crossing solid; a
+            # shared edge reports once (``_covers``)
             same_z = np.abs(zc[1:] - zc[:-1]) <= 1e-9 * (1.0 + np.abs(zc[1:]))
             dup = np.r_[False, (px[1:] == px[:-1]) & same_z & (sg[1:] == sg[:-1])]
             px, zc, sg = px[~dup], zc[~dup], sg[~dup]
@@ -502,7 +505,7 @@ class _ImgRasterizeInternal:
             span_lo = np.concatenate([zc[solid], zc])
             span_hi = np.concatenate([np.r_[zc[1:], zc[-1:]][solid], zc])
             filled[np.unique(px)] = True
-            cls._assign_spans(lo, hi, span_px, span_lo, span_hi, size, spans)
+            cls._assign_spans(lo, hi, span_px, span_lo, span_hi, size, spans, merge_gap)
         # -- the splat hull where the fill left a pixel empty
         only_splat = np.isfinite(splat_top) & ~filled & (splat_top > 0.0)
         idx = np.flatnonzero(only_splat)
@@ -516,10 +519,40 @@ class _ImgRasterizeInternal:
         return lo, hi, (a0, a1, b0, b1)
 
     @staticmethod
-    def _assign_spans(lo, hi, px, span_lo, span_hi, size, spans):
-        """Merge touching spans per pixel, keep the *spans* thickest (the
-        rest merged into the neighbour across the smallest gap) and write
-        them, sorted by height, into ``lo`` / ``hi`` ``(K, size, size)``."""
+    def _covers(xs, ys, ccw, px, py):
+        """Which points ``(px, py)`` the triangle ``(xs, ys)`` covers, watertight:
+        a point on an edge two triangles share is covered by exactly one.
+
+        Each edge's side test is computed from its endpoints in one order
+        (the lesser ``(x, y)`` first, then negated for the triangle's own
+        direction), so the two triangles sharing an edge read the same value
+        with opposite signs, never both a rounding below zero. A point
+        exactly on an edge is the triangle's when that edge, walked
+        counter-clockwise round it, heads up, or due left (a top-left rule):
+        the neighbour walks it the other way, so it is the neighbour's
+        otherwise. *ccw* is the triangle's winding in ``(x, y)``.
+        """
+        inside = np.ones(np.shape(px), bool)
+        sigma = 1.0 if ccw else -1.0
+        for j in range(3):
+            k = (j + 1) % 3
+            p, q = (xs[j], ys[j]), (xs[k], ys[k])
+            flip = q < p
+            if flip:
+                p, q = q, p
+            e = (q[0] - p[0]) * (py - p[1]) - (q[1] - p[1]) * (px - p[0])
+            e = sigma * (-e if flip else e)
+            dx, dy = sigma * (xs[k] - xs[j]), sigma * (ys[k] - ys[j])
+            tie = dy > 0.0 or (dy == 0.0 and dx < 0.0)
+            inside &= (e > 0.0) | ((e == 0.0) & tie)
+        return inside
+
+    @staticmethod
+    def _assign_spans(lo, hi, px, span_lo, span_hi, size, spans, merge_gap=1e-9):
+        """Merge touching spans per pixel (a gap no wider than *merge_gap*
+        touches), keep the *spans* thickest (the rest merged into the
+        neighbour across the smallest gap) and write them, sorted by height,
+        into ``lo`` / ``hi`` ``(K, size, size)``."""
         order = np.lexsort((span_lo, px))
         px, span_lo, span_hi = px[order], span_lo[order], span_hi[order]
         # A span merges into the one before it (same pixel) when it starts at
@@ -530,7 +563,7 @@ class _ImgRasterizeInternal:
         lift = float(np.nanmax(span_hi) - np.nanmin(span_lo)) + 1.0
         run_top = np.maximum.accumulate(span_hi + seg * lift) - seg * lift
         prev_top = np.r_[-np.inf, run_top[:-1]]
-        start = new_pixel | (span_lo > prev_top + 1e-9)
+        start = new_pixel | (span_lo > prev_top + float(merge_gap))
         group = np.cumsum(start) - 1
         n_groups = int(group[-1]) + 1
         g_lo = np.full(n_groups, np.inf)

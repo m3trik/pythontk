@@ -97,7 +97,7 @@ class ExposureEqualizer:
         LAB space: ``1.0`` is a full Reinhard match (can flatten local
         contrast); lower values nudge exposure/WB toward the reference
         while preserving each frame's own contrast — useful before tools
-        that re-balance internally (e.g. RealityCapture's MosaicBlending).
+        that re-balance internally (e.g. RealityScan's MosaicBlending).
 
         ``reference_strategy`` chooses the target distribution when
         ``reference_dir`` is not given explicitly:

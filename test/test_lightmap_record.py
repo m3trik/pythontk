@@ -3,10 +3,11 @@
 """``LightmapRecord``: the ``lightmaps`` record's model, written in one shape.
 
 Both hosts' bakers publish the record and every reader takes it (the GLB
-build, unitytk's importer), so its shape is declared once. Version 2
-(2026-10-20) states each thing once -- one record-level ``unit_scale``, the
-probe's box as ``{min, max}``, no direction on a point light -- and a reader
-reads that version alone.
+build, unitytk's importer), so its shape is declared once. Version 3
+(2026-11-07) states each thing once -- one record-level ``unit_scale``, the
+probe's box as ``{min, max}``, no direction on a point light, and no UV set:
+the contract reads every map through the second -- and a reader reads that
+version alone.
 """
 
 import copy
@@ -19,7 +20,6 @@ OBJECTS = [
         "name": "room",
         "hierarchy": ["ROOM", "room"],
         "map": "room_Lightmap.exr",
-        "uvIndex": 1,
         "scaleOffset": [1, 1, 0, 0],
     }
 ]
@@ -43,10 +43,106 @@ class TestPayload(unittest.TestCase):
         self.assertEqual(record["objects"], OBJECTS)
         self.assertIn("objects[].intensity", "\n".join(logs.output))
 
+    def test_an_entry_names_no_uv_set_the_contract_reads_the_second(self):
+        """Version 3 (2026-11-07): every map is read through the second UV set
+        (index 1), where an engine reads a lightmap, so an entry names
+        none -- a producer's ``uvIndex`` is left out and the cut warned -- and
+        the record's contract states the set (a producer whose set sits
+        elsewhere refuses to publish: ``LightmapRecord.check_uv_sets``)."""
+        from pythontk.core_utils.engines.scene_export.lightmap_record import (
+            LightmapEntry,
+        )
+
+        self.assertNotIn("uvIndex", LightmapEntry.json_schema()["properties"])
+        with self.assertLogs(
+            "pythontk.core_utils.engines.scene_export", level="WARNING"
+        ) as logs:
+            record = LightmapRecord.payload([dict(OBJECTS[0], uvIndex=1)])
+        self.assertEqual(record["objects"], OBJECTS)
+        self.assertIn("objects[].uvIndex", "\n".join(logs.output))
+        self.assertEqual(LightmapRecord.UV_SET, 1)
+        self.assertIn("second UV set (index 1)", SceneRecords.LIGHTMAPS.assembly)
+
+    def test_a_uv_set_off_the_second_slot_is_refused_with_its_fix(self):
+        """``check_uv_sets``: the one refusal both hosts' producers raise --
+        each object whose lightmap set sits elsewhere named with its set and
+        slot, and the host's fix -- and nothing for sets in the second slot."""
+        LightmapRecord.check_uv_sets([("crate", "lightmap", 1)], fix="Move it.")
+        with self.assertRaises(LightmapRecord.UvSetRefused) as caught:
+            LightmapRecord.check_uv_sets(
+                [("crate", "lightmap", 1), ("wall", "UV2", 2), ("door", "lm", 0)],
+                fix="Re-run create_lightmap_uvs on them.",
+            )
+        text = str(caught.exception)
+        self.assertIsInstance(caught.exception, ValueError)
+        for part in (
+            "second UV set (index 1)",
+            "wall ('UV2' at index 2)",
+            "door ('lm' at index 0)",
+            "Re-run create_lightmap_uvs on them.",
+        ):
+            with self.subTest(part=part):
+                self.assertIn(part, text)
+        self.assertNotIn("crate", text)
+
+    def test_a_committed_set_gone_since_the_bake_is_refused(self):
+        """A set renamed or removed since the bake (index ``None``) is where
+        the second slot may hold another set: refused like one elsewhere,
+        never published on faith (it was a warning). Added: 2026-11-07"""
+        with self.assertRaises(LightmapRecord.UvSetRefused) as caught:
+            LightmapRecord.check_uv_sets(
+                [("wall", "lightmap", None)], fix="Bake again."
+            )
+        text = str(caught.exception)
+        self.assertIn("wall ('lightmap', which it no longer has)", text)
+        self.assertIn("Bake again.", text)
+
+    def test_an_exports_producer_notes_its_refusal(self):
+        """An export's producer says a refusal on its context's notes
+        (``note=ctx.note``) and publishes none, so the delivered record is
+        cleared -- a raise was caught as a failed producer and the stale
+        stored record shipped. Logged by the snapshot, once: not here too.
+        Added: 2026-11-07"""
+        import logging
+
+        host = logging.getLogger("test_lightmap_record.export_note")
+        notes = []
+
+        def refused():
+            LightmapRecord.check_uv_sets([("wall", "UV2", 2)], fix="Move it.")
+
+        with self.assertNoLogs(host, level="WARNING"):
+            self.assertIsNone(
+                LightmapRecord.unless_refused(refused, host, note=notes.append)
+            )
+        self.assertEqual(len(notes), 1, notes)
+        self.assertIn("wall ('UV2' at index 2)", notes[0])
+        self.assertIn("Move it.", notes[0])
+
+    def test_an_authoring_publish_ships_no_refused_record(self):
+        """``unless_refused``: what a bake's or a revert's publish ships -- the
+        record built, or none when it is refused, the refusal said on the
+        host's logger -- so the work that published goes on and no write
+        carries a record that reads a map through the wrong UVs. Anything
+        else a build raises is no refusal and propagates."""
+        import logging
+
+        host = logging.getLogger("test_lightmap_record.unless_refused")
+
+        def refused():
+            LightmapRecord.check_uv_sets([("wall", "UV2", 2)], fix="Move it.")
+
+        self.assertEqual(LightmapRecord.unless_refused(lambda: "record", host), "record")
+        with self.assertLogs(host, level="WARNING") as logs:
+            self.assertIsNone(LightmapRecord.unless_refused(refused, host))
+        self.assertIn("wall ('UV2' at index 2)", logs.output[0])
+        with self.assertRaises(KeyError):
+            LightmapRecord.unless_refused(lambda: {}["x"], host)
+
     def test_the_record_is_stamped_with_its_declared_version(self):
         record = LightmapRecord.payload(OBJECTS)
         self.assertEqual(record["version"], SceneRecords.LIGHTMAPS.version)
-        self.assertEqual(SceneRecords.LIGHTMAPS.version, 2)
+        self.assertEqual(SceneRecords.LIGHTMAPS.version, 3)
         self.assertEqual(record["objects"], OBJECTS)
         self.assertNotIn("unit_scale", record, "no lengths, no unit to state")
         self.assertNotIn("probe", record)
@@ -202,6 +298,99 @@ class TestBox(unittest.TestCase):
     def test_a_negative_zero_corner_reads_as_zero(self):
         box = LightmapRecord.box([[-0.0, 0.0, -0.0], [1, 1, 1]])
         self.assertEqual([str(c) for c in box["min"]], ["0.0", "0.0", "0.0"])
+
+
+def _descriptions(node):
+    """Every ``description`` in a JSON Schema *node*, at any depth."""
+    if isinstance(node, dict):
+        found = (
+            [node["description"]] if isinstance(node.get("description"), str) else []
+        )
+        for value in node.values():
+            found += _descriptions(value)
+        return found
+    if isinstance(node, list):
+        return [d for value in node for d in _descriptions(value)]
+    return []
+
+
+class TestTheTextSaysEachThingOnce(unittest.TestCase):
+    """The reference generated from this declaration (``DELIVERABLE_FORMAT.md``,
+    the schema, each reader's types) states each rule once, where it belongs:
+    a reading rule in the record's assembly, which rides in the file, and in
+    each field's help what the field holds. Measured 2026-11-07: "a reader
+    lights none of 'lights' while a probe is present" four times, the
+    highlight copies' meaning three, the second UV set in four wordings.
+    Added: 2026-11-07"""
+
+    @staticmethod
+    def _text():
+        spec = SceneRecords.LIGHTMAPS
+        return " ".join(
+            [spec.description, spec.assembly_for()]
+            + _descriptions(LightmapRecord.json_schema())
+        )
+
+    def test_each_rule_is_stated_once(self):
+        text = self._text()
+        for phrase in (
+            "lights none of",
+            "UV set",
+            "in the probe's place",
+            "one copy at most",
+            "box projection shows them",
+            "specular only",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertEqual(text.count(phrase), 1, phrase)
+        self.assertIn("second UV set (index 1)", SceneRecords.LIGHTMAPS.assembly)
+
+    def test_no_generated_reader_is_told_of_a_field_it_does_not_hold(self):
+        """Each reader's types leave out the extensions another reader is
+        served ('lights' and 'probe.highlights' are one reader's), so no help
+        a reader's types keep names a field they drop: a generated
+        ``Probe.map`` doc named both. Added: 2026-11-07"""
+        whole = LightmapRecord.json_schema()
+
+        def keys(node):
+            if isinstance(node, dict):
+                out = set(node.get("properties", {}))
+                for value in node.values():
+                    out |= keys(value)
+                return out
+            if isinstance(node, list):
+                return set().union(*(keys(v) for v in node)) if node else set()
+            return set()
+
+        narrowed = 0
+        for reader in SceneRecords.LIGHTMAPS.consumers:
+            view = LightmapRecord.json_schema(reader=reader)
+            dropped = keys(whole) - keys(view)
+            narrowed += bool(dropped)
+            for help_text in _descriptions(view):
+                for name in dropped:
+                    with self.subTest(reader=reader, name=name, help=help_text[:50]):
+                        self.assertNotIn(f"'{name}'", help_text)
+        self.assertTrue(narrowed, "some reader's types leave an extension out")
+
+    def test_the_occlusion_rule_is_the_producers_alone(self):
+        """A material only lightmapped objects wear ships without its occlusion
+        map; a shared one keeps it, warned: the producer's rule, stated where
+        the materials record states occlusion -- no reader applies one, and
+        the lightmaps' assembly no longer says the material stays as
+        authored. Added: 2026-11-07"""
+        from pythontk.core_utils.engines.scene_export.material_record import (
+            MaterialOcclusionTextureInfo,
+        )
+
+        doc = " ".join(MaterialOcclusionTextureInfo.__doc__.split())
+        self.assertNotIn("takes none", doc)
+        for part in ("only lightmapped objects wear", "keeps it", "no reader"):
+            with self.subTest(part=part):
+                self.assertIn(part, doc)
+        assembly = SceneRecords.LIGHTMAPS.assembly_for()
+        self.assertNotIn("as authored", assembly)
+        self.assertNotIn("lightmappedMaterials", assembly)
 
 
 if __name__ == "__main__":

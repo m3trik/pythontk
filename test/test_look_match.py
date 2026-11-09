@@ -199,6 +199,15 @@ class TestLookMatch(unittest.TestCase):
         self.assertEqual(rig["source"]["viewer_only"], ["panel"])
         self.assertAlmostEqual(rig["bake_gain"], math.pi)
 
+    def test_a_rigs_gain_defaults_to_one(self):
+        """``to_rig``'s ``gain`` defaults to 1 (was pi): the viewer and every
+        reader apply a lightmap as stored, so a light baked at weight 1 is a
+        light at its own intensity (the maintainer's decision)."""
+        rig = LookMatch.open(self.session).to_rig(LightMix({"fill": {"weight": 2.0}}))
+        self.assertEqual(rig["bake_gain"], 1.0)
+        (light,) = rig["lights"]
+        self.assertAlmostEqual(light["intensity"], 2.0, places=4)  # white
+
     def test_a_rig_light_carries_its_layers_specular_scale(self):
         rig = LookMatch.open(self.session).to_rig(
             LightMix({"key": {"weight": 1.0, "specular": 0.5}, "fill": {"weight": 1.0}})
@@ -358,6 +367,18 @@ class TestLookMatch(unittest.TestCase):
             self.assertEqual(json.load(f)["version"], 1)
         self.assertEqual(self.run_cli("sheet", self.session, "--out", sheet)[0], 0)
         self.assertTrue(os.path.isfile(sheet))
+
+    def test_cli_rigs_gain_defaults_to_one(self):
+        """The CLI's ``--gain`` defaults as the API's does (1), and passes."""
+        rig = os.path.join(self.dir, "rig.json")
+        self.assertEqual(self.run_cli("rig", self.session, "--out", rig)[0], 0)
+        with open(rig, encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["bake_gain"], 1.0)
+        self.assertEqual(
+            self.run_cli("rig", self.session, "--out", rig, "--gain", "2.5")[0], 0
+        )
+        with open(rig, encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["bake_gain"], 2.5)
 
     def test_cli_readout_owners_solve_and_tiles(self):
         truth = os.path.join(self.dir, "truth.json")

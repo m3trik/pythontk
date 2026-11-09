@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "SceneRecords",
-  "description": "What a deliverable's data_export node holds: each record's JSON under its key. A record whose x-in-frame is true states its values in metres, right-handed with +Y up and +Z forward, rotations as a unit quaternion (x, y, z, w) and times in seconds (glTF 2.0's frame); any other states its units in its assembly. An animated material value (opacity, highlight) rides on a child transform of the animated object in an FBX, named `<object>__<channel>` and carrying the `curveProxy` user property, whose `scale.x` holds the curve, and on the property itself in a GLB, through `KHR_animation_pointer` channels. A record animating anything else states its own carrier in its assembly. A field naming its readers (x-readers) is an optional extension the others ignore.",
+  "description": "What a deliverable's data_export node holds: each record's JSON under its key. A record whose x-in-frame is true states its values in metres, right-handed with +Y up and +Z forward, rotations as a unit quaternion (x, y, z, w) and times in seconds (glTF 2.0's frame); any other states its units in its assembly. An animated value rides, in an FBX, on a curve proxy per take: a transform named `<target>__<channel>`, the target by its leaf name (no path, no namespace: a reader joins a record's node or material to its curve by that leaf), carrying the `curveProxy` user property, whose `scale.x` holds the curve -- a child of the node for a node channel (visibility, opacity, highlight), of the export's carrier node for a material channel (emission). A node channel plays on its proxy's parent wherever the file carries the proxy; only a track with no proxy joins a node by name, the exact name first, then the one node of its leaf, a tie never guessed; visibility steps. In a GLB it rides on the property itself, per clip, through `KHR_animation_pointer` channels, presence as a stepped scale of the node. A record animating anything else states its own carrier in its assembly. The files the lightmaps record names -- its maps, its probe and the probe's highlight copies -- and the shadows record names -- each plane's horizon map, silhouette and atlas -- ride a GLB that carries the record, each as the bufferView whose glTF `name` is the file's name (the audio record's sounds ride none yet). A reader joins the record's name to that view by file name, both lower-cased (str.lower, toLowerCase); two views that join one name hold neither. The bufferView's `extras.mimeType` states its bytes -- the file itself where a glTF reader reads its format, else a web encoding of it: an HDR lightmap as 8-bit sRGB (`image/png`, `image/webp`, `image/ktx2`) whose decoded linear texels times `extras.scale` (a finite positive number) are the map, an HDR probe or highlight copy as Radiance RGBE (`image/vnd.radiance`). An FBX embeds each file itself, under the same name. A field naming its readers (x-readers) is an optional extension the others ignore.",
   "x-frame": {
     "length": "metre",
     "up": "+Y",
@@ -15,17 +15,35 @@
     "separator": "__",
     "curve": "scale.x",
     "glb": "KHR_animation_pointer",
-    "channels": [
+    "node_channels": [
+      "visibility",
       "opacity",
       "highlight"
+    ],
+    "material_channels": [
+      "emission"
+    ],
+    "stepped": [
+      "visibility"
     ]
+  },
+  "x-media": {
+    "name": "name",
+    "mime_type": "mimeType",
+    "scale": "scale",
+    "hdr_web": [
+      "image/png",
+      "image/webp",
+      "image/ktx2"
+    ],
+    "radiance": "image/vnd.radiance"
   },
   "type": "object",
   "properties": {
     "materials": {
-      "description": "every material as glTF 2.0 states it: its factors, the embedded map behind each, alpha mode, double-sidedness and unlit",
+      "description": "every material as glTF 2.0 states it, literally: a glTF document of the file's materials, textures, images (by file name) and samplers -- metal and roughness packed into one image, KHR_texture_transform, KHR_materials_unlit and KHR_materials_emissive_strength",
       "$ref": "#/$defs/MaterialRecord",
-      "x-version": 1,
+      "x-version": 2,
       "x-readers": [
         "unity",
         "glb"
@@ -33,9 +51,9 @@
       "x-in-frame": false
     },
     "animation": {
-      "description": "shot definitions -- per clip its frame range ('start'/'end', the take the clip is cut from) and any description; the scene fps and the declared clip mode; the clip name is the join key to the imported animation clip",
+      "description": "shot definitions -- per shot its clip name, the name of the file's take for it, and what a clip cannot hold: its description and its metadata -- and the scene's frame rate (a scene that animates and declares no shot states the rate alone); the clip name is the join key to the imported animation clip",
       "$ref": "#/$defs/AnimationRecord",
-      "x-version": 1,
+      "x-version": 3,
       "x-readers": [
         "unity",
         "glb",
@@ -44,18 +62,19 @@
       "x-in-frame": false
     },
     "audio": {
-      "description": "audio events with the frames they fire on, scoped to their clip, and 'fps', the rate those frames count at",
+      "description": "the scene's sounds cut into cues per clip: each the sound (the delivered audio file's name), when it starts and stops in seconds from the clip's start, and where in the sound it starts; the cues are the source's, and what a Unity user adds in the model importer's Events tab is Unity's",
       "$ref": "#/$defs/AudioRecord",
-      "x-version": 2,
+      "x-version": 3,
       "x-readers": [
-        "unity"
+        "unity",
+        "glb"
       ],
       "x-in-frame": false
     },
     "lightmaps": {
-      "description": "per-object baked-lightmap records: map file name, uvIndex, scaleOffset, and the object's scene hierarchy (which tells apart objects that share a name); and the bake's reflection probe, when it captured one: its HDR's file name, capture point and projection box; and the lights the maps were baked from, for the highlights a lightmap cannot hold -- every length times unit_scale is metres",
+      "description": "per-object baked-lightmap records: map file name, scaleOffset, and the object's scene hierarchy (which tells apart objects that share a name); the bake's reflection probe, when it captured one -- its HDR's file name, capture point and projection box -- with copies of it for groups of receivers; and the lights the maps were baked from -- every length times unit_scale is metres",
       "$ref": "#/$defs/LightmapRecord",
-      "x-version": 2,
+      "x-version": 3,
       "x-readers": [
         "unity",
         "glb"
@@ -63,9 +82,9 @@
       "x-in-frame": false
     },
     "shadows": {
-      "description": "projected-shadow planes: per plane its node name, type, silhouette texture and intensity, the source and contact it follows and the projection model's constants, and, when packed or baked, its atlas rect and horizon map -- every length times unit_scale is metres",
+      "description": "shadow planes: per plane its node name, the source and contact it follows, its horizon map, the projection model's constants and its fade's terms, and its projected silhouette (an extension) -- every length times unit_scale is metres",
       "$ref": "#/$defs/ShadowRecord",
-      "x-version": 2,
+      "x-version": 3,
       "x-readers": [
         "unity",
         "glb"
@@ -73,29 +92,21 @@
       "x-in-frame": false
     },
     "articulation": {
-      "description": "articulated rigs: per rig its joints (node name, parent, rest translate and orient, rotate order, channels with limits and grab weights) and the parts a hand grabs, each with the joint it rides",
+      "description": "articulated rigs: per rig its joints (node name, parent joint, rest translate and rotation, the anchor frame its channels turn and slide in, rotate order, channels with limits and grab weights) and the parts a hand grabs, each with the joint it rides -- in metres",
       "$ref": "#/$defs/ArticulationRecord",
-      "x-version": 1,
+      "x-version": 2,
       "x-readers": [
         "unity",
         "glb"
       ],
-      "x-in-frame": false
-    },
-    "emissive_groups": {
-      "description": "named emissive material groups and their weights",
-      "$ref": "#/$defs/EmissiveGroupsRecord",
-      "x-version": 2,
-      "x-readers": [
-        "unity"
-      ],
-      "x-in-frame": false
+      "x-in-frame": true
     },
     "render_effects": {
-      "description": "each node's keyed render effects: 'visibility' as stepped on/off frames, the authored 'opacity' ramp, and the 'highlight' ramp with its colour stops ('highlight_color', 'highlight_color_dim'); with 'fps' and each take's first/last authored frame ('clip_span'); on a shot scene keying none, the exporter's measured whole-timeline clip origin alone",
+      "description": "which nodes carry an animated render effect -- 'visibility', 'opacity', 'highlight' with its colour stops 'highlight_color' and 'highlight_color_dim' -- and which materials an animated 'emission'; each curve rides the file's animated-value transport, per clip",
       "$ref": "#/$defs/RenderEffectsRecord",
-      "x-version": 1,
+      "x-version": 2,
       "x-readers": [
+        "unity",
         "glb",
         "verifier"
       ],
@@ -106,21 +117,100 @@
       "$ref": "#/$defs/HandoffBlock",
       "x-version": 3,
       "x-readers": [
-        "unity",
         "glb"
       ],
       "x-in-frame": false
     }
   },
   "$defs": {
+    "MaterialAsset": {
+      "type": "object",
+      "description": "glTF's ``asset``: the version of glTF the record is.",
+      "properties": {
+        "version": {
+          "type": "string",
+          "description": "The glTF version: '2.0'."
+        }
+      },
+      "required": [
+        "version"
+      ]
+    },
     "MaterialEntry": {
       "type": "object",
-      "description": "One material as glTF 2.0's metallic-roughness model states it: each factor linear and multiplied by its map, each map an image the file embeds, named by file name and read through UV set 0.",
+      "description": "One material, as a glTF 2.0 ``material``.",
       "properties": {
         "name": {
           "type": "string",
-          "description": "The material's name as the file names it, namespace included ('ns:name'): the join key to the imported material. A reader whose import drops the namespace matches the name after the last ':'."
+          "description": "The material's name as the file names it, namespace included ('ns:name'): the join key to the imported material (the FBX material this describes; in a GLB, the material itself). A reader whose import drops the namespace matches the name after the last ':'."
         },
+        "pbrMetallicRoughness": {
+          "$ref": "#/$defs/MaterialPbr",
+          "description": "Its metallic-roughness values."
+        },
+        "normalTexture": {
+          "$ref": "#/$defs/MaterialNormalTextureInfo",
+          "description": "The tangent-space normal map (linear)."
+        },
+        "occlusionTexture": {
+          "$ref": "#/$defs/MaterialOcclusionTextureInfo",
+          "description": "The ambient-occlusion map (linear), read from R."
+        },
+        "emissiveTexture": {
+          "$ref": "#/$defs/MaterialTextureInfo",
+          "description": "The emission map (sRGB)."
+        },
+        "emissiveFactor": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "Linear RGB emission, each 0-1: emission above 1 is this times KHR_materials_emissive_strength."
+        },
+        "alphaMode": {
+          "type": "string",
+          "enum": [
+            "OPAQUE",
+            "MASK",
+            "BLEND"
+          ],
+          "description": "OPAQUE ignores the opacity; MASK cuts at alphaCutoff; BLEND blends (sorted, no depth write)."
+        },
+        "alphaCutoff": {
+          "type": "number",
+          "description": "MASK only: the opacity below which a pixel is cut."
+        },
+        "doubleSided": {
+          "type": "boolean",
+          "description": "Both faces render."
+        },
+        "extensions": {
+          "$ref": "#/$defs/MaterialExtensions",
+          "description": "KHR_materials_unlit and KHR_materials_emissive_strength, when used."
+        }
+      },
+      "required": [
+        "name",
+        "pbrMetallicRoughness",
+        "emissiveFactor",
+        "alphaMode",
+        "doubleSided"
+      ]
+    },
+    "MaterialPbr": {
+      "type": "object",
+      "description": "glTF's metallic-roughness model: each factor linear and multiplied by its map.",
+      "properties": {
         "baseColorFactor": {
           "type": "array",
           "prefixItems": [
@@ -139,76 +229,63 @@
           ],
           "minItems": 4,
           "maxItems": 4,
-          "description": "Linear RGBA; A is the opacity."
+          "description": "Linear RGBA, each 0-1; A is the opacity."
         },
         "baseColorTexture": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
+          "$ref": "#/$defs/MaterialTextureInfo",
           "description": "The colour map (sRGB); its alpha is the opacity."
         },
         "metallicFactor": {
           "type": "number",
           "description": "0 dielectric to 1 metal."
         },
-        "metallicTexture": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Metalness map (linear), read from R."
-        },
         "roughnessFactor": {
           "type": "number",
           "description": "0 mirror to 1 matte."
         },
-        "roughnessTexture": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Roughness map (linear), read from R."
+        "metallicRoughnessTexture": {
+          "$ref": "#/$defs/MaterialTextureInfo",
+          "description": "The packed map (linear): roughness in G, metal in B -- and the occlusion in R where the material's occlusion map is packed with them. A channel the material does not map is white, so its factor carries it."
+        }
+      },
+      "required": [
+        "baseColorFactor",
+        "metallicFactor",
+        "roughnessFactor"
+      ]
+    },
+    "MaterialTextureInfo": {
+      "type": "object",
+      "description": "A map's binding: the texture it samples, through UV set 0.",
+      "properties": {
+        "index": {
+          "type": "integer",
+          "description": "The texture, by its index in 'textures'."
         },
-        "occlusionTexture": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Ambient-occlusion map (linear), read from R; it darkens only the environment's light, and a lightmapped object takes none (its bake holds the occlusion)."
-        },
-        "normalTexture": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Tangent-space normal map, +Y up (glTF's convention), linear."
-        },
-        "normalScale": {
-          "type": "number",
-          "description": "Scales the normal map's X and Y; 1 is the map as authored."
-        },
-        "emissiveFactor": {
+        "extensions": {
+          "$ref": "#/$defs/MaterialTextureExtensions",
+          "description": "KHR_texture_transform, when the map's UVs are transformed."
+        }
+      },
+      "required": [
+        "index"
+      ]
+    },
+    "MaterialTextureExtensions": {
+      "type": "object",
+      "description": "The extensions a map's binding carries.",
+      "properties": {
+        "KHR_texture_transform": {
+          "$ref": "#/$defs/MaterialTextureTransform",
+          "description": "The map's UV transform; absent when it has none."
+        }
+      }
+    },
+    "MaterialTextureTransform": {
+      "type": "object",
+      "description": "``KHR_texture_transform``: how a map's UVs are offset and scaled, in glTF's UV space (origin top left).",
+      "properties": {
+        "offset": {
           "type": "array",
           "prefixItems": [
             {
@@ -216,71 +293,190 @@
             },
             {
               "type": "number"
+            }
+          ],
+          "minItems": 2,
+          "maxItems": 2,
+          "description": "The UV offset, applied after the scale; [0, 0] is none."
+        },
+        "scale": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "number"
             },
             {
               "type": "number"
             }
           ],
-          "minItems": 3,
-          "maxItems": 3,
-          "description": "Linear RGB emission; may exceed 1."
+          "minItems": 2,
+          "maxItems": 2,
+          "description": "The UV scale; [1, 1] is none."
+        }
+      }
+    },
+    "MaterialNormalTextureInfo": {
+      "type": "object",
+      "description": "The normal map's binding: tangent space, +Y up (glTF's convention).",
+      "properties": {
+        "index": {
+          "type": "integer",
+          "description": "The texture, by its index in 'textures'."
         },
-        "emissiveTexture": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "The emission map (sRGB)."
+        "scale": {
+          "type": "number",
+          "description": "Scales the normal map's X and Y; absent (1) is the map as authored."
         },
-        "alphaMode": {
-          "type": "string",
-          "enum": [
-            "OPAQUE",
-            "MASK",
-            "BLEND"
-          ],
-          "description": "OPAQUE ignores the opacity; MASK cuts at alphaCutoff; BLEND blends (sorted, no depth write)."
-        },
-        "alphaCutoff": {
-          "anyOf": [
-            {
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "MASK only: the opacity below which a pixel is cut."
-        },
-        "doubleSided": {
-          "type": "boolean",
-          "description": "Both faces render."
-        },
-        "unlit": {
-          "type": "boolean",
-          "description": "Shows its base colour and opacity alone: no light, reflection or emission."
+        "extensions": {
+          "$ref": "#/$defs/MaterialTextureExtensions",
+          "description": "KHR_texture_transform, when the map's UVs are transformed."
         }
       },
       "required": [
-        "name",
-        "baseColorFactor",
-        "metallicFactor",
-        "roughnessFactor",
-        "emissiveFactor",
-        "alphaMode"
+        "index"
       ]
+    },
+    "MaterialOcclusionTextureInfo": {
+      "type": "object",
+      "description": "The occlusion map's binding, read from R: it darkens only the environment's light. A lightmap holds its object's occlusion, so the producer exports a material only lightmapped objects wear without one; a material that lightmapped and unbaked objects share keeps it, the export warned with the fix: no reader rule applies.",
+      "properties": {
+        "index": {
+          "type": "integer",
+          "description": "The texture, by its index in 'textures': the packed metallicRoughness image when occlusion is packed with them."
+        },
+        "extensions": {
+          "$ref": "#/$defs/MaterialTextureExtensions",
+          "description": "KHR_texture_transform, when the map's UVs are transformed."
+        }
+      },
+      "required": [
+        "index"
+      ]
+    },
+    "MaterialExtensions": {
+      "type": "object",
+      "description": "The extensions a material carries.",
+      "properties": {
+        "KHR_materials_unlit": {
+          "$ref": "#/$defs/MaterialUnlit",
+          "description": "Shows its base colour and opacity alone: no light, reflection or emission (metallic 0 and roughness 1 for a reader that lights it anyway)."
+        },
+        "KHR_materials_emissive_strength": {
+          "$ref": "#/$defs/MaterialEmissiveStrength",
+          "description": "Emission above 1, carried as the strength."
+        }
+      }
+    },
+    "MaterialUnlit": {
+      "type": "object",
+      "description": "``KHR_materials_unlit``: an empty object.",
+      "properties": {}
+    },
+    "MaterialEmissiveStrength": {
+      "type": "object",
+      "description": "``KHR_materials_emissive_strength``: emission above 1.",
+      "properties": {
+        "emissiveStrength": {
+          "type": "number",
+          "description": "Multiplies emissiveFactor (whose peak is then 1); above 1."
+        }
+      },
+      "required": [
+        "emissiveStrength"
+      ]
+    },
+    "MaterialTexture": {
+      "type": "object",
+      "description": "A glTF ``texture``: an image and how it is sampled.",
+      "properties": {
+        "source": {
+          "type": "integer",
+          "description": "The image, by its index in 'images'."
+        },
+        "sampler": {
+          "type": "integer",
+          "description": "The sampler, by its index in 'samplers'; absent: repeat, auto filtering."
+        }
+      },
+      "required": [
+        "source"
+      ]
+    },
+    "MaterialImage": {
+      "type": "object",
+      "description": "A glTF ``image``, named by the file the delivery carries.",
+      "properties": {
+        "uri": {
+          "type": "string",
+          "description": "The image's file name (no folder): the file travels with the delivery (embedded in an FBX under this name; in a GLB, in its buffer)."
+        }
+      },
+      "required": [
+        "uri"
+      ]
+    },
+    "MaterialSampler": {
+      "type": "object",
+      "description": "A glTF ``sampler``.",
+      "properties": {
+        "magFilter": {
+          "type": "integer",
+          "enum": [
+            9728,
+            9729
+          ],
+          "description": "NEAREST 9728 or LINEAR 9729."
+        },
+        "minFilter": {
+          "type": "integer",
+          "enum": [
+            9728,
+            9729,
+            9984,
+            9985,
+            9986,
+            9987
+          ],
+          "description": "A WebGL minification filter."
+        },
+        "wrapS": {
+          "type": "integer",
+          "enum": [
+            33071,
+            33648,
+            10497
+          ],
+          "description": "CLAMP_TO_EDGE 33071, MIRRORED_REPEAT 33648 or REPEAT 10497."
+        },
+        "wrapT": {
+          "type": "integer",
+          "enum": [
+            33071,
+            33648,
+            10497
+          ],
+          "description": "As wrapS, for V."
+        }
+      }
     },
     "MaterialRecord": {
       "type": "object",
-      "description": "The ``materials`` record's payload: every material the file's meshes use.",
+      "description": "The ``materials`` record's payload: a glTF 2.0 document holding every material the file's meshes use, and the record's version.",
       "properties": {
         "version": {
           "type": "integer",
-          "description": "The record's schema version (SceneRecords.MATERIALS.version)."
+          "description": "The record's schema version (SceneRecords.MATERIALS.version): 2. Not glTF's: a reader reading the record as a glTF document leaves it out. A reader refuses 1 (the flat shape); the cure is a re-export."
+        },
+        "asset": {
+          "$ref": "#/$defs/MaterialAsset",
+          "description": "glTF's asset: version '2.0'."
+        },
+        "extensionsUsed": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The glTF extensions the materials and textures use; absent when none."
         },
         "materials": {
           "type": "array",
@@ -288,129 +484,141 @@
             "$ref": "#/$defs/MaterialEntry"
           },
           "description": "Every material, in the file's order."
+        },
+        "textures": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MaterialTexture"
+          },
+          "description": "The textures the materials sample; absent when none."
+        },
+        "images": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MaterialImage"
+          },
+          "description": "The images the textures read, by file name; absent when none."
+        },
+        "samplers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MaterialSampler"
+          },
+          "description": "The samplers the textures name; absent when every one repeats."
         }
       },
       "required": [
         "version",
+        "asset",
         "materials"
       ]
     },
     "AnimationShot": {
       "type": "object",
-      "description": "One shot: the span of the authoring timeline its take is cut from, and what it shows.",
+      "description": "One shot: the take it is, by name, and what a clip cannot hold.",
       "properties": {
         "clip": {
           "type": "string",
-          "description": "The shot's clip name, unique ignoring case: the name of the take or animation cut for it (a 'full' file cuts none) and the join key to the imported animation clip."
-        },
-        "start": {
-          "type": "integer",
-          "description": "The shot's first frame on the authoring timeline, a whole frame at the 'fps' beside it."
-        },
-        "end": {
-          "type": "integer",
-          "description": "The shot's last frame on the authoring timeline (inclusive), a whole frame at the 'fps' beside it."
+          "description": "The shot's clip name, unique ignoring case: the name of the file's take for this shot (one take per shot, spanning its range) and the join key to the imported animation clip."
         },
         "description": {
           "type": "string",
           "description": "What the shot shows, as free text; absent when it has none."
+        },
+        "metadata": {
+          "type": "object",
+          "description": "What the shot's author wrote for it, every value JSON: the keys the scene's Shot Manifest writes from what its sheet says (ShotManifest.MANIFEST_METADATA and the sheet's pass-through columns); absent when it has none. The tools' own bookkeeping on a shot stays in the scene."
         }
       },
       "required": [
-        "clip",
-        "start",
-        "end"
+        "clip"
       ]
     },
     "AnimationRecord": {
       "type": "object",
-      "description": "The ``animation`` record's payload: the scene's shots, each one take of the file.",
+      "description": "The ``animation`` record's payload: per shot its description and its metadata, each joined by name to the take the file carries for it, and the scene's frame rate.",
       "properties": {
         "version": {
           "type": "integer",
-          "description": "The record's schema version (SceneRecords.SHOTS.version)."
-        },
-        "fps": {
-          "type": "number",
-          "description": "The scene's frame rate: how many of the authoring timeline's frames, which every 'start' and 'end' counts, make one second."
+          "description": "The record's schema version (SceneRecords.SHOTS.version): 3. A GLB carries the record under the key its retired GLB block rode at version 2, so 2 is skipped -- two shapes under one key and version would be read half-way; a reader refuses 1 (the FBX record before one take per shot) and 2 (that GLB block) alike, and the cure is a re-export."
         },
         "shots": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AnimationShot"
           },
-          "description": "The scene's shots in start-frame order -- a stale one (every object it names gone and nothing keyed in its frames) too, unless the scene leaves stale shots out."
+          "description": "The scene's shots in timeline order, the order of the file's takes -- a stale one (every object it names gone and nothing keyed in its frames) too, unless the scene leaves stale shots out. Empty in a scene that animates and declares no shot: the record then states the rate alone."
         },
-        "clip_mode": {
-          "type": "string",
-          "enum": [
-            "full",
-            "shots",
-            "both"
-          ],
-          "description": "How the exporter cut the file's takes: 'shots', one per shot; 'full', one whole-timeline take in which each shot is the window 'start'..'end'; 'both', both; absent when no exporter declared one (an authoring-time publish, an export outside the Scene Exporter), which reads as 'both'."
+        "fps": {
+          "type": "number",
+          "description": "The scene's frame rate, the rate its takes were cut at: for a reader of a format that states none (a glTF's animations are in seconds), so a GLB, which carries this record as it stands, can be stepped frame by frame. A reader of a format that states its own (an FBX's time mode) uses that; the two agree (ExportVerifier.check_animation_rate)."
         }
       },
       "required": [
         "version",
-        "fps",
-        "shots"
+        "shots",
+        "fps"
       ]
     },
     "AudioCue": {
       "type": "object",
-      "description": "One audio event: a track that starts on a frame of the clip that plays it.",
+      "description": "One cue: a sound that plays in one clip, from a time of that clip to its stop.",
       "properties": {
         "clip": {
           "type": "string",
-          "description": "The take that plays the event, as the 'animation' record's 'clip' names it (matched ignoring case), or '' when the file has no shot takes and every clip plays it."
+          "description": "The clip that plays the cue: the name of the file's take for it (one take per shot, named after the shot), matched ignoring case; '' in a file with no shots, whose one take is the clip."
         },
-        "frame": {
-          "type": "integer",
-          "description": "The frame the track starts on, a whole number of frames at the record's 'fps' from the start of its clip: its take's 'start', or for an unscoped event the first frame of the whole-timeline take."
-        },
-        "name": {
+        "sound": {
           "type": "string",
-          "description": "The track that plays: the audio file whose stem it is, ignoring case, which the deliverable carries as media of its own."
+          "description": "The sound that plays: the name of the audio file the delivery carries for it, extension included, matched ignoring case."
+        },
+        "time": {
+          "type": "number",
+          "description": "When the sound starts, in seconds from the start of its clip."
+        },
+        "offset": {
+          "type": "number",
+          "description": "Where in the sound it starts, in seconds from the sound's start: 0 for a sound heard from its beginning, more for one that began before its clip (a sound a cut between shots divides) or that its author trimmed at the head."
+        },
+        "stop": {
+          "type": "number",
+          "description": "When the sound stops, in seconds from the start of its clip: its end on the timeline, or the end of its clip when it runs past it. No later than the clip's end, and after 'time'."
         }
       },
       "required": [
         "clip",
-        "frame",
-        "name"
+        "sound",
+        "time",
+        "offset",
+        "stop"
       ]
     },
     "AudioRecord": {
       "type": "object",
-      "description": "The ``audio`` record's payload: the scene's audio events, each scoped to the clip that plays it.",
+      "description": "The ``audio`` record's payload: the scene's sounds, cut into cues per clip, in seconds.",
       "properties": {
         "version": {
           "type": "integer",
           "description": "The record's schema version (SceneRecords.AUDIO.version)."
         },
-        "events": {
+        "cues": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/AudioCue"
           },
-          "description": "Every event in authoring-timeline order: a scoped one listed once for each take that holds its frame (one outside every take is left out), an unscoped one once."
-        },
-        "fps": {
-          "type": "number",
-          "description": "The scene's frame rate: how many of the frames every event's 'frame' counts make one second."
+          "description": "Every cue, clip by clip in the order of the takes and by time within a clip: a sound that spans several clips is cut into one cue per clip, each starting at its offset into the sound and stopping at the cut. A sound in no clip is left out."
         },
         "media": {
           "type": "object",
           "additionalProperties": {
             "type": "string"
           },
-          "description": "The content digest of each audio file the deliverable embeds, by the event name that is its stem: the SHA-256 of the bytes inside, in lowercase hex, written by the pass that embedded them. A same-named clip found elsewhere stands in for the track only when its bytes hash alike; else the deliverable's own is taken. A track it carries no file for is left out, and a file written without that pass (a raw export) or before 2026-10-31 carries no 'media' at all."
+          "description": "The content digest of each audio file the delivery embeds, by the 'sound' that names it: the SHA-256 of the bytes inside, in lowercase hex, written by the pass that embedded them. A same-named sound found elsewhere stands in for it only when its bytes hash alike; else the delivery's own is taken. A sound it carries no file for is left out, and a file written without that pass (a raw export) carries no 'media' at all."
         }
       },
       "required": [
         "version",
-        "events",
-        "fps"
+        "cues"
       ]
     },
     "LightmapEntry": {
@@ -424,10 +632,6 @@
         "map": {
           "type": "string",
           "description": "The lightmap image's file name, no folder; the deliverable carries the image under that name (an FBX embeds it)."
-        },
-        "uvIndex": {
-          "type": "integer",
-          "description": "The UV set the map is read through, 0-based: 1 is the second set."
         },
         "scaleOffset": {
           "type": "array",
@@ -460,7 +664,6 @@
       "required": [
         "name",
         "map",
-        "uvIndex",
         "scaleOffset",
         "hierarchy"
       ]
@@ -506,7 +709,10 @@
           "items": {
             "$ref": "#/$defs/LightmapHighlight"
           },
-          "description": "Copies of the probe with the bake's lights drawn in, one per group of receivers -- a reader that uses them lights none of 'lights', or the highlights count twice; absent when the export drew none."
+          "description": "Copies of the probe, one per group of receivers; absent when the export drew none.",
+          "x-readers": [
+            "glb"
+          ]
         }
       },
       "required": [
@@ -561,18 +767,18 @@
     },
     "LightmapHighlight": {
       "type": "object",
-      "description": "A copy of the probe with the bake's lights drawn in, for one group of receivers: each light where box projection shows it true for them.",
+      "description": "A copy of the probe for one group of receivers (the record's assembly says how it is read).",
       "properties": {
         "map": {
           "type": "string",
-          "description": "The copy's file name, no folder: a Radiance (.hdr) layer in the probe's layout and units, added to the probe (box-filtered down to the layer's size) and prefiltered as the probe is."
+          "description": "The copy's file name, no folder: an equirectangular linear HDR (top row +Y) in the probe's layout and units, at its own size, a whole fraction of the probe's, the deliverable carries under that name."
         },
         "objects": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/LightmapNode"
           },
-          "description": "The mesh nodes that reflect the probe plus this layer in the probe's place, box-projected from its position and box; a node is under one copy at most."
+          "description": "The mesh nodes that read this copy."
         }
       },
       "required": [
@@ -603,7 +809,7 @@
     },
     "LightmapBakedLight": {
       "type": "object",
-      "description": "A light the maps were baked from, for its highlight alone: its diffuse light is already in the maps, so a reader that lights it lights its specular only, or the scene is lit twice.",
+      "description": "A light the maps were baked from (the record's assembly says how a reader lights it).",
       "properties": {
         "type": {
           "type": "string",
@@ -724,7 +930,7 @@
         },
         "unit_scale": {
           "type": "number",
-          "description": "Metres per unit of every length in the record -- the probe's position and box, each light's position, size and radius; present exactly when 'probe' or 'lights' is."
+          "description": "Metres per unit of every length in the record -- the probe's position and box, each baked light's position, size and radius; present exactly when the record holds a length."
         },
         "objects": {
           "type": "array",
@@ -742,7 +948,10 @@
           "items": {
             "$ref": "#/$defs/LightmapBakedLight"
           },
-          "description": "The lights the maps were baked from, for their highlights alone; absent when none ships."
+          "description": "The lights the maps were baked from; absent when none ships.",
+          "x-readers": [
+            "glb"
+          ]
         }
       },
       "required": [
@@ -752,19 +961,23 @@
     },
     "ShadowPlane": {
       "type": "object",
-      "description": "One shadow plane of the record, joined to its nodes and images by name.",
+      "description": "One shadow plane of the record: its nodes by name, its horizon map, the placement's inputs (pythontk ``ShadowProjection.model``) and its fade's terms (``ShadowProjection.fade``).",
       "properties": {
-        "type": {
+        "name": {
           "type": "string",
-          "enum": [
-            "projected",
-            "horizon"
-          ],
-          "description": "projected: a silhouette drawn for one source position, re-placed as the source moves; horizon: a height-field map a shader marches for any source position."
+          "description": "The plane mesh node's name, namespace included: the join key to the imported plane (where an import drops namespaces, the part after the last ':' joins)."
+        },
+        "source": {
+          "type": "string",
+          "description": "The name of the node the shadow is cast from, or an empty string when it has none."
+        },
+        "contact": {
+          "type": "string",
+          "description": "The name of the node the shadow is anchored to, at the footprint's centre on the target's underside, or an empty string when it has none."
         },
         "intensity": {
           "type": "number",
-          "description": "The shadow's overall darkness, 0 to 1, which the plane's opacity never exceeds: a reader draws the lesser of the two, so a file whose material states no opacity draws this."
+          "description": "The shadow's overall darkness, 0 to 1: the fade's ceiling."
         },
         "source_type": {
           "type": "string",
@@ -820,35 +1033,36 @@
           ],
           "minItems": 4,
           "maxItems": 4,
-          "description": "Where the texture's edges sit around the projected shadow, [u0, u1, w0, w1]: u1 the far edge in top-disk radii past where the target's top lands, u0 the near edge as a fraction of that far edge's distance from the anchor, w0 and w1 the sides as fractions of the shadow's width."
+          "description": "Where the quad's edges sit around the projected shadow, [u0, u1, w0, w1]: u1 the far edge in top-disk radii past where the target's top lands, u0 the near edge as a fraction of that far edge's distance from the anchor, w0 and w1 the sides as fractions of the shadow's width -- what a follow_source placement spans, and the edges the silhouette was drawn to."
         },
-        "name": {
-          "type": "string",
-          "description": "The plane mesh node's name, namespace included: the join key to the imported plane (where an import drops namespaces, the part after the last ':' joins)."
+        "falloff_power": {
+          "type": "number",
+          "description": "How fast the shadow lightens as it stretches past its footprint: the fade's exponent on the stretch."
         },
-        "texture": {
-          "type": "string",
-          "description": "The file name of the plane's own silhouette image (the shadow in its alpha), or an empty string when it has none."
+        "fade_height": {
+          "type": "number",
+          "description": "The target's rise above the ground at which its shadow has faded out, in the record's unit."
         },
-        "source": {
-          "type": "string",
-          "description": "The name of the node the shadow is cast from, or an empty string when it has none."
-        },
-        "contact": {
-          "type": "string",
-          "description": "The name of the node the shadow is anchored to, at the footprint's centre on the target's underside, or an empty string when it has none."
-        },
-        "atlas": {
-          "$ref": "#/$defs/ShadowPlaneAtlas",
-          "description": "Where the silhouette sits in the shared silhouette atlas; absent when the plane is not packed."
+        "source_ramp": {
+          "type": "number",
+          "description": "The source's height over the contact at which the shadow is all in, in the record's unit: the fade ramps in from none with the source at the contact's height -- the ramp the plane's producer previews (one unit of its rig: 0.01 in a metre record of a centimetre rig); over 0."
         },
         "horizon": {
           "$ref": "#/$defs/ShadowPlaneHorizon",
-          "description": "The height-field map a horizon plane is shaded from; absent on a projected plane and on a horizon plane not yet baked."
+          "description": "The height-field map the plane's shadow is marched from."
+        },
+        "silhouette": {
+          "$ref": "#/$defs/ShadowPlaneSilhouette",
+          "description": "The plane's projected silhouette; absent when it has none. A reader without it draws the horizon.",
+          "x-readers": [
+            "glb"
+          ]
         }
       },
       "required": [
-        "type",
+        "name",
+        "source",
+        "contact",
         "intensity",
         "source_type",
         "source_size",
@@ -859,49 +1073,15 @@
         "height",
         "max_stretch",
         "canvas",
-        "name",
-        "texture",
-        "source",
-        "contact"
-      ]
-    },
-    "ShadowPlaneAtlas": {
-      "type": "object",
-      "description": "Where a plane's silhouette sits in the shared silhouette atlas.",
-      "properties": {
-        "texture": {
-          "type": "string",
-          "description": "The atlas image's file name."
-        },
-        "rect": {
-          "type": "array",
-          "prefixItems": [
-            {
-              "type": "number"
-            },
-            {
-              "type": "number"
-            },
-            {
-              "type": "number"
-            },
-            {
-              "type": "number"
-            }
-          ],
-          "minItems": 4,
-          "maxItems": 4,
-          "description": "The plane's tile in the atlas, [scale_u, scale_v, offset_u, offset_v] (uv' = uv * scale + offset), origin bottom-left: the bounds the quad's UVs already address."
-        }
-      },
-      "required": [
-        "texture",
-        "rect"
+        "falloff_power",
+        "fade_height",
+        "source_ramp",
+        "horizon"
       ]
     },
     "ShadowPlaneHorizon": {
       "type": "object",
-      "description": "A horizon plane's height-field shadow map, by file name, and where it sits in its image.",
+      "description": "A plane's height-field shadow map, by file name, and where it sits in its image.",
       "properties": {
         "size": {
           "type": "integer",
@@ -1005,13 +1185,69 @@
         "rect"
       ]
     },
+    "ShadowPlaneSilhouette": {
+      "type": "object",
+      "description": "A plane's projected silhouette: the shadow drawn for one source position, re-placed as the source moves -- an extension, read by the GLB's readers alone.",
+      "properties": {
+        "texture": {
+          "type": "string",
+          "description": "The file name of the plane's own silhouette image (the shadow in its alpha)."
+        },
+        "atlas": {
+          "$ref": "#/$defs/ShadowPlaneAtlas",
+          "description": "Where the silhouette sits in the shared silhouette atlas; absent when the plane is not packed."
+        },
+        "draw": {
+          "type": "boolean",
+          "description": "Whether a reader holding the silhouette draws it (true), or draws the horizon and keeps the silhouette as the fallback where it cannot march (false): the rig's authored choice."
+        }
+      },
+      "required": [
+        "texture",
+        "draw"
+      ]
+    },
+    "ShadowPlaneAtlas": {
+      "type": "object",
+      "description": "Where a plane's silhouette sits in the shared silhouette atlas.",
+      "properties": {
+        "texture": {
+          "type": "string",
+          "description": "The atlas image's file name."
+        },
+        "rect": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "minItems": 4,
+          "maxItems": 4,
+          "description": "The plane's tile in the atlas, [scale_u, scale_v, offset_u, offset_v] (uv' = uv * scale + offset), origin bottom-left: the bounds the quad's UVs already address."
+        }
+      },
+      "required": [
+        "texture",
+        "rect"
+      ]
+    },
     "ShadowRecord": {
       "type": "object",
       "description": "The ``shadows`` record's payload: the export's shadow planes, and the unit their lengths are in.",
       "properties": {
         "version": {
           "type": "integer",
-          "description": "The record's schema version (SceneRecords.SHADOWS.version)."
+          "description": "The record's schema version (SceneRecords.SHADOWS.version); a reader reads the version it knows and refuses any other -- a version 2 record (a plane's 'type', its silhouette's image on the plane, no fade terms) is re-exported."
         },
         "unit_scale": {
           "type": "number",
@@ -1073,7 +1309,7 @@
               "type": "null"
             }
           ],
-          "description": "An earlier joint's index, or null for a root (its parent is the rig's space)."
+          "description": "An earlier joint's index, or null for a root (its parent is the rig's space): the joint chain a reader poses the part from, whatever node its part hangs under."
         },
         "t": {
           "type": "array",
@@ -1090,7 +1326,7 @@
           ],
           "minItems": 3,
           "maxItems": 3,
-          "description": "The rest translate in the parent's space, in the file's units (a runtime measures its scale against the rest pose: ArticulationModel.scale_of)."
+          "description": "The rest translate in the parent joint's frame, in metres as glTF frames the file: an FBX's own value x 0.01 whatever its UnitScaleFactor, a GLB node's local exactly (a scale a node above carries scales it). A reader whose import converts the file's unit into the locals (an FBX importer applying its UnitScaleFactor) scales it by that conversion x 100."
         },
         "q": {
           "type": "array",
@@ -1110,7 +1346,11 @@
           ],
           "minItems": 4,
           "maxItems": 4,
-          "description": "The rest rotation (the DCC's joint orient), a quaternion x, y, z, w."
+          "description": "The rest rotation in the parent joint's frame (the DCC's joint orient), a quaternion x, y, z, w."
+        },
+        "anchor": {
+          "$ref": "#/$defs/ArticulationAnchor",
+          "description": "The frame the channels turn and slide in, in the rest frame: the part poses as rest . anchor . pose(channels) . anchor^-1 (the identity: rest . pose(channels))."
         },
         "rotate_order": {
           "type": "string",
@@ -1140,9 +1380,57 @@
         "parent",
         "t",
         "q",
+        "anchor",
         "rotate_order",
         "channels",
         "name"
+      ]
+    },
+    "ArticulationAnchor": {
+      "type": "object",
+      "description": "The frame a joint's channels turn and slide in: a point and an orientation in the joint's REST frame. The identity -- the rest frame itself -- is a joint whose part nests on its pivot.",
+      "properties": {
+        "t": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "The point the joint turns about, in its rest frame (metres, as 't' is)."
+        },
+        "q": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "minItems": 4,
+          "maxItems": 4,
+          "description": "The orientation of the axes its channels turn about and slide along, in its rest frame: a quaternion x, y, z, w."
+        }
+      },
+      "required": [
+        "t",
+        "q"
       ]
     },
     "ArticulationChannel": {
@@ -1159,7 +1447,7 @@
             "ty",
             "tz"
           ],
-          "description": "rx/ry/rz turn about the rest frame's own axes (degrees); tx/ty/tz slide along them (the file's units, in the parent's space)."
+          "description": "rx/ry/rz turn about the anchor's axes through its point (degrees); tx/ty/tz slide along them (metres, as 't' is)."
         },
         "min": {
           "anyOf": [
@@ -1219,7 +1507,7 @@
       "properties": {
         "version": {
           "type": "integer",
-          "description": "The record's schema version (SceneRecords.ARTICULATION.version)."
+          "description": "The record's schema version (SceneRecords.ARTICULATION.version); a reader reads the version it knows and refuses any other -- a version 1 record (no anchor, lengths in the file's own units) is re-exported."
         },
         "rigs": {
           "type": "array",
@@ -1234,139 +1522,20 @@
         "rigs"
       ]
     },
-    "EmissiveGroupsEntry": {
-      "type": "object",
-      "description": "One region group: the mask channel it gates and its weight.",
-      "properties": {
-        "name": {
-          "type": "string",
-          "description": "The group's name: the key a consumer binds its weight by."
-        },
-        "slot": {
-          "type": "integer",
-          "enum": [
-            0,
-            1,
-            2,
-            3
-          ],
-          "description": "The mask channel the group gates (0-3: R, G, B, A) -- a stable contract, never reassigned once given."
-        },
-        "default": {
-          "type": "number",
-          "description": "The weight a consumer applies when nothing overrides it (1.0 = on)."
-        },
-        "attr": {
-          "type": "string",
-          "description": "The property whose animation carries the group's keyed weight: on the model's root, or a child node of that name whose scale.x carries the curve. Absent when the weight is not keyed."
-        }
-      },
-      "required": [
-        "name",
-        "slot",
-        "default"
-      ]
-    },
-    "EmissiveGroupsRecord": {
-      "type": "object",
-      "description": "The ``emissive_groups`` record's payload: named emissive regions and how a mesh encodes membership in them (:meth:`RegionMaskManifest.to_dict`).",
-      "properties": {
-        "version": {
-          "type": "integer",
-          "description": "The record's schema version (SceneRecords.EMISSIVE_GROUPS.version)."
-        },
-        "encoding": {
-          "type": "string",
-          "enum": [
-            "vertex-color",
-            "channels"
-          ],
-          "description": "How membership is encoded: 'vertex-color' (a mesh colour set) or 'channels' (an RGBA mask texture)."
-        },
-        "groups": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/EmissiveGroupsEntry"
-          },
-          "description": "The groups, each gating one slot's channel."
-        },
-        "color_set": {
-          "type": "string",
-          "description": "The mesh colour set membership rides in; with 'vertex-color' only."
-        },
-        "mask": {
-          "type": "string",
-          "description": "The mask texture's file name, no folder; with 'channels' only."
-        },
-        "uv_channel": {
-          "type": "integer",
-          "description": "The UV set the mask texture is read through; with 'channels' only."
-        }
-      },
-      "required": [
-        "version",
-        "encoding",
-        "groups"
-      ]
-    },
     "RenderEffectsTrack": {
       "type": "object",
-      "description": "One node's tracks: its presence and the effect ramps it carries.",
+      "description": "One node's effects: which channels its subtree carries, and the highlight's colour stops.",
       "properties": {
         "node": {
           "type": "string",
-          "description": "The node's name, without namespace: the join key to the file's node."
+          "description": "The node's name as its host names it: the join key to its curves (by the leaf after the last ':'). The node a curve plays on is its proxy's parent wherever the file carries the proxy; only a track with no proxy joins a node by this name, the exact name first, then the one node of its leaf, a tie never guessed."
         },
-        "visibility": {
+        "channels": {
           "type": "array",
           "items": {
-            "type": "array",
-            "prefixItems": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "number"
-              }
-            ],
-            "minItems": 2,
-            "maxItems": 2
+            "type": "string"
           },
-          "description": "Stepped presence keys ([[frame, 0 or 1], ...]); absent when not keyed."
-        },
-        "opacity": {
-          "type": "array",
-          "items": {
-            "type": "array",
-            "prefixItems": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "number"
-              }
-            ],
-            "minItems": 2,
-            "maxItems": 2
-          },
-          "description": "The fade ramp ([[frame, 0..1], ...], linear): the node's presence where it has no visibility keys; absent when not keyed."
-        },
-        "highlight": {
-          "type": "array",
-          "items": {
-            "type": "array",
-            "prefixItems": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "number"
-              }
-            ],
-            "minItems": 2,
-            "maxItems": 2
-          },
-          "description": "The highlight ramp ([[frame, 0..1], ...], linear); absent when not keyed."
+          "description": "The channels the node carries, each a curve on the transport: 'visibility' (stepped: shown at 1, hidden at 0), 'opacity' (the subtree's materials' alpha, 0..1) and 'highlight' (an added glow, 0..1)."
         },
         "highlight_color": {
           "type": "array",
@@ -1383,7 +1552,7 @@
           ],
           "minItems": 3,
           "maxItems": 3,
-          "description": "The highlight's colour at 1.0, linear RGB; absent for the default."
+          "description": "The highlight's colour at 1.0, linear RGB; absent for the default (white)."
         },
         "highlight_color_dim": {
           "type": "array",
@@ -1400,16 +1569,59 @@
           ],
           "minItems": 3,
           "maxItems": 3,
-          "description": "The highlight's colour at 0.0, linear RGB; absent for the default."
+          "description": "The highlight's colour at 0.0, linear RGB; absent for the default (black)."
         }
       },
       "required": [
-        "node"
+        "node",
+        "channels"
+      ]
+    },
+    "RenderEffectsMaterial": {
+      "type": "object",
+      "description": "One material whose emission is animated: the channel names it, the curve (a weight 0..1) rides the transport.",
+      "properties": {
+        "material": {
+          "type": "string",
+          "description": "The material's name, as the delivered material is named (the 'materials' record's entry); where an import drops the namespace, the name after the last ':' joins."
+        },
+        "channels": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The material's animated channels: 'emission', its emission's weight 0..1."
+        },
+        "emission_color": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "The emission's colour at weight 1, linear RGB; absent: the material's own emissive colour."
+        },
+        "emission_strength": {
+          "type": "number",
+          "description": "The emission's strength at weight 1 (a multiplier of the colour, above 1 for a glow brighter than white); absent: the material's own."
+        }
+      },
+      "required": [
+        "material",
+        "channels"
       ]
     },
     "RenderEffectsRecord": {
       "type": "object",
-      "description": "The ``render_effects`` record's payload: the keyed visibility and the effect ramps per node, and the whole timeline's span.",
+      "description": "The ``render_effects`` record's payload: which nodes and materials carry an animated effect, and the colours their curves scale.",
       "properties": {
         "version": {
           "type": "integer",
@@ -1420,28 +1632,14 @@
           "items": {
             "$ref": "#/$defs/RenderEffectsTrack"
           },
-          "description": "One per node that carries a keyed effect; empty when only spans ride."
+          "description": "One per node that carries an animated effect."
         },
-        "fps": {
-          "type": "number",
-          "description": "The rate every frame number here is quoted in; absent when unknown."
-        },
-        "clip_span": {
-          "type": "object",
-          "additionalProperties": {
-            "type": "array",
-            "prefixItems": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "number"
-              }
-            ],
-            "minItems": 2,
-            "maxItems": 2
+        "materials": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RenderEffectsMaterial"
           },
-          "description": "The first and last frame each named stack carries -- the whole timeline's under '*' (MeshConvert.DEFAULT_CLIP_SPAN) -- which places every clip cut from it."
+          "description": "One per material whose emission is animated; absent when none is."
         }
       },
       "required": [
@@ -1544,616 +1742,59 @@
         "rendering"
       ]
     },
-    "AnimationBlockClip": {
-      "type": "object",
-      "description": "One glTF animation: its name, its index, and the authoring frame its time 0 sits on.",
-      "properties": {
-        "name": {
-          "type": "string",
-          "description": "The glTF animation's name ('animation_<index>' when it has none): the clip a shot whose 'clip' it is plays."
-        },
-        "animation": {
-          "type": "integer",
-          "description": "The clip's index in the glTF's 'animations' array."
-        },
-        "zero_frame": {
-          "type": "number",
-          "description": "The authoring frame the clip's time 0 sits on, so a frame f is (f - zero_frame) / fps seconds into it: a shot's own clip opens on its 'start', the whole-timeline clip on its first key; present whenever the block states 'fps', unless the file declares no take and publishes no span for the clip."
-        }
-      },
-      "required": [
-        "name",
-        "animation"
-      ]
-    },
-    "AnimationBlock": {
-      "type": "object",
-      "description": "The ``extras.animation`` block: the scene's shots as the ``animation`` record states them, and the file's clips by glTF animation index, each placed on the authoring timeline.",
-      "properties": {
-        "version": {
-          "type": "integer",
-          "description": "The block's own schema version (SceneRecords.SHOTS.glb.version)."
-        },
-        "shots": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/AnimationShot"
-          },
-          "description": "The scene's shots, in start-frame order, as the 'animation' record states them -- every one, whatever clips the file holds."
-        },
-        "clips": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/AnimationBlockClip"
-          },
-          "description": "One entry per glTF animation, in the file's order."
-        },
-        "default_clip": {
-          "type": "string",
-          "description": "The name of the clip to open on: the first shot's clip that has channels, else the first clip that has channels, else the first shot's clip, else the first clip; absent when the file holds no clip."
-        },
-        "fps": {
-          "type": "number",
-          "description": "The frame rate every frame number here counts at: the 'animation' record's 'fps', else the 'render_effects' record's, else one derived from a shot's range and its clip's duration; absent when none gives one."
-        },
-        "clip_mode": {
-          "type": "string",
-          "enum": [
-            "full",
-            "shots",
-            "both"
-          ],
-          "description": "The 'animation' record's 'clip_mode': how the exporter cut the takes the clips came from; absent when it declared none."
-        }
-      },
-      "required": [
-        "version",
-        "shots",
-        "clips"
-      ]
-    },
-    "LightmapsBlockMaterial": {
-      "type": "object",
-      "description": "One lightmapped material: what its lightmap's texels are multiplied by.",
-      "properties": {
-        "intensity": {
-          "type": "number",
-          "description": "The scalar its lightmap's decoded linear texels are multiplied by, restoring the bake's range."
-        }
-      },
-      "required": [
-        "intensity"
-      ]
-    },
-    "LightmapsBlockProbe": {
-      "type": "object",
-      "description": "The reflection probe the bake captured, embedded in the file: an equirectangular Radiance HDR in one of its bufferViews, placed in metres.",
-      "properties": {
-        "bufferView": {
-          "type": "integer",
-          "description": "The bufferView holding the probe image's Radiance (RGBE) bytes."
-        },
-        "position": {
-          "type": "array",
-          "prefixItems": [
-            {
-              "type": "number"
-            },
-            {
-              "type": "number"
-            },
-            {
-              "type": "number"
-            }
-          ],
-          "minItems": 3,
-          "maxItems": 3,
-          "description": "Where it was captured, in metres, in the scene's world space (glTF axes, +Y up)."
-        },
-        "box": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/LightmapBox"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "{min, max}: the box its reflections are projected onto, in metres in the same space; null for an open scene, whose probe is read as distant."
-        },
-        "highlights": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/LightmapsBlockHighlight"
-          },
-          "description": "Copies of the probe with the bake's lights drawn in, one per group of receivers; absent when the bake shipped no lights or none was drawn."
-        }
-      },
-      "required": [
-        "bufferView",
-        "position",
-        "box"
-      ]
-    },
-    "LightmapsBlockHighlight": {
-      "type": "object",
-      "description": "A highlight copy of the embedded probe: a layer with the bake's lights drawn in, for the materials it lists.",
-      "properties": {
-        "bufferView": {
-          "type": "integer",
-          "description": "The bufferView holding the layer's Radiance (RGBE) bytes: radiance in the probe's layout and units, added to the probe (box-filtered down to the layer's size) and prefiltered as the probe is."
-        },
-        "materials": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "description": "The materials, by glTF name, whose surfaces reflect the probe plus this layer in the probe's place."
-        }
-      },
-      "required": [
-        "bufferView",
-        "materials"
-      ]
-    },
-    "LightmapsBlock": {
-      "type": "object",
-      "description": "The ``extras.lightmaps`` block: the bake's lightmaps bound to the file's materials, and the reflection probe embedded in its buffer.",
-      "properties": {
-        "version": {
-          "type": "integer",
-          "description": "The block's schema version (SceneRecords.LIGHTMAPS.glb.version); a reader reads the version it knows and refuses any other."
-        },
-        "carrier": {
-          "type": "string",
-          "enum": [
-            "occlusion",
-            "emissive"
-          ],
-          "description": "The texture slot each lightmapped material carries its lightmap in, 8-bit sRGB decoded to linear, read through that texture's own texCoord: 'occlusion' (occlusionTexture) or 'emissive' (emissiveTexture)."
-        },
-        "materials": {
-          "type": "object",
-          "additionalProperties": {
-            "$ref": "#/$defs/LightmapsBlockMaterial"
-          },
-          "description": "{glTF material name: {intensity}}: each material carrying a lightmap -- the surface's whole diffuse light, direct and indirect, not ambient occlusion -- and the scalar its texels are multiplied by."
-        },
-        "probe": {
-          "$ref": "#/$defs/LightmapsBlockProbe",
-          "description": "The reflection probe the bake captured, the scene's environment; absent when it captured none or its image was not found."
-        }
-      },
-      "required": [
-        "version",
-        "carrier",
-        "materials"
-      ]
-    },
-    "ShadowBlockPlane": {
-      "type": "object",
-      "description": "A plane bound to the file: its node, its source and contact nodes, and the textures it samples, by index.",
-      "properties": {
-        "type": {
-          "type": "string",
-          "enum": [
-            "projected",
-            "horizon"
-          ],
-          "description": "projected: a silhouette drawn for one source position, re-placed as the source moves; horizon: a height-field map a shader marches for any source position."
-        },
-        "intensity": {
-          "type": "number",
-          "description": "The shadow's overall darkness, 0 to 1, which the plane's opacity never exceeds: a reader draws the lesser of the two, so a file whose material states no opacity draws this."
-        },
-        "source_type": {
-          "type": "string",
-          "enum": [
-            "point",
-            "directional"
-          ],
-          "description": "point: the source shines from its position; directional: along one direction, wherever it stands (a sun)."
-        },
-        "source_size": {
-          "type": "number",
-          "description": "A positional source's diameter, in the record's unit, which softens the shadow's edge (0 for a sharp edge, and for a directional source)."
-        },
-        "source_angle": {
-          "type": "number",
-          "description": "A directional source's angular diameter, in radians (0 for a sharp edge, and for a positional source)."
-        },
-        "follow_source": {
-          "type": "boolean",
-          "description": "Whether a runtime re-places the plane from its source and contact every frame (both must resolve); false plays the imported animation."
-        },
-        "ground": {
-          "type": "number",
-          "description": "The ground plane's height along the up axis, in the record's unit."
-        },
-        "radius": {
-          "type": "number",
-          "description": "The target's footprint radius (half its footprint's diagonal), in the record's unit."
-        },
-        "height": {
-          "type": "number",
-          "description": "The target's height above its contact, in the record's unit."
-        },
-        "max_stretch": {
-          "type": "number",
-          "description": "The cap on the shadow's length past the target, in target heights (6 is the length a sun 9.5 degrees up casts)."
-        },
-        "canvas": {
-          "type": "array",
-          "prefixItems": [
-            {
-              "type": "number"
-            },
-            {
-              "type": "number"
-            },
-            {
-              "type": "number"
-            },
-            {
-              "type": "number"
-            }
-          ],
-          "minItems": 4,
-          "maxItems": 4,
-          "description": "Where the texture's edges sit around the projected shadow, [u0, u1, w0, w1]: u1 the far edge in top-disk radii past where the target's top lands, u0 the near edge as a fraction of that far edge's distance from the anchor, w0 and w1 the sides as fractions of the shadow's width."
-        },
-        "node": {
-          "type": "integer",
-          "description": "The plane mesh's glTF node index."
-        },
-        "source_node": {
-          "anyOf": [
-            {
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "The source's glTF node index, or null when the file holds no single node of that name."
-        },
-        "contact_node": {
-          "anyOf": [
-            {
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "The contact's glTF node index, or null when the file holds no single node of that name."
-        },
-        "texture_index": {
-          "anyOf": [
-            {
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "The glTF texture index of a projected plane's colour map (its atlas once packed, which the quad's UVs then address), or null on a horizon plane, which the march shades."
-        },
-        "horizon": {
-          "$ref": "#/$defs/ShadowBlockHorizon",
-          "description": "The height-field map the plane is shaded from; present on every horizon plane the block carries."
-        }
-      },
-      "required": [
-        "type",
-        "intensity",
-        "source_type",
-        "source_size",
-        "source_angle",
-        "follow_source",
-        "ground",
-        "radius",
-        "height",
-        "max_stretch",
-        "canvas",
-        "node",
-        "source_node",
-        "contact_node",
-        "texture_index"
-      ]
-    },
-    "ShadowBlockHorizon": {
-      "type": "object",
-      "description": "A horizon map bound to the file.",
-      "properties": {
-        "size": {
-          "type": "integer",
-          "description": "Footprint pixels per side, S (a power of two); the image is S tall and S x (spans + 2) wide."
-        },
-        "spans": {
-          "type": "integer",
-          "description": "Solid spans kept per pixel column, K."
-        },
-        "bounds": {
-          "type": "array",
-          "prefixItems": [
-            {
-              "type": "number"
-            },
-            {
-              "type": "number"
-            },
-            {
-              "type": "number"
-            },
-            {
-              "type": "number"
-            }
-          ],
-          "minItems": 4,
-          "maxItems": 4,
-          "description": "The footprint the map covers, [a0, a1, b0, b1] along frame_a and frame_b from the contact node, in the record's unit."
-        },
-        "height_scale": {
-          "type": "number",
-          "description": "The height above the ground a 16-bit channel value of 65535 stands for, in the record's unit."
-        },
-        "frame_a": {
-          "type": "array",
-          "prefixItems": [
-            {
-              "type": "number"
-            },
-            {
-              "type": "number"
-            },
-            {
-              "type": "number"
-            }
-          ],
-          "minItems": 3,
-          "maxItems": 3,
-          "description": "The footprint's first horizontal axis, a unit vector in the contact node's local frame as exported (FBX/glTF axes, +Y up)."
-        },
-        "frame_b": {
-          "type": "array",
-          "prefixItems": [
-            {
-              "type": "number"
-            },
-            {
-              "type": "number"
-            },
-            {
-              "type": "number"
-            }
-          ],
-          "minItems": 3,
-          "maxItems": 3,
-          "description": "The footprint's second horizontal axis, a unit vector in the same frame."
-        },
-        "rect": {
-          "type": "array",
-          "prefixItems": [
-            {
-              "type": "number"
-            },
-            {
-              "type": "number"
-            },
-            {
-              "type": "number"
-            },
-            {
-              "type": "number"
-            }
-          ],
-          "minItems": 4,
-          "maxItems": 4,
-          "description": "The map's exact rect in its image (never inset), [scale_u, scale_v, offset_u, offset_v], origin top-left (glTF)."
-        },
-        "texture_index": {
-          "type": "integer",
-          "description": "The glTF texture index of the map, bound with no mipmaps and clamped: its texels are data, fetched whole, never colour-decoded."
-        }
-      },
-      "required": [
-        "size",
-        "spans",
-        "bounds",
-        "height_scale",
-        "frame_a",
-        "frame_b",
-        "rect",
-        "texture_index"
-      ]
-    },
-    "ShadowBlock": {
-      "type": "object",
-      "description": "The ``extras.shadows`` block of a GLB: the record's planes, each bound to the file's glTF nodes and textures.",
-      "properties": {
-        "version": {
-          "type": "integer",
-          "description": "The block's own schema version (SceneRecords.SHADOWS.glb.version), apart from the record's."
-        },
-        "unit_scale": {
-          "type": "number",
-          "description": "Metres per unit of every length in the record (0.01 for centimetres)."
-        },
-        "planes": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/ShadowBlockPlane"
-          },
-          "description": "One entry per plane mesh node in the file (a name several nodes carry gives one each); a plane the file lacks, or cannot bind, is left out."
-        }
-      },
-      "required": [
-        "version",
-        "unit_scale",
-        "planes"
-      ]
-    },
-    "ArticulationBlockRig": {
-      "type": "object",
-      "description": "One rig bound to the file: its joints and grabbed parts carry node indices.",
-      "properties": {
-        "name": {
-          "type": "string",
-          "description": "The rig's name."
-        },
-        "joints": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/ArticulationBlockJoint"
-          },
-          "description": "Its joints, each after its parent."
-        },
-        "grab": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/ArticulationBlockGrab"
-          },
-          "description": "The parts a hand takes hold of that resolved to a node."
-        }
-      },
-      "required": [
-        "name",
-        "joints",
-        "grab"
-      ]
-    },
-    "ArticulationBlockJoint": {
-      "type": "object",
-      "description": "A joint bound to the file: its pose, and the glTF node that carried its name (whose own name it is).",
-      "properties": {
-        "parent": {
-          "anyOf": [
-            {
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "An earlier joint's index, or null for a root (its parent is the rig's space)."
-        },
-        "t": {
-          "type": "array",
-          "prefixItems": [
-            {
-              "type": "number"
-            },
-            {
-              "type": "number"
-            },
-            {
-              "type": "number"
-            }
-          ],
-          "minItems": 3,
-          "maxItems": 3,
-          "description": "The rest translate in the parent's space, in the file's units (a runtime measures its scale against the rest pose: ArticulationModel.scale_of)."
-        },
-        "q": {
-          "type": "array",
-          "prefixItems": [
-            {
-              "type": "number"
-            },
-            {
-              "type": "number"
-            },
-            {
-              "type": "number"
-            },
-            {
-              "type": "number"
-            }
-          ],
-          "minItems": 4,
-          "maxItems": 4,
-          "description": "The rest rotation (the DCC's joint orient), a quaternion x, y, z, w."
-        },
-        "rotate_order": {
-          "type": "string",
-          "enum": [
-            "xyz",
-            "yzx",
-            "zxy",
-            "xzy",
-            "yxz",
-            "zyx"
-          ],
-          "description": "The order the rotation channels compose in; the first letter applies first."
-        },
-        "channels": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/ArticulationChannel"
-          },
-          "description": "The channels it turns or slides on, in state order."
-        },
-        "node": {
-          "type": "integer",
-          "description": "The joint's glTF node index."
-        }
-      },
-      "required": [
-        "parent",
-        "t",
-        "q",
-        "rotate_order",
-        "channels",
-        "node"
-      ]
-    },
-    "ArticulationBlockGrab": {
-      "type": "object",
-      "description": "A grabbed part bound to its glTF node.",
-      "properties": {
-        "node": {
-          "type": "integer",
-          "description": "The part's glTF node index: the one of its name under its joint's node."
-        },
-        "joint": {
-          "type": "integer",
-          "description": "The index of the joint the part rides."
-        }
-      },
-      "required": [
-        "node",
-        "joint"
-      ]
-    },
-    "ArticulationBlock": {
-      "type": "object",
-      "description": "The ``extras.articulation`` block: the record's rigs, bound to the file's glTF nodes.",
-      "properties": {
-        "version": {
-          "type": "integer",
-          "description": "The block's own schema version (SceneRecords.ARTICULATION.glb.version)."
-        },
-        "rigs": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/ArticulationBlockRig"
-          },
-          "description": "The rigs whose every joint is in the file."
-        }
-      },
-      "required": [
-        "version",
-        "rigs"
-      ]
-    },
     "GlbExtras": {
       "type": "object",
       "description": "A GLB's root extras: each record's block under the record's key.",
       "properties": {
         "animation": {
-          "description": "shot definitions -- per clip its frame range ('start'/'end', the take the clip is cut from) and any description; the scene fps and the declared clip mode; the clip name is the join key to the imported animation clip",
-          "$ref": "#/$defs/AnimationBlock",
+          "description": "shot definitions -- per shot its clip name, the name of the file's take for it, and what a clip cannot hold: its description and its metadata -- and the scene's frame rate (a scene that animates and declares no shot states the rate alone); the clip name is the join key to the imported animation clip",
+          "$ref": "#/$defs/AnimationRecord",
+          "x-version": 3,
+          "x-readers": [
+            "unity",
+            "glb",
+            "verifier"
+          ]
+        },
+        "audio": {
+          "description": "the scene's sounds cut into cues per clip: each the sound (the delivered audio file's name), when it starts and stops in seconds from the clip's start, and where in the sound it starts; the cues are the source's, and what a Unity user adds in the model importer's Events tab is Unity's",
+          "$ref": "#/$defs/AudioRecord",
+          "x-version": 3,
+          "x-readers": [
+            "unity",
+            "glb"
+          ]
+        },
+        "lightmaps": {
+          "description": "per-object baked-lightmap records: map file name, scaleOffset, and the object's scene hierarchy (which tells apart objects that share a name); the bake's reflection probe, when it captured one -- its HDR's file name, capture point and projection box -- with copies of it for groups of receivers; and the lights the maps were baked from -- every length times unit_scale is metres",
+          "$ref": "#/$defs/LightmapRecord",
+          "x-version": 3,
+          "x-readers": [
+            "unity",
+            "glb"
+          ]
+        },
+        "shadows": {
+          "description": "shadow planes: per plane its node name, the source and contact it follows, its horizon map, the projection model's constants and its fade's terms, and its projected silhouette (an extension) -- every length times unit_scale is metres",
+          "$ref": "#/$defs/ShadowRecord",
+          "x-version": 3,
+          "x-readers": [
+            "unity",
+            "glb"
+          ]
+        },
+        "articulation": {
+          "description": "articulated rigs: per rig its joints (node name, parent joint, rest translate and rotation, the anchor frame its channels turn and slide in, rotate order, channels with limits and grab weights) and the parts a hand grabs, each with the joint it rides -- in metres",
+          "$ref": "#/$defs/ArticulationRecord",
+          "x-version": 2,
+          "x-readers": [
+            "unity",
+            "glb"
+          ]
+        },
+        "render_effects": {
+          "description": "which nodes carry an animated render effect -- 'visibility', 'opacity', 'highlight' with its colour stops 'highlight_color' and 'highlight_color_dim' -- and which materials an animated 'emission'; each curve rides the file's animated-value transport, per clip",
+          "$ref": "#/$defs/RenderEffectsRecord",
           "x-version": 2,
           "x-readers": [
             "unity",
@@ -2161,39 +1802,11 @@
             "verifier"
           ]
         },
-        "lightmaps": {
-          "description": "per-object baked-lightmap records: map file name, uvIndex, scaleOffset, and the object's scene hierarchy (which tells apart objects that share a name); and the bake's reflection probe, when it captured one: its HDR's file name, capture point and projection box; and the lights the maps were baked from, for the highlights a lightmap cannot hold -- every length times unit_scale is metres",
-          "$ref": "#/$defs/LightmapsBlock",
-          "x-version": 2,
-          "x-readers": [
-            "unity",
-            "glb"
-          ]
-        },
-        "shadows": {
-          "description": "projected-shadow planes: per plane its node name, type, silhouette texture and intensity, the source and contact it follows and the projection model's constants, and, when packed or baked, its atlas rect and horizon map -- every length times unit_scale is metres",
-          "$ref": "#/$defs/ShadowBlock",
-          "x-version": 2,
-          "x-readers": [
-            "unity",
-            "glb"
-          ]
-        },
-        "articulation": {
-          "description": "articulated rigs: per rig its joints (node name, parent, rest translate and orient, rotate order, channels with limits and grab weights) and the parts a hand grabs, each with the joint it rides",
-          "$ref": "#/$defs/ArticulationBlock",
-          "x-version": 1,
-          "x-readers": [
-            "unity",
-            "glb"
-          ]
-        },
         "handoff": {
           "description": "the standalone-reader contract: the approved scene part by part and the lighting it was approved under",
           "$ref": "#/$defs/HandoffBlock",
           "x-version": 3,
           "x-readers": [
-            "unity",
             "glb"
           ]
         }

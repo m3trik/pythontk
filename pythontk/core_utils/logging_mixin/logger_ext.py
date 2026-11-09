@@ -21,6 +21,7 @@ import time
 import logging as internal_logging
 from collections import deque
 from typing import Union, List, Optional, Any
+from pythontk.core_utils.color import Palette
 from pythontk.core_utils.logging_mixin._text_layout import TextLayout
 
 
@@ -121,18 +122,9 @@ class LoggerExt:
     # TextEditLogHandler measures its columns in this same stack.
     MONOSPACE_FAMILIES = "'Consolas','Courier New',Monaco,monospace"
 
-    # Default log colors (Hex)
-    LOG_COLORS = {
-        "DEBUG": "#AAAAAA",  # Neutral gray
-        "INFO": "#FFFFFF",  # Pure white
-        "PROGRESS": "#00CCFF",  # Cyan
-        "WARNING": "#FFF5B7",  # Pastel yellow
-        "ERROR": "#FFCCCC",  # Pastel pink
-        "CRITICAL": "#CC3333",  # Strong red
-        "SUCCESS": "#CCFFCC",  # Pastel green
-        "RESULT": "#CCFFFF",  # Pastel teal
-        "NOTICE": "#E5CCFF",  # Pastel lavender
-    }
+    # Default log colors (hex): a plain-dict view of ``Palette.log()``, the
+    # shared severity scheme, so a log's ERROR is every UI's error.
+    LOG_COLORS = {level: str(color) for level, color in Palette.log().items()}
 
     # HTML Presets for formatting log messages.
     # Block-level tags (<h3>, <blockquote>, <div>) are avoided inside presets

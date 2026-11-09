@@ -599,18 +599,54 @@ class Palette(dict):
 
     # ---- Built-in palettes ------------------------------------------------
 
-    @classmethod
-    def status(cls) -> "Palette":
-        """Standard severity palette for dark-theme UIs.
+    #: :meth:`status` tiers per theme: ``(fg, bg)``; ``None`` leaves a role
+    #: alone. The ecosystem's ONE severity scheme -- logs (:meth:`log`), field
+    #: and cell states, footers and reports all read it; a domain extends it
+    #: with :meth:`alias` / :meth:`override`, never a table of its own.
+    STATUS_THEMES = {
+        "dark": {  # soft pastels on dark grey (the default)
+            "valid": (None, None),
+            "locked": ("#888888", None),  # dimmed grey: inactive, n/a
+            "info": ("#88B8D0", "#28323D"),  # soft steel-blue
+            "success": ("#9CC69B", "#283D2A"),  # soft sage
+            "warn": ("#D4B878", "#3D3528"),  # warm gold
+            "error": ("#D4908F", "#3D2828"),  # soft coral
+            "critical": ("#CC3333", "#3D1F1F"),  # strong red
+        },
+        "light": {  # muted ink on pale tints
+            "valid": (None, None),
+            "locked": ("#AAAAAA", None),
+            "info": ("#6D9BAA", "#E2F3F9"),
+            "success": ("#3C8D3C", "#E6F4EA"),
+            "warn": ("#B49B5C", "#FFF6DC"),
+            "error": ("#B97A7A", "#FBEAEA"),
+            "critical": ("#B03030", "#FBE0E0"),
+        },
+        "high-contrast": {  # saturated on near-black
+            "valid": (None, None),
+            "locked": ("#C8C8C8", None),
+            "info": ("#40C4FF", "#002540"),
+            "success": ("#00E676", "#002814"),
+            "warn": ("#FFD600", "#332B00"),
+            "error": ("#FF6961", "#400000"),
+            "critical": ("#FF3030", "#500000"),
+        },
+    }
 
-        Five tiers designed as soft pastels on dark grey backgrounds::
+    @classmethod
+    def status(cls, theme: str = "dark") -> "Palette":
+        """The standard severity palette, for *theme*'s backgrounds.
+
+        Seven tiers, mildest first::
 
             p = Palette.status()
-            fg, bg = p["info"]    # steel-blue
-            fg, bg = p["warn"]    # warm gold
-            fg, bg = p["error"]   # soft coral
             p["valid"]            # (None, None) — no color
             p["locked"][0]        # "#888888" — dimmed grey
+            fg, bg = p["info"]    # steel-blue
+            fg, bg = p["success"] # sage
+            fg, bg = p["warn"]    # warm gold
+            fg, bg = p["error"]   # soft coral
+            fg, bg = p["critical"]  # strong red
 
         Extend with domain-specific aliases::
 
@@ -618,14 +654,35 @@ class Palette(dict):
                 "missing_shot": "info",
                 "collision":    "error",
             })
+
+        Parameters:
+            theme (str): A :attr:`STATUS_THEMES` key -- ``"dark"`` (default),
+                ``"light"`` or ``"high-contrast"``; an unknown name is dark.
         """
+        return cls(cls.STATUS_THEMES.get(theme, cls.STATUS_THEMES["dark"]))
+
+    @classmethod
+    def log(cls) -> "Palette":
+        """Log-level text colors, on dark (``LoggingMixin.LOG_COLORS`` reads this).
+
+        The severity levels are :meth:`status` foregrounds (``DEBUG`` is
+        ``locked``); ``INFO`` is plain text and ``PROGRESS`` / ``RESULT`` /
+        ``NOTICE`` are the log's own tiers, which have no severity::
+
+            str(Palette.log()["ERROR"])  # == Palette.status()["error"][0]
+        """
+        status = cls.status()
         return cls(
             {
-                "valid": (None, None),
-                "locked": ("#888888", None),
-                "info": ("#88B8D0", "#28323D"),  # soft steel-blue
-                "warn": ("#D4B878", "#3D3528"),  # warm gold
-                "error": ("#D4908F", "#3D2828"),  # soft coral
+                "DEBUG": status["locked"][0],
+                "INFO": "#FFFFFF",
+                "PROGRESS": "#00CCFF",  # cyan
+                "WARNING": status["warn"][0],
+                "ERROR": status["error"][0],
+                "CRITICAL": status["critical"][0],
+                "SUCCESS": status["success"][0],
+                "RESULT": "#CCFFFF",  # pastel teal
+                "NOTICE": "#E5CCFF",  # pastel lavender
             }
         )
 

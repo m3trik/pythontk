@@ -805,13 +805,12 @@ class PreviewServerTestCase(unittest.TestCase):
         )
         # A block key a record was renamed from is said too, from the
         # declarations' own list (records.js), never a silent unlit load.
-        self.assertIn("import { RETIRED_BLOCK_KEYS } from './records.js';", page)
+        self.assertIn("import { GLB_MEDIA, RETIRED_BLOCK_KEYS } from './records.js';", page)
         self.assertIn("is a retired block -- re-export the file", page)
         # The page's table of blocks is the declarations' own (records.js).
         for spec in (*SceneRecords.glb_records(), SceneRecords.HANDOFF):
-            version = spec.glb.version if spec.glb else spec.version
             with self.subTest(block=spec.key):
-                self.assertIn(f"{{ key: '{spec.key}', version: {version} }}", page)
+                self.assertIn(f"{{ key: '{spec.key}', version: {spec.version} }}", page)
         # Read BEFORE the lights are set, or the first frame of a new model is
         # lit by the previous one's policy. In the load path itself: the
         # Environment menu re-applies the lighting too, after its switch. Of
@@ -1020,29 +1019,50 @@ class PreviewServerTestCase(unittest.TestCase):
         # on the whole set of parts, their clips in one picker.
         self.assertIn("setupAnimation(whole.gltf, whole.shots);", page)
 
-    def test_the_viewer_opens_on_the_clip_the_file_names(self):
-        """``animations[0]`` is the wrong default on a shot-split deliverable.
-
-        Maya's FBX exporter keeps the whole-timeline take alongside the takes
-        it split out and it converts FIRST, so index 0 is the entire timeline
-        rather than shot 1. ``extras.animation.default_clip`` is the file's
-        own answer (``MeshConvert.apply_glb_animations`` writes it), and the
-        page has to be reading it rather than picking an index.
-        """
+    def test_the_viewer_reads_the_record_and_joins_shots_by_name(self):
+        """A GLB carries the ``animation`` record as the FBX holds it
+        (``MeshConvert.apply_glb_animations``): the page reads it at the
+        record's own version, joins each shot to the animation of its clip's
+        NAME, and builds its whole sequence from the record's shots in turn --
+        reading nothing bound to an animation index (``clips``,
+        ``default_clip``, ``zero_frame``) and no frame number
+        (``start_frame``, a shot's ``start``/``end``). Fixed: 2026-11-05 (a
+        v3 block of clips by index)."""
         self._serve()
         page = _served_page(self.root)
         self.assertIn("readExtras(gltf, SHOTS)", page)
         self.assertIn(
-            f"{{ key: '{SceneRecords.SHOTS.key}', version: {SceneRecords.SHOTS.glb.version} }}",
+            f"{{ key: '{SceneRecords.SHOTS.key}', version: {SceneRecords.SHOTS.version} }}",
             page,
         )
-        # Regex, not a literal: the page reads the field through whichever
-        # optional-chaining spelling the surrounding guard makes correct, and
-        # WHICH FIELD it opens on is the behaviour worth pinning.
-        self.assertRegex(page, r"manifest\??\.default_clip")
-        # The picker leads with the declared shots; the glTF's own animation
-        # order is left alone, so index-keyed consumers still agree with it.
-        self.assertIn("entry.meta?.declared", page)
+        animation = page[page.index("export function setupAnimation(") :]
+        self.assertIn("buildSequence(entries, manifest)", animation)
+        self.assertIn("shots.get(name)", page)
+        self.assertIn("(manifest?.shots || [])", page)
+        for retired in ("default_clip", "zero_frame", "start_frame", "manifest?.clips"):
+            self.assertNotIn(retired, page, retired)
+
+    def test_the_viewer_reads_the_records_rate_and_guesses_none(self):
+        """glTF is in seconds; the record states the scene's rate for it. The
+        page states a clip in seconds and at that rate (``viewer.clip.fps``),
+        and measures none off a clip's key spacing -- key reduction leaves
+        gaps, and a gap halves the measured rate. The playblast records at the
+        record's rate and asks one -- a prompt choice with a stated default --
+        only of a file that states none. Added: 2026-11-05."""
+        self._serve()
+        page = _served_page(self.root)
+        self.assertFalse("bakedRate" in page, "the page measures a rate")
+        info = page[page.index("export function clipInfo(") :]
+        info = info[: info.index("\n}\n")]
+        self.assertIn("fps: recordFps()", info)
+        import pythontk.net_utils.preview as preview
+
+        playblast = (
+            Path(preview.__file__).parent / "features" / "playblast.js"
+        ).read_text(encoding="utf-8")
+        self.assertIn("const DEFAULT_RATE = 24;", playblast)
+        self.assertIn("const fps = clip.fps || options.rate;", playblast)
+        self.assertIn("...(clip.fps ? [] : [{", playblast)
 
     # -- parts ----------------------------------------------------------
 
@@ -2643,6 +2663,90 @@ class PreviewDelivererTestCase(unittest.TestCase):
         self.assertIsNone(self.converted[-1].get("data_export"))
         self.assertEqual(result["data_export"], [])
 
+    def test_an_animation_off_push_states_the_scenes_effect_curves(self):
+        """Bug: a push with Include Animation off (the default) played no
+        render effect once the curves rode the takes alone. Fixed: 2026-11-05
+        -- the push asks the host for the scene's curves (``_effect_curves``,
+        in frames) and states them, in seconds from the range's start, in the
+        build's preview overlay. A push that exports animation carries them in
+        its takes and asks nothing; a caller's own effect overlay (the Render
+        Effects panel's Preview) is its own statement and stands as given."""
+
+        class _Effects(_StubPreviewBridge):
+            asked = 0
+
+            def _effect_curves(self, objects):
+                type(self).asked += 1
+                return {
+                    "curves": [
+                        {"target": "HL", "channel": "highlight", "keys": [[12, 0.0, "linear"], [24, 1.0, "linear"]]}
+                    ],
+                    "start": 0,
+                    "fps": 24.0,
+                }
+
+        bridge = _Effects()
+        with unittest.mock.patch.object(bridge, "send", return_value={}) as send:
+            bridge.push(objects=["a"])
+            stated = send.call_args.kwargs["data_export"]
+            (curve,) = stated[MeshConvert.EFFECT_PREVIEW_KEY]["curves"]
+            self.assertEqual(curve["target"], "HL")
+            self.assertEqual(curve["keys"], [[0.5, 0.0, "linear"], [1.0, 1.0, "linear"]])
+            self.assertEqual(set(stated), {MeshConvert.EFFECT_PREVIEW_KEY}, "the record is the file's")
+
+            bridge.push(objects=["a"], INCLUDE_ANIMATION=True)
+            self.assertIsNone(send.call_args.kwargs["data_export"])
+            self.assertEqual(_Effects.asked, 1, "an animated push carries them in its takes")
+
+            panel = MeshConvert.effect_preview_channels(["HL"], "opacity", [(0, 0.0), (10, 1.0)])
+            bridge.push(objects=["a"], data_export=panel)
+            self.assertIs(send.call_args.kwargs["data_export"], panel)
+            self.assertEqual(_Effects.asked, 1, "the panel's preview is its own statement")
+
+            other = {SceneRecords.SHOTS.key: None}
+            bridge.push(objects=["a"], data_export=other)
+            merged = send.call_args.kwargs["data_export"]
+            self.assertIn(MeshConvert.EFFECT_PREVIEW_KEY, merged)
+            self.assertIn(SceneRecords.SHOTS.key, merged)
+            self.assertEqual(other, {SceneRecords.SHOTS.key: None}, "the caller's dict is not edited")
+
+        quiet = _StubPreviewBridge()
+        with unittest.mock.patch.object(quiet, "send", return_value={}) as send:
+            quiet.push(objects=["a"])
+        self.assertIsNone(send.call_args.kwargs["data_export"], "no effect keyed, no overlay")
+
+    def test_an_animation_off_push_of_shots_states_one_clip_per_take(self):
+        """Bug: an animation-off push of a scene with declared shots gave the
+        page one clip where HEAD gave one per declared take (the picker's
+        shots, their sequence). Fixed: 2026-11-07 -- the host names the takes
+        an animated write of the push would split (``_declared_takes``, in
+        frames) and the overlay states one clip per take, named as it, its
+        curves in seconds from the take's start."""
+
+        class _Shots(_StubPreviewBridge):
+            def _effect_curves(self, objects):
+                return {
+                    "curves": [
+                        {"target": "HL", "channel": "opacity", "keys": [[1, 0.0, "linear"], [49, 1.0, "linear"]]}
+                    ],
+                    "start": 1,
+                    "fps": 24.0,
+                }
+
+            def _declared_takes(self):
+                return [{"name": "ShotA", "start": 1, "end": 25}, {"name": "ShotB", "start": 25, "end": 49}]
+
+        bridge = _Shots()
+        with unittest.mock.patch.object(bridge, "send", return_value={}) as send:
+            bridge.push(objects=["a"])
+        stated = send.call_args.kwargs["data_export"][MeshConvert.EFFECT_PREVIEW_KEY]
+        self.assertEqual([c["name"] for c in stated["clips"]], ["ShotA", "ShotB"])
+        (a,) = stated["clips"][0]["curves"]
+        (b,) = stated["clips"][1]["curves"]
+        self.assertEqual(a["keys"], [[0.0, 0.0, "linear"], [1.0, 0.5, "linear"]])
+        self.assertEqual(b["keys"], [[0.0, 0.5, "linear"], [1.0, 1.0, "linear"]])
+        self.assertEqual(_StubPreviewBridge()._declared_takes(), [], "no host, no take")
+
     def test_push_names_the_overlay_as_a_request_knob_not_an_export_param(self):
         bridge = _StubPreviewBridge()
         overlay = {SceneRecords.SHOTS.key: None}
@@ -3311,22 +3415,50 @@ class PreviewSettingsTestCase(unittest.TestCase):
         return self.server
 
     def _glb(self, name="baked.glb"):
-        """A GLB with one BAKED, normal-mapped material -- what the dial acts on."""
+        """A GLB with one BAKED, normal-mapped material -- what the dial acts
+        on: worn by the node its ``lightmaps`` record lights, that node's map
+        riding the file as the bufferView of its name."""
+        media = SceneRecords.GLB_MEDIA
+        record = {
+            "version": SceneRecords.LIGHTMAPS.version,
+            "objects": [
+                {
+                    "name": "room",
+                    "map": "room_LM.exr",
+                    "scaleOffset": [1.0, 1.0, 0.0, 0.0],
+                    "hierarchy": ["room"],
+                }
+            ],
+        }
+        blob = b"\x89PNG"
         gltf = {
             "asset": {"version": "2.0"},
-            "extras": {
-                SceneRecords.LIGHTMAPS.key: MeshConvert.lightmaps_block({"room": 1.0})
-            },
+            "extras": {SceneRecords.LIGHTMAPS.key: record},
+            "nodes": [{"name": "room", "mesh": 0}],
+            "meshes": [{"primitives": [{"attributes": {"TEXCOORD_1": 0}, "material": 0}]}],
             "materials": [{"name": "room", "normalTexture": {"index": 0}}],
             "textures": [{"source": 0}],
             "images": [{"name": "n", "uri": "data:image/png;base64,"}],
+            "buffers": [{"byteLength": len(blob)}],
+            "bufferViews": [
+                {
+                    "buffer": 0,
+                    "byteOffset": 0,
+                    "byteLength": len(blob),
+                    media.name: "room_LM.exr",
+                    "extras": media.extras("image/png", 1.0),
+                }
+            ],
         }
         payload = json.dumps(gltf).encode("utf-8")
         payload += b" " * ((4 - len(payload) % 4) % 4)
         path = self.assets / name
         with open(path, "wb") as fh:
-            fh.write(struct.pack("<4sII", b"glTF", 2, 12 + 8 + len(payload)))
+            fh.write(
+                struct.pack("<4sII", b"glTF", 2, 12 + 8 + len(payload) + 8 + len(blob))
+            )
             fh.write(struct.pack("<I4s", len(payload), b"JSON") + payload)
+            fh.write(struct.pack("<I4s", len(blob), b"BIN\x00") + blob)
         return path
 
     def _scale_of(self, path):

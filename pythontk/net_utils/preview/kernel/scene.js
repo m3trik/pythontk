@@ -105,12 +105,11 @@ export const DEFAULT_TONE_EXPOSURE = 1;
 // (`reflectionNormalization`, BAKED_ENV_GLSL).
 export const DEFAULT_BAKED_ENV_INTENSITY = 1.0;
 // The level a deliverable's own reflection probe plays at (probe.js). Not a
-// look but a unit: the probe holds the room's radiance, while a lightmap
-// holds a white card's (irradiance / pi) and three.js reads it as
-// irradiance, so the page draws every baked surface pi below physical; the
-// probe at 1/pi stays in the bake's units, which is what makes its
+// look but a unit: the probe holds the room's radiance, and every lightmap is
+// drawn as stored (lightmaps.js LIGHTMAP_AS_STORED: texel x albedo, as an
+// engine's lightmap path draws it), so the probe plays as it was captured, at 1 -- its
 // reflections, and the light it puts on unbaked objects, agree with the bake.
-export const DEFAULT_PROBE_INTENSITY = 0.3183099;
+export const DEFAULT_PROBE_INTENSITY = 1;
 
 // The rig this page renders with. The values above are what it FALLS BACK to;
 // the live ones come from the deliverable itself, which publishes the whole

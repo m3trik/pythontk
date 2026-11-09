@@ -49,15 +49,14 @@ class PreviewBridge(HandoffBridge):
     deliverer: Optional[PreviewDeliverer] = None
 
     def lightmap_search_dirs(self) -> Sequence[str]:
-        """Extra directories the lightmap pass resolves the manifest's EXRs against.
+        """Extra directories the lightmap pass resolves the record's files against.
 
-        The manifest travelling inside the FBX names its maps by BASENAME plus
-        the authoring directory recorded when the bake was committed, and
-        ``MeshConvert.apply_glb_lightmaps`` tries that hint first. It is history
-        rather than a contract: reorganise the project, or open the scene on
-        another machine, and every lookup misses -- so the push previews unlit
-        with the bake sitting on disk one folder away, which reads as a broken
-        bake rather than a stale path.
+        The record travelling inside the FBX names its maps and its probe by
+        FILE NAME alone, and ``MeshConvert.apply_glb_lightmaps`` finds each in
+        the folders it is handed, then beside the GLB. Without the host's own
+        answer, a reorganised project or another machine misses every lookup
+        -- so the push previews unlit with the bake sitting on disk one folder
+        away, which reads as a broken bake rather than a stale path.
 
         Empty here because pythontk cannot know where a host keeps its
         textures. A DCC bridge overrides it with the host's live answer
@@ -89,6 +88,80 @@ class PreviewBridge(HandoffBridge):
         """
         return None
 
+    def _effect_curves(self, objects: List[Any]) -> Optional[Dict[str, Any]]:
+        """The scene's render-effect curves a push of *objects* ships, or ``None``.
+
+        A host hook like :meth:`_start_node`: ``{"curves": [{"target",
+        "channel", "keys": [[frame, value, interpolation?], ...]}], "start":
+        frame, "fps": rate}`` -- the curves the write's curve proxies would
+        carry (mayatk's and blendertk's ``RenderEffects.effect_curves``) and
+        the frame an animated write puts at its clip's t=0. Read only for a
+        push that exports no animation (:meth:`_with_scene_effects`).
+        ``None`` here: a bridge with no scene keys nothing.
+        """
+        return None
+
+    def _declared_takes(self) -> List[Dict[str, Any]]:
+        """The takes an animated push of this scene would split, as
+        ``{"name", "start", "end"}`` frames in timeline order, or ``[]``.
+
+        A host hook beside :meth:`_effect_curves`: a push that exports no
+        animation states one clip per take (:meth:`_with_scene_effects`),
+        named as the take -- the shot's clip -- so the page offers the
+        scene's shots as an animated push does. ``[]`` here: a bridge with no
+        scene declares no shot.
+        """
+        return []
+
+    def _with_scene_effects(
+        self,
+        objects: List[Any],
+        params: Dict[str, Any],
+        data_export: Optional[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        """*data_export* stating the scene's own render-effect curves when this
+        push exports no animation, else as given.
+
+        A file written without animation carries no take, so its curve
+        proxies carry no curve and the effects its record names play nowhere;
+        the push states them for its build instead, in seconds from the
+        range's start (:meth:`MeshConvert.effect_preview_curves`), and the
+        build plays them on the file's one clip -- or, for a scene with shots,
+        on one clip per take an animated write would split
+        (:meth:`_declared_takes`), each from its take's start. A push that exports
+        animation carries them in its takes, and a caller's overlay that
+        states effects (a panel's Preview, :meth:`MeshConvert.effect_preview_channels`)
+        is its own statement: both are left as they are.
+        """
+        from pythontk.core_utils.engines.scene_export.scene_records import SceneRecords
+        from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
+
+        if self.merge_params(params).get("INCLUDE_ANIMATION"):
+            return data_export
+        stated = data_export or {}
+        if MeshConvert.EFFECT_PREVIEW_KEY in stated or SceneRecords.VISIBILITY.key in stated:
+            return data_export
+        try:
+            scene = self._effect_curves(objects) if objects else None
+            overlay = (
+                MeshConvert.effect_preview_curves(
+                    scene.get("curves") or (),
+                    scene.get("start") or 0.0,
+                    scene.get("fps"),
+                    clips=self._declared_takes(),
+                )
+                if scene
+                else {}
+            )
+        except Exception as error:  # noqa: BLE001 -- a scene read never fails a push
+            self.logger.warning(
+                "Render effects: the scene's curves could not be read (%s) -- "
+                "this push plays none of its effects.",
+                error,
+            )
+            return data_export
+        return {**stated, **overlay} if overlay else data_export
+
     def params_defaults(self) -> Dict[str, Any]:
         """glTF-appropriate export defaults, read by both DCC export mixins.
 
@@ -96,7 +169,8 @@ class PreviewBridge(HandoffBridge):
         referencing textures by path previews with every map resolving to
         nothing, since the browser can only fetch what the server hosts.
         Animation stays off -- it multiplies payload size, and a preview is
-        aimed at look and scale.
+        aimed at look and scale; the scene's render effects still play
+        (:meth:`_with_scene_effects`).
 
         ``TRIANGULATE`` is deliberately **off**, even though glTF has no
         polygon primitive. Maya's FBX exporter rejects triangulation combined
@@ -259,6 +333,9 @@ class PreviewBridge(HandoffBridge):
                 its current settings (:meth:`MeshConvert.effect_preview_channels`),
                 without writing it into the scene first. Named for the same
                 reason as the knobs above: ``**params`` is the EXPORT bag.
+                A push that exports no animation adds the scene's own
+                render-effect curves to it, unless it states effects itself
+                (:meth:`_with_scene_effects`).
             **params: Export param overrides (see :meth:`params_defaults`).
                 ``SCENE_SIDECAR`` is deprecated: it warns, and still travels
                 for a released host's producer (:meth:`_attach_sidecar`).
@@ -289,6 +366,7 @@ class PreviewBridge(HandoffBridge):
         # caller who resolved the objects themselves and is naming what they
         # mean, which must outrank the convenience default.
         params.setdefault("SCOPE", scope)
+        data_export = self._with_scene_effects(objects, params, data_export)
         return self.send(
             objects,
             params=params,

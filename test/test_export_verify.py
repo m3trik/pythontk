@@ -55,14 +55,16 @@ def build_glb(
     undeclared_basisu: bool = False,
     clip_end: float = 0.5,
     clip_name: str = "Shot_1",
-    zero_frame: float = None,
+    record_fps: float = None,
     hold_frames: float = 0.0,
     hold_moves: bool = False,
+    record_clips=None,
 ) -> str:
     """Write a tiny, valid GLB: two nodes, one clip, one skin, two images.
 
-    *zero_frame* states the authoring frame the clip was cut from where a
-    finished file states it: its entry in ``extras.animation``."""
+    *record_fps* carries the ``animation`` record in the root ``extras``, as
+    the conversion carries it: the scene's rate and one shot per name of
+    *record_clips* (default: the one clip's)."""
     bin_parts = []
     views = []
     accessors = []
@@ -164,15 +166,12 @@ def build_glb(
         gltf["nodes"].append({"name": "stray"})
         gltf["scenes"][0]["nodes"].append(len(gltf["nodes"]) - 1)
         gltf["skins"][0]["skeleton"] = len(gltf["nodes"]) - 1
-    if zero_frame is not None:
+    if record_fps is not None:
         gltf["extras"] = {
             SceneRecords.SHOTS.key: {
-                "version": SceneRecords.SHOTS.glb.version,
-                "shots": [],
-                "clips": [
-                    {"name": clip_name, "animation": 0, "zero_frame": zero_frame}
-                ],
-                "default_clip": clip_name,
+                "version": SceneRecords.SHOTS.version,
+                "fps": record_fps,
+                "shots": [{"clip": name} for name in record_clips or [clip_name]],
             }
         }
 
@@ -243,8 +242,31 @@ def _fbx_record(name: str, props, children, offset: int) -> bytes:
     )
 
 
-def build_fbx(path: str, takes=("Shot_1",)) -> str:
-    """Write a tiny, valid binary FBX with Objects + Connections sections."""
+def _takes_section(windows):
+    """The ``Takes`` section declaring each take's window, ``{take: (first
+    frame, last frame)}`` at the fixtures' 30 fps -- what
+    ``FbxFile.take_windows`` reads."""
+    return (
+        "Takes",
+        [],
+        [
+            (
+                "Take",
+                [take.encode()],
+                [
+                    ("LocalTime", [first * TICK, last * TICK], []),
+                    ("ReferenceTime", [first * TICK, last * TICK], []),
+                ],
+            )
+            for take, (first, last) in windows.items()
+        ],
+    )
+
+
+def build_fbx(path: str, takes=("Shot_1",), windows=None) -> str:
+    """Write a tiny, valid binary FBX with Objects + Connections sections,
+    and a ``Takes`` section declaring *windows* (``{take: (first, last)}``
+    frames) when given."""
     objects_children = [
         ("Model", [1001, b"cube\x00\x01Model", b"Mesh"], []),
         ("AnimationCurveNode", [2001, b"T\x00\x01AnimCurveNode", b""], []),
@@ -261,6 +283,8 @@ def build_fbx(path: str, takes=("Shot_1",)) -> str:
         ("Objects", [], objects_children),
         ("Connections", [], [("C", [b"OO", 2001, 1001], [])]),
     ]
+    if windows:
+        roots.append(_takes_section(windows))
     payload = b""
     offset = len(b"Kaydara FBX Binary  \x00\x1a\x00") + 4
     for name, props, children in roots:
@@ -279,7 +303,7 @@ def build_fbx(path: str, takes=("Shot_1",)) -> str:
 TICK = 46186158000 // 30
 
 
-def build_take_fbx(path: str, takes, names=None) -> str:
+def build_take_fbx(path: str, takes, names=None, windows=None) -> str:
     """A binary FBX whose takes animate real curves.
 
     *takes* is ``{take: {(model, channel): (first_frame, last_frame)}}``; each
@@ -289,9 +313,17 @@ def build_take_fbx(path: str, takes, names=None) -> str:
     ``(model, channel, layer)`` keys its curve on that layer of the take
     instead of ``BaseLayer``. *names* writes a model under another display
     name -- ``{"b": "a"}`` is two models both called ``a``, uids 1000 and
-    1001 in sorted key order.
+    1001 in sorted key order. *windows* (``{take: (first, last)}`` frames) is
+    each take's declared window; a take it does not name declares its curves'
+    extent, and one with no curve declares none.
     """
     names = names or {}
+    declared = {
+        take: (min(f for f, _ in curves.values()), max(l for _, l in curves.values()))
+        for take, curves in takes.items()
+        if curves
+    }
+    declared.update(windows or {})
     models = sorted({key[0] for curves in takes.values() for key in curves})
     model_ids = {model: 1000 + i for i, model in enumerate(models)}
     objects = [
@@ -343,7 +375,11 @@ def build_take_fbx(path: str, takes, names=None) -> str:
                 ("C", [b"OP", node, model_ids[model], b"Lcl Translation"], []),
                 ("C", [b"OP", curve, node, channel.encode()], []),
             ]
-    roots = [("Objects", [], objects), ("Connections", [], connections)]
+    roots = [
+        ("Objects", [], objects),
+        ("Connections", [], connections),
+        _takes_section(declared),
+    ]
     payload = b""
     offset = len(b"Kaydara FBX Binary  \x00\x1a\x00") + 4
     for name, props, children in roots:
@@ -374,28 +410,27 @@ def build_truncated_fbx(path: str, inside: bytes = b"KeyTime") -> str:
     return path
 
 
-def build_sidecar(path: str, takes, span=None, fps=30.0, clip_mode=None) -> str:
-    """*takes* (``[{"name", "start", "end"}]``) are the shots the run declares,
-    each a clip of the ``animation`` record with its range; *span* publishes
-    ``clip_span["*"]`` -- the origin clips are cut against -- and *clip_mode*
-    declares the run's Animation Clips mode on that record."""
+def build_sidecar(path: str, clips, fps=30.0, version=None, record_fps=None) -> str:
+    """*clips* are the shots the run declares, by clip name (a
+    ``{"name": ...}`` take entry reads as its name): the ``animation``
+    record's shots, one take each. *fps* is the scene's rate, which the
+    record states (*record_fps*, when it states another); the
+    ``render_effects`` record states none. *version* writes the record in another
+    schema -- version 1 also stated each shot's range and the rate."""
+    names = [c["name"] if isinstance(c, dict) else c for c in clips]
     shots = {
-        "version": SceneRecords.SHOTS.version,
-        "fps": fps,
-        "shots": [
-            {"clip": t["name"], "start": t["start"], "end": t["end"]} for t in takes
-        ],
+        "version": SceneRecords.SHOTS.version if version is None else version,
+        "fps": fps if record_fps is None else record_fps,
+        "shots": [{"clip": name} for name in names],
     }
-    if clip_mode is not None:
-        shots["clip_mode"] = clip_mode
-    data_export = {SceneRecords.SHOTS.key: shots}
-    if span is not None:
-        data_export["render_effects"] = {
-            "fps": fps,
-            "version": 1,
-            "tracks": [],
-            "clip_span": {"*": list(span)},
-        }
+    if version == 1:
+        shots["fps"] = fps
+        for entry in shots["shots"]:
+            entry.update(start=0, end=15)
+    data_export = {
+        SceneRecords.SHOTS.key: shots,
+        "render_effects": {"version": SceneRecords.VISIBILITY.version, "tracks": []},
+    }
     with open(path, "w", encoding="utf-8") as handle:
         json.dump(
             {
@@ -703,6 +738,45 @@ class TestFbxFile(_FixtureCase):
             fbx.user_properties(shots),
         )
         self.assertEqual(fbx.user_property_items("Texture"), [])
+
+    def test_a_carrier_under_a_group_is_named_with_its_path(self):
+        """``object_path`` / ``user_properties(paths=True)`` /
+        ``user_property_items(paths=True)``: a Model wired under another is
+        named with the Models above it (``Module|data_export``), one at the
+        scene root by its name alone -- what tells a grouped module's
+        own-named carrier from the scene's. Added: 2026-11-08"""
+        from test_fbx_media import build_carrier_fbx
+
+        lightmaps = SceneRecords.LIGHTMAPS.key
+        path = build_carrier_fbx(
+            self.path("grouped.fbx"),
+            {lightmaps: {"by": "scene"}},
+            others={"data_export": {lightmaps: {"by": "module"}}},
+            parents={"data_export": "Module"},
+        )
+        fbx = FbxFile.load(path)
+        models = {
+            fbx.object_path(record)
+            for record in fbx.iter_objects()
+            if record["name"] == "Model"
+        }
+        self.assertEqual(models, {"Crate", "Module", "Module|data_export", "data_export"})
+        self.assertEqual(
+            fbx.user_properties(lightmaps, named=True, paths=True),
+            [
+                ("Module|data_export", b'{"by": "module"}'),
+                ("data_export", b'{"by": "scene"}'),
+            ],
+        )
+        self.assertEqual(
+            [owner for owner, _ in fbx.user_properties(lightmaps, named=True)],
+            ["data_export", "data_export"],
+            "without paths the two read alike",
+        )
+        self.assertEqual(
+            [owner for owner, _key, _value in fbx.user_property_items(paths=True)],
+            ["Module|data_export", "data_export"],
+        )
 
     def test_raw_payloads_can_be_skipped_without_changing_the_census(self):
         """``raw_payloads=False`` leaves embedded media on disk -- a census
@@ -1283,9 +1357,16 @@ class TestFbxTakeChannels(_FixtureCase):
         {"name": "A02", "start": 51, "end": 100},
     ]
 
-    def _run(self, takes, clip_mode=None, names=None):
-        fbx = build_take_fbx(self.path("asset.fbx"), takes, names=names)
-        sidecar = build_sidecar(self.path("s.json"), self.WINDOWS, clip_mode=clip_mode)
+    def _run(self, takes, names=None, clips=None):
+        fbx = build_take_fbx(
+            self.path("asset.fbx"),
+            takes,
+            names=names,
+            windows={w["name"]: (w["start"], w["end"]) for w in self.WINDOWS},
+        )
+        sidecar = build_sidecar(
+            self.path("s.json"), self.WINDOWS if clips is None else clips
+        )
         rows = (
             ExportVerifier(fbx=fbx, sidecar=sidecar)
             .run(["check_fbx_take_channels"])
@@ -1294,17 +1375,17 @@ class TestFbxTakeChannels(_FixtureCase):
         return [(row.status, row.detail) for row in rows]
 
     def _exact(self):
-        whole = {("lift", "d|Y"): (1, 100), ("door", "d|Y"): (1, 100)}
+        """One take per shot, each keying every channel across its window."""
+        keys = (("lift", "d|Y"), ("door", "d|Y"))
         return {
-            "Take 001": whole,
-            "A01": {key: (1, 50) for key in whole},
-            "A02": {key: (51, 100) for key in whole},
+            "A01": {key: (1, 50) for key in keys},
+            "A02": {key: (51, 100) for key in keys},
         }
 
     def test_exact_slices_pass(self):
         rows = self._run(self._exact())
         self.assertEqual([status for status, _ in rows], ["PASS"], rows)
-        self.assertIn("2 take(s)", rows[0][1])
+        self.assertIn("2 take(s) carry all 2 animated channel(s)", rows[0][1])
 
     def test_a_channel_lost_to_the_split_fails_naming_it(self):
         """The measured loss: a node keyed only inside A01 has no channel in A02."""
@@ -1323,23 +1404,17 @@ class TestFbxTakeChannels(_FixtureCase):
         self.assertEqual([status for status, _ in rows], ["FAIL"], rows)
         self.assertIn("short of the take's 1-50 window", rows[0][1])
 
-    def test_a_file_without_a_whole_timeline_take_is_held_to_the_windows(self):
-        takes = self._exact()
-        del takes["Take 001"]
-        rows = self._run(takes)
-        self.assertEqual([status for status, _ in rows], ["PASS"], rows)
-        self.assertIn("no whole-timeline take", rows[0][1])
-
-    def test_full_sequence_only_has_no_takes_to_slice(self):
-        rows = self._run({"Take 001": {("lift", "d|Y"): (1, 100)}}, clip_mode="full")
+    def test_no_shots_declared_has_no_takes_to_slice(self):
+        rows = self._run({"Take 001": {("lift", "d|Y"): (1, 100)}}, clips=[])
         self.assertEqual([status for status, _ in rows], ["SKIP"], rows)
 
     def test_a_take_with_no_curves_fails(self):
-        """A declared take whose stack carries no curve at all -- the split's
+        """A shot's take whose stack carries no curve at all -- the split's
         worst case, every channel lost -- read as ABSENT: skipped as
         ``fbx_takes``' to name, and that gate checks names alone, so it passed
-        both; with every take hollow, "no declared take is in the file"
-        (2026-10-04 review). Present, it is judged like any take."""
+        both (2026-10-04 review). Present, it is judged like any take: it
+        lacks every channel another shot's take animates. With every take
+        hollow, nothing is animated anywhere: still shots."""
         takes = self._exact()
         takes["A02"] = {}
         rows = self._run(takes)
@@ -1348,25 +1423,13 @@ class TestFbxTakeChannels(_FixtureCase):
 
         takes["A01"] = {}
         rows = self._run(takes)
-        self.assertEqual([status for status, _ in rows], ["FAIL", "FAIL"], rows)
-
-    def test_a_take_with_no_curves_is_legal_without_a_whole_timeline_take(self):
-        """Blender windows each take itself, so there is nothing to compare a
-        shot against: one that animates nothing is a still shot."""
-        takes = self._exact()
-        del takes["Take 001"]
-        takes["A02"] = {}
-        rows = self._run(takes)
         self.assertEqual([status for status, _ in rows], ["PASS"], rows)
-        self.assertIn("2 take(s)", rows[0][1])
 
     def test_a_twin_s_channel_lost_to_the_split_fails(self):
         """Two nodes sharing a name were one channel to the gate, so a shot
         that lost one twin's curve still held the other's and passed."""
-        whole = {("a", "d|Y"): (1, 100), ("b", "d|Y"): (1, 100)}
         takes = {
-            "Take 001": whole,
-            "A01": {key: (1, 50) for key in whole},
+            "A01": {("a", "d|Y"): (1, 50), ("b", "d|Y"): (1, 50)},
             "A02": {("a", "d|Y"): (51, 100)},
         }
         rows = self._run(takes, names={"b": "a"})
@@ -1404,144 +1467,156 @@ class TestExportVerifier(_FixtureCase):
         self.assertEqual(retired, verifier.check_glb_handoff())
         self.assertNotIn("check_glb_envelope", verifier.gate_names())
 
-    # ---- a declared Full Sequence Only export ------------------------------
+    # ---- one take per shot (2026-11-05) -----------------------------------
 
-    def _full_sequence(self, clip_mode):
-        """What a Full Sequence Only export ships: ONE whole-timeline stack and
-        clip, while the takes still list every shot -- they describe the scene."""
-        glb = build_glb(self.path("asset.glb"), clip_name="Take 001")
-        fbx = build_fbx(self.path("asset.fbx"), ("Take 001",))
-        build_sidecar(
-            self.path(".asset.scene_data.json"),
-            [{"name": "Shot_1", "start": 0, "end": 15}],
-            clip_mode=clip_mode,
-        )
+    def _per_shot(self, takes=("Shot_1",), clips=("Shot_1",)):
+        """A GLB whose clips are *clips* and an FBX whose takes are *takes*,
+        beside a record declaring the one shot ``Shot_1``."""
+        from pythontk.file_utils.mesh_convert._mesh_convert import MeshConvert
+
+        glb = build_glb(self.path("asset.glb"), clip_name=clips[0])
+        if len(clips) > 1:
+            with MeshConvert.open_glb(glb) as edit:
+                first = edit.gltf["animations"][0]
+                for name in clips[1:]:
+                    edit.gltf["animations"].append({**first, "name": name})
+                edit.dirty = True
+        fbx = build_fbx(self.path("asset.fbx"), takes)
+        build_sidecar(self.path(".asset.scene_data.json"), ["Shot_1"])
         return glb, fbx
 
-    def test_a_declared_full_sequence_export_does_not_fail_its_takes(self):
-        """Measured on a real Full Sequence Only export: ``fbx_takes`` failed
-        "declared but absent" on every shot of a deliverable that was exactly
-        what was asked for. The takes describe the scene in every mode, so the
-        gates read the DECLARED mode instead of calling the shots missing."""
-        glb, fbx = self._full_sequence("full")
-        statuses = {}
-        for row in ExportVerifier(glb=glb, fbx=fbx).run().rows:
-            statuses.setdefault(row.check, []).append(row.status)
-        self.assertEqual(statuses["fbx_takes"], [SKIP])
-        self.assertNotIn(FAIL, statuses["clips_vs_takes"])
-
-    def test_an_undeclared_single_stack_still_fails_its_takes(self):
-        """Inferred from "only one stack", the gate would pass a split that
-        silently failed -- the defect it was written for -- so a file that does
-        not declare the mode, or declares a shot-bearing one, still fails."""
-        for mode in (None, "both"):
-            glb, fbx = self._full_sequence(mode)
-            rows = ExportVerifier(glb=glb, fbx=fbx).run().rows
-            self.assertEqual(
-                [r.status for r in rows if r.check == "fbx_takes"], [FAIL], mode
-            )
-            self.assertIn(
-                FAIL, [r.status for r in rows if r.check == "clips_vs_takes"], mode
-            )
-
-    # ---- a declared Shots + Full Sequence export ---------------------------
-
-    def _shots_alone(self, clip_mode):
-        """What Blender's split shipped until 2026-10-05: the shots, and no
-        whole-timeline stack or clip beside them."""
-        glb = build_glb(self.path("asset.glb"), clip_name="Shot_1")
-        fbx = build_fbx(self.path("asset.fbx"), ("Shot_1",))
-        build_sidecar(
-            self.path(".asset.scene_data.json"),
-            [{"name": "Shot_1", "start": 0, "end": 15}],
-            clip_mode=clip_mode,
-        )
-        return glb, fbx
-
-    def test_a_declared_both_export_without_its_whole_timeline_fails(self):
-        """A Shots + Full Sequence export whose split replaced the whole
-        timeline shipped the same files as Shots Only while declaring both, and
-        every gate passed: the clips matched their takes and ``clip_origin``
-        SKIPped for want of an undeclared clip (measured on Blender 5.1,
-        2026-10-04)."""
-        glb, fbx = self._shots_alone("both")
+    def test_one_take_per_shot_passes(self):
+        glb, fbx = self._per_shot()
         report = ExportVerifier(glb=glb, fbx=fbx).run(
-            ["check_clips_vs_takes", "check_fbx_takes"]
-        )
-        statuses = {}
-        for row in report.rows:
-            statuses.setdefault(row.check, []).append(row.status)
-        self.assertIn(FAIL, statuses["clips_vs_takes"])
-        self.assertEqual(statuses["fbx_takes"], [FAIL])
-        failed = [row.detail for row in report.rows if row.status == FAIL]
-        self.assertTrue(all("whole-timeline" in d for d in failed), failed)
-
-    def test_shots_only_needs_no_whole_timeline(self):
-        glb, fbx = self._shots_alone("shots")
-        report = ExportVerifier(glb=glb, fbx=fbx).run(
-            ["check_clips_vs_takes", "check_fbx_takes"]
+            ["check_clips_vs_takes", "check_fbx_takes", "check_cross_clips"]
         )
         self.assertTrue(report.ok, report.summary())
+        self.assertEqual({r.status for r in report.rows}, {PASS}, report.summary())
 
-    def test_a_declared_both_fbx_with_its_whole_timeline_take_passes(self):
-        fbx = build_fbx(self.path("asset.fbx"), ("Shot_1", "Take 001"))
-        build_sidecar(
-            self.path(".asset.scene_data.json"),
-            [{"name": "Shot_1", "start": 0, "end": 15}],
-            clip_mode="both",
+    def test_a_whole_timeline_take_beside_the_shots_fails(self):
+        """A file of shots carries one take per shot and no other: the
+        whole-timeline take Maya writes beside a split (``Take 001``), or a
+        clip converted from it, is named as what should not be there."""
+        glb, fbx = self._per_shot(
+            takes=("Shot_1", "Take 001"), clips=("Shot_1", "Take 001")
         )
-        report = ExportVerifier(fbx=fbx).run(["check_fbx_takes"])
+        report = ExportVerifier(glb=glb, fbx=fbx).run(
+            ["check_clips_vs_takes", "check_fbx_takes"]
+        )
+        rows = {row.check: row for row in report.rows}
+        self.assertEqual(rows["fbx_takes"].status, FAIL, report.summary())
+        self.assertEqual(rows["clips_vs_takes"].status, FAIL, report.summary())
+        for row in rows.values():
+            self.assertIn("'Take 001'", row.detail)
+            self.assertIn("no whole-timeline take", row.detail)
+
+    def test_a_version_1_record_is_refused_with_its_fix(self):
+        """A record of the schema that stated ranges and clip modes is not
+        read as this one: every gate reading the shots FAILs, naming the
+        version and the cure -- a re-export."""
+        glb, fbx = self._per_shot()
+        build_sidecar(self.path(".asset.scene_data.json"), ["Shot_1"], version=1)
+        report = ExportVerifier(glb=glb, fbx=fbx).run(
+            ["check_clips_vs_takes", "check_fbx_takes", "check_fbx_take_channels"]
+        )
+        self.assertEqual([r.status for r in report.rows], [FAIL] * 3, report.summary())
+        for row in report.rows:
+            self.assertIn("version 1", row.detail)
+            self.assertIn("re-export", row.detail)
+
+    # ---- the rate the record states (2026-11-05) ---------------------------
+
+    def _rated_fbx(self):
+        """A real FBX of one take, ``Shot_1``, at 30 fps (``TimeMode`` 6)."""
+        from test_fbx_media import build_curve_fbx
+
+        return build_curve_fbx(
+            self.path("asset.fbx"),
+            {"Shot_1": {("cube", "Lcl Translation", "d|X"): [(0, 0.0), (15, 1.0)]}},
+        )
+
+    def test_the_records_rate_is_the_fbxs_time_mode(self):
+        """The ``animation`` record states the scene's rate for a reader that
+        has none of its own (a GLB's); the FBX states its own, and the two
+        must agree -- read off the sidecar's record and the GLB's alike."""
+        fbx = self._rated_fbx()
+        glb = build_glb(self.path("asset.glb"), record_fps=30.0)
+        build_sidecar(self.path(".asset.scene_data.json"), ["Shot_1"], fps=30.0)
+        report = ExportVerifier(glb=glb, fbx=fbx).run(["check_animation_rate"])
         self.assertEqual([r.status for r in report.rows], [PASS], report.summary())
 
-    # ---- clip origin ------------------------------------------------------
-    #
-    # The defect these cover shipped a production assembly: the exporter
-    # published the BAKE RANGE as the exported stack's span, but the FBX
-    # plug-in does not trim authored curves to that range (measured on Maya
-    # 2025 / FBX 2020.3.6: a curve keyed 0-100 exports as 0-100 under a 20-80
-    # range). The stack carried frames 80-4281 while 161-4275 was published, so
-    # all 18 shots were cut 81 frames early and played the end of the previous
-    # shot -- with every other gate green, because the clip LENGTHS still
-    # matched their takes and no shot was missing.
+    def test_a_record_stating_another_rate_than_the_fbx_fails(self):
+        fbx = self._rated_fbx()
+        glb = build_glb(self.path("asset.glb"), record_fps=24.0)
+        build_sidecar(
+            self.path(".asset.scene_data.json"), ["Shot_1"], fps=30.0, record_fps=25.0
+        )
+        report = ExportVerifier(glb=glb, fbx=fbx).run(["check_animation_rate"])
+        self.assertEqual([r.status for r in report.rows], [FAIL, FAIL], report.summary())
+        details = " ".join(r.detail for r in report.rows)
+        for stated in ("24", "25"):
+            self.assertIn(stated, details)
+        self.assertIn("30", details)
 
-    def test_clip_origin_fails_when_the_stack_outruns_its_published_span(self):
-        glb = build_glb(self.path("asset.glb"), clip_end=0.5)  # 15 frames carried
-        build_sidecar(self.path(".asset.scene_data.json"), [], span=[100, 108])
-        report = ExportVerifier(glb=glb).run(["check_clip_origin"])
-        self.assertFalse(report.ok, report.summary())
-        row = report.rows[0]
-        self.assertEqual(row.status, FAIL)
-        # Names both numbers and the drift between them, so the reader can see
-        # which end is wrong without opening the file.
-        self.assertIn("carries 15f", row.detail)
-        self.assertIn("8f span (100-108)", row.detail)
-        self.assertIn("+7f", row.detail)
+    def test_the_rate_gate_skips_without_an_fbx_or_a_stated_rate(self):
+        glb = build_glb(self.path("asset.glb"), record_fps=30.0)
+        report = ExportVerifier(glb=glb, sidecar=None).run(["check_animation_rate"])
+        self.assertEqual([r.status for r in report.rows], [SKIP])
+        report = ExportVerifier(fbx=self._rated_fbx(), sidecar=None).run(
+            ["check_animation_rate"]
+        )
+        self.assertEqual([r.status for r in report.rows], [SKIP])
 
-    def test_clip_origin_passes_when_the_span_describes_the_stack(self):
-        glb = build_glb(self.path("asset.glb"), clip_end=0.5)  # 15 frames carried
-        build_sidecar(self.path(".asset.scene_data.json"), [], span=[100, 115])
-        report = ExportVerifier(glb=glb).run(["check_clip_origin"])
-        self.assertTrue(report.ok, report.summary())
-        self.assertEqual(report.rows[0].status, PASS)
+    def test_the_glbs_clips_are_its_records_shots_by_name(self):
+        """Every shot the GLB's record names plays the animation of its clip's
+        name: the join every reader makes."""
+        glb = build_glb(self.path("asset.glb"), record_fps=30.0)
+        report = ExportVerifier(glb=glb, sidecar=None).run(["check_glb_shot_clips"])
+        self.assertEqual([r.status for r in report.rows], [PASS], report.summary())
+        glb = build_glb(
+            self.path("other.glb"), record_fps=30.0, record_clips=["Shot_1", "Shot_2"]
+        )
+        report = ExportVerifier(glb=glb, sidecar=None).run(["check_glb_shot_clips"])
+        self.assertEqual([r.status for r in report.rows], [FAIL], report.summary())
+        self.assertIn("Shot_2", report.rows[0].detail)
+        plain = build_glb(self.path("plain.glb"))
+        report = ExportVerifier(glb=plain, sidecar=None).run(["check_glb_shot_clips"])
+        self.assertEqual([r.status for r in report.rows], [SKIP])
+
+    def test_the_retired_clip_origin_gate_is_gone(self):
+        """No clip is cut from a whole-timeline stack, so there is no origin
+        to judge: the gate retired with it (its moved-names row names the
+        gate that judges each clip against its own take)."""
+        import pythontk
+
+        glb, fbx = self._per_shot()
+        verifier = ExportVerifier(glb=glb, fbx=fbx)
+        self.assertNotIn("check_clip_origin", verifier.gate_names())
+        self.assertEqual(
+            pythontk.MOVED_NAMES["ExportVerifier.check_clip_origin"][0],
+            "pythontk.ExportVerifier.check_clips_vs_takes",
+        )
 
     def test_fps_comes_from_the_sidecar_not_a_hardcoded_30(self):
         """Every frame a gate quotes is scaled by the rate it assumes.
 
         ``TaskManager.verify_deliverables`` passes only paths, so a 24 or 60
         fps scene was measured at 30 and every frame count came out wrong by
-        the ratio.
+        the ratio. The rate rides the ``animation`` record (the
+        ``render_effects`` and ``audio`` records state none).
         """
         glb = build_glb(self.path("asset.glb"), clip_end=1.0)  # 1 second
-        build_sidecar(self.path(".asset.scene_data.json"), [], span=[0, 24], fps=24.0)
-        verifier = ExportVerifier(glb=glb)
+        fbx = build_fbx(self.path("asset.fbx"), ("Shot_1",), windows={"Shot_1": (0, 30)})
+        build_sidecar(self.path(".asset.scene_data.json"), ["Shot_1"], fps=24.0)
+        verifier = ExportVerifier(glb=glb, fbx=fbx)
         self.assertEqual(verifier.fps, 24.0)
-        # 1s at 24 fps is 24 frames, which is the span the sidecar publishes.
-        report = verifier.run(["check_clip_origin"])
+        # 1 s of clip against the take's 0-30 window at 30 fps: 1 s too.
+        report = verifier.run(["check_clips_vs_takes"])
         self.assertTrue(report.ok, report.summary())
 
     def test_explicit_fps_overrides_the_sidecar(self):
         glb = build_glb(self.path("asset.glb"))
-        build_sidecar(self.path(".asset.scene_data.json"), [], span=[0, 24], fps=24.0)
+        build_sidecar(self.path(".asset.scene_data.json"), [], fps=24.0)
         self.assertEqual(ExportVerifier(glb=glb, fps=60.0).fps, 60.0)
 
     def test_fps_falls_back_to_30_without_a_sidecar(self):
@@ -1567,57 +1642,6 @@ class TestExportVerifier(_FixtureCase):
         glb = build_glb(self.path("arch_v2_proxy.glb"))
         build_sidecar(self.path(".arch.scene_data.json"), [])
         self.assertIsNone(ExportVerifier(glb=glb).sidecar_path)
-
-    def test_clip_origin_skips_without_a_published_span(self):
-        """An older sidecar publishes no span; there is nothing to check against."""
-        glb = build_glb(self.path("asset.glb"))
-        build_sidecar(self.path(".asset.scene_data.json"), [])
-        report = ExportVerifier(glb=glb).run(["check_clip_origin"])
-        self.assertEqual(report.rows[0].status, SKIP)
-
-    def test_clip_origin_skips_when_no_clip_is_the_whole_timeline(self):
-        """Every clip declared: none of them is the stack, so none can show drift."""
-        glb = build_glb(self.path("asset.glb"), clip_name="Shot_1", clip_end=0.5)
-        build_sidecar(
-            self.path(".asset.scene_data.json"),
-            [{"name": "Shot_1", "start": 0, "end": 15}],
-            span=[100, 108],
-        )
-        report = ExportVerifier(glb=glb).run(["check_clip_origin"])
-        self.assertEqual(report.rows[0].status, SKIP)
-
-    # The conversion measures the stack's span from the FBX it reads
-    # (``MeshConvert._stamp_clip_spans``) and states where each clip was cut
-    # from in ``extras.animation`` (``zero_frame``), so the clips are cut from
-    # the FILE's own stack, whatever the producer predicted.
-
-    def test_clip_origin_judges_the_span_the_file_was_cut_against(self):
-        """A producer whose prediction was off FAILed a deliverable cut right
-        -- "every clip is cut from the wrong frame" -- when the conversion had
-        placed every clip by the FBX's own keys (2026-10-04 review). The file
-        states where its whole-timeline clip was cut from (its ``zero_frame``
-        in ``extras.animation``, 2026-10-20): the stack is judged from there,
-        and the producer's span is a WARN naming both."""
-        glb = build_glb(
-            self.path("asset.glb"),
-            clip_name="FULL_SEQUENCE",
-            clip_end=0.5,  # 15 frames carried
-            zero_frame=100,
-        )
-        build_sidecar(self.path(".asset.scene_data.json"), [], span=[100, 108])
-        report = ExportVerifier(glb=glb).run(["check_clip_origin"])
-        self.assertTrue(report.ok, report.summary())
-        self.assertEqual([row.status for row in report.rows], [WARN])
-        self.assertIn("published 100-108", report.rows[0].detail)
-        self.assertIn("cut against 100-115", report.rows[0].detail)
-
-        # Without a sidecar the file's own origin is all there is: its stack
-        # measured from there is its own length by construction, so nothing
-        # independent judges it (2026-10-24: this PASSed a number compared
-        # with itself).
-        report = ExportVerifier(glb=glb, sidecar=None).run(["check_clip_origin"])
-        self.assertEqual([row.status for row in report.rows], [SKIP])
-        self.assertIn("no independent span", report.rows[0].detail)
 
     def test_a_truncated_fbx_fails_its_container_gate_with_the_reason(self):
         """Cut inside a key array, the reader's ``zlib.error`` escaped as
@@ -1809,156 +1833,27 @@ class TestExportVerifier(_FixtureCase):
                 self.assertEqual(rows(glb), [(expected[0], "glb_handoff", expected[1])])
 
     def test_take_length_mismatch_fails(self):
+        """Each clip is as long as its take: a 1 s clip of a 15-frame take."""
         glb = build_glb(self.path("asset.glb"), clip_end=1.0)  # 30 frames
-        build_sidecar(
-            self.path(".asset.scene_data.json"),
-            [{"name": "Shot_1", "start": 0, "end": 15}],
-        )
-        report = ExportVerifier(glb=glb).run(["check_clips_vs_takes"])
+        fbx = build_fbx(self.path("asset.fbx"), ("Shot_1",), windows={"Shot_1": (0, 15)})
+        build_sidecar(self.path(".asset.scene_data.json"), ["Shot_1"])
+        report = ExportVerifier(glb=glb, fbx=fbx).run(["check_clips_vs_takes"])
         self.assertFalse(report.ok)
+        self.assertIn("Shot_1: 30f vs its take's 15f", report.rows[0].detail)
 
-    def test_a_rebased_full_timeline_clip_is_measured_from_its_own_zero(self):
-        """The whole-timeline stack is REBASED, and says so.
+    def test_a_clip_as_long_as_its_take_passes(self):
+        glb = build_glb(self.path("asset.glb"), clip_end=0.5)  # 15 frames
+        fbx = build_fbx(self.path("asset.fbx"), ("Shot_1",), windows={"Shot_1": (10, 25)})
+        build_sidecar(self.path(".asset.scene_data.json"), ["Shot_1"])
+        report = ExportVerifier(glb=glb, fbx=fbx).run(["check_clips_vs_takes"])
+        self.assertEqual([r.status for r in report.rows], [PASS], report.summary())
 
-        The converter puts the stack's first key at ``t=0``, so a clip whose
-        content starts at authoring frame 33 ends 33 frames short of the
-        takes' declared end while being perfectly correct. Reading its raw
-        end frame called that a failure -- the same blind spot that, on the
-        producer side, slid every shot by 33 frames on the PROPS assembly.
-        The file states the clip's origin -- its ``zero_frame`` in
-        ``extras.animation``, the one place a finished GLB states it -- and
-        the gate has to use it.
-        """
-        glb = build_glb(
-            self.path("asset.glb"),
-            clip_name="FULL_SEQUENCE",
-            clip_end=(1989 - 33) / 30.0,
-            zero_frame=33,
-        )
-        build_sidecar(
-            self.path(".asset.scene_data.json"),
-            [{"name": "Shot_1", "start": 33, "end": 1989}],
-        )
+    def test_a_declared_shot_with_no_clip_fails(self):
+        glb = build_glb(self.path("asset.glb"), clip_name="Shot_1")
+        build_sidecar(self.path(".asset.scene_data.json"), ["Shot_1", "Shot_2"])
         report = ExportVerifier(glb=glb).run(["check_clips_vs_takes"])
-        # Isolate the branch under test: this minimal fixture carries only the
-        # whole-timeline clip, so the declared take is legitimately "absent".
-        # Assert on the STATUS, not on the wording -- a message-shaped assert
-        # passes for free the moment the message is reworded.
-        self.assertEqual(
-            [r.detail for r in report.rows if "FULL_SEQUENCE" in r.detail],
-            [],
-            report.summary(),
-        )
-
-    def test_a_rebased_clip_that_is_actually_short_still_fails(self):
-        """Honouring the origin must not blunt the gate."""
-        glb = build_glb(
-            self.path("asset.glb"),
-            clip_name="FULL_SEQUENCE",
-            clip_end=(1500 - 33) / 30.0,
-            zero_frame=33,
-        )
-        build_sidecar(
-            self.path(".asset.scene_data.json"),
-            [{"name": "Shot_1", "start": 33, "end": 1989}],
-        )
-        report = ExportVerifier(glb=glb).run(["check_clips_vs_takes"])
-        self.assertFalse(report.ok, report.summary())
-        self.assertTrue(
-            [
-                r
-                for r in report.rows
-                if r.status == FAIL and "FULL_SEQUENCE" in r.detail
-            ],
-            report.summary(),
-        )
-
-    def test_a_trailing_held_pose_is_a_note_not_a_failure(self):
-        """The bake pads the whole-timeline clip; padding is not an overrun.
-
-        The bake range is handed to the exporter, and it writes keys across
-        all of it -- so the full-timeline clip routinely ends on a held pose
-        some frames past the last take. Judging it on key occupancy called
-        that a failure on a correct file (PROPS: 48 inert frames, 1109 of
-        1185 channels flat, the other 76 moving by 3e-4), and a gate that is
-        permanently red is a gate nobody reads. Only motion out there counts.
-        """
-        glb = build_glb(
-            self.path("asset.glb"),
-            clip_name="FULL_SEQUENCE",
-            clip_end=1989 / 30.0,
-            hold_frames=48,
-        )
-        build_sidecar(
-            self.path(".asset.scene_data.json"),
-            [{"name": "Shot_1", "start": 0, "end": 1989}],
-        )
-        report = ExportVerifier(glb=glb).run(["check_clips_vs_takes"])
-        # As in the sibling rebase test, the lone clip means the declared take
-        # is legitimately absent -- judge the padding row, not the whole run.
-        held = [r for r in report.rows if "FULL_SEQUENCE" in r.detail]
-        self.assertEqual(len(held), 1, report.summary())
-        self.assertEqual(held[0].status, WARN, report.summary())
-        self.assertIn("+48f", held[0].detail)
-        self.assertIn("2037f", held[0].detail)
-
-    def test_motion_past_the_last_take_still_fails(self):
-        """Forgiving the hold must not forgive a real overrun."""
-        glb = build_glb(
-            self.path("asset.glb"),
-            clip_name="FULL_SEQUENCE",
-            clip_end=1989 / 30.0,
-            hold_frames=48,
-            hold_moves=True,
-        )
-        build_sidecar(
-            self.path(".asset.scene_data.json"),
-            [{"name": "Shot_1", "start": 0, "end": 1989}],
-        )
-        report = ExportVerifier(glb=glb).run(["check_clips_vs_takes"])
-        self.assertFalse(report.ok, report.summary())
-        self.assertTrue(
-            [r for r in report.rows if "animates to" in r.detail], report.summary()
-        )
-
-    def test_a_clip_closing_on_a_held_pose_is_not_truncation(self):
-        """Motion ending before the take does is ordinary animation.
-
-        Shots routinely finish their action and hold for a beat. Judging the
-        clip on where motion STOPS would call every one of those truncated --
-        the real PROPS assembly stops moving 79 frames before its last take
-        ends. Only the KEYS falling short means content is missing.
-        """
-        glb = build_glb(
-            self.path("asset.glb"),
-            clip_name="FULL_SEQUENCE",
-            clip_end=1989 / 30.0,
-            hold_frames=48,
-        )
-        build_sidecar(
-            self.path(".asset.scene_data.json"),
-            [{"name": "Shot_1", "start": 0, "end": 2037}],
-        )
-        report = ExportVerifier(glb=glb).run(["check_clips_vs_takes"])
-        self.assertEqual(
-            [r.detail for r in report.rows if "FULL_SEQUENCE" in r.detail],
-            [],
-            report.summary(),
-        )
-
-    def test_a_clip_whose_keys_end_short_of_its_take_fails(self):
-        """Keys that stop early cannot play the declared range at all."""
-        glb = build_glb(
-            self.path("asset.glb"),
-            clip_name="FULL_SEQUENCE",
-            clip_end=1500 / 30.0,
-        )
-        build_sidecar(
-            self.path(".asset.scene_data.json"),
-            [{"name": "Shot_1", "start": 0, "end": 1989}],
-        )
-        report = ExportVerifier(glb=glb).run(["check_clips_vs_takes"])
-        self.assertFalse(report.ok, report.summary())
+        self.assertEqual([r.status for r in report.rows], [FAIL], report.summary())
+        self.assertIn("declared but absent: ['Shot_2']", report.rows[0].detail)
 
     def test_corrupt_sidecar_degrades_to_skip(self):
         """A broken sidecar must never crash the run — its gates SKIP with
@@ -2049,12 +1944,12 @@ class TestFbxDependenciesGate(_FixtureCase):
     RECORDS = {
         SceneRecords.LIGHTMAPS.key: {
             "version": SceneRecords.LIGHTMAPS.version,
-            "objects": [{"name": "Crate", "map": "Crate_Lightmap.exr", "uvIndex": 1}],
+            "objects": [{"name": "Crate", "map": "Crate_Lightmap.exr", "scaleOffset": [1.0, 1.0, 0.0, 0.0], "hierarchy": ["Crate"]}],
             "probe": {"map": "Room_Probe.exr", "position": [0, 0, 0]},
         },
         SceneRecords.SHADOWS.key: {
             "version": SceneRecords.SHADOWS.version,
-            "planes": [{"name": "P", "texture": "P_shadow.png"}],
+            "planes": [{"name": "P", "silhouette": {"texture": "P_shadow.png"}}],
         },
     }
 
@@ -2129,6 +2024,49 @@ class TestFbxDependenciesGate(_FixtureCase):
         row = self._gate(shadowed)
         self.assertEqual(row.status, PASS, row.detail)
 
+    def test_a_grouped_modules_carrier_is_never_the_scenes(self):
+        """A grouped module's own ``data_export`` under a group -- ahead of
+        the scene's in the file -- is a module's: the gate reads the scene's
+        own record, so the module's map is no dependency (under the old
+        first-in-file-order rule the gate failed on it). Added: 2026-11-08"""
+        from test_fbx_media import build_carrier_fbx
+
+        from pythontk.file_utils.mesh_convert.fbx_media import FbxMedia
+
+        module = {
+            "version": SceneRecords.LIGHTMAPS.version,
+            "objects": [{"name": "Crate", "map": "Module_Lightmap.exr", "scaleOffset": [1.0, 1.0, 0.0, 0.0], "hierarchy": ["Crate"]}],
+        }
+        path = build_carrier_fbx(
+            self.path("grouped.fbx"),
+            self.RECORDS,
+            others={"data_export": {SceneRecords.LIGHTMAPS.key: module}},
+            parents={"data_export": "Module"},
+        )
+        files = []
+        for name in ("Crate_Lightmap.exr", "Room_Probe.exr", "P_shadow.png"):
+            files.append(self.path(name))
+            with open(files[-1], "wb") as fh:
+                fh.write(name.encode() * 4)
+        FbxMedia.embed(path, files=files)
+        row = self._gate(path)
+        self.assertEqual(row.status, PASS, row.detail)
+
+    def test_a_property_of_a_records_name_on_another_node_is_no_record(self):
+        """An artist's attribute named like a record (``lightmaps`` on a mesh)
+        is no record: every reader takes carriers alone, and the gate failed
+        on the files it named. Added: 2026-11-08"""
+        from test_fbx_media import build_carrier_fbx
+
+        stray = {
+            "version": SceneRecords.LIGHTMAPS.version,
+            "objects": [{"name": "Lamp_geo", "map": "Stray_Lightmap.exr"}],
+        }
+        path = build_carrier_fbx(
+            self.path("stray.fbx"), {}, others={"Lamp_geo": {SceneRecords.LIGHTMAPS.key: stray}}
+        )
+        self.assertEqual(self._gate(path).status, SKIP)
+
     def test_records_naming_nothing_and_no_fbx_skip(self):
         from test_fbx_media import build_carrier_fbx
 
@@ -2139,6 +2077,136 @@ class TestFbxDependenciesGate(_FixtureCase):
         self.assertEqual(row.status, SKIP)
 
 
+class TestFbxRenderEffectsGate(_FixtureCase):
+    """``fbx_render_effects``: the ``render_effects`` record names exactly the
+    curves the FBX carries -- one curve proxy per channel each entry names
+    (``SceneRecords.TRANSPORT``), a node's or a material's, and no proxy it
+    does not name. Added: 2026-11-05"""
+
+    def _rows(self, record, proxies=()):
+        from test_fbx_media import build_carrier_fbx
+
+        marker = SceneRecords.TRANSPORT.marker
+        channels = {SceneRecords.VISIBILITY.key: record} if record else {}
+        fbx = build_carrier_fbx(
+            self.path("effects.fbx"),
+            channels,
+            others={name: {marker: 1} for name in proxies},
+        )
+        report = ExportVerifier(fbx=fbx, sidecar=None).run(["check_fbx_render_effects"])
+        return [(row.status, row.detail) for row in report.rows]
+
+    def test_the_record_is_the_scenes_own_never_a_grouped_modules(self):
+        """The record the gate holds to the proxies is the one a reader
+        applies: the root-level carrier's, never a grouped module's own
+        ``data_export`` under a group, though it comes first in the file
+        (under the old first-in-file-order rule the module's was held: its
+        channel had no proxy, the scene's proxy no channel). Added: 2026-11-08"""
+        from test_fbx_media import build_carrier_fbx
+
+        key, marker = SceneRecords.VISIBILITY.key, SceneRecords.TRANSPORT.marker
+        own = self._record([{"node": "Crate", "channels": ["opacity"]}])
+        module = self._record([{"node": "Gone", "channels": ["visibility"]}])
+        fbx = build_carrier_fbx(
+            self.path("grouped_effects.fbx"),
+            {key: own},
+            others={"data_export": {key: module}, "Crate__opacity": {marker: 1}},
+            parents={"data_export": "Module"},
+        )
+        report = ExportVerifier(fbx=fbx, sidecar=None).run(["check_fbx_render_effects"])
+        rows = [(row.status, row.detail) for row in report.rows]
+        self.assertEqual(rows, [(PASS, "1 channel(s), each on its curve proxy")])
+
+    @staticmethod
+    def _record(tracks=(), materials=()):
+        record = {"version": SceneRecords.VISIBILITY.version, "tracks": list(tracks)}
+        if materials:
+            record["materials"] = list(materials)
+        return record
+
+    def test_every_named_channel_on_its_proxy_passes(self):
+        record = self._record(
+            [{"node": "Crate", "channels": ["visibility", "opacity"]}],
+            [{"material": "screen", "channels": ["emission"]}],
+        )
+        rows = self._rows(record, ["Crate__visibility", "ns:Crate__opacity", "screen__emission"])
+        self.assertEqual(rows, [(PASS, "3 channel(s), each on its curve proxy")])
+
+    def test_a_namespaced_entry_joins_its_proxy_by_the_transports_name(self):
+        """The record names a material as the delivery does, namespace included
+        (``ns:screen``); its proxy is named by the leaf (``screen__emission``,
+        ``SceneRecords.TRANSPORT.target_name``) -- one pair, not two failures.
+        Measured before on a real Maya export of a copy imported under ``ns``:
+        the record's channel 'had no proxy' and the proxy 'no channel'."""
+        record = self._record(
+            [{"node": "ns:Crate", "channels": ["opacity"]}],
+            [{"material": "ns:screen", "channels": ["emission"]}],
+        )
+        rows = self._rows(record, ["Crate__opacity", "screen__emission"])
+        self.assertEqual(rows, [(PASS, "2 channel(s), each on its curve proxy")])
+        rows = self._rows(self._record(materials=[{"material": "ns:screen", "channels": ["emission"]}]))
+        self.assertEqual(
+            rows,
+            [(FAIL, "the record names ns:screen's emission but the file carries no 'screen__emission' proxy")],
+        )
+
+    def test_a_channel_with_no_proxy_and_a_proxy_with_no_channel_fail(self):
+        record = self._record([{"node": "Crate", "channels": ["opacity", "highlight"]}])
+        rows = self._rows(record, ["Crate__opacity", "Crate__visibility"])
+        self.assertEqual(
+            rows,
+            [
+                (FAIL, "the record names Crate's highlight but the file carries no 'Crate__highlight' proxy"),
+                (FAIL, "a 'Crate__visibility' proxy the record does not name"),
+            ],
+        )
+
+    def test_two_nodes_sharing_a_leaf_on_one_proxy_fail(self):
+        """A node channel plays on its curve proxy's parent
+        (``SceneRecords.TRANSPORT.join``): two tracks whose nodes share the
+        leaf ``box`` but one ``box__opacity`` proxy ship one curve, played on
+        that proxy's parent alone -- the other's never ships. And two proxies
+        of one name carry two curves a reader keys as one. Measured before:
+        both passed, the pairs joining by leaf alone. Added: 2026-11-08"""
+        record = self._record(
+            [
+                {"node": "a:box", "channels": ["opacity"]},
+                {"node": "b:box", "channels": ["opacity"]},
+            ]
+        )
+        self.assertEqual(
+            self._rows(record, ["box__opacity"]),
+            [
+                (
+                    FAIL,
+                    "the record names 2 nodes' opacity (a:box, b:box) but the file "
+                    "carries 1 'box__opacity' proxy: a reader plays each curve on "
+                    "its proxy's parent alone",
+                )
+            ],
+        )
+        record = self._record([{"node": "box", "channels": ["opacity"]}])
+        self.assertEqual(
+            self._rows(record, ["box__opacity", "ns:box__opacity"]),
+            [
+                (
+                    FAIL,
+                    "the file carries 2 'box__opacity' proxies for 1 node: a reader "
+                    "keys their curves by the one name and reads the first",
+                )
+            ],
+        )
+
+    def test_a_version_1_record_fails_naming_its_fix(self):
+        rows = self._rows({"version": 1, "fps": 30.0, "tracks": []}, ["Crate__opacity"])
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0][0], FAIL)
+        self.assertIn("re-export", rows[0][1])
+
+    def test_a_file_with_no_effect_skips(self):
+        self.assertEqual(self._rows(None), [(SKIP, "the FBX carries no render effect")])
+
+
 class TestFbxRecordsGate(_FixtureCase):
     """``fbx_records``: every record an FBX's carriers hold -- the scene's and
     every referenced module's -- is one the standard declares, in the version
@@ -2147,7 +2215,7 @@ class TestFbxRecordsGate(_FixtureCase):
 
     EFFECTS = {
         "version": SceneRecords.VISIBILITY.version,
-        "tracks": [{"node": "Crate"}],
+        "tracks": [{"node": "Crate", "channels": ["visibility"]}],
     }
 
     def _rows(self, channels, others=None):
@@ -2168,6 +2236,16 @@ class TestFbxRecordsGate(_FixtureCase):
         self.assertEqual(
             rows, [(PASS, "2 record(s) in their declared version and shape")]
         )
+
+    def test_a_retired_record_fails_naming_its_fix(self):
+        """An FBX the old Emissive Groups wrote carries ``emissive_groups``:
+        retired, its reader is told how to convert (2026-11-07)."""
+        old = {"version": 2, "encoding": "vertex-color", "groups": [{"name": "a", "slot": 0}]}
+        rows = self._rows({"emissive_groups": old})
+        self.assertEqual(len(rows), 1, rows)
+        self.assertEqual(rows[0][0], FAIL)
+        self.assertIn("retired", rows[0][1])
+        self.assertIn("convert_legacy", rows[0][1])
 
     def test_each_problem_is_said_where_the_record_rides(self):
         spec = SceneRecords.VISIBILITY
@@ -2211,7 +2289,7 @@ class TestFbxRecordsGate(_FixtureCase):
         held = [("data_export", "frame_count", 2**63 - 1), ("data_export", "slot", 3)]
         stand_in = SimpleNamespace(
             user_property_items=lambda: list(held),
-            user_properties=lambda key, named=True: [
+            user_properties=lambda key, named=True, paths=False: [
                 (owner, value) for owner, name, value in held
             ],
             object_names=lambda kind: [],
@@ -2274,15 +2352,16 @@ class TestExportFingerprint(_FixtureCase):
         )
 
     def test_a_records_fields_are_pinned_not_just_its_name(self):
-        """A record written with the right key but a wrong value -- a clip's
-        zero frame -- is a difference; its text fields read as "text"."""
-        at3 = ExportFingerprint.of(build_glb(self.path("a.glb"), zero_frame=3.0))
-        at5 = ExportFingerprint.of(build_glb(self.path("b.glb"), zero_frame=5.0))
-        clip = at3["extras"][SceneRecords.SHOTS.key]["clips"][0]
-        self.assertEqual(clip, {"animation": 0, "name": "text", "zero_frame": 3.0})
+        """A record written with the right key but a wrong value -- the
+        scene's frame rate -- is a difference; its text fields read as
+        "text"."""
+        at30 = ExportFingerprint.of(build_glb(self.path("a.glb"), record_fps=30.0))
+        at24 = ExportFingerprint.of(build_glb(self.path("b.glb"), record_fps=24.0))
+        shot = at30["extras"][SceneRecords.SHOTS.key]["shots"][0]
+        self.assertEqual(shot, {"clip": "text"})
         self.assertEqual(
-            ExportFingerprint.diff(at3, at5),
-            [f"extras/{SceneRecords.SHOTS.key}/clips[0]/zero_frame: 3.0 -> 5.0"],
+            ExportFingerprint.diff(at30, at24),
+            [f"extras/{SceneRecords.SHOTS.key}/fps: 30.0 -> 24.0"],
         )
 
     def test_numbers_within_the_tolerance_are_equal(self):

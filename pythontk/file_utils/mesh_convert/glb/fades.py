@@ -1,51 +1,58 @@
 # !/usr/bin/python
 # coding=utf-8
-"""Write authored per-object material ramps into a GLB as ``KHR_animation_pointer`` channels.
+"""Write animated render effects into a GLB as ``KHR_animation_pointer`` channels.
 
 glTF animates four things -- translation, rotation, scale and morph weights --
 and a material property is none of them. The Khronos answer is
 ``KHR_animation_pointer``, which lets a channel target any property by JSON
-pointer. Writing it is what makes a fade (or a highlight) part of the
-DELIVERABLE rather than a note attached to it: a viewer that implements the
-extension plays it with nothing explained to it, and one that does not still
-loads the file (it is declared in ``extensionsUsed``, never
+pointer. Writing it is what makes a fade, a highlight or an animated emission
+part of the DELIVERABLE rather than a note attached to it: a viewer that
+implements the extension plays it with nothing explained to it, and one that
+does not still loads the file (it is declared in ``extensionsUsed``, never
 ``extensionsRequired``).
 
 ONE pass, a TABLE of channels. Each :class:`PointerChannel` row says which
-``render_effects`` key carries its ramp, which material property it targets,
-how many components that property has, whether the clone needs ``alphaMode
-BLEND`` (only alpha does -- an additive emissive sorts as opaque), and how a
-ramp sample composes with the material's own value. The pass isolates a node's
-materials ONCE for every channel it carries, and guards per pointer TARGET
-rather than per file -- so a channel added after another was written is still
-written, and a second run of the same set writes nothing.
+``render_effects`` channel it plays, whether its target is a NODE (every
+material under the node's subtree) or a MATERIAL (every material of that
+name), which material property it targets and how a curve's sample composes
+with the material's own value. The curves are the file's own -- each take's
+curve proxy, read off the FBX (``MeshConvert.render_effect_curves``) -- never
+the record, which only names what carries what (``render_effects`` v2).
+
+Opaque at rest: no channel changes a material's ``alphaMode``. A reader blends
+a material only while its animated alpha is below 1 and hides its renderer at
+0 (the record's contract); the presence gate (``MeshConvert.apply_glb_visibility``)
+states the hiding for every glTF viewer. A highlight keeps an emissive MAP in
+the file: glTF cannot animate a texture's presence, so the channel states the
+spans its highlight is above 0 (``extras.render_effects.active``), over which
+the contract has a reader set the map aside -- the glow is then the
+highlight -- and at rest the map is back.
 
 three.js does not implement the extension -- checked against its
 ``GLTFLoader``, which is the runtime this pipeline's own preview uses; the
 loader simply skips a channel with no ``target.node``. So the preview page
 carries a small shim that reads these same channels back out of the file and
-hands them to the mixer as ordinary keyframe tracks. ONE statement of each
-ramp, the glTF's; no side block, no second encoding, and the day three.js
-ships support the shim deletes without touching the exporter.
+hands them to the mixer as ordinary keyframe tracks.
 
-Materials are ISOLATED per animated subtree before being animated, because a
-material is shared by whatever samples it: animating the one a node happens
-to use would animate every other object using it too. A material already used
-by nothing outside the subtree is animated in place; one that is shared is
-cloned. The clone costs no binary -- a glTF material is JSON, and so is the
-mesh copy taken when a mesh is shared with something outside the subtree.
+A node's materials are ISOLATED before being animated, because a material is
+shared by whatever samples it: animating the one a node happens to use would
+animate every other object using it too. A material used by nothing outside
+the subtree is animated in place; one that is shared is cloned (JSON only: a
+clone costs no binary, nor does the mesh copy taken when a mesh is shared
+with something outside the subtree). A material target is the material
+itself, wherever it is drawn.
 """
 
 from __future__ import annotations
 
 import copy
 import logging
-import struct
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 from pythontk.core_utils.color import ColorStops
-from pythontk.file_utils.mesh_convert.glb.edit import GlbEdit
+from pythontk.core_utils.engines.scene_export.scene_records import SceneRecords
+from pythontk.file_utils.mesh_convert.glb.edit import GlbEdit, _SamplerBatch
 
 __all__ = ["GlbFades", "PointerChannel", "CHANNELS"]
 
@@ -54,124 +61,143 @@ logger = logging.getLogger(__name__)
 #: The extension this pass writes. Declared in ``extensionsUsed`` only: a
 #: viewer without it must still open the file and simply not animate.
 EXTENSION = "KHR_animation_pointer"
+#: Where a material's emission above 1 lives (glTF caps ``emissiveFactor`` at 1).
+STRENGTH = "KHR_materials_emissive_strength"
 #: The alpha channel's target, kept under its historical name. The alpha is the
 #: fourth component of the base colour factor, and glTF has no pointer to a
 #: single component -- so the whole VEC4 is animated, holding the material's
 #: own RGB constant.
 POINTER = "/materials/{index}/pbrMetallicRoughness/baseColorFactor"
+#: How long, in seconds, a cut is given in a LINEAR sampler: a step is stated
+#: as a hold this long before the key it cuts to. Small enough to read as a
+#: cut at any playback rate, large enough to survive float32 times in a clip
+#: of tens of minutes.
+STEP_SECONDS = 1e-3
 
 Rgb = Sequence[float]
 #: One resolved ``(r, g, b)`` per stop, in ``ColorStops.keys`` order.
 Stops = Tuple[Rgb, ...]
+#: A curve: ``[(seconds, value, interpolation), ...]`` -- interpolation the
+#: segment after the key, ``"step"`` or ``"linear"`` (``"smooth"`` reads as
+#: linear: the reader samples a cubic segment at the file's rate).
+Curve = Sequence[Sequence[Any]]
+#: ``{(target, channel): [node path, ...]}``: the nodes a node channel's curve
+#: proxies sit under -- the nodes their curves play on (``GlbFades.carriers``).
+Carriers = Dict[Tuple[str, str], List[str]]
 
 
-def _opacity_values(base: List[float], sample: float, _stops: Stops) -> List[float]:
+def _mapped(material: Optional[Dict[str, Any]]) -> bool:
+    """Whether *material* has an emissive map; ``None`` (a preview's call,
+    with no material) has none."""
+    return isinstance((material or {}).get("emissiveTexture"), dict)
+
+
+def _opacity_values(
+    base: List[float],
+    sample: float,
+    _stops: Stops,
+    _material: Optional[Dict[str, Any]] = None,
+) -> List[float]:
     """Alpha rides the fourth lane; the material's own RGB is carried through."""
-    return [base[0], base[1], base[2], sample]
+    return [base[0], base[1], base[2], min(1.0, max(0.0, sample))]
 
 
-def _highlight_values(base: List[float], sample: float, stops: Stops) -> List[float]:
-    """Additive over the material's own emissive, clamped to glTF's LDR factor.
+def _highlight_values(
+    base: List[float],
+    sample: float,
+    stops: Stops,
+    material: Optional[Dict[str, Any]] = None,
+) -> List[float]:
+    """A glow BETWEEN the channel's two stops, clamped to glTF's LDR factor.
 
-    An LED panel that is also highlighted keeps glowing at intensity 0, and a
-    white surface highlighted blue reads blue rather than replacing its albedo.
-
-    The sample rides BETWEEN the channel's two stops rather than scaling one,
-    so the dim half of a pulse is an authored colour instead of the absence of
-    one. A low stop of black is the legacy shape -- ``base + hi * sample``
-    exactly -- which is why it is :attr:`ColorStops.BLACK` that an unstated low
-    stop falls back to.
+    Over a uniform emission it adds to the material's own: an LED panel that
+    is also highlighted keeps glowing, and a white surface highlighted blue
+    reads blue. Over an emissive MAP the map is set aside while the highlight
+    is above 0 -- the glow is the highlight alone (glTF emission is factor x
+    map, and a map hides an additive glow: measured 2026-09-05 on a production
+    board, the channel was written and nothing changed on screen) -- and at
+    rest the factor is the material's own, the map back. A low stop of black
+    is the legacy shape -- ``base + hi * sample`` exactly.
     """
     hi = stops[0]
     lo = stops[1] if len(stops) > 1 else ColorStops.BLACK
+    if _mapped(material):
+        if sample <= 0.0:
+            return list(base)
+        own = (0.0, 0.0, 0.0)
+    else:
+        own = base
     return [
-        min(1.0, max(0.0, base[i] + lo[i] + (hi[i] - lo[i]) * sample)) for i in range(3)
+        min(1.0, max(0.0, own[i] + lo[i] + (hi[i] - lo[i]) * sample)) for i in range(3)
     ]
 
 
-def _opacity_rest(sample: float, _stops: Stops) -> bool:
+def _emission_values(
+    base: List[float],
+    sample: float,
+    stops: Stops,
+    _material: Optional[Dict[str, Any]] = None,
+) -> List[float]:
+    """The weight scales the emission colour, already divided by the strength
+    the material is given (``stops`` here is ``(colour x strength / given,)``)."""
+    colour = stops[0]
+    return [min(1.0, max(0.0, colour[i] * sample)) for i in range(3)]
+
+
+def _opacity_rest(sample: float, _stops: Stops, _material: Dict[str, Any]) -> bool:
     """A held alpha of 1 leaves the material as authored, and a held 0 is the
     presence gate's to hide; only a held partial alpha changes the render."""
     return sample <= 0.0 or sample >= 1.0
 
 
-def _highlight_rest(sample: float, stops: Stops) -> bool:
-    """A held intensity of 0 adds the LOW stop, which is nothing only when it
-    is black."""
+def _highlight_rest(sample: float, stops: Stops, material: Dict[str, Any]) -> bool:
+    """A held intensity of 0 adds the LOW stop -- nothing when it is black,
+    and nothing over a map, which is back at rest."""
     low = stops[1] if len(stops) > 1 else ColorStops.BLACK
-    return sample <= 0.0 and not any(float(c) for c in low)
-
-
-def _uncover_emissive(material: Dict[str, Any]) -> Optional[str]:
-    """Drop an emissive MAP from a highlighted copy, so the highlight can show.
-
-    glTF emission is ``emissiveFactor * emissiveTexture``. A mapped material
-    arrives with the factor at white -- the map IS its emission -- so an
-    additive channel over it clamps to no change, and the map would mask the
-    colour everywhere it is black besides. Measured on a production board
-    (StingrayPBS with an emissive map, 2026-09-05): the channel was written,
-    the file said "highlighted", and nothing on screen changed.
-
-    The copy this pass isolated glows from the highlight alone: the map goes,
-    and with it the strength that scaled it and the white factor that stood
-    for it. That is the one honest reading glTF allows -- "this map, plus a
-    uniform glow over it" is not something the format can say -- and it is
-    what the reference build shows (the whole board pulses its colour). A
-    material with a uniform emissive is untouched: the additive composition
-    above is exactly right for it.
-
-    Returns:
-        The material's name when a map was dropped, ``None`` otherwise.
-    """
-    if "emissiveTexture" not in material:
-        return None
-    del material["emissiveTexture"]
-    material["emissiveFactor"] = [0.0, 0.0, 0.0]
-    extensions = material.get("extensions")
-    if isinstance(extensions, dict):
-        extensions.pop("KHR_materials_emissive_strength", None)
-        if not extensions:
-            del material["extensions"]
-    return str(material.get("name") or "<unnamed>")
+    return sample <= 0.0 and (_mapped(material) or not any(float(c) for c in low))
 
 
 @dataclass(frozen=True)
 class PointerChannel:
-    """One animatable material property and how a published ramp reaches it.
+    """One animatable material property and how a curve reaches it.
 
     Attributes:
-        name: The ``render_effects`` key carrying the ramp (``[[frame, v]]``).
+        name: The ``render_effects`` channel it plays (a transport channel).
         pointer: JSON pointer template with ``{index}`` for the material.
         property: Path of the material property inside the material dict, as
             ``("pbrMetallicRoughness", "baseColorFactor")`` or ``("emissiveFactor",)``.
         default: The property's per-spec default when the material omits it.
-        blend: Whether an animated clone must switch to ``alphaMode BLEND``.
-        color_stops: Optional :class:`ColorStops` naming the sibling track
-            key(s) that carry this channel's per-node colour(s).
-        values: ``(base, sample, stops) -> components`` for one key, where
-            *stops* is one resolved ``(r, g, b)`` per stop.
-        prepare: Readies an isolated material for the channel, before its base
-            is read -- returns a note naming what it changed, or ``None``.
-            Runs once per pointer target, guarded by the same "already
-            written" check as the channel itself.
-        rest: ``(sample, stops) -> bool``: a value that, HELD through a clip,
-            leaves the render as the material has it -- such a clip writes
-            nothing. ``None``: every held value does.
+        target: ``"node"`` -- the materials under a track's node -- or
+            ``"material"`` -- every material of a ``materials`` entry's name.
+        color_stops: Optional :class:`ColorStops` naming the record entry's
+            colour key(s) for this channel.
+        values: ``(base, sample, stops, material=None) -> components`` for
+            one key, where *stops* is one resolved ``(r, g, b)`` per stop and
+            *material* the glTF material it composes on; omitted -- a
+            panel's preview swatch, handed this very function so it cannot
+            drift from what ships, calls it ``(base, sample, stops)`` -- it
+            reads as a material with no map.
+        rest: ``(sample, stops, material) -> bool``: a value that, HELD
+            through a clip, leaves the render as the material has it -- such a
+            clip writes nothing. ``None``: every held value does.
+        active: Whether the channel states, per clip, the spans its curve is
+            above 0 on a material with an emissive map (the highlight's
+            map rule).
     """
 
     name: str
     pointer: str
     property: Tuple[str, ...]
     default: Tuple[float, ...]
-    blend: bool
+    target: str
     color_stops: Optional[ColorStops]
-    values: Callable[[List[float], float, Stops], List[float]]
-    prepare: Optional[Callable[[Dict[str, Any]], Optional[str]]] = None
-    rest: Optional[Callable[[float, Stops], bool]] = None
+    values: Callable[..., List[float]]
+    rest: Optional[Callable[[float, Stops, Dict[str, Any]], bool]] = None
+    active: bool = False
 
     @property
     def color_key(self) -> Optional[str]:
-        """The HIGH stop's track key.
+        """The HIGH stop's record key.
 
         Deprecated read-through kept for one release: the channel carries a
         :class:`ColorStops` now, and a caller that wants every key wants
@@ -199,15 +225,17 @@ class PointerChannel:
         return [float(v) for v in value]
 
 
-#: The channel table. ``opacity`` is the fade; ``highlight`` an additive
-#: emissive intensity with a per-node colour. Order is write order.
+#: The channel table, in write order: ``opacity`` the fade, ``highlight`` a
+#: glow with a per-node colour ramp, ``emission`` a material's animated
+#: emission weight. ``visibility``, the one stepped channel, plays as the
+#: presence gate (a ``scale`` channel), not here.
 CHANNELS: Dict[str, PointerChannel] = {
     "opacity": PointerChannel(
         name="opacity",
         pointer=POINTER,
         property=("pbrMetallicRoughness", "baseColorFactor"),
         default=(1.0, 1.0, 1.0, 1.0),
-        blend=True,
+        target="node",
         color_stops=None,
         values=_opacity_values,
         rest=_opacity_rest,
@@ -217,11 +245,20 @@ CHANNELS: Dict[str, PointerChannel] = {
         pointer="/materials/{index}/emissiveFactor",
         property=("emissiveFactor",),
         default=(0.0, 0.0, 0.0),
-        blend=False,
+        target="node",
         color_stops=ColorStops("highlight_color", "highlight_color_dim"),
         values=_highlight_values,
-        prepare=_uncover_emissive,
         rest=_highlight_rest,
+        active=True,
+    ),
+    "emission": PointerChannel(
+        name="emission",
+        pointer="/materials/{index}/emissiveFactor",
+        property=("emissiveFactor",),
+        default=(0.0, 0.0, 0.0),
+        target="material",
+        color_stops=None,
+        values=_emission_values,
     ),
 }
 
@@ -234,6 +271,159 @@ DEFAULT_COLOR: Tuple[float, float, float] = ColorStops.WHITE
 class _GlbFadesInternal:
     """Internal helpers for :class:`GlbFades`."""
 
+    # ------------------------------------------------------------- the curves
+    @staticmethod
+    def _keys(curve: Curve) -> List[Tuple[float, float, str]]:
+        """*curve* as ``(seconds, value, interpolation)``, time-ordered (ties
+        keep their order: the later key is the state from that instant)."""
+        keys = []
+        for key in curve or ():
+            try:
+                time, value = float(key[0]), float(key[1])
+            except (TypeError, ValueError, IndexError):
+                continue
+            interpolation = str(key[2]) if len(key) > 2 else "linear"
+            keys.append((time, value, interpolation))
+        return sorted(keys, key=lambda k: k[0])
+
+    @staticmethod
+    def _strictly_increasing(
+        samples: Sequence[Tuple[float, Any]],
+    ) -> List[Tuple[float, Any]]:
+        """*samples* on strictly increasing times, the LAST value at a repeated
+        time winning: glTF requires an animation input to strictly increase."""
+        merged: List[Tuple[float, Any]] = []
+        for time, value in samples:
+            if merged and merged[-1][0] >= time:
+                merged[-1] = (merged[-1][0], value)
+            else:
+                merged.append((time, value))
+        return merged
+
+    @classmethod
+    def _linearized(cls, curve: Curve) -> List[Tuple[float, float]]:
+        """*curve* as ``(seconds, value)`` keys a LINEAR sampler reproduces:
+        a stepped segment holds its value until :data:`STEP_SECONDS` before
+        the next key, which it then cuts to."""
+        keys = cls._keys(curve)
+        out: List[Tuple[float, float]] = []
+        for index, (time, value, interpolation) in enumerate(keys):
+            out.append((time, value))
+            if index + 1 >= len(keys) or interpolation != "step":
+                continue
+            following = keys[index + 1][0]
+            if following - time > STEP_SECONDS:
+                out.append((following - STEP_SECONDS, value))
+        return cls._strictly_increasing(out)
+
+    @classmethod
+    def _positive_runs(cls, curve: Curve, start: float = 0.0) -> List[Tuple[float, int]]:
+        """Where *curve* is above 0, as stepped runs ``[(seconds, 0|1), ...]``
+        from *start* (the clip's t=0) on.
+
+        A ramping segment is above 0 wherever either end is -- it leaves 0 the
+        instant it starts rising and reaches it only at its end -- and a
+        stepped one where its own key is. Before the first key the first
+        key's value holds (a curve is read held at its ends), and after the
+        last, the last's.
+        """
+        keys = cls._keys(curve)
+        if not keys:
+            return []
+        runs: List[Tuple[float, int]] = [(start, 1 if keys[0][1] > 0.0 else 0)]
+        for index, (time, value, interpolation) in enumerate(keys):
+            if index + 1 < len(keys) and interpolation != "step":
+                on = value > 0.0 or keys[index + 1][1] > 0.0
+            else:
+                on = value > 0.0
+            runs.append((time, 1 if on else 0))
+        return cls._collapsed(runs)
+
+    @classmethod
+    def _glowing_runs(
+        cls, shaped: Sequence[Tuple[float, float]], start: float = 0.0
+    ) -> List[Tuple[float, int]]:
+        """Where the keys a highlight's factor is written at (*shaped*,
+        :meth:`_with_boundaries`) glow, as stepped runs ``[(seconds, 0|1),
+        ...]`` from *start* (the clip's t=0) on: each key's state from its
+        instant, on where its value is above 0 -- so at every key the runs
+        and the factor agree (the factor is the glow exactly where the value
+        is above 0, the material's own elsewhere). A run never starts at a
+        ramp's first key, whose value is still 0, but at the edge key
+        :data:`STEP_SECONDS` inside it, where the glow starts."""
+        if not shaped:
+            return []
+        runs = [(start, 1 if shaped[0][1] > 0.0 else 0)]
+        runs.extend((time, 1 if value > 0.0 else 0) for time, value in shaped)
+        return cls._collapsed(runs)
+
+    @classmethod
+    def _stepped_runs(cls, curve: Curve, start: float = 0.0) -> List[Tuple[float, int]]:
+        """A stepped channel (``visibility``) as runs: on at 0.5 and above,
+        each key the state from its instant on, whatever the file's
+        interpolation (a DCC that bakes a step writes a one-frame ramp)."""
+        keys = cls._keys(curve)
+        if not keys:
+            return []
+        runs = [(start, 1 if keys[0][1] >= 0.5 else 0)]
+        runs.extend((time, 1 if value >= 0.5 else 0) for time, value, _i in keys)
+        return cls._collapsed(runs)
+
+    @classmethod
+    def _collapsed(cls, runs: Sequence[Tuple[float, int]]) -> List[Tuple[float, int]]:
+        """*runs* on strictly increasing times, then with each run that changes
+        nothing dropped."""
+        out: List[Tuple[float, int]] = []
+        for time, value in cls._strictly_increasing(runs):
+            if not out or out[-1][1] != value:
+                out.append((time, value))
+        return out
+
+    @staticmethod
+    def _both(*runs: Sequence[Tuple[float, int]]) -> List[Tuple[float, int]]:
+        """The runs on where every one of *runs* is (each held at its ends)."""
+        present = [r for r in runs if r]
+        if not present:
+            return []
+        times = sorted({t for r in present for t, _v in r})
+
+        def at(run, time):
+            value = run[0][1]
+            for t, v in run:
+                if t <= time:
+                    value = v
+                else:
+                    break
+            return value
+
+        out: List[Tuple[float, int]] = []
+        for time in times:
+            value = 1 if all(at(r, time) for r in present) else 0
+            if not out or out[-1][1] != value:
+                out.append((time, value))
+        return out
+
+    @classmethod
+    def _with_boundaries(cls, curve: Curve) -> List[Tuple[float, float]]:
+        """:meth:`_linearized`, plus a key :data:`STEP_SECONDS` inside each
+        segment that leaves or reaches 0, so a value that jumps there (the
+        highlight over a map: the factor is the material's own at 0 and the
+        glow above it) is stated at the edge, not blended across it."""
+        keys = cls._linearized(curve)
+        out: List[Tuple[float, float]] = []
+        for index, (time, value) in enumerate(keys):
+            out.append((time, value))
+            if index + 1 >= len(keys):
+                continue
+            nxt_time, nxt_value = keys[index + 1]
+            span = nxt_time - time
+            if span <= 2 * STEP_SECONDS or (value > 0.0) == (nxt_value > 0.0):
+                continue
+            edge = time + STEP_SECONDS if value <= 0.0 else nxt_time - STEP_SECONDS
+            out.append((edge, value + (nxt_value - value) * (edge - time) / span))
+        return cls._strictly_increasing(sorted(out, key=lambda k: k[0]))
+
+    # ------------------------------------------------------- the file's parts
     @staticmethod
     def _subtree(gltf: Dict[str, Any], roots: Sequence[int]) -> List[int]:
         """Every node index at or under *roots* (cycle-safe)."""
@@ -279,7 +469,6 @@ class _GlbFadesInternal:
         gltf: Dict[str, Any],
         nodes: Sequence[int],
         users: Dict[int, List[int]],
-        blend: bool = True,
     ) -> List[int]:
         """Give *nodes* materials nothing outside them shares; return their indices.
 
@@ -288,18 +477,15 @@ class _GlbFadesInternal:
         * A MESH used by a node outside this subtree is duplicated first, so
           repointing its primitives cannot reach the outsider. The copy shares
           every accessor, so it adds no geometry.
-        * A MATERIAL is cloned unless it is used by nothing outside AND already
-          carries what the channel needs -- for alpha, a ``BLEND`` clone this
-          pass made on an earlier run; for an additive channel, any exclusive
-          material. The original is never mutated: the sidecar repairs it by
-          name, and its authored ``alphaMode`` stays. This is what makes the
-          pass idempotent and lets two channels on one node share one clone.
+        * A MATERIAL used by anything outside is cloned; one used by nothing
+          outside is animated where it stands. Nothing authored changes on
+          either -- no channel switches an alpha mode or drops a map -- so the
+          pass is idempotent: a second run finds every clone exclusive.
 
-        *blend* switches the isolated materials to ``BLEND`` -- for alpha,
-        because the ramp is continuous and ``MASK`` is binary at its cutoff
-        (the pop this pass exists to replace). An additive channel leaves the
-        mode alone: a blended surface sorts differently from an opaque one,
-        and a highlight has no reason to pay that.
+        The clone keeps the NAME, deliberately: glTF does not require unique
+        material names, and the lightmap manifest (``lightmaps.materials``)
+        and the ``materials`` record are keyed by name -- a renamed clone
+        loses its lightmap in every reader that binds that way.
         """
         meshes = gltf.setdefault("meshes", [])
         materials = gltf.setdefault("materials", [])
@@ -319,13 +505,9 @@ class _GlbFadesInternal:
                 node["mesh"] = mesh_index
                 users.setdefault(mesh_index, []).append(index)
             if mesh_index in repointed:
-                # Instanced: shared with another node in this SAME subtree, so
-                # its primitives already point at this call's clones. Walking
-                # them again would read a CLONE as the source material and clone
-                # that, stranding the first with no primitive while still
-                # returning it -- and the caller writes one channel per returned
-                # material. (A mesh copied just above is always a fresh index,
-                # so it is never the one skipped here.)
+                # Instanced inside this subtree: its primitives already point
+                # at this call's materials; walking them again would read a
+                # CLONE as a source and clone it.
                 continue
             repointed.add(mesh_index)
             for primitive in meshes[mesh_index].get("primitives") or []:
@@ -333,39 +515,79 @@ class _GlbFadesInternal:
                 if not isinstance(source, int) or not 0 <= source < len(materials):
                     continue
                 if source not in clones:
-                    # In place only when the material is used by nothing
-                    # outside AND already carries what the channel needs. For
-                    # alpha that means it is already a BLEND clone (an earlier
-                    # run's): the ORIGINAL keeps its authored mode untouched,
-                    # because the sidecar repairs it by name and an authored
-                    # MASK turned BLEND would pop at no cutoff at all. An
-                    # additive channel mutates nothing authored, so any
-                    # exclusive material will do.
-                    exclusive = material_users.get(source, set()) <= inside
-                    if exclusive and (
-                        not blend or materials[source].get("alphaMode") == "BLEND"
-                    ):
+                    if material_users.get(source, set()) <= inside:
                         clones[source] = source
                     else:
-                        clone = copy.deepcopy(materials[source])
-                        # The NAME is kept, deliberately: glTF does not require
-                        # unique material names, and the lightmap manifest
-                        # (`lightmaps.materials`) is keyed by name -- a
-                        # renamed clone loses its lightmap in every reader that
-                        # binds that way, the preview included.
-                        materials.append(clone)
+                        materials.append(copy.deepcopy(materials[source]))
                         clones[source] = len(materials) - 1
-                    if blend:
-                        materials[clones[source]]["alphaMode"] = "BLEND"
                     touched.append(clones[source])
                 primitive["material"] = clones[source]
         return touched
 
     @staticmethod
-    def _existing_pointers(animations: Sequence[Dict[str, Any]]) -> Set[str]:
-        """Every pointer target the file already animates."""
-        found: Set[str] = set()
+    def _named(gltf: Dict[str, Any], name: str) -> List[int]:
+        """Every material *name* joins: its own name, or the name after the
+        last ``:`` on either side (an import that dropped a namespace)."""
+        leaf = str(name).split(":")[-1]
+        return [
+            index
+            for index, material in enumerate(gltf.get("materials") or [])
+            if isinstance(material, dict)
+            and (
+                material.get("name") == name
+                or str(material.get("name") or "").split(":")[-1] == leaf
+            )
+        ]
+
+    @staticmethod
+    def _parents(gltf: Dict[str, Any]) -> Dict[int, int]:
+        """``child index -> parent index`` over the file's nodes."""
+        parents: Dict[int, int] = {}
+        for index, node in enumerate(gltf.get("nodes") or []):
+            for child in (node or {}).get("children") or []:
+                if isinstance(child, int):
+                    parents.setdefault(child, index)
+        return parents
+
+    @classmethod
+    def _paths(cls, gltf: Dict[str, Any]) -> List[str]:
+        """Every node's path from its root, by index (``"|grp|a:Box"``)."""
+        nodes = gltf.get("nodes") or []
+        parents = cls._parents(gltf)
+        paths: List[str] = []
+        for index in range(len(nodes)):
+            steps: List[str] = []
+            seen: Set[int] = set()
+            at: Optional[int] = index
+            while at is not None and at not in seen:
+                seen.add(at)
+                steps.append(str((nodes[at] or {}).get("name") or ""))
+                at = parents.get(at)
+            paths.append("|" + "|".join(reversed(steps)))
+        return paths
+
+    @classmethod
+    def _resolve(
+        cls,
+        name: str,
+        channels: Sequence[str],
+        carriers: Carriers,
+        paths: Sequence[str],
+    ) -> Tuple[List[int], str]:
+        """The nodes a record's track *name* plays its *channels* on, by the
+        transport's rule (``SceneRecords.TRANSPORT.join``): its proxies'
+        parent wherever the file carried a proxy, else its name."""
+        leaf = SceneRecords.TRANSPORT.target_name(name)
+        wanted = {path for channel in channels for path in carriers.get((leaf, channel), ())}
+        carried = [index for index, path in enumerate(paths) if path in wanted]
+        return SceneRecords.TRANSPORT.join(name, paths, carried)
+
+    @staticmethod
+    def _existing_pointers(animations: Sequence[Dict[str, Any]]) -> Set[Tuple[str, str]]:
+        """``(clip, pointer)`` for every pointer target a clip already animates."""
+        found: Set[Tuple[str, str]] = set()
         for animation in animations:
+            clip = str(animation.get("name") or "")
             for channel in animation.get("channels") or []:
                 target = channel.get("target") or {}
                 if target.get("path") != "pointer":
@@ -374,117 +596,107 @@ class _GlbFadesInternal:
                     "pointer"
                 )
                 if pointer:
-                    found.add(str(pointer))
+                    found.add((clip, str(pointer)))
         return found
 
     @staticmethod
-    def _per_clip(
-        ramp: Sequence[Tuple[float, float]],
-        animations: Sequence[Dict[str, Any]],
-        windows: Dict[str, Tuple[float, float]],
-        zeros: Dict[str, float],
-        fps: float,
-        rest: Optional[Callable[[float], bool]] = None,
-    ) -> Dict[str, Tuple[List[float], List[Any]]]:
-        """``{clip: (times, samples)}`` -- the ramp cut to each clip that it
-        moves in, or holds a value *rest* says changes the render at."""
-        from pythontk.file_utils.mesh_convert.glb.clips import GlbClips
+    def _held(values: Sequence[float]) -> Optional[float]:
+        """The one value *values* hold, or ``None`` when they move."""
+        if not values:
+            return None
+        first = round(float(values[0]), 6)
+        return first if all(round(float(v), 6) == first for v in values) else None
 
-        per_clip: Dict[str, Tuple[List[float], List[Any]]] = {}
-        for animation in animations:
-            clip = str(animation.get("name") or "")
-            window, zero = windows.get(clip), zeros.get(clip)
-            if window is None or zero is None:
-                continue
-            lo = (window[0] - zero) / fps
-            cut, samples = GlbClips._window(
-                [(frame - zero) / fps for frame, _v in ramp],
-                [(value,) for _f, value in ramp],
-                "LINEAR",
-                False,
-                lo,
-                (window[1] - zero) / fps,
-                0.25 / fps,
-            )
-            # ``_window`` rebases onto the window it cut, which is right for a
-            # clip BUILT to that window and wrong here: this channel joins a
-            # clip that already has a zero, and the two are the same only when
-            # the clip starts where its window does. The retained whole-timeline
-            # stack is the case where they differ -- its zero is the timeline's,
-            # so the ramp arrived shifted by the first shot's start frame
-            # (measured: 7 frames).
-            cut = [k + lo for k in cut]
-            if len(cut) < 2:
-                continue
-            if len({round(s[0], 6) for s in samples}) < 2 and (
-                rest is None or rest(float(samples[0][0]))
-            ):
-                # Held where the material already is: nothing to animate. A
-                # value held anywhere else is still the render (a shadow
-                # plane's baked intensity x falloff over a still prop), which
-                # unitytk plays.
-                continue
-            per_clip[clip] = (cut, samples)
-        return per_clip
+    # ----------------------------------------------------- the emission entry
+    @staticmethod
+    def _emission_strength(material: Dict[str, Any]) -> float:
+        extension = (material.get("extensions") or {}).get(STRENGTH) or {}
+        try:
+            return float(extension.get("emissiveStrength", 1.0))
+        except (TypeError, ValueError):
+            return 1.0
+
+    @classmethod
+    def _give_strength(cls, gltf: Dict[str, Any], index: int, peak: float) -> float:
+        """Give material *index* the strength its emission needs -- the curve's
+        *peak* and its own emission, whichever is brighter, at least 1 --
+        keeping its own emission as it renders; returns the strength given."""
+        material = gltf["materials"][index]
+        own = cls._emission_strength(material)
+        factor = [float(c) for c in material.get("emissiveFactor") or (0.0, 0.0, 0.0)]
+        given = max(1.0, peak, max(factor) * own)
+        if abs(given - own) > 1e-9:
+            material["emissiveFactor"] = [
+                min(1.0, c * own / given) for c in factor[:3]
+            ]
+        extensions = material.setdefault("extensions", {})
+        if given > 1.0:
+            extensions[STRENGTH] = {"emissiveStrength": given}
+            used = gltf.setdefault("extensionsUsed", [])
+            if STRENGTH not in used:
+                used.append(STRENGTH)
+        else:
+            extensions.pop(STRENGTH, None)
+        if not extensions:
+            material.pop("extensions", None)
+        return given
 
 
 class GlbFades(_GlbFadesInternal):
-    """Publish authored material ramps as animated material channels."""
+    """Publish a file's animated render effects as animated material channels."""
 
     CHANNELS = CHANNELS
+    STEP_SECONDS = STEP_SECONDS
 
     @classmethod
-    def apply(
+    def carriers(cls, gltf: Dict[str, Any]) -> Carriers:
+        """``{(target, channel): [node path, ...]}``: where each node channel's
+        curve proxy sits in *gltf* -- its parent, the node its curve plays on
+        (``SceneRecords.TRANSPORT.join``). A proxy is a node marked
+        ``SceneRecords.TRANSPORT.marker``, never a name alone. Read it BEFORE
+        the proxies are stripped (``MeshConvert.strip_glb_curve_proxies``)
+        and hand it to the passes after: the paths name the parents, which
+        the strip leaves where they are."""
+        transport = SceneRecords.TRANSPORT
+        nodes = gltf.get("nodes") or []
+        parents = cls._parents(gltf)
+        paths = cls._paths(gltf)
+        carriers: Carriers = {}
+        for index, node in enumerate(nodes):
+            if index not in parents or not GlbEdit.user_property(node, transport.marker):
+                continue
+            parsed = transport.parse(str((node or {}).get("name") or ""))
+            if parsed is None or parsed[1] not in transport.node_channels:
+                continue
+            found = carriers.setdefault(parsed, [])
+            if paths[parents[index]] not in found:
+                found.append(paths[parents[index]])
+        return carriers
+
+    @classmethod
+    def apply_curves(
         cls,
         edit: Any,
-        fades: Dict[str, Sequence[Sequence[float]]],
-        windows: Dict[str, Tuple[float, float]],
-        zeros: Dict[str, float],
-        fps: float,
+        record: Dict[str, Any],
+        curves: Dict[str, Dict[Tuple[str, str], Curve]],
+        carriers: Optional[Carriers] = None,
     ) -> Optional[Dict[str, Any]]:
-        """Write one alpha channel per faded node per clip.
-
-        The opacity-only entry point, kept for its callers;
-        :meth:`apply_channels` is the general form.
+        """Write every pointer channel the *record* names, per clip, from *curves*.
 
         Parameters:
             edit: An open ``GlbEdit``.
-            fades: ``{node name: [[frame, alpha], ...]}`` -- the authored ramps.
-            windows: ``{clip name: (start frame, end frame)}``.
-            zeros: ``{clip name: authoring frame the clip puts at t=0}``.
-            fps: The rate the frame numbers are quoted in.
-
-        Returns:
-            ``{"nodes", "materials", "channels"}``, or ``None`` when there was
-            nothing to write.
-        """
-        return cls.apply_channels(edit, {"opacity": fades}, {}, windows, zeros, fps)
-
-    @classmethod
-    def apply_channels(
-        cls,
-        edit: Any,
-        ramps: Dict[str, Dict[str, Sequence[Sequence[float]]]],
-        colors: Dict[str, Dict[str, Any]],
-        windows: Dict[str, Tuple[float, float]],
-        zeros: Dict[str, float],
-        fps: float,
-    ) -> Optional[Dict[str, Any]]:
-        """Write every channel of every node, per clip, in one pass.
-
-        Parameters:
-            edit: An open ``GlbEdit``.
-            ramps: ``{channel name: {node name: [[frame, value], ...]}}`` --
-                channel names are :data:`CHANNELS` keys; unknown ones are skipped
-                with a warning.
-            colors: ``{channel name: {node name: colour}}`` for channels whose
-                row names ``color_stops``. The colour is one ``(r, g, b)`` per
-                stop, high first; a bare ``(r, g, b)`` is read as the HIGH stop
-                alone, so a producer written before a channel grew a second
-                stop stays correct. Missing stops take their own defaults.
-            windows: ``{clip name: (start frame, end frame)}``.
-            zeros: ``{clip name: authoring frame the clip puts at t=0}``.
-            fps: The rate the frame numbers are quoted in.
+            record: The ``render_effects`` record (v2): its ``tracks`` name the
+                node channels each node carries (and the highlight's colour
+                stops), its ``materials`` the material channels.
+            curves: ``{clip name: {(target, channel): curve}}`` -- each curve
+                ``[(seconds, value, interpolation), ...]`` from the clip's t=0
+                (``MeshConvert.render_effect_curves``). A clip of another name,
+                and a curve the record does not name, write nothing.
+            carriers: Where each node channel's proxy sat (:meth:`carriers`,
+                read before the proxies were stripped); ``None`` reads them
+                off *edit* itself. A node channel plays on its proxy's
+                parent; a track with no proxy joins by name, a tie never
+                guessed (``SceneRecords.TRANSPORT.join``).
 
         Returns:
             ``{"nodes", "materials", "channels", "by_channel"}``, or ``None``
@@ -492,190 +704,184 @@ class GlbFades(_GlbFadesInternal):
         """
         gltf = edit.gltf
         animations = gltf.get("animations") or []
-        if not ramps or not animations or fps <= 0:
+        if not animations or not curves:
             return None
+        clips = {str(a.get("name") or ""): a for a in animations}
 
-        unknown = sorted(set(ramps) - set(CHANNELS))
-        if unknown:
-            logger.warning(
-                "Pointer channels: no row for %s -- those ramps ship as data only.",
-                ", ".join(unknown),
-            )
-
-        by_name: Dict[str, List[int]] = {}
-        for index, node in enumerate(gltf.get("nodes") or []):
-            name = (node or {}).get("name")
-            if name is not None:
-                by_name.setdefault(str(name).split("|")[-1], []).append(index)
-
-        # Which node moves inside which clip, per channel, resolved BEFORE
-        # anything is cloned. Isolating a subtree can switch its materials to
-        # BLEND, and a blended surface sorts differently from an opaque one --
-        # so doing it for a ramp that turns out to hold a constant value in
-        # every clip would change how the object renders in exchange for no
-        # animation.
+        # What moves where, per target and channel, resolved BEFORE anything is
+        # cloned: a curve that holds its rest in every clip costs no copy.
         missing: List[str] = []
-        # node -> [(channel, per_clip, stops)]
-        resolved: Dict[str, List[Tuple[PointerChannel, Dict[str, Any], Stops]]] = {}
-        for channel_name, spec in CHANNELS.items():
-            for name, keys in sorted((ramps.get(channel_name) or {}).items()):
-                if name not in by_name:
-                    missing.append(f"{name}.{channel_name}")
+        tied: List[str] = []
+        planned: List[Tuple[str, str, PointerChannel, Dict[str, Any], Stops]] = []
+        paths = cls._paths(gltf)
+        if carriers is None:
+            carriers = cls.carriers(gltf)
+        wanted: List[Tuple[str, str, Dict[str, Any]]] = []
+        for track in record.get("tracks") or ():
+            if isinstance(track, dict) and track.get("node"):
+                for channel in track.get("channels") or ():
+                    wanted.append(("node", str(track["node"]), {**track, "channel": channel}))
+        for entry in record.get("materials") or ():
+            if isinstance(entry, dict) and entry.get("material"):
+                for channel in entry.get("channels") or ():
+                    wanted.append(("material", str(entry["material"]), {**entry, "channel": channel}))
+        for kind, target, entry in wanted:
+            spec = CHANNELS.get(entry["channel"])
+            if spec is None or spec.target != kind:
+                continue
+            # The record names its target as the delivery (a material) or
+            # the host (a node) does; a curve is keyed by the transport's
+            # name for it, as its proxy is named.
+            joined = SceneRecords.TRANSPORT.target_name(target)
+            per_clip = {
+                clip: keys
+                for clip, keys in (
+                    (clip, (by_target or {}).get((joined, spec.name)))
+                    for clip, by_target in curves.items()
+                )
+                if keys and clip in clips
+            }
+            if not per_clip:
+                continue
+            roots: List[int] = []
+            if kind == "node":
+                roots, status = cls._resolve(target, (spec.name,), carriers, paths)
+                if not roots:
+                    (tied if status == "ambiguous" else missing).append(f"{target}.{spec.name}")
                     continue
-                stops = (
-                    spec.color_stops.resolve((colors.get(spec.name) or {}).get(name))
-                    if spec.color_stops is not None
-                    else ()
-                )
-                rest = (
-                    (lambda v, f=spec.rest, s=stops: f(v, s))
-                    if spec.rest is not None
-                    else None
-                )
-                ramp = sorted((float(k[0]), float(k[1])) for k in keys)
-                per_clip = cls._per_clip(ramp, animations, windows, zeros, fps, rest)
-                if per_clip:
-                    resolved.setdefault(name, []).append((spec, per_clip, stops))
+            if kind == "material" and not cls._named(gltf, target):
+                missing.append(f"{target}.{spec.name}")
+                continue
+            stops = (
+                spec.color_stops.resolve([entry.get(k) for k in spec.color_stops.keys])
+                if spec.color_stops is not None
+                else ()
+            )
+            planned.append(
+                (kind, target, spec, {"curves": per_clip, "entry": entry, "roots": roots}, stops)
+            )
+        if tied:
+            logger.warning(
+                "Pointer channels: %d curve(s) name a node several nodes share, "
+                "and no curve proxy says which (%s) -- never guessed, they play "
+                "nowhere here. Give each node its own name, or re-export so "
+                "each curve rides its node's proxy.",
+                len(tied),
+                ", ".join(sorted(tied)),
+            )
         if missing:
             logger.warning(
-                "Pointer channels: %d ramp(s) name nodes not in this GLB (%s) -- "
-                "they ship as data only.",
+                "Pointer channels: %d curve(s) name a target not in this GLB (%s) "
+                "-- they play nowhere here.",
                 len(missing),
                 ", ".join(sorted(missing)),
             )
-        if not resolved:
+        if not planned:
             return None
 
         existing = cls._existing_pointers(animations)
         users = cls._mesh_users(gltf)
-        payloads: List[bytes] = []
-        slots: Dict[bytes, int] = {}
-
-        def slot(values: Sequence[float]) -> int:
-            raw = struct.pack(f"<{len(values)}f", *values)
-            if raw not in slots:
-                slots[raw] = len(payloads)
-                payloads.append(raw)
-            return slots[raw]
-
+        isolated: Dict[str, List[int]] = {}
+        batch = _SamplerBatch()
         by_clip: Dict[str, List[Dict[str, Any]]] = {}
-        animated_nodes: Set[str] = set()
+        animated: Set[str] = set()
         by_channel: Dict[str, int] = {}
-        prepared: Dict[str, List[str]] = {}  # channel -> notes from ``prepare``
-        for name, entries in resolved.items():
-            # One isolation per node for every channel it carries; BLEND only
-            # when one of those channels is alpha.
-            materials = cls._isolate(
-                gltf,
-                cls._subtree(gltf, by_name[name]),
-                users,
-                blend=any(spec.blend for spec, _pc, _st in entries),
-            )
-            if not materials:
-                # A locator drives the ramp but carries no geometry of its own;
-                # nothing under it renders, so there is nothing to animate.
-                continue
-            for spec, per_clip, stops in entries:
-                for material in materials:
-                    pointer = spec.pointer.format(index=material)
-                    if pointer in existing:
-                        # Already written on THIS target. Writing again would
-                        # stack a second channel on the same property, which is
-                        # undefined; the file's own channel is the statement.
+        doubled: Set[str] = set()
+        for kind, target, spec, plan, stops in planned:
+            materials = cls._targets(gltf, kind, target, spec, plan, stops, users, isolated)
+            for material in materials:
+                pointer = spec.pointer.format(index=material)
+                material_def = gltf["materials"][material]
+                given = stops
+                if spec.name == "emission":
+                    given = cls._emission_stops(gltf, material, plan)
+                base = spec.base(gltf, material)
+                wrote = False
+                for clip, curve in plan["curves"].items():
+                    if (clip, pointer) in existing:
+                        # Already animated in this clip: a second channel on
+                        # one property is undefined -- the file's own stands.
+                        doubled.add(f"{target}.{spec.name}")
                         continue
-                    if spec.prepare is not None:
-                        note = spec.prepare(gltf["materials"][material])
-                        if note:
-                            prepared.setdefault(spec.name, []).append(note)
-                    base = spec.base(gltf, material)
-                    for clip, (cut, samples) in per_clip.items():
-                        flat = [
-                            c
-                            for s in samples
-                            for c in spec.values(base, float(s[0]), stops)
+                    shaped = (
+                        cls._with_boundaries(curve)
+                        if spec.active and _mapped(material_def)
+                        else cls._linearized(curve)
+                    )
+                    held = cls._held([v for _t, v in shaped])
+                    if held is not None and (
+                        (spec.rest is not None and spec.rest(held, given, material_def))
+                        or spec.values(base, held, given, material_def) == base
+                    ):
+                        continue
+                    if len(shaped) < 2:
+                        shaped = [shaped[0], (shaped[0][0] + STEP_SECONDS, shaped[0][1])]
+                    times = [t for t, _v in shaped]
+                    flat = [
+                        c
+                        for _t, value in shaped
+                        for c in spec.values(base, value, given, material_def)
+                    ]
+                    note: Dict[str, Any] = {"channel": spec.name, kind: target}
+                    if spec.active and _mapped(material_def):
+                        # Read off the keys the factor is written at, so the
+                        # map is set aside exactly where the factor glows.
+                        note["active"] = [
+                            [round(t, 6) + 0.0, on] for t, on in cls._glowing_runs(shaped)
                         ]
-                        by_clip.setdefault(clip, []).append(
-                            {
-                                "pointer": pointer,
-                                "type": spec.accessor_type,
-                                "material": material,
-                                "channel": spec.name,
-                                "input": slot(cut),
-                                "output": slot(flat),
-                                "count": len(cut),
-                                "min": cut[0],
-                                "max": cut[-1],
-                            }
-                        )
-                    animated_nodes.add(name)
+                    by_clip.setdefault(clip, []).append(
+                        {
+                            "pointer": pointer,
+                            "type": spec.accessor_type,
+                            "material": material,
+                            "input": batch.slot(times),
+                            "output": batch.slot(flat),
+                            "note": note,
+                        }
+                    )
+                    existing.add((clip, pointer))
+                    wrote = True
+                if wrote:
+                    animated.add(f"{kind}:{target}")
                     by_channel[spec.name] = by_channel.get(spec.name, 0) + 1
-        planned = [
-            (animation, by_clip[str(animation.get("name") or "")])
-            for animation in animations
-            if by_clip.get(str(animation.get("name") or ""))
-        ]
-        if not planned:
-            return None
-        for channel_name, notes in prepared.items():
-            logger.info(
-                "Pointer channels: %s dropped the emissive map from %d "
-                "highlighted material(s) (%s) -- glTF emission is factor x map, "
-                "so the map would have masked the highlight; the highlighted "
-                "copy glows from the channel alone.",
-                channel_name,
-                len(notes),
-                ", ".join(sorted(notes)),
+        if doubled:
+            logger.warning(
+                "Pointer channels: %s already animated in some clip -- the "
+                "file's own channel stands there.",
+                ", ".join(sorted(doubled)),
             )
+        writes = [
+            (clips[clip], specs) for clip, specs in by_clip.items() if specs
+        ]
+        if not writes:
+            return None
 
-        added = GlbEdit.append_bin_views(edit, payloads)
-        if not added:
+        if not batch.commit(edit):
             logger.warning(
                 "Pointer channels: this GLB's buffer is external, so the "
-                "channels have nowhere to live -- the ramps ship as data only."
+                "channels have nowhere to live -- the effects do not play."
             )
             return None
 
-        accessors = gltf.setdefault("accessors", [])
         written = 0
-        for animation, specs in planned:
-            samplers = animation.setdefault("samplers", [])
+        for animation, specs in writes:
             channels = animation.setdefault("channels", [])
             for spec in specs:
-                accessors.append(
-                    {
-                        "bufferView": added[spec["input"]],
-                        "componentType": 5126,
-                        "count": spec["count"],
-                        "type": "SCALAR",
-                        "min": [spec["min"]],
-                        "max": [spec["max"]],
-                    }
-                )
-                input_index = len(accessors) - 1
-                accessors.append(
-                    {
-                        "bufferView": added[spec["output"]],
-                        "componentType": 5126,
-                        "count": spec["count"],
-                        "type": spec["type"],
-                    }
-                )
-                samplers.append(
-                    {
-                        "input": input_index,
-                        "output": len(accessors) - 1,
-                        "interpolation": "LINEAR",
-                    }
-                )
                 channels.append(
                     {
-                        "sampler": len(samplers) - 1,
+                        "sampler": batch.sampler(
+                            animation, spec["input"], spec["output"], spec["type"]
+                        ),
                         "target": {
                             # No ``node``: a pointer channel targets the
                             # document, not the scene graph.
                             "path": "pointer",
                             "extensions": {EXTENSION: {"pointer": spec["pointer"]}},
                         },
+                        # What the channel plays, for a reader of the record:
+                        # the record's channel and target, and -- for a
+                        # highlight over a map -- the spans it is above 0.
+                        "extras": {"render_effects": spec["note"]},
                     }
                 )
                 written += 1
@@ -685,9 +891,7 @@ class GlbFades(_GlbFadesInternal):
             used.append(EXTENSION)
         edit.dirty = True
 
-        materials = sorted(
-            {spec["material"] for _a, specs in planned for spec in specs}
-        )
+        materials = sorted({spec["material"] for _a, specs in writes for spec in specs})
         logger.info(
             "Pointer channels: %s written as %d %s channel(s) on %d material(s), "
             "across %d clip(s).",
@@ -695,11 +899,88 @@ class GlbFades(_GlbFadesInternal):
             written,
             EXTENSION,
             len(materials),
-            len(planned),
+            len(writes),
         )
         return {
-            "nodes": len(animated_nodes),
+            "nodes": len({a for a in animated if a.startswith("node:")}),
             "materials": len(materials),
             "channels": written,
             "by_channel": by_channel,
         }
+
+    @classmethod
+    def _targets(
+        cls,
+        gltf: Dict[str, Any],
+        kind: str,
+        target: str,
+        spec: PointerChannel,
+        plan: Dict[str, Any],
+        stops: Stops,
+        users: Dict[int, List[int]],
+        isolated: Dict[str, List[int]],
+    ) -> List[int]:
+        """The material indices *target*'s channel animates -- a node's
+        materials (under the nodes it resolved to, ``plan["roots"]``)
+        isolated once for every channel it carries, and only when some clip
+        moves it from its rest."""
+        if kind == "material":
+            return cls._named(gltf, target)
+        roots = list(plan["roots"])
+        key = "|".join(str(i) for i in roots)
+        if key in isolated:
+            return isolated[key]
+        moves = False
+        for curve in plan["curves"].values():
+            held = cls._held([v for _t, v in cls._linearized(curve)])
+            if held is None or spec.rest is None:
+                moves = True
+                break
+            for index in cls._candidates(gltf, roots):
+                if not spec.rest(held, stops, gltf["materials"][index]):
+                    moves = True
+            if moves:
+                break
+        if not moves:
+            return []
+        isolated[key] = cls._isolate(gltf, cls._subtree(gltf, roots), users)
+        return isolated[key]
+
+    @classmethod
+    def _candidates(cls, gltf: Dict[str, Any], roots: Sequence[int]) -> List[int]:
+        """The material indices drawn under *roots*, as they stand."""
+        meshes = gltf.get("meshes") or []
+        found: List[int] = []
+        for index in cls._subtree(gltf, roots):
+            mesh = (gltf.get("nodes") or [])[index].get("mesh")
+            if isinstance(mesh, int) and 0 <= mesh < len(meshes):
+                for primitive in meshes[mesh].get("primitives") or []:
+                    material = primitive.get("material")
+                    if isinstance(material, int) and material not in found:
+                        found.append(material)
+        return found
+
+    @classmethod
+    def _emission_stops(
+        cls, gltf: Dict[str, Any], index: int, plan: Dict[str, Any]
+    ) -> Stops:
+        """``(colour x strength / given,)`` for material *index*'s emission
+        entry: the entry's colour and strength, else the material's own, over
+        the strength the material is given for the curve's peak."""
+        material = gltf["materials"][index]
+        entry = plan["entry"]
+        colour = entry.get("emission_color")
+        if not (isinstance(colour, (list, tuple)) and len(colour) >= 3):
+            colour = material.get("emissiveFactor") or (0.0, 0.0, 0.0)
+        strength = entry.get("emission_strength")
+        if not isinstance(strength, (int, float)):
+            strength = cls._emission_strength(material)
+        scaled = [float(c) * float(strength) for c in list(colour)[:3]]
+        weights = [
+            value for curve in plan["curves"].values() for _t, value in cls._linearized(curve)
+        ]
+        peak = max(scaled) * max([0.0, *weights])
+        given = plan.setdefault("given", {}).get(index)
+        if given is None:
+            given = plan["given"][index] = cls._give_strength(gltf, index, peak)
+        return (tuple(c / given for c in scaled),)

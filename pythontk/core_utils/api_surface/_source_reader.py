@@ -711,8 +711,10 @@ class _SourceReader:
         remove_in, since)``: a ``Deprecation.<parameter|values|warn|attributes|
         class_attribute>(...)`` call that names ``remove_in``, anywhere in a
         module. One whose ``remove_in`` cannot be read (a helper's result, a
-        name bound to two strings) carries ``""``. One row per distinct
-        retirement."""
+        name bound to two strings) carries ``""``. A ``class_attribute``
+        bound to a name is keyed by that name, never by the value it holds (a
+        value restated in its new home's terms is the same notice). One row
+        per distinct retirement."""
         out: List[Tuple[str, str, str, str]] = []
         for path in cls._iter_py_files(source_root):
             try:
@@ -721,6 +723,15 @@ class _SourceReader:
                 continue
             relpath = path.relative_to(source_root).as_posix()
             constants = cls._string_constants(tree)
+            bound: Dict[int, str] = {}  # id(call) -> the name it is bound to
+            for node in ast.walk(tree):
+                target = None
+                if isinstance(node, ast.Assign) and len(node.targets) == 1:
+                    target = node.targets[0]
+                elif isinstance(node, ast.AnnAssign):
+                    target = node.target
+                if isinstance(target, ast.Name) and isinstance(node.value, ast.Call):
+                    bound[id(node.value)] = target.id
             for node in ast.walk(tree):
                 if not (
                     isinstance(node, ast.Call)
@@ -737,6 +748,8 @@ class _SourceReader:
                 if given is None:
                     continue
                 what = ast.unparse(node.args[0]) if node.args else ""
+                if node.func.attr == "class_attribute" and id(node) in bound:
+                    what = bound[id(node)]
                 since = next(
                     (
                         cls._string_value(kw.value, constants)

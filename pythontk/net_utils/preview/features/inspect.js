@@ -295,9 +295,9 @@ function textureBytes(texture, THREE) {
 }
 
 // What the model holds in GPU memory, estimated from what it uploads. Textures
-// are counted by IMAGE (`texture.source`): the lightmap pass gives each baked
-// object its own texture carrying its atlas rect, and every one of them shares
-// one uploaded image -- counted per texture, one atlas read as forty-six.
+// are counted by IMAGE (`texture.source`): the lightmap bind gives each atlas
+// rect a texture of its own, and every one of them shares one uploaded image
+// -- counted per texture, one atlas read as forty-six.
 function gpuMemory(viewer, model) {
   const { THREE, materialsOf } = viewer;
   const images = new Map();
@@ -368,7 +368,12 @@ function fileBreakdown(gltf, specs) {
   const viewOf = (index) => accessors[index]?.bufferView;
   const bytesOf = (indices) => [...new Set(indices.filter((index) => index !== undefined && index !== null))]
     .reduce((sum, index) => sum + (views[index]?.byteLength || 0), 0);
-  const images = bytesOf((json.images || []).map((image) => image.bufferView));
+  // A lightmap rides a view of its own, named by its file (the record's
+  // media): an image to the reader as it always was.
+  const images = bytesOf([
+    ...(json.images || []).map((image) => image.bufferView),
+    ...(specs.lightmaps?.views || []),
+  ]);
   const animation = bytesOf((json.animations || []).flatMap((clip) => (
     (clip.samplers || []).flatMap((sampler) => [viewOf(sampler.input), viewOf(sampler.output)])
   )));
@@ -381,7 +386,7 @@ function fileBreakdown(gltf, specs) {
     ...(json.skins || []).map((skin) => viewOf(skin.inverseBindMatrices)),
   ]);
   // The bake's reflection probe rides a view of its own (Radiance bytes),
-  // named from the lightmap manifest rather than from an image.
+  // named by its file in the lightmaps record rather than an image.
   const probe = bytesOf([specs.probe?.bufferView]);
   const total = specs.file.bytes;
   const described = specs.file.jsonBytes || 0;

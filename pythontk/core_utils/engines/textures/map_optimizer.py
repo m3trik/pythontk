@@ -679,7 +679,9 @@ class MapOptimizer(LoggingMixin, HelpMixin):
             elif op.kind == "mode_coerce":
                 target = op.params["target_mode"]
                 if image.mode != target:
-                    image = cls._coerce_mode(image, target)
+                    # A >8-bit source is scaled at its value, never clipped
+                    # (a 0..65535 ramp came back 99.6% white, 2026-08-14).
+                    image = ImgUtils.convert_mode(image, target)
             elif op.kind in ("resize", "force_pot"):
                 # Both resize to the size the PLAN chose. force_pot must not
                 # call ImgUtils.ensure_pot: that re-derives its own nearest-POT
@@ -691,47 +693,6 @@ class MapOptimizer(LoggingMixin, HelpMixin):
                     image, w, h, normal_map=op.params.get("normal_map", False)
                 )
         return image
-
-    @staticmethod
-    def _coerce_mode(image: "Image.Image", target: str) -> "Image.Image":
-        """Convert *image* to *target*, RESCALING a >8-bit integer source.
-
-        Pillow implements ``I;16``/``I`` -> ``L`` as a CLIP at 255, not a range
-        rescale: a smooth 0..65535 ramp comes back as two values, 99.6% of them
-        pure white (probe-proven 2026-08-14). The plan's fallback to a map
-        type's 8-bit target mode — what every container that cannot store the
-        16-bit mode now gets — is meant to be a precision *reduction*; without
-        this it is a destroyed map.
-
-        The reduction itself belongs to ``ImgUtils.convert_i_to_l``, which
-        already owns this rule package-wide. Rolling a private ``point``-based
-        rescale here instead cost a crash: ``point`` refuses byte-order-
-        qualified modes, so ``I;16B`` — what Pillow hands back for a
-        big-endian 16-bit TIFF — raised ``ValueError: point operation not
-        supported for this mode``. The shared helper goes through numpy and
-        reads every byte order.
-
-        Mode "F" is the same trap one dtype over, and the worst of the family:
-        a float map's data lives in 0..1, so Pillow's truncation sends every
-        texel below 1.0 to 0 — a 0..1 height ramp optimized to an essentially
-        black 84-byte PNG, reported as a successful -99% pass. It goes through
-        ``convert_f_to_l``, whose clamp-don't-normalize rule keeps the twins in
-        agreement (both still name "L") where refusing the mode outright would
-        make the writer raise on a prediction ``assess`` had called clean.
-
-        Narrowing to another high-precision mode ("I" -> "I;16" for PNG) stays
-        a plain convert — no range change is involved.
-        """
-        if target in ("I", "I;16") or not (
-            image.mode == "F" or image.mode == "I" or image.mode.startswith("I;")
-        ):
-            return image.convert(target)
-        reduced = (
-            ImgUtils.convert_f_to_l(image)
-            if image.mode == "F"
-            else ImgUtils.convert_i_to_l(image)
-        )
-        return reduced if target == "L" else reduced.convert(target)
 
     @classmethod
     def _resolve_profile(

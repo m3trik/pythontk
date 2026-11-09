@@ -50,10 +50,9 @@ class ExportContext:
     """What an export DECIDES, handed to every producer as input.
 
     The exporter's choices used to be patched onto records after the
-    producers ran -- the clip mode onto the shot envelope, the clip origin
-    onto the visibility tracks -- and were silently overwritten whenever the
-    producers ran again.  Here they are inputs: a producer reads them, and
-    re-running produces the same record.
+    producers ran, and were silently overwritten whenever the producers ran
+    again.  Here they are inputs: a producer reads them, and re-running
+    produces the same record.
 
     Attributes:
         mode: :attr:`PIPELINE` (an export pipeline, the authority on every
@@ -64,14 +63,6 @@ class ExportContext:
             tool republishing its own record -- no write, so a
             :attr:`RecordSpec.transient` record named is cleared, never
             produced).
-        clip_mode: The run's Animation Clips mode (``full`` / ``shots`` /
-            ``both``), declared on the shot record; ``None`` = undeclared.
-        clip_span: The first and last frame the exported stack CARRIES, the
-            frame every GLB clip is cut against; measured by the pipeline
-            from the final keys, ``None`` when nothing measured it. A
-            statement for readers of the carrier: a GLB conversion measures
-            the written file itself and logs a disagreement
-            (``MeshConvert._stamp_clip_spans``).
         source: Producer identity and provenance for the handoff block
             (``application``, ``version``, ``scene``).
         rendering: The export's choices over the lighting recipe the handoff
@@ -79,8 +70,7 @@ class ExportContext:
             value}}`` over ``HandoffRecord.RENDERING_POLICY``); empty = the policy
             as it stands.
         records: Every record produced so far in this assembly, by key --
-            how a producer reads another's output (the audio manifest scopes
-            its events against the takes the shots producer just built).
+            how a producer reads another's output.
         notes: What a producer left out of its record, or could not keep,
             one sentence each (:meth:`note`) -- the report an exporter shows,
             so nothing is dropped from a deliverable silently (the shots
@@ -108,6 +98,33 @@ class ExportContext:
             scene holds them, and the label says what the writer made of
             them. ``None`` when no writer stated one: the producer labels its
             record with the scene's unit.
+        animated: Whether this write carries animation at all -- stated by
+            its WRITER, as :attr:`unit_scale` is (the host's
+            ``FbxUtils.export_context``: Maya's FBX ``Animation`` include
+            group, Blender's ``bake_anim``), never read off the scene: a
+            scene that animates can be written without it. ``None`` when no
+            writer stated it (a context built without one); a producer then
+            asks the scene. The shots producer ships the scene's rate only
+            for a write that carries animation.
+        take_window: The ``(start, end)`` timeline frames the written file's
+            one take declares, in a file with no shots -- MEASURED off the
+            file after the write, its window fitted to the keys it holds
+            (``FbxMedia.fit_take_windows``), by the host's post-write step,
+            which runs the producers that count from it again with this
+            (the ``audio`` record's cues). ``None`` before the write: such a
+            producer counts from what the host's writer declares by itself.
+        withheld: The stored records this write must ship none of, by key,
+            each with the sentence why -- a hand-off ships an authored record
+            as stored, and its host found that copy no longer true of the
+            scene (a ``lightmaps`` record some of whose objects hold their
+            lightmap set off the second UV set since it was published).
+            Stated by the host that knows its scene (``FbxUtils.
+            export_context``), like :attr:`nodes`. The snapshot ships none of
+            each (:meth:`ExportSnapshot.commit`), says why once, keeps the
+            scene's copy for the exporter's restore, and a producer reading
+            it reads none (:meth:`record`); a record the assembly produces is
+            its producer's call (its own refusal: ``LightmapRecord.
+            unless_refused``).
     """
 
     #: Each writer's effective metres per scene unit, stated once: ``{(host,
@@ -172,8 +189,6 @@ class ExportContext:
     AUTHORING = "authoring"
 
     mode: str = "pipeline"
-    clip_mode: Optional[str] = None
-    clip_span: Optional[Tuple[float, float]] = None
     source: Dict[str, Any] = field(default_factory=dict)
     rendering: Dict[str, Any] = field(default_factory=dict)
     records: Dict[str, Optional[Record]] = field(default_factory=dict)
@@ -181,6 +196,9 @@ class ExportContext:
     scope: Optional[Tuple[str, ...]] = None
     nodes: Optional[FrozenSet[str]] = None
     unit_scale: Optional[float] = None
+    animated: Optional[bool] = None
+    take_window: Optional[Tuple[float, float]] = None
+    withheld: Dict[str, str] = field(default_factory=dict)
     #: :attr:`nodes` as a reader matches them, built on first use.
     _names: Optional[NodeNames] = field(
         default=None, init=False, repr=False, compare=False
@@ -222,12 +240,15 @@ class ExportContext:
 
         The one read a consumer of another producer's record needs: fresh
         when both run in one assembly, stored when a tool republishes its own
-        record alone at authoring time.
+        record alone at authoring time or a hand-off ships it as stored, and
+        *default* for a stored copy the write withholds (:attr:`withheld`).
         """
         spec = SceneRecords.resolve(spec)
         if spec.key in self.records:
             produced = self.records[spec.key]
             return produced.payload if produced is not None else default
+        if spec.key in self.withheld:
+            return default
         if store is not None:
             return spec.load(store, default)
         return default
@@ -237,6 +258,28 @@ class ExportContext:
         if self.mode == self.HANDOFF:
             return spec.kind is Kind.DERIVED
         return True
+
+    def ships_stored(self) -> bool:
+        """Whether this write ships some record as the scene stores it --
+        one its mode does not refresh (:meth:`refreshes`): a hand-off's
+        authored records, which only a host can find false (:meth:`withhold`)."""
+        return not all(self.refreshes(spec) for spec in SceneRecords.deliverable())
+
+    def withhold(
+        self, vet: Optional[Callable[["ExportContext"], Optional[Mapping[str, str]]]]
+    ) -> None:
+        """Add to :attr:`withheld` the stored records *vet* -- the host's,
+        taking this context -- names, ``{key: why}``. ``None`` vets nothing,
+        and a vet that raises withholds nothing, logged: a vet never costs
+        the write."""
+        if vet is None:
+            return
+        try:
+            self.withheld.update(vet(self) or {})
+        except Exception:  # noqa: BLE001 - the write goes on without the vet
+            logger.warning(
+                "The stored records were not vetted for the write.", exc_info=True
+            )
 
 
 Producer = Callable[[ExportContext], Union[Record, Iterable[Record], None]]
@@ -319,6 +362,14 @@ class ExportSnapshot:
             for spec in table
             if (wanted is None or spec.key in wanted) and ctx.refreshes(spec)
         ]
+        running = {spec.key for spec in selected}
+        for key, why in ctx.withheld.items():
+            # A stored copy the write ships none of: said once, before any
+            # producer reads it as none (ctx.record). One this assembly
+            # produces is its producer's call.
+            if key not in running:
+                ctx.note(why)
+                snapshot.noted.setdefault(key, []).append(why)
         for spec in SceneRecords.ordered(selected):
             if spec.transient and ctx.mode == ctx.AUTHORING:
                 # An authoring publish is no write: a transient record is
@@ -534,7 +585,10 @@ class ExportSnapshot:
         (self-description must not be able to fail an export).  Each write is
         isolated like each producer: one the store refuses (a locked
         attribute) is logged and added to :attr:`failed`, and the rest are
-        still written.
+        still written. A store that refuses the write whole
+        (``SceneStoreBase.WriteRefused``: the scene's carrier would be
+        another's) is said ONCE, its fix and no traceback, and noted under
+        the first record it refused (:attr:`noted`), for the exporter.
 
         A write that names the nodes it ships (``ctx.nodes``) ships every
         export-scoped record narrowed to them, the ones this assembly did not
@@ -543,15 +597,27 @@ class ExportSnapshot:
         the whole scene's entries, and the post-write embed their maps. Each
         stored copy narrowed is committed narrowed and kept whole in
         :attr:`scene_wide`, for the exporter's restore. A failed producer's
-        record stays as stored.
+        record stays as stored. A stored record the write withholds
+        (``ctx.withheld``) ships none at all -- cleared for the write, kept
+        whole in :attr:`scene_wide` -- whatever the write names.
 
         Returns:
             :attr:`written` -- key -> the text stored (``None`` = cleared).
         """
 
+        from pythontk.core_utils.engines.scene_export.scene_store import (
+            StoreWriteRefused,
+        )
+
+        refused: Dict[str, List[str]] = {}
+
         def write(spec: RecordSpec, text: Optional[str]) -> None:
             try:
                 spec.write_text(store, text)
+            except StoreWriteRefused as why:  # said once, below
+                refused.setdefault(str(why), []).append(spec.key)
+                self.failed.add(spec.key)
+                return
             except Exception:  # one record's write must not cost the others
                 logger.warning(
                     "Scene record %r was not written; left as stored.",
@@ -569,8 +635,10 @@ class ExportSnapshot:
             store.migrate()
         except Exception:  # noqa: BLE001
             logger.warning("Scene records were not migrated.", exc_info=True)
-        if self.ctx.nodes is not None and self.ctx.mode != ExportContext.AUTHORING:
-            self._narrow_stored(store)
+        if self.ctx.mode != ExportContext.AUTHORING:
+            self._withhold_stored(store)
+            if self.ctx.nodes is not None:
+                self._narrow_stored(store)
         for key, record in self.produced.items():
             if key in self.failed:
                 continue
@@ -578,6 +646,11 @@ class ExportSnapshot:
                 write(SceneRecords.resolve(key), None)
             else:
                 write(record.spec, record.text)
+        for why, keys in refused.items():
+            logger.warning(
+                "Scene records not written (%s): %s", ", ".join(sorted(keys)), why
+            )
+            self.noted.setdefault(keys[0], []).append(why)
         try:
             handoff = SceneRecords.HANDOFF
             present = store.channels(Scope.DELIVERABLE)
@@ -603,6 +676,25 @@ class ExportSnapshot:
         except Exception:  # noqa: BLE001 - a missing description never costs the export
             logger.debug("Handoff record not stamped.", exc_info=True)
         return self.written
+
+    def _withhold_stored(self, store) -> None:
+        """Clear for the write each stored record ``ctx.withheld`` names that
+        this assembly did not produce, keeping the stored copy in
+        :attr:`scene_wide` for the exporter's restore. A record its producer
+        failed for stays as stored."""
+        for key in self.ctx.withheld:
+            if key in self.produced or key in self.failed:
+                continue
+            spec = SceneRecords.resolve(key)
+            try:
+                stored = spec.load(store, None)
+            except Exception:  # noqa: BLE001 - an unreadable copy ships as it is
+                logger.debug("Scene record %r not read.", key, exc_info=True)
+                continue
+            if stored is None:
+                continue
+            self.scene_wide[spec.key] = Record(spec, stored)
+            self.produced[spec.key] = None
 
     def _narrow_stored(self, store) -> None:
         """Narrow each export-scoped record *store* holds that this assembly

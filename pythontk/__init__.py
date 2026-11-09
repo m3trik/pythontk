@@ -56,6 +56,7 @@ DEFAULT_INCLUDE = {
     "file_utils.mesh_convert.fbx_media": ["FbxMedia"],
     "file_utils.mesh_convert.export_verify": ["ExportVerifier"],
     "file_utils.mesh_convert.export_fingerprint": ["ExportFingerprint"],
+    "file_utils.mesh_convert.gltf_validator": ["GltfValidator"],
     # FBX -> GLB: the one build the Scene Exporters and the WebXR preview share
     "file_utils.mesh_convert.glb.pipeline": ["GlbPipeline"],
     # The fade/highlight channel table (``GlbFades.CHANNELS``) the DCC render
@@ -139,7 +140,12 @@ DEFAULT_INCLUDE = {
         "ShadowRaster",
         "ShadowConformance",
     ],
-    "geo_utils.shadow_horizon": ["ShadowHorizon", "HeightFieldMap", "HorizonMap"],
+    "geo_utils.shadow_horizon": [
+        "ShadowHorizon",
+        "HeightFieldMap",
+        "HorizonMap",
+        "ShadowHorizonConformance",
+    ],
     # Where a lightmap bake's reflection probe stands, by ray casts a DCC
     # hands it through its host adapter (mayatk's and blendertk's
     # ProbePlacement bind theirs).
@@ -157,12 +163,15 @@ DEFAULT_INCLUDE = {
     "geo_utils.articulation.conformance": "ArticulationConformance",
     # The plan a DCC's ArticulatedRig builds from (mayatk + blendertk share it).
     "geo_utils.articulation.plan": "ArticulationPlan",
-    # The ``articulation`` record's payload and the GLB block it binds to,
-    # declared once (SceneRecords.ARTICULATION names them).
+    # The ``articulation`` record's payload, declared once
+    # (SceneRecords.ARTICULATION names it; a GLB carries it as it stands).
     "geo_utils.articulation.record": [
         "ArticulationRecord",
-        "ArticulationBlock",
+        # Held until 0.22.0 (see HELD_UNTIL_0_22 below).
         "ArticulationWeb",
+        "ArticulationWebRig",
+        "ArticulationWebJoint",
+        "ArticulationWebGrab",
     ],
     "img_utils.shadow_atlas": "ShadowAtlas",
     "img_utils.rect_packer": ["RectPacker", "RectPackResult"],
@@ -216,9 +225,12 @@ DEFAULT_INCLUDE = {
         "RecordSpec",
         "Record",
         "SceneRecords",
+        # Held until 0.22.0 (see HELD_UNTIL_0_22 below).
         "GlbBlock",
         "WebProjection",
     ],
+    # Held until 0.22.0 (see HELD_UNTIL_0_22 below).
+    "core_utils.engines.textures.region_masks": ["RegionMaskManifest"],
     "core_utils.engines.scene_export.scene_store": ["SceneStoreBase"],
     # How a deliverable states itself, for every carrier: the handoff block's
     # instructions, the approved scene's parts, the lighting it was approved
@@ -229,12 +241,12 @@ DEFAULT_INCLUDE = {
         "HandoffBlock",
     ],
     # The ``animation`` record's declared shape and its GLB block.
-    "core_utils.engines.shots.animation_record": ["AnimationRecord", "AnimationBlock"],
+    "core_utils.engines.shots.animation_record": ["AnimationRecord"],
     # The ``shadows`` record's declared shape and its GLB block.
-    "geo_utils.shadow_record": ["ShadowRecord", "ShadowBlock"],
+    "geo_utils.shadow_record": ["ShadowRecord"],
     # The lightmap record's model: what both hosts' bakers publish and every
-    # reader reads, in one shape.
-    "core_utils.engines.scene_export.lightmap_record": ["LightmapRecord", "LightmapsBlock"],
+    # reader reads, in one shape -- an FBX's and a GLB's alike.
+    "core_utils.engines.scene_export.lightmap_record": ["LightmapRecord"],
     # The materials record's model: a material in its shading family's own
     # terms, stated as glTF states it -- what each host's producer and the
     # FBX reader of a record-less file share.
@@ -256,7 +268,7 @@ DEFAULT_INCLUDE = {
         "SidecarHost",
         "PureSidecarHost",
     ],
-    "core_utils.engines.scene_export.scene_exporter": ["SceneExporterBase"],
+    "core_utils.engines.scene_export.scene_exporter": ["SceneExporterBase", "SceneExportHandoff"],
     # Shots engine — DCC-agnostic shot model core shared by mayatk / blendertk
     "core_utils.engines.shots.shot_model": [
         "ShotStore",
@@ -435,15 +447,8 @@ DEFAULT_INCLUDE = {
         "NormalOutputMode",
     ],
     "core_utils.engines.textures.map_optimizer": ["MapOptimizer"],
-    "core_utils.engines.textures.region_masks": [
-        "RegionGroup",
-        "RegionGroupRegistry",
-        "RegionMaskManifest",
-        "RegionMaskPacker",
-        "EmissiveGroupsRecord",
-    ],
-    # Emissive groups: the host-free model mayatk and blendertk drive through
-    # their own half (an ``EmissiveGroupsHost``).
+    # Emissive groups as materials: the host-free model each host library
+    # drives through its own half (an ``EmissiveGroupsHost``).
     "core_utils.engines.textures.emissive_groups": [
         "EmissiveGroupsModel",
         "EmissiveGroupsHost",
@@ -554,6 +559,10 @@ DEFAULT_INCLUDE = {
         "HandoffRequest",
         "Payload",
     ],
+    # A file delivered by copying it into a folder another application watches
+    # (a game engine's project, a hot folder): the deliverer an app shapes, and
+    # the bridge for a file already on disk.
+    "core_utils.handoff.folder_delivery": ["FolderDeliverer", "FileDeliveryBridge"],
     # The `<payload>.manifest.json` sidecar every conversion ships beside its
     # FBX / USD intermediate: the suffix, the section vocabulary and the
     # read/write rules, so both producers and both consumers spell one contract
@@ -652,12 +661,13 @@ DEFAULT_INCLUDE = {
     "net_utils.preview.look_capture": "LookCapture",
     "net_utils.rpc.installer": [
         "PluginInstaller",
+        "RpcPluginSpec",
     ],
     "net_utils.rpc.job": ["RpcJob"],
     # The in-application half of the RPC pair (`client` drives it from outside).
     # Exposed here for the plugin that loads in place and can import pythontk;
     # installed plugins stage `plugin_core.py` into their payload instead.
-    "net_utils.rpc.plugin_core": ["OpRegistry", "MainThreadMarshaller", "RpcPlugin"],
+    "net_utils.rpc.plugin_core": ["OpRegistry", "MainThreadMarshaller", "RpcInstances", "RpcPlugin"],
     "str_utils.fuzzy_matcher": "FuzzyMatcher",
     "str_utils.hotkey_utils": "HotkeyUtils",
     # Pure-string rich-tooltip DSL; uitk's TooltipPresenter shows the result.
@@ -718,6 +728,190 @@ MOVED_NAMES = {
     # The removed tasks["version"] pattern it carried: the Output Filename's own
     # {n} counter states a version (removed 2026-11-01).
     "ExportRun.version_format": ("pythontk.ExportProfile.VERSION_TOKEN", "0.19.0"),
+    # One take per shot (2026-11-05): a file's takes are its shots, named after
+    # them, so the Animation Clips modes (full / shots / both), the shot record's
+    # frame ranges and the whole-timeline clip bookkeeping retire. Take ranges
+    # at export time are the store's; after the write, the file's own.
+    "ExportProfile.ANIMATION_CLIPS_OPTIONS": ("pythontk.ShotStore.declared_takes", "0.21.0"),
+    "ExportRun.clip_mode": ("pythontk.ShotStore.declared_takes", "0.21.0"),
+    "ExportRun.animation_clips_mode": ("pythontk.ExportRun.splits_takes", "0.21.0"),
+    "ExportContext.clip_mode": ("pythontk.ShotStore.declared_takes", "0.21.0"),
+    "ExportContext.clip_span": ("pythontk.FbxFile.take_spans", "0.21.0"),
+    "SceneRecords.declared_takes": ("pythontk.ShotStore.declared_takes", "0.21.0"),
+    "ShotStore.CLIP_MODE_KEY": ("pythontk.ShotStore.declared_takes", "0.21.0"),
+    "MeshConvert.apply_glb_clips": ("pythontk.MeshConvert.apply_glb_animations", "0.21.0"),
+    "MeshConvert.clip_spans": ("pythontk.FbxFile.take_spans", "0.21.0"),
+    "MeshConvert.SHOT_CLIP_MODE_KEY": ("pythontk.ShotStore.declared_takes", "0.21.0"),
+    "MeshConvert.ANIMATION_CLIP_MODES": ("pythontk.ShotStore.declared_takes", "0.21.0"),
+    "MeshConvert.DEFAULT_CLIP_SPAN": ("pythontk.FbxFile.take_spans", "0.21.0"),
+    "MeshConvert.CLIP_SPAN_DRIFT_FRAMES": ("pythontk.FbxFile.take_spans", "0.21.0"),
+    "GlbClips.rebuild": ("pythontk.MeshConvert.apply_glb_animations", "0.21.0"),
+    "ExportVerifier.check_clip_origin": (
+        "pythontk.ExportVerifier.check_clips_vs_takes",
+        "0.21.0",
+    ),
+    # One layout, two containers (2026-11-05): a GLB carries the 'animation'
+    # record as it stands, each shot joined to the animation of its clip's
+    # name, so the block that bound the shots to animation indices retires.
+    "AnimationBlock": ("pythontk.AnimationRecord", "0.21.0"),
+    "AnimationBlockClip": ("pythontk.AnimationRecord", "0.21.0"),
+    # The 'audio' record v3 (2026-11-05): cues per clip in seconds, each with
+    # its sound by the delivered file's name, its offset and its stop -- so
+    # the frame scoping of one event per start retires, and the FBX reader
+    # names the delivered sound files rather than track names.
+    "AudioUtils.scope_events": ("pythontk.AudioUtils.clip_cues", "0.21.0"),
+    "FbxMedia.audio_events": ("pythontk.FbxMedia.audio_sounds", "0.21.0"),
+    # The 'render_effects' record v2 (2026-11-05): it names channels and the
+    # curves ride the takes on their proxies, so the writers placing record
+    # ramps per clip by frame retire for the one reading the file's curves.
+    "GlbFades.apply": ("pythontk.GlbFades.apply_curves", "0.21.0"),
+    "GlbFades.apply_channels": ("pythontk.GlbFades.apply_curves", "0.21.0"),
+    # Emissive groups become materials (2026-11-07): a group's faces wear a
+    # copy of their material per group, its emission keyed by the weight, so
+    # the masks (vertex colours, the _EMask texture), the slots and the
+    # emissive_groups record retire; an old scene converts in one action.
+    "RegionGroup": ("pythontk.EmissiveGroupsModel", "0.21.0"),
+    "RegionGroupRegistry": ("pythontk.EmissiveGroupsModel", "0.21.0"),
+    "RegionMaskPacker": ("pythontk.EmissiveGroupsModel.convert_legacy", "0.21.0"),
+    "EmissiveGroupsRecord": ("pythontk.RenderEffectsRecord", "0.21.0"),
+    "EmissiveGroupsModel.set_default": ("pythontk.EmissiveGroupsModel.set_weight", "0.21.0"),
+    "EmissiveGroupsModel.make_weights_keyable": ("pythontk.EmissiveGroupsModel.key_weight", "0.21.0"),
+    "EmissiveGroupsModel.remove_keyable_weights": ("pythontk.EmissiveGroupsModel.remove_keys", "0.21.0"),
+    "EmissiveGroupsModel.weight_attrs": ("pythontk.EmissiveGroupsModel.list_groups", "0.21.0"),
+    "EmissiveGroupsModel.compact_slots": ("pythontk.EmissiveGroupsModel.convert_legacy", "0.21.0"),
+    "EmissiveGroupsModel.bake_vertex_colors": ("pythontk.EmissiveGroupsModel.convert_legacy", "0.21.0"),
+    "EmissiveGroupsModel.bake_mask": ("pythontk.EmissiveGroupsModel.convert_legacy", "0.21.0"),
+    "EmissiveGroupsModel.export_record": ("pythontk.EmissiveGroupsModel.render_effect_materials", "0.21.0"),
+    "EmissiveGroupsModel.refresh_export_metadata": ("pythontk.EmissiveGroupsModel.render_effect_materials", "0.21.0"),
+    "EmissiveGroupsModel.merge_carrier": ("pythontk.EmissiveGroupsModel.transfer_in", "0.21.0"),
+    "EmissiveGroupsModel.discard_carrier": ("pythontk.EmissiveGroupsModel.transfer_in", "0.21.0"),
+    "SceneRecords.EMISSIVE_GROUPS": ("pythontk.SceneRecords.VISIBILITY", "0.21.0"),
+    # The host seam those masks spoke (stores, carrier weights, colour sets,
+    # mask bakes) gives way to the material seam: each old member to the one
+    # that now does its job, or, for the masks, to the conversion's removal.
+    "EmissiveGroupsHost.add_members": ("pythontk.EmissiveGroupsHost.assign", "0.21.0"),
+    "EmissiveGroupsHost.remove_members": ("pythontk.EmissiveGroupsHost.delete_material", "0.21.0"),
+    "EmissiveGroupsHost.members": ("pythontk.EmissiveGroupsHost.material_faces", "0.21.0"),
+    "EmissiveGroupsHost.membership_stores": ("pythontk.EmissiveGroupsHost.legacy_store_names", "0.21.0"),
+    "EmissiveGroupsHost.carrier_weights": ("pythontk.EmissiveGroupsHost.copies", "0.21.0"),
+    "EmissiveGroupsHost.weight_exists": ("pythontk.EmissiveGroupsHost.copies", "0.21.0"),
+    "EmissiveGroupsHost.ensure_weight": ("pythontk.EmissiveGroupsHost.set_emission", "0.21.0"),
+    "EmissiveGroupsHost.delete_weight": ("pythontk.EmissiveGroupsHost.clear_emission_keys", "0.21.0"),
+    "EmissiveGroupsHost.sync_weight": ("pythontk.EmissiveGroupsHost.set_emission", "0.21.0"),
+    "EmissiveGroupsHost.key_weight": ("pythontk.EmissiveGroupsHost.key_emission", "0.21.0"),
+    "EmissiveGroupsHost.foreign_color_sets": ("pythontk.EmissiveGroupsHost.remove_legacy", "0.21.0"),
+    "EmissiveGroupsHost.write_colors": ("pythontk.EmissiveGroupsHost.remove_legacy", "0.21.0"),
+    "EmissiveGroupsHost.uv_triangles": ("pythontk.EmissiveGroupsHost.remove_legacy", "0.21.0"),
+    "EmissiveGroupsHost.mask_path": ("pythontk.EmissiveGroupsHost.remove_legacy", "0.21.0"),
+    "EmissiveGroupsHost.object_names": ("pythontk.EmissiveGroupsHost.faces", "0.21.0"),
+    "EmissiveGroupsHost.face_count": ("pythontk.EmissiveGroupsHost.material_faces", "0.21.0"),
+    "EmissiveGroupsHost.mesh": ("pythontk.EmissiveGroupsHost.material", "0.21.0"),
+    "EmissiveGroupsHost.merge_stores": ("pythontk.EmissiveGroupsHost.copies", "0.21.0"),
+    "EmissiveGroupsHost.discard_stores": ("pythontk.EmissiveGroupsHost.remove_legacy", "0.21.0"),
+    "EmissiveGroupsHost.publish": ("pythontk.EmissiveGroupsHost.stage_emission_proxy", "0.21.0"),
+    "PureEmissiveGroupsHost.add_members": ("pythontk.PureEmissiveGroupsHost.assign", "0.21.0"),
+    "PureEmissiveGroupsHost.remove_members": ("pythontk.PureEmissiveGroupsHost.delete_material", "0.21.0"),
+    "PureEmissiveGroupsHost.members": ("pythontk.PureEmissiveGroupsHost.material_faces", "0.21.0"),
+    "PureEmissiveGroupsHost.membership_stores": ("pythontk.PureEmissiveGroupsHost.legacy_store_names", "0.21.0"),
+    "PureEmissiveGroupsHost.carrier_weights": ("pythontk.PureEmissiveGroupsHost.copies", "0.21.0"),
+    "PureEmissiveGroupsHost.weight_exists": ("pythontk.PureEmissiveGroupsHost.copies", "0.21.0"),
+    "PureEmissiveGroupsHost.ensure_weight": ("pythontk.PureEmissiveGroupsHost.set_emission", "0.21.0"),
+    "PureEmissiveGroupsHost.delete_weight": ("pythontk.PureEmissiveGroupsHost.clear_emission_keys", "0.21.0"),
+    "PureEmissiveGroupsHost.sync_weight": ("pythontk.PureEmissiveGroupsHost.set_emission", "0.21.0"),
+    "PureEmissiveGroupsHost.key_weight": ("pythontk.PureEmissiveGroupsHost.key_emission", "0.21.0"),
+    "PureEmissiveGroupsHost.foreign_color_sets": ("pythontk.PureEmissiveGroupsHost.remove_legacy", "0.21.0"),
+    "PureEmissiveGroupsHost.write_colors": ("pythontk.PureEmissiveGroupsHost.remove_legacy", "0.21.0"),
+    "PureEmissiveGroupsHost.uv_triangles": ("pythontk.PureEmissiveGroupsHost.remove_legacy", "0.21.0"),
+    "PureEmissiveGroupsHost.mask_path": ("pythontk.PureEmissiveGroupsHost.remove_legacy", "0.21.0"),
+    "PureEmissiveGroupsHost.object_names": ("pythontk.PureEmissiveGroupsHost.faces", "0.21.0"),
+    "PureEmissiveGroupsHost.face_count": ("pythontk.PureEmissiveGroupsHost.material_faces", "0.21.0"),
+    "PureEmissiveGroupsHost.mesh": ("pythontk.PureEmissiveGroupsHost.material", "0.21.0"),
+    "PureEmissiveGroupsHost.merge_stores": ("pythontk.PureEmissiveGroupsHost.copies", "0.21.0"),
+    "PureEmissiveGroupsHost.discard_stores": ("pythontk.PureEmissiveGroupsHost.remove_legacy", "0.21.0"),
+    "PureEmissiveGroupsHost.publish": ("pythontk.PureEmissiveGroupsHost.stage_emission_proxy", "0.21.0"),
+    "ENCODING_CHANNELS": ("pythontk.EmissiveGroupsModel.convert_legacy", "0.21.0"),
+    "ENCODING_ID": ("pythontk.EmissiveGroupsModel.convert_legacy", "0.21.0"),
+    "ENCODING_VERTEX_COLOR": ("pythontk.EmissiveGroupsModel.convert_legacy", "0.21.0"),
+    "SLOT_CHANNELS": ("pythontk.EmissiveGroupsModel.convert_legacy", "0.21.0"),
+    "EmissiveGroupsEntry": ("pythontk.RenderEffectsRecord", "0.21.0"),
+    # The 'lightmaps' record v3 (2026-11-07): one layout, two containers -- a
+    # GLB carries the record as it stands, its files by bufferView name
+    # (SceneRecords.GLB_MEDIA), so the index-bound block retires; the probe's
+    # files are the delivery's in both containers, named for what they are.
+    "LightmapsBlock": ("pythontk.LightmapRecord", "0.21.0"),
+    "LightmapsBlockMaterial": ("pythontk.LightmapRecord", "0.21.0"),
+    "LightmapsBlockProbe": ("pythontk.LightmapRecord", "0.21.0"),
+    "LightmapsBlockHighlight": ("pythontk.LightmapRecord", "0.21.0"),
+    "MeshConvert.FBX_HIGHLIGHT_NAME": ("pythontk.MeshConvert.HIGHLIGHT_COPY_NAME", "0.21.0"),
+    # The GLB build carries that record and its files (2026-11-07): it binds
+    # no material and clones none, so the block's builder, the clone marker
+    # and the probe's separate embed go; the WebXR viewer binds at load.
+    "MeshConvert.lightmaps_block": ("pythontk.SceneRecords.LIGHTMAPS", "0.21.0"),
+    "MeshConvert.embed_glb_lightmap_probe": ("pythontk.MeshConvert.apply_glb_lightmaps", "0.21.0"),
+    "MeshConvert.LIGHTMAP_CLONE_SUFFIX": ("pythontk.MeshConvert.lit_nodes", "0.21.0"),
+    # The probe's highlight copies are the lightmaps record's own row's on
+    # every carrier (2026-11-07), so the per-carrier text that said them --
+    # empty on both since -- goes with its lighting clause.
+    "HandoffCarrier.highlights": ("pythontk.SceneRecords.LIGHTMAPS.clauses", "0.21.0"),
+    # The 'shadows' record v3 (2026-11-07): one layout, two containers -- a
+    # GLB carries the record as it stands, its maps by bufferView name
+    # (SceneRecords.GLB_MEDIA), so the index-bound block retires; the plane's
+    # fields are one shape (no carrier shares them any more).
+    "ShadowBlock": ("pythontk.ShadowRecord", "0.21.0"),
+    "ShadowBlockPlane": ("pythontk.ShadowRecord", "0.21.0"),
+    "ShadowBlockHorizon": ("pythontk.ShadowRecord", "0.21.0"),
+    "ShadowPlaneModel": ("pythontk.ShadowRecord", "0.21.0"),
+    # The GLB build carries that record and its files (2026-11-07): nothing is
+    # bound by index and no glTF texture is made, so the sampler the horizon
+    # map's texture took goes; a reader samples the map as the record says it
+    # is read (whole texels: the WebXR viewer's texture, no mipmaps, clamped).
+    "MeshConvert.SHADOW_DATA_SAMPLER": ("pythontk.SceneRecords.SHADOWS", "0.21.0"),
+    # The 'articulation' record v2 (2026-11-08): one layout, two containers --
+    # a GLB carries the record as it stands, its joints and parts bound by
+    # name, so the index-bound block (and the aliases it was renamed from)
+    # retires; the record is in metres (glTF's frame), so no runtime measures
+    # its unit off the rest pose.
+    "ArticulationBlock": ("pythontk.ArticulationRecord", "0.21.0"),
+    "ArticulationBlockRig": ("pythontk.ArticulationRecord", "0.21.0"),
+    "ArticulationBlockJoint": ("pythontk.ArticulationRecord", "0.21.0"),
+    "ArticulationBlockGrab": ("pythontk.ArticulationRecord", "0.21.0"),
+    "ArticulationModel.scale_of": ("pythontk.SceneRecords.FRAME", "0.21.0"),
+    # The GLB block machinery retires whole with it (2026-11-08): articulation
+    # was the last record a GLB carried bound to its indices, so a GLB carries
+    # each record it carries as it stands (RecordSpec.glb_verbatim; False for
+    # the deliverables a GLB states otherwise -- materials, as glTF's own; the
+    # handoff, the GLB's own -- and every private record) -- nothing declares
+    # a block, its node fields or its version apart from its record's, and no
+    # build pass renumbers one when it removes nodes. A block version is its
+    # record's: SceneRecords.resolve(item).version.
+    "RecordSpec.glb": ("pythontk.RecordSpec.glb_verbatim", "0.21.0"),
+    "SceneRecords.glb_shape": ("pythontk.SceneRecords.shape", "0.21.0"),
+    "SceneRecords.glb_version": ("pythontk.SceneRecords.resolve", "0.21.0"),
+    "SceneRecords.block_problems": ("pythontk.SceneRecords.problems", "0.21.0"),
+}
+
+#: Held until 0.22.0: names v0.20.0 noticed for removal in 0.18.0 on
+#: 2026-10-24, whose window closes 2026-11-23, after 0.21.0 ships -- restored
+#: as working deprecated aliases (``scene_export/_retired.py``,
+#: ``geo_utils/articulation/_retired.py``, ``textures/region_masks.py``,
+#: ``RecordSpec.web``, ``SceneRecords.web_shape``, the three
+#: ``MeshConvert.*_WEB_*`` class attributes; the test class
+#: ``TestRetiredUntil022``). At 0.22.0 delete them and their DEFAULT_INCLUDE
+#: entries, and move these rows into MOVED_NAMES.
+HELD_UNTIL_0_22 = {
+    "GlbBlock": ("pythontk.RecordSpec.glb_verbatim", "0.22.0"),
+    "WebProjection": ("pythontk.RecordSpec.glb_verbatim", "0.22.0"),
+    "RecordSpec.web": ("pythontk.RecordSpec.glb_verbatim", "0.22.0"),
+    "SceneRecords.web_shape": ("pythontk.SceneRecords.shape", "0.22.0"),
+    "ArticulationWeb": ("pythontk.ArticulationRecord", "0.22.0"),
+    "ArticulationWebRig": ("pythontk.ArticulationRecord", "0.22.0"),
+    "ArticulationWebJoint": ("pythontk.ArticulationRecord", "0.22.0"),
+    "ArticulationWebGrab": ("pythontk.ArticulationRecord", "0.22.0"),
+    "RegionMaskManifest": ("pythontk.EmissiveGroupsModel.render_effect_materials", "0.22.0"),
+    "RegionMaskManifest.SCHEMA_VERSION": ("pythontk.EmissiveGroupsModel.render_effect_materials", "0.22.0"),
+    "MeshConvert.ANIMATION_WEB_VERSION": ("pythontk.SceneRecords.SHOTS.version", "0.22.0"),
+    "MeshConvert.SHADOW_WEB_NODE_FIELDS": ("pythontk.SceneRecords.SHADOWS.nodes", "0.22.0"),
+    "MeshConvert.ARTICULATION_WEB_NODE_FIELDS": ("pythontk.SceneRecords.ARTICULATION.nodes", "0.22.0"),
 }
 
 bootstrap_package(globals(), include=DEFAULT_INCLUDE, moved=MOVED_NAMES)

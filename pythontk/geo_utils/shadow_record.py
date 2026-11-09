@@ -1,38 +1,35 @@
 # !/usr/bin/python
 # coding=utf-8
-"""The ``shadows`` record's payload and its GLB block, declared once.
+"""The ``shadows`` record's payload, declared once.
 
-The two shapes of :attr:`pythontk.SceneRecords.SHADOWS`:
+The one shape of :attr:`pythontk.SceneRecords.SHADOWS`, in both containers:
+what both DCCs' ``ShadowRig.export_record`` publishes on the ``data_export``
+carrier (one ``ShadowRig.plane_record`` per plane), and what a GLB carries as
+it stands in its root ``extras`` (one layout, two containers). Each plane is
+joined to its nodes and images by NAME in either; a GLB's images ride as
+media (:attr:`pythontk.SceneRecords.GLB_MEDIA`).
 
-- :class:`ShadowRecord` -- what both DCCs' ``ShadowRig.export_record``
-  publishes on the ``data_export`` carrier (one ``ShadowRig.plane_record``
-  per plane), and what unitytk's ``ShadowPlaneController`` reads from an FBX:
-  each plane joined to its nodes and images by NAME.
-- :class:`ShadowBlock` -- the ``extras.shadows`` block
-  ``MeshConvert.apply_glb_shadows`` derives from it for a GLB: the same
-  planes, each bound to its glTF nodes and textures by INDEX instead, the
-  horizon map's rect flipped to glTF's top-left origin.
-
-A plane's projection model (:class:`ShadowPlaneModel`) and a horizon map's
-layout (:class:`ShadowHorizonLayout`) are declared once and shared; each
-carrier adds only how it addresses the nodes and images -- names in the
-record, indices in the block, never both. A packed plane's atlas tile is the
-quad's own UV bounds, so the block states none.
+Version 3: every plane carries its horizon map (:class:`ShadowPlaneHorizon`),
+which a shader marches for any source position, the canvas a placement
+spans, and the terms of its fade (``falloff_power``, ``fade_height``,
+``source_ramp``), which every reader evaluates each frame
+(``ShadowProjection.fade``). The projected silhouette is an optional
+extension (:class:`ShadowPlaneSilhouette`, read by the GLB's readers alone);
+a reader without it draws the horizon.
 
 They are typed :class:`~pythontk.SchemaSpec` declarations, so this one
 definition validates a payload (``ShadowRecord.validate(payload)``),
 publishes its JSON Schema, and is what ``m3trik/scripts/sync_scene_records.py``
 generates the WebXR runtime's JSDoc typedefs and unitytk's C# record types
 from -- a field renamed here fails their checks until they are regenerated.
-Every plane field is required: both rigs write each one. Change a field
-together with its producers (mayatk's and blendertk's
-``ShadowRig.plane_record``, ``ShadowHorizon.record`` for the horizon block,
-``MeshConvert.apply_glb_shadows`` for the GLB) and bump the record's declared
-version.
+Every plane field is required unless it says otherwise: both rigs write each
+one. Change a field together with its producers (mayatk's and blendertk's
+``ShadowRig.plane_record``, ``ShadowHorizon.record`` for the horizon block)
+and bump the record's declared version.
 """
 
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from pythontk.core_utils.schema_spec import SchemaSpec
 
@@ -40,8 +37,10 @@ from pythontk.geo_utils.shadow_projection import ShadowConformance, ShadowProjec
 
 _field = SchemaSpec.spec_field
 
-#: A plane's rig type: a silhouette drawn for one source position, or a
-#: height-field map a shader marches for any (the DCC rigs' ``RIG_TYPES``).
+#: A rig's type, an authoring choice of the producers (their ``RIG_TYPES``),
+#: never a record field: ``projected`` draws its silhouette (the plane's
+#: ``silhouette.draw``), ``horizon`` keeps it as its march's fallback. Every
+#: plane of either carries its horizon map.
 RIG_TYPES: Tuple[str, ...] = ("projected", "horizon")
 #: How a plane's source shines: from its position, or along one direction.
 SOURCE_TYPES: Tuple[str, ...] = ("point", "directional")
@@ -49,12 +48,20 @@ SOURCE_TYPES: Tuple[str, ...] = ("point", "directional")
 _Vec3 = Tuple[float, float, float]
 _Vec4 = Tuple[float, float, float, float]
 
-# The help a rect's spelling in the record and in the block share; its V
-# origin is the one thing that differs (the GLB pass flips it).
-_MAP_RECT = (
-    "The map's exact rect in its image (never inset), [scale_u, scale_v, "
-    "offset_u, offset_v], origin {origin}."
-)
+
+class _ShadowRecordInternal:
+    """Field checks the declarations below share."""
+
+    @staticmethod
+    def positive(value: Any) -> List[str]:
+        """A length a reader divides by: a number over zero."""
+        if (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and value > 0
+        ):
+            return []
+        return [f"must be a number over 0, got {value!r}"]
 
 
 @dataclass
@@ -118,40 +125,86 @@ class ShadowHorizonLayout(SchemaSpec):
 
 @dataclass
 class ShadowPlaneHorizon(ShadowHorizonLayout):
-    """A horizon plane's height-field shadow map, by file name, and where it
-    sits in its image."""
+    """A plane's height-field shadow map, by file name, and where it sits in
+    its image."""
 
     texture: str = _field(
         help="The map image's file name: the shared horizon atlas once packed.",
         required=True,
     )
-    rect: _Vec4 = _field(help=_MAP_RECT.format(origin="bottom-left"), required=True)
+    rect: _Vec4 = _field(
+        help=(
+            "The map's exact rect in its image (never inset), [scale_u, "
+            "scale_v, offset_u, offset_v], origin bottom-left."
+        ),
+        required=True,
+    )
 
 
 @dataclass
-class ShadowPlaneModel(SchemaSpec):
-    """What a plane shows and how it is placed: its type, its source, and the
-    projection model's inputs (pythontk ``ShadowProjection.model``), the same
-    on every carrier."""
+class ShadowPlaneSilhouette(SchemaSpec):
+    """A plane's projected silhouette: the shadow drawn for one source
+    position, re-placed as the source moves -- an extension, read by the
+    GLB's readers alone."""
 
     TYPED = True
 
-    type: str = _field(
+    texture: str = _field(
+        help="The file name of the plane's own silhouette image (the shadow in its alpha).",
+        required=True,
+    )
+    atlas: ShadowPlaneAtlas = _field(
         help=(
-            "projected: a silhouette drawn for one source position, re-placed "
-            "as the source moves; horizon: a height-field map a shader "
-            "marches for any source position."
+            "Where the silhouette sits in the shared silhouette atlas; absent "
+            "when the plane is not packed."
+        ),
+        nested=ShadowPlaneAtlas,
+    )
+    draw: bool = _field(
+        help=(
+            "Whether a reader holding the silhouette draws it (true), or "
+            "draws the horizon and keeps the silhouette as the fallback where "
+            "it cannot march (false): the rig's authored choice."
         ),
         required=True,
-        choices=RIG_TYPES,
-        default=RIG_TYPES[0],
+        default=True,
+    )
+
+
+@dataclass
+class ShadowPlane(SchemaSpec):
+    """One shadow plane of the record: its nodes by name, its horizon map,
+    the placement's inputs (pythontk ``ShadowProjection.model``) and its
+    fade's terms (``ShadowProjection.fade``)."""
+
+    TYPED = True
+
+    name: str = _field(
+        help=(
+            "The plane mesh node's name, namespace included: the join key to "
+            "the imported plane (where an import drops namespaces, the part "
+            "after the last ':' joins)."
+        ),
+        required=True,
+    )
+    source: str = _field(
+        help=(
+            "The name of the node the shadow is cast from, or an empty string "
+            "when it has none."
+        ),
+        required=True,
+        default="",
+    )
+    contact: str = _field(
+        help=(
+            "The name of the node the shadow is anchored to, at the footprint's "
+            "centre on the target's underside, or an empty string when it has none."
+        ),
+        required=True,
+        default="",
     )
     intensity: float = _field(
-        help=(
-            "The shadow's overall darkness, 0 to 1, which the plane's opacity "
-            "never exceeds: a reader draws the lesser of the two, so a file "
-            "whose material states no opacity draws this."
-        ),
+        help="The shadow's overall darkness, 0 to 1: the fade's ceiling.",
         required=True,
         default=1.0,
     )
@@ -217,65 +270,57 @@ class ShadowPlaneModel(SchemaSpec):
     )
     canvas: _Vec4 = _field(
         help=(
-            "Where the texture's edges sit around the projected shadow, [u0, "
-            "u1, w0, w1]: u1 the far edge in top-disk radii past where the "
+            "Where the quad's edges sit around the projected shadow, [u0, u1, "
+            "w0, w1]: u1 the far edge in top-disk radii past where the "
             "target's top lands, u0 the near edge as a fraction of that far "
             "edge's distance from the anchor, w0 and w1 the sides as fractions "
-            "of the shadow's width."
+            "of the shadow's width -- what a follow_source placement spans, "
+            "and the edges the silhouette was drawn to."
         ),
         required=True,
         default_factory=lambda: list(ShadowConformance.CANVAS),
     )
-
-
-@dataclass
-class ShadowPlane(ShadowPlaneModel):
-    """One shadow plane of the record, joined to its nodes and images by name."""
-
-    name: str = _field(
+    falloff_power: float = _field(
         help=(
-            "The plane mesh node's name, namespace included: the join key to "
-            "the imported plane (where an import drops namespaces, the part "
-            "after the last ':' joins)."
+            "How fast the shadow lightens as it stretches past its footprint: "
+            "the fade's exponent on the stretch."
         ),
         required=True,
+        default=ShadowProjection.DEFAULT_FALLOFF_POWER,
     )
-    texture: str = _field(
+    # Twice the default height: the rigs' own default (2 x the target's height).
+    fade_height: float = _field(
         help=(
-            "The file name of the plane's own silhouette image (the shadow in "
-            "its alpha), or an empty string when it has none."
+            "The target's rise above the ground at which its shadow has faded "
+            "out, in the record's unit."
         ),
         required=True,
+        default=2.0,
     )
-    source: str = _field(
+    source_ramp: float = _field(
         help=(
-            "The name of the node the shadow is cast from, or an empty string "
-            "when it has none."
+            "The source's height over the contact at which the shadow is all "
+            "in, in the record's unit: the fade ramps in from none with the "
+            "source at the contact's height -- the ramp the plane's producer "
+            "previews (one unit of its rig: 0.01 in a metre record of a "
+            "centimetre rig); over 0."
         ),
         required=True,
-        default="",
-    )
-    contact: str = _field(
-        help=(
-            "The name of the node the shadow is anchored to, at the footprint's "
-            "centre on the target's underside, or an empty string when it has none."
-        ),
-        required=True,
-        default="",
-    )
-    atlas: ShadowPlaneAtlas = _field(
-        help=(
-            "Where the silhouette sits in the shared silhouette atlas; absent "
-            "when the plane is not packed."
-        ),
-        nested=ShadowPlaneAtlas,
+        default=1.0,
+        validate=_ShadowRecordInternal.positive,
     )
     horizon: ShadowPlaneHorizon = _field(
-        help=(
-            "The height-field map a horizon plane is shaded from; absent on a "
-            "projected plane and on a horizon plane not yet baked."
-        ),
+        help="The height-field map the plane's shadow is marched from.",
+        required=True,
         nested=ShadowPlaneHorizon,
+    )
+    silhouette: ShadowPlaneSilhouette = _field(
+        help=(
+            "The plane's projected silhouette; absent when it has none. A "
+            "reader without it draws the horizon."
+        ),
+        nested=ShadowPlaneSilhouette,
+        readers=("glb",),
     )
 
 
@@ -285,13 +330,18 @@ class ShadowRecord(SchemaSpec):
     unit their lengths are in."""
 
     TYPED = True
-    #: A plane's rig types (:data:`RIG_TYPES`), on the root-exposed class the
-    #: DCC rigs read them from (``ptk.ShadowRecord.RIG_TYPES``). A class
-    #: constant, never a field: it carries no annotation.
+    #: The rigs' types (:data:`RIG_TYPES`), on the root-exposed class the DCC
+    #: rigs read them from (``ptk.ShadowRecord.RIG_TYPES``). A class constant,
+    #: never a field: it carries no annotation.
     RIG_TYPES = RIG_TYPES
 
     version: int = _field(
-        help="The record's schema version (SceneRecords.SHADOWS.version).",
+        help=(
+            "The record's schema version (SceneRecords.SHADOWS.version); a "
+            "reader reads the version it knows and refuses any other -- a "
+            "version 2 record (a plane's 'type', its silhouette's image on "
+            "the plane, no fade terms) is re-exported."
+        ),
         required=True,
     )
     unit_scale: float = _field(
@@ -305,78 +355,86 @@ class ShadowRecord(SchemaSpec):
         default_factory=list,
     )
 
+    @staticmethod
+    def fade(
+        plane: Dict[str, Any],
+        unit_scale: float,
+        contact: Optional[Sequence[float]] = None,
+        light: Optional[Sequence[float]] = None,
+        *,
+        direction: Optional[Sequence[float]] = None,
+        up: int = 1,
+    ) -> float:
+        """The fade one plane of the record draws with its contact at
+        *contact* and its source at *light* (or shining along *direction*):
+        ``ShadowProjection.fade`` over the plane's terms, every length in the
+        record's unit times *unit_scale* -- what each reader evaluates every
+        frame. A plane whose contact or source does not resolve (*contact*
+        None, or neither *light* nor *direction*) draws at its intensity.
 
-# ------------------------------------------------------------- the GLB block
-@dataclass
-class ShadowBlockHorizon(ShadowHorizonLayout):
-    """A horizon map bound to the file."""
+        Parameters:
+            plane: One entry of the record's ``planes``.
+            unit_scale: The record's metres per unit.
+            contact, light: Points in the record's unit, *up* vertical.
+            direction: The way a directional source shines (any length).
+            up: The vertical axis of the points (1 Y-up, 2 Z-up).
 
-    rect: _Vec4 = _field(help=_MAP_RECT.format(origin="top-left (glTF)"), required=True)
-    texture_index: int = _field(
-        help=(
-            "The glTF texture index of the map, bound with no mipmaps and "
-            "clamped: its texels are data, fetched whole, never colour-decoded."
-        ),
-        required=True,
-    )
+        Returns:
+            The fade, ``0 <= fade <= intensity``.
+        """
+        intensity = float(plane.get("intensity", 1.0))
+        if contact is None or (light is None and direction is None):
+            return intensity
+        m = float(unit_scale)
+        height = float(plane.get("height", 1.0))
+        return ShadowProjection.fade(
+            [float(v) * m for v in contact],
+            None if light is None else [float(v) * m for v in light],
+            float(plane.get("ground", 0.0)) * m,
+            float(plane.get("radius", 0.5)) * m,
+            height * m,
+            up=up,
+            direction=direction,
+            max_stretch=float(
+                plane.get("max_stretch", ShadowProjection.DEFAULT_MAX_STRETCH)
+            ),
+            intensity=intensity,
+            falloff_power=float(
+                plane.get("falloff_power", ShadowProjection.DEFAULT_FALLOFF_POWER)
+            ),
+            fade_height=float(plane.get("fade_height", 2.0 * height)) * m,
+            source_ramp=float(plane.get("source_ramp", 1.0)) * m,
+        )
 
+    @staticmethod
+    def silhouette(
+        texture: str,
+        draw: bool,
+        atlas: str = "",
+        atlas_rect: Sequence[float] = (1.0, 1.0, 0.0, 0.0),
+    ) -> Dict[str, Any]:
+        """A plane's ``silhouette`` (:class:`ShadowPlaneSilhouette`), built
+        once for both rigs' ``plane_record``, as ``ShadowHorizon.record``
+        builds its ``horizon``.
 
-@dataclass
-class ShadowBlockPlane(ShadowPlaneModel):
-    """A plane bound to the file: its node, its source and contact nodes, and
-    the textures it samples, by index."""
+        Parameters:
+            texture: The silhouette image's path or file name; empty when the
+                plane has none.
+            draw: Whether a reader holding it draws it: the rig's type is
+                ``projected``.
+            atlas: The silhouette atlas's file name while the plane is packed.
+            atlas_rect: Its tile in that atlas, ``(su, sv, ou, ov)``.
 
-    node: int = _field(help="The plane mesh's glTF node index.", required=True)
-    source_node: Optional[int] = _field(
-        help=(
-            "The source's glTF node index, or null when the file holds no "
-            "single node of that name."
-        ),
-        required=True,
-    )
-    contact_node: Optional[int] = _field(
-        help=(
-            "The contact's glTF node index, or null when the file holds no "
-            "single node of that name."
-        ),
-        required=True,
-    )
-    texture_index: Optional[int] = _field(
-        help=(
-            "The glTF texture index of a projected plane's colour map (its "
-            "atlas once packed, which the quad's UVs then address), or null on "
-            "a horizon plane, which the march shades."
-        ),
-        required=True,
-    )
-    horizon: ShadowBlockHorizon = _field(
-        help=(
-            "The height-field map the plane is shaded from; present on every "
-            "horizon plane the block carries."
-        ),
-        nested=ShadowBlockHorizon,
-    )
-
-
-@dataclass
-class ShadowBlock(ShadowRecord):
-    """The ``extras.shadows`` block of a GLB: the record's planes, each bound
-    to the file's glTF nodes and textures."""
-
-    version: int = _field(
-        help=(
-            "The block's own schema version (SceneRecords.SHADOWS.glb.version), "
-            "apart from the record's."
-        ),
-        required=True,
-    )
-    planes: List[ShadowBlockPlane] = _field(
-        help=(
-            "One entry per plane mesh node in the file (a name several nodes "
-            "carry gives one each); a plane the file lacks, or cannot bind, is "
-            "left out."
-        ),
-        required=True,
-        nested=[ShadowBlockPlane],
-        default_factory=list,
-    )
+        Returns:
+            The block, or ``{}`` for a plane with no silhouette image.
+        """
+        name = str(texture or "").replace("\\", "/").rsplit("/", 1)[-1]
+        if not name:
+            return {}
+        out: Dict[str, Any] = {"texture": name, "draw": bool(draw)}
+        if atlas:
+            out["atlas"] = {
+                "texture": str(atlas),
+                "rect": [round(float(v), 6) for v in atlas_rect],
+            }
+        return out

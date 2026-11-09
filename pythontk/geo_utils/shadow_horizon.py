@@ -48,17 +48,20 @@ the footprint resolution until that disagreement is under a threshold.
 
 from __future__ import annotations
 
+import base64
+import json
 import math
 import warnings
+import zlib
 from importlib import resources
-from typing import Dict, List, NamedTuple, Optional, Sequence, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Tuple
 
 import numpy as np
 
 from pythontk.core_utils.deprecation import Deprecation
 from pythontk.geo_utils.shadow_projection import ShadowProjection
 
-__all__ = ["HeightFieldMap", "HorizonMap", "ShadowHorizon"]
+__all__ = ["HeightFieldMap", "HorizonMap", "ShadowHorizon", "ShadowHorizonConformance"]
 
 _TWO_PI = 2.0 * math.pi
 #: The 16-bit range a height or a distance is quantised over.
@@ -84,7 +87,11 @@ class HeightFieldMap(NamedTuple):
     Heights are above the ground plane, in frame units, already quantised
     the way the PNG stores them (16-bit over ``height_scale``; the nearest
     column's hull 8-bit; the distance field in 1/64 pixel), so a map and its
-    PNG round trip evaluate identically. ``NaN`` marks an absent span.
+    PNG round trip evaluate alike: decoded fields within 1.2e-7 of the
+    height scale and the alpha within 1.2e-6 (float32 decode; measured over
+    the conformance cases of four seeds), never byte-identical on a re-pack,
+    whose pyramid re-derives from the 8-bit hull and can sit one code below
+    the bake's conservative ceiling. ``NaN`` marks an absent span.
     """
 
     size: int  #: footprint pixels per side, ``S`` (a power of two)
@@ -742,14 +749,20 @@ class ShadowHorizon:
             raise ValueError("ShadowHorizon.bake: no geometry provided.")
         size = 1 << max(3, int(math.ceil(math.log2(max(int(size), 1)))))
         spans = max(int(spans), 1)
+        corners = np.concatenate([p[t].reshape(-1, 3) for p, t in meshes])
+        tall = float(corners[:, up].max()) - float(ground)
         if bounds is None:
-            corners = np.concatenate([p[t].reshape(-1, 3) for p, t in meshes])
             a, b = ShadowProjection.horizontal_axes(up)
             lo_a, hi_a = float(corners[:, a].min()), float(corners[:, a].max())
             lo_b, hi_b = float(corners[:, b].min()), float(corners[:, b].max())
-            tall = float(corners[:, up].max()) - float(ground)
             pad = float(padding) * max(hi_a - lo_a, hi_b - lo_b, tall, 1e-3) + 1e-6
             bounds = (lo_a - pad, hi_a + pad, lo_b - pad, hi_b + pad)
+        # A gap no wider than one step of the 16-bit height code at the
+        # geometry's height is no daylight: it encodes as touching, and two
+        # parts meeting face to face (an awning's post under its slab) come
+        # through a DCC's export and an engine's import a float apart
+        # (measured 2026-11-08: 1.2e-7 m between an awning's post and slab).
+        merge_gap = max(tall, 1e-3) / MAX16
         lo, hi, bounds = ImgUtils.rasterize_height_spans(
             meshes,
             up=up,
@@ -757,6 +770,7 @@ class ShadowHorizon:
             ground=ground,
             bounds=bounds,
             spans=spans,
+            merge_gap=merge_gap,
         )
         top = float(np.fmax.reduce(hi, axis=None))  # NaN: no column at all
         height_scale = max(top, 1e-3) if np.isfinite(top) else 1e-3
@@ -1035,3 +1049,649 @@ class ShadowHorizon:
             if score["tolerant_mean"] <= threshold:
                 break
         return hmap, score
+
+
+class ShadowHorizonConformance:
+    """The golden cases every port of :meth:`ShadowHorizon.bake` and
+    :meth:`HeightFieldMap.alpha` is held to.
+
+    A reader of the ``shadows`` record that bakes a plane's map itself ports
+    the bake, and a reader that draws it ports the evaluation as the oracle
+    its shader is tested against. A port runs every case through its own
+    code and compares within :attr:`TOLERANCE`; the cases are generated from
+    this reference at test time (``Conformance.cases("shadow_horizon")``), so
+    they cannot drift from it.
+
+    A case is geometry in and the map out: triangles in the map's frame (the
+    contact at the horizontal origin), the ground, the up axis, the size, the
+    spans and the bounds (``None`` = fitted with the padding) go in; the
+    layout the bake chose and the whole packed image
+    (:meth:`HeightFieldMap.to_rgba`) come out, its bytes deflated (zlib) and
+    base64-encoded: a 256-pixel map is 1 MB raw and 12 to 50 KB so. Each
+    case also carries :meth:`HeightFieldMap.alpha` at sampled points for a
+    soft and a hard point source and a soft and a hard sun, evaluated on the
+    map **decoded from that image** (:meth:`HeightFieldMap.from_rgba`), what
+    a shader reads, so a port's evaluation is held to the delivered bytes
+    independently of its bake. The named cases come first (each edge the
+    bake has, every spans count, both up axes and both adaptive sizes), then
+    random ones; a case whose input the reference refuses carries
+    ``"error"`` and no map.
+    """
+
+    #: Per quantity, the largest difference a port may show. ``layout``: the
+    #: bounds and the height scale, frame units: closed forms in double and
+    #: one float32 maximum, equal to rounding. ``texel``: codes, a 16-bit
+    #: pair (the span tiles' ``RG`` and ``BA``, the aux tile's ``RG``, the
+    #: pyramid tile's left-half ``BA``) read as one code and every other
+    #: channel as its 8-bit one. The bake quantises float32 values by
+    #: rounding, flooring and ceiling, so a port whose value is one unit in
+    #: the last place off, where the reference's sits on a code boundary,
+    #: lands one code over: one code is what an exact port can be held to.
+    #: ``alpha``: the evaluation, float32 out of double arithmetic; a port
+    #: differs only where its ``asin``, ``acos``, ``sqrt`` sums and ``hypot``
+    #: differ from numpy's in the last place, which moves a soft alpha by
+    #: ~1e-7, never a hard one. Measured on a C# port (.NET 10, x64, seed 3,
+    #: ``per_kind=4``): 0 of 4.8 M codes and 0 of 5,664 alphas off; the
+    #: bounds stay for a runtime whose libm rounds otherwise.
+    TOLERANCE: Dict[str, float] = {
+        "layout": 1.0e-12,
+        "texel": 1.0,
+        "alpha": 1.0e-6,
+    }
+
+    #: Points evaluated per source in each case.
+    POINTS = 48
+
+    # -- fixtures --------------------------------------------------------------
+    @staticmethod
+    def _box(x0, x1, y0, y1, z0, z1) -> Tuple[np.ndarray, np.ndarray]:
+        """A closed axis-aligned box, Y-up, as ``(points, tris)``."""
+        pts = np.array(
+            [[x, y, z] for x in (x0, x1) for y in (y0, y1) for z in (z0, z1)],
+            dtype=float,
+        )
+        quads = (
+            (0, 1, 3, 2),
+            (4, 6, 7, 5),
+            (0, 4, 5, 1),
+            (2, 3, 7, 6),
+            (0, 2, 6, 4),
+            (1, 5, 7, 3),
+        )
+        tris = []
+        for a, b, c, d in quads:
+            tris += [(a, b, c), (a, c, d)]
+        return pts, np.array(tris, dtype=np.int64)
+
+    @staticmethod
+    def _box_flipped(x0, x1, y0, y1, z0, z1) -> Tuple[np.ndarray, np.ndarray]:
+        """The box of :meth:`_box` as a DCC's cube primitive lays it out
+        (the ShadowPlane sample's producer), its corners and triangles in
+        that order: every quad split on the other diagonal, so a ray down a
+        face's diagonal runs along the other pair's shared edge."""
+        pts = np.array(
+            [
+                [x0, y0, z1],
+                [x1, y0, z1],
+                [x0, y1, z1],
+                [x1, y1, z1],
+                [x0, y1, z0],
+                [x1, y1, z0],
+                [x0, y0, z0],
+                [x1, y0, z0],
+            ],
+            dtype=float,
+        )
+        tris = (
+            (0, 1, 2), (2, 1, 3), (2, 3, 4), (4, 3, 5), (4, 5, 6), (6, 5, 7),
+            (6, 7, 0), (0, 7, 1), (1, 7, 3), (3, 7, 5), (6, 0, 4), (4, 0, 2),
+        )  # fmt: skip
+        return pts, np.array(tris, dtype=np.int64)
+
+    @staticmethod
+    def _fan() -> Tuple[np.ndarray, np.ndarray]:
+        """A closed prism, Y-up, from the ground to 1, whose top and bottom
+        are fans of eight triangles round a vertex at (0.0625, 0.0625): over
+        the bounds ``(-1, 1, -1, 1)`` at 16 pixels the fan's centre is a
+        pixel centre and six of its spokes run along rows, columns and
+        diagonals of pixel centres, so rays meet a shared vertex and run
+        along shared edges, exactly."""
+        lo, mid, hi = -0.5625, 0.0625, 0.5625
+        ring = [
+            (hi, lo),
+            (hi, mid),
+            (hi, hi),
+            (mid, hi),
+            (lo, hi),
+            (lo, mid),
+            (lo, lo),
+            (mid, lo),
+        ]
+        pts = np.array(
+            [[a, y, b] for y in (1.0, 0.0) for a, b in ring + [(mid, mid)]],
+            dtype=float,
+        )
+        top, bottom, n = 8, 17, 9  # the centres' indices; a ring's offset
+        tris = []
+        for i in range(8):
+            j = (i + 1) % 8
+            tris += [(top, i, j), (bottom, n + j, n + i)]
+            tris += [(n + i, n + j, j), (n + i, j, i)]
+        return pts, np.array(tris, dtype=np.int64)
+
+    @classmethod
+    def _boxes(cls, *extents) -> List[Tuple[np.ndarray, np.ndarray]]:
+        return [cls._box(*e) for e in extents]
+
+    @staticmethod
+    def _z_up(meshes) -> List[Tuple[np.ndarray, np.ndarray]]:
+        """*meshes* turned from Y-up to Z-up: ``(x, y, z) -> (x, -z, y)``."""
+        return [(np.column_stack([p[:, 0], -p[:, 2], p[:, 1]]), t) for p, t in meshes]
+
+    @classmethod
+    def _random_boxes(cls, rng, up: int) -> List[Tuple[np.ndarray, np.ndarray]]:
+        """Two to four boxes, each turned about a random axis, round the contact."""
+        out = []
+        for _ in range(int(rng.integers(2, 5))):
+            half = rng.uniform(0.03, 0.5, 3)
+            pts, tris = cls._box(
+                -half[0], half[0], -half[1], half[1], -half[2], half[2]
+            )
+            axis = rng.normal(size=3)
+            axis /= np.linalg.norm(axis)
+            angle = rng.uniform(0.0, math.pi)
+            k = np.array(
+                [
+                    [0.0, -axis[2], axis[1]],
+                    [axis[2], 0.0, -axis[0]],
+                    [-axis[1], axis[0], 0.0],
+                ]
+            )
+            rot = np.eye(3) + math.sin(angle) * k + (1.0 - math.cos(angle)) * (k @ k)
+            centre = np.array(
+                [rng.uniform(-0.6, 0.6), rng.uniform(0.0, 1.2), rng.uniform(-0.6, 0.6)]
+            )
+            out.append((pts @ rot.T + centre, tris))
+        return out if up == 1 else cls._z_up(out)
+
+    @staticmethod
+    def _soup(rng, up: int) -> List[Tuple[np.ndarray, np.ndarray]]:
+        """Six to twenty open triangles in general position, some under the ground."""
+        n = int(rng.integers(6, 21))
+        a, b = ShadowProjection.horizontal_axes(up)
+        pts = np.zeros((3 * n, 3))
+        centres = rng.uniform(-0.7, 0.7, (n, 2))
+        pts[:, a] = np.repeat(centres[:, 0], 3) + rng.uniform(-0.3, 0.3, 3 * n)
+        pts[:, b] = np.repeat(centres[:, 1], 3) + rng.uniform(-0.3, 0.3, 3 * n)
+        pts[:, up] = rng.uniform(-0.2, 1.4, 3 * n)
+        return [(pts, np.arange(3 * n, dtype=np.int64).reshape(n, 3))]
+
+    # -- one case --------------------------------------------------------------
+    @classmethod
+    def _sources(cls, hmap: HeightFieldMap, rng) -> List[Dict[str, Any]]:
+        """A soft and a hard point source, a soft and a hard sun, over the map."""
+        a, b = ShadowProjection.horizontal_axes(hmap.up)
+        a0, a1, b0, b1 = hmap.bounds
+        extent = max(a1 - a0, b1 - b0)
+        out = []
+        for kind, spread, intensity in (
+            ("point", 0.15 * extent, 1.0),
+            ("point", 0.0, 1.0),
+            ("sun", 0.06, 1.5),
+            ("sun", 0.0, 1.0),
+        ):
+            bearing = rng.uniform(0.0, _TWO_PI)
+            elev = math.radians(rng.uniform(15.0, 65.0))
+            toward = np.zeros(3)
+            toward[a] = math.cos(elev) * math.cos(bearing)
+            toward[b] = math.cos(elev) * math.sin(bearing)
+            toward[hmap.up] = math.sin(elev)
+            src = {
+                "light": None,
+                "direction": None,
+                "source_size": 0.0,
+                "source_angle": 0.0,
+                "intensity": float(intensity),
+            }
+            if kind == "point":
+                light = toward * rng.uniform(1.5, 3.0) * extent
+                light[hmap.up] += hmap.ground
+                src["light"] = [float(v) for v in light]
+                src["source_size"] = float(spread)
+            else:
+                src["direction"] = [float(v) for v in -toward]
+                src["source_angle"] = float(spread)
+            out.append(src)
+        return out
+
+    @classmethod
+    def _points(cls, hmap: HeightFieldMap, rng) -> np.ndarray:
+        """Points over the footprint and a quarter of it round, at random
+        heights (the evaluation replaces each with the ground)."""
+        a, b = ShadowProjection.horizontal_axes(hmap.up)
+        a0, a1, b0, b1 = hmap.bounds
+        ma, mb = 0.25 * (a1 - a0), 0.25 * (b1 - b0)
+        pts = np.zeros((cls.POINTS, 3))
+        pts[:, a] = rng.uniform(a0 - ma, a1 + ma, cls.POINTS)
+        pts[:, b] = rng.uniform(b0 - mb, b1 + mb, cls.POINTS)
+        pts[:, hmap.up] = hmap.ground + rng.uniform(-1.0, 1.0, cls.POINTS)
+        return pts
+
+    @classmethod
+    def case(
+        cls,
+        meshes,
+        *,
+        ground: float = 0.0,
+        up: int = 1,
+        size: int = ShadowHorizon.DEFAULT_SIZE,
+        spans: int = ShadowHorizon.DEFAULT_SPANS,
+        bounds: Optional[Sequence[float]] = None,
+        padding: float = ShadowHorizon.DEFAULT_PADDING,
+        seed: int = 0,
+        extra_sources: Sequence[Dict[str, Any]] = (),
+        name: str = "",
+    ) -> Dict[str, Any]:
+        """One case: its inputs and what the reference makes of them.
+
+        Parameters:
+            meshes: ``(points, tris)`` pairs in the map's frame.
+            ground, up, size, spans, bounds, padding: As :meth:`ShadowHorizon.bake`.
+            seed: The stream the case's sources and points are drawn from.
+            extra_sources: Sources evaluated after the drawn four, each
+                ``{"light", "direction", "source_size", "source_angle",
+                "intensity"}`` and, optionally, the ``"points"`` it is
+                evaluated at (``x, y, z`` rows; drawn when absent).
+            name: A label for a failure message.
+
+        Returns:
+            ``{"name", "input": {"meshes": [{"points", "triangles"}],
+            "ground", "up", "size", "spans", "bounds", "padding"}, "map":
+            {"size", "spans", "levels", "bounds", "ground", "up",
+            "height_scale", "width", "height", "rgba"}, "alpha": [{"light",
+            "direction", "source_size", "source_angle", "intensity",
+            "points", "alpha"}]}``: points and triangles flat (``x, y, z``
+            and ``i, j, k`` runs), ``rgba`` the image's rows top first (row 0
+            is the frame's ``b0`` edge), ``R, G, B, A`` per texel, deflated
+            (zlib) and base64-encoded. A refused input carries ``"error"``
+            (the exception's type name) and no ``map`` or ``alpha``.
+        """
+        flat = []
+        for p, t in meshes:
+            p = np.asarray(p, dtype=float).reshape(-1, 3)
+            t = np.asarray(t, dtype=np.int64).reshape(-1, 3)
+            flat.append(
+                {
+                    "points": [float(v) for v in p.ravel()],
+                    "triangles": [int(v) for v in t.ravel()],
+                }
+            )
+        doc: Dict[str, Any] = {
+            "name": name,
+            "input": {
+                "meshes": flat,
+                "ground": float(ground),
+                "up": int(up),
+                "size": int(size),
+                "spans": int(spans),
+                "bounds": None if bounds is None else [float(v) for v in bounds],
+                "padding": float(padding),
+            },
+        }
+        try:
+            hmap = ShadowHorizon.bake(
+                meshes,
+                ground=ground,
+                up=up,
+                size=size,
+                spans=spans,
+                bounds=bounds,
+                padding=padding,
+            )
+        except ValueError as e:
+            doc["error"] = type(e).__name__
+            return doc
+        rgba = hmap.to_rgba()
+        doc["map"] = {
+            "size": hmap.size,
+            "spans": hmap.spans,
+            "levels": hmap.levels,
+            "bounds": [float(v) for v in hmap.bounds],
+            "ground": hmap.ground,
+            "up": hmap.up,
+            "height_scale": hmap.height_scale,
+            "width": int(rgba.shape[1]),
+            "height": int(rgba.shape[0]),
+            "rgba": base64.b64encode(
+                zlib.compress(np.ascontiguousarray(rgba).tobytes(), 9)
+            ).decode("ascii"),
+        }
+        delivered = HeightFieldMap.from_rgba(
+            rgba,
+            size=hmap.size,
+            spans=hmap.spans,
+            bounds=hmap.bounds,
+            ground=hmap.ground,
+            up=hmap.up,
+            height_scale=hmap.height_scale,
+        )
+        rng = np.random.default_rng(seed)
+        evaluations = []
+        for src in cls._sources(hmap, rng) + list(extra_sources):
+            if src.get("points") is None:
+                pts = cls._points(hmap, rng)
+            else:
+                pts = np.asarray(src["points"], dtype=float).reshape(-1, 3)
+            alpha = delivered.alpha(
+                pts,
+                src["light"],
+                direction=src["direction"],
+                source_size=src["source_size"],
+                source_angle=src["source_angle"],
+                intensity=src["intensity"],
+            )
+            evaluations.append(
+                dict(
+                    src,
+                    points=[float(v) for v in pts.ravel()],
+                    alpha=[float(v) for v in alpha],
+                )
+            )
+        doc["alpha"] = evaluations
+        return doc
+
+    # -- the document ----------------------------------------------------------
+    @classmethod
+    def cases(cls, seed: int = 0, per_kind: int = 3) -> Dict[str, Any]:
+        """The conformance document: ``{"tolerance", "cases"}``.
+
+        Parameters:
+            seed: The random stream's seed -- the same seed, the same cases.
+            per_kind: Random cases of each kind (turned boxes, a triangle
+                soup) after the named ones, whose own draws are fixed.
+        """
+        rng = np.random.default_rng(seed)
+        randoms = []
+        for k in range(int(per_kind)):
+            for kind in ("boxes", "soup"):
+                up = int(rng.choice([1, 2]))
+                meshes = (
+                    cls._random_boxes(rng, up)
+                    if kind == "boxes"
+                    else cls._soup(rng, up)
+                )
+                randoms.append(
+                    cls.case(
+                        meshes,
+                        ground=float(rng.uniform(-0.1, 0.3)),
+                        up=up,
+                        size=int(rng.choice([16, 32, 64, 128])),
+                        spans=int(rng.integers(1, 4)),
+                        seed=int(rng.integers(0, 2**31)),
+                        name=f"{kind}_{k}",
+                    )
+                )
+        return {"tolerance": dict(cls.TOLERANCE), "cases": cls._named() + randoms}
+
+    #: The named cases as JSON text, built on first use: they take no seed,
+    #: and their bakes and marches are most of a document's cost.
+    _NAMED_JSON: Optional[str] = None
+
+    @classmethod
+    def _named(cls) -> List[Dict[str, Any]]:
+        """The named cases, a fresh copy each call."""
+        if cls._NAMED_JSON is None:
+            cls._NAMED_JSON = json.dumps(cls._build_named())
+        return json.loads(cls._NAMED_JSON)
+
+    @classmethod
+    def _build_named(cls) -> List[Dict[str, Any]]:
+        """Each edge the bake has, every spans count, both up axes and both
+        adaptive sizes, in a fixed order."""
+        legs = ((-0.55, -0.35), (0.5, 0.3), (-0.55, 0.3), (0.5, -0.35))
+        box = cls._boxes((-1, 1, 0, 2, -1, 1))
+        table = cls._boxes(
+            (-0.6, 0.6, 0.7, 0.75, -0.4, 0.4),
+            *((x, x + 0.05, 0, 0.7, z, z + 0.05) for x, z in legs),
+        )
+        chair = cls._boxes(
+            (-0.25, 0.25, 0.40, 0.45, -0.25, 0.25),
+            (-0.25, 0.25, 0.45, 0.90, 0.20, 0.25),
+            *(
+                (x, x + 0.05, 0.0, 0.40, z, z + 0.05)
+                for x in (-0.23, 0.18)
+                for z in (-0.23, 0.18)
+            ),
+        )
+        stool = cls._boxes(
+            (-0.2, 0.2, 0.45, 0.48, -0.2, 0.2),
+            *(
+                (x, x + 0.03, 0.0, 0.45, z, z + 0.03)
+                for x in (-0.19, 0.16)
+                for z in (-0.19, 0.16)
+            ),
+            *((-0.16, 0.16, 0.15, 0.18, z, z + 0.03) for z in (-0.19, 0.16)),
+        )
+        arch = cls._boxes(
+            (-0.65, -0.55, 0.0, 1.8, -0.05, 0.05),
+            (0.55, 0.65, 0.0, 1.8, -0.05, 0.05),
+            (-0.7, 0.7, 1.8, 1.95, -0.05, 0.05),
+        )
+        # four boards over one footprint and a post: more spans than K
+        shelf = cls._boxes(
+            *((-0.4, 0.4, y, y + 0.03, -0.15, 0.15) for y in (0.1, 0.45, 0.62, 1.1)),
+            (-0.4, -0.37, 0.0, 1.2, -0.15, 0.15),
+        )
+        # a square frame round an open middle: an interior hole
+        frame = cls._boxes(
+            (-0.6, 0.6, 0.0, 0.5, -0.6, -0.4),
+            (-0.6, 0.6, 0.0, 0.5, 0.4, 0.6),
+            (-0.6, -0.4, 0.0, 0.5, -0.4, 0.4),
+            (0.4, 0.6, 0.0, 0.5, -0.4, 0.4),
+        )
+        triangle = [
+            (
+                np.array([[-0.4, 0.2, -0.3], [0.5, 0.9, -0.1], [0.1, 0.5, 0.45]]),
+                np.array([[0, 1, 2]]),
+            )
+        ]
+        # a single-sided board: an open surface still blocks at its height
+        plank = [
+            (
+                np.array(
+                    [
+                        [-0.5, 0.6, -0.1],
+                        [0.5, 0.6, -0.1],
+                        [0.5, 0.62, 0.1],
+                        [-0.5, 0.62, 0.1],
+                    ]
+                ),
+                np.array([[0, 1, 2], [0, 2, 3]]),
+            )
+        ]
+        # a 1 cm strip leaning across the footprint: thinner than a pixel
+        strip = [
+            (
+                np.array(
+                    [
+                        [-0.5, 0.0, -0.3],
+                        [-0.49, 0.0, -0.3],
+                        [0.6, 1.5, 0.4],
+                        [0.61, 1.5, 0.4],
+                    ]
+                ),
+                np.array([[0, 1, 2], [1, 3, 2]]),
+            )
+        ]
+        below = {
+            "light": [0.5, -1.0, 0.2],
+            "direction": None,
+            "source_size": 0.2,
+            "source_angle": 0.0,
+            "intensity": 1.0,
+        }
+        # a sun near noon: the plank's shadow falls inside its own footprint
+        steep = {
+            "light": None,
+            "direction": [float(v) for v in ShadowProjection._unit((0.15, -1.0, 0.08))],
+            "source_size": 0.0,
+            "source_angle": 0.02,
+            "intensity": 1.0,
+        }
+        small, large = ShadowHorizon.ADAPTIVE_SIZES
+        named = [
+            cls.case(box, extra_sources=[below], seed=1, name="box"),
+            cls.case(triangle, seed=2, name="single_triangle"),
+            cls.case(plank, extra_sources=[steep], seed=3, name="open_plank"),
+            cls.case(table, seed=4, name="overhang"),
+            cls.case(frame, seed=5, name="interior_hole"),
+            cls.case(stool, seed=6, name="stool"),
+            cls.case(shelf, spans=1, seed=7, name="spans_1"),
+            cls.case(shelf, spans=2, seed=8, name="spans_2"),
+            cls.case(shelf, spans=3, seed=9, name="spans_3"),
+            # the bounds cut the box on two sides; the post straddles the a0 edge
+            cls.case(
+                cls._boxes(
+                    (-0.8, 0.3, 0.0, 1.0, 0.2, 0.9),
+                    (-0.52, -0.48, 0.0, 0.8, -0.3, -0.2),
+                ),
+                bounds=(-0.5, 0.5, -0.5, 0.5),
+                size=64,
+                seed=10,
+                name="canvas_edge",
+            ),
+            # an empty footprint, twice: the bounds miss the geometry, or it
+            # lies wholly under the ground
+            cls.case(
+                box, bounds=(3.0, 4.0, 3.0, 4.0), size=32, seed=11, name="empty_outside"
+            ),
+            cls.case(
+                cls._boxes((-0.5, 0.5, 0.0, 0.4, -0.5, 0.5)),
+                ground=0.5,
+                size=32,
+                seed=12,
+                name="empty_buried",
+            ),
+            cls.case(
+                cls._boxes((-0.5, 0.5, -0.5, 1.0, -0.3, 0.3)),
+                seed=13,
+                name="ground_cut",
+            ),
+            cls.case(strip, seed=14, name="thin_member"),
+            cls.case(
+                cls._boxes((-1.0, 1.0, 0.0, 0.45, -0.12, 0.12)),
+                seed=15,
+                name="elongated",
+            ),
+            cls.case(cls._z_up(chair), up=2, seed=16, name="z_up"),
+            cls.case(arch, size=small, seed=17, name="adaptive_small"),
+            cls.case(arch, size=large, seed=18, name="adaptive_large"),
+            cls.case(
+                chair, size=large, spans=3, seed=19, name="adaptive_large_spans_3"
+            ),
+            cls.case(table, size=100, seed=20, name="size_rounds_up"),
+            cls.case(box, size=3, seed=21, name="size_floor"),
+            cls.case([], name="no_geometry"),
+            # Watertight: rays down a face's diagonal run along the edge its
+            # two triangles share (the footprint centred, its bounds
+            # symmetric), and either split bakes the same solid; a fan whose
+            # centre and spokes sit on pixel centres, exactly.
+            cls.case(
+                [cls._box_flipped(-30, 30, 0, 60, -30, 30)],
+                size=64,
+                seed=22,
+                name="edge_rays_flipped",
+            ),
+            cls.case(
+                cls._boxes((-30, 30, 0, 60, -30, 30)),
+                size=64,
+                seed=22,
+                name="edge_rays_split",
+            ),
+            cls.case(
+                [cls._fan()],
+                size=16,
+                bounds=(-1.0, 1.0, -1.0, 1.0),
+                seed=23,
+                name="edge_rays_fan",
+            ),
+            # Two parts meeting face to face a float32 step apart -- an
+            # awning's post under its slab, as an engine imported one DCC's
+            # delivery (measured 2026-11-08) -- bake one span, not daylight.
+            cls.case(
+                cls._boxes(
+                    (-0.06, 0.06, 0.0, float(np.nextafter(np.float32(1.1), np.float32(0.0))), -0.06, 0.06),
+                    (-0.3, 0.5, 1.1, 1.18, -0.2, 0.2),
+                ),
+                size=64,
+                seed=24,
+                name="faces_a_float_apart",
+            ),
+        ]
+        return named + cls._exact_named()
+
+    @classmethod
+    def _exact_named(cls) -> List[Dict[str, Any]]:
+        """The named cases whose values sit exactly on a tie or a boundary,
+        each pinning one rule a port could spell otherwise and still pass
+        the rest: over 16 pixels of ``(-1, 1)``, where every pixel edge and
+        centre is a binary fraction."""
+        unit = (-1.0, 1.0, -1.0, 1.0)
+        # three boards, evenly spaced, over K = 2: the two gaps tie, and the
+        # first (lowest) is merged
+        boards = cls._boxes(
+            *((-0.5, 0.5, y, y + 0.125, -0.25, 0.25) for y in (0.25, 0.5, 0.75))
+        )
+        # pixels 129/128 as wide as tall: a pixel beside a column along a is
+        # 1.0078125 pitches away, 64.5 distance codes -- a half, to even
+        wide = (-1.0078125, 1.0078125, -1.0, 1.0)
+
+        # one-pixel posts of two heights, a pixel (column 6, row 8) sqrt(5)
+        # from both: one row up, two along; two rows down, one along. The
+        # lower row's hull is the nearest's.
+        def post(i, j, height):
+            a, b = -1.0 + i / 8.0, -1.0 + j / 8.0
+            return (a + 0.02, a + 0.105, 0.0, height, b + 0.02, b + 0.105)
+
+        posts = cls._boxes(post(8, 9, 0.5), post(7, 6, 1.0))
+        # a post whose -a face lies on the pixel edge a = 0, and points on
+        # that edge: a ray leaving it toward -a starts in the pixel it heads
+        # into, not the solid one behind it
+        edge_post = cls._boxes((0.0, 0.1, 0.0, 1.0, 0.02, 0.105))
+        on_edge = {
+            "light": None,
+            "direction": [float(v) for v in ShadowProjection._unit((1.0, -1.0, 0.0))],
+            "source_size": 0.0,
+            "source_angle": 0.0,
+            "intensity": 1.0,
+            "points": [[0.0, 0.0, 0.0625], [0.0, 0.0, 0.03]],
+        }
+        # a sun within 1e-9 of the zenith: no horizontal bearing, no shadow,
+        # even under the post
+        zenith = {
+            "light": None,
+            "direction": [1e-10, -1.0, 0.0],
+            "source_size": 0.0,
+            "source_angle": 0.0,
+            "intensity": 1.0,
+            "points": [[0.05, 0.0, 0.06], [0.04, 0.0, 0.05]],
+        }
+        return [
+            cls.case(boards, size=16, spans=2, bounds=unit, seed=24, name="equal_gaps"),
+            cls.case(
+                cls._boxes((-0.2, 0.2, 0.0, 0.5, -0.2, 0.2)),
+                size=16,
+                bounds=wide,
+                seed=25,
+                name="half_code",
+            ),
+            cls.case(posts, size=16, bounds=unit, seed=26, name="row_tie"),
+            cls.case(
+                edge_post,
+                size=16,
+                bounds=unit,
+                extra_sources=[on_edge, zenith],
+                seed=27,
+                name="march_edges",
+            ),
+        ]

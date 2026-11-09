@@ -2,22 +2,30 @@
   Articulated rig — pose the DCC's articulated rigs, and let a hand move them.
 
   An articulated rig (mayatk `ArticulatedRig`) is a prop of rigid parts on
-  hinge, swivel, ball and slide joints: one joint per moving part, the part
-  parented under it, every channel 0 at rest. The joints' own keys ride the
-  FBX -> glTF hop as ordinary node animation, so a clip plays with no help;
-  what does NOT survive is the rig -- which channels each joint turns on,
-  their limits, which parts a hand grabs. `MeshConvert.apply_glb_articulation`
-  (pythontk) writes that as root `extras.articulation`: the
-  `articulation` scene record with every joint and grabbed part bound to its
-  glTF node index. This script is the runtime half:
+  hinge, swivel, ball and slide joints: one joint per moving part, every
+  channel 0 at rest. The joints' own keys ride the FBX -> glTF hop as ordinary
+  node animation, so a clip plays with no help; what does NOT survive is the
+  rig -- which channels each joint turns on, about which anchor, their limits,
+  which parts a hand grabs. The GLB carries that as the `articulation` record
+  itself, in its root extras (`MeshConvert.apply_glb_articulation`, pythontk:
+  one layout, two containers), in glTF's frame (metres). This script is the
+  runtime half:
 
-    load   read the manifest; map node indices to Object3Ds through the
-           loader's association table (names are not unique); build each
-           rig's model; measure the file's unit against the record's off the
-           rest translations of the joints that cannot slide; register every
-           grabbed part with the page's `viewer.grab`, and show each rig's
-           section of the Rig window (a slider per channel, the joints'
-           values, Reset, Return to animation, joint axes).
+    load   read the record; resolve each rig's joints by name over every node
+           of the file, as one assignment, and each grabbed part by name under
+           its joint's node (kernel/resolve.js, the rule every record's reader
+           shares: exactly, else by the name after the last ':'; a name two
+           nodes answer binds neither, and its rig is not posed); build each
+           rig's model; register every grabbed part with the page's
+           `viewer.grab`, and show each rig's section of the Rig window (a
+           slider per channel, the joints' values, Reset, Return to
+           animation, joint axes).
+    pose   every part is posed from its parent JOINT's pose, never its scene
+           parent's: a part nested under its parent joint's node takes its
+           joint's local as it stands, and one hanging anywhere else (a flat
+           model, every part under the root) is placed where that joint's
+           pose puts it. A root joint's chain is posed and solved in the
+           space its root hangs in.
     grab   a hold reads the pose on screen back into the model's state (a
            playing clip included), records the held point in its joint's
            frame, and each move solves the state that brings it to the hand
@@ -28,11 +36,11 @@
            or until the transport starts playing again.
 
   THE MODEL is `ArticulationModel` (model.js beside this): pythontk's
-  `geo_utils/articulation/model.py` ported operation for operation, pinned
-  against it by the reference's golden cases, with no three.js -- so a
-  production WebXR app on any framework can vendor it without the preview.
-  This module is its three.js adapter, and re-exports it for a script that
-  imports the model from here.
+  `geo_utils/articulation/model.py` ported operation for operation, anchors
+  included, pinned against it by the reference's golden cases, with no
+  three.js -- so a production WebXR app on any framework can vendor it
+  without the preview. This module is its three.js adapter, and re-exports it
+  for a script that imports the model from here.
 
   Activate:  automatic -- PreviewServer.AUTO_SCRIPTS turns it on for any
              deliverable whose root extras carry `articulation`;
@@ -40,8 +48,9 @@
 */
 
 import { readBlock } from '../../kernel/extras.js';
-import { norm, qmul, scale } from '../../kernel/math.js';
+import { norm, qmul } from '../../kernel/math.js';
 import { ARTICULATION } from '../../kernel/records.js';
+import { indexNodes, resolveIndexed } from '../../kernel/resolve.js';
 import { ArticulationModel, ROTATE_CHANNELS } from './model.js';
 
 export { ArticulationModel, ROTATE_CHANNELS, ROTATE_ORDERS, TRANSLATE_CHANNELS } from './model.js';
@@ -51,86 +60,151 @@ const PANEL_INTERVAL = 0.1;
 
 /* -------------------------------------------------------------- the file --- */
 
-// The articulation record's block (the ROOT's extras, where the conversion
-// writes it and PreviewServer.AUTO_SCRIPTS looks).
-/** @returns {import('../../kernel/records.js').ArticulationBlock | null} */
-function readManifest(parser) {
+// The articulation record (the ROOT's extras, where the conversion carries it
+// and PreviewServer.AUTO_SCRIPTS looks).
+/** @returns {import('../../kernel/records.js').ArticulationRecord | null} */
+function readRecord(parser) {
   return readBlock(parser?.json?.extras, ARTICULATION);
 }
 
+// The one node a resolution names, or null (absent, or a tie).
+const single = (found) => (found.nodes && found.nodes.length === 1 ? found.nodes[0] : null);
+
 /* ------------------------------------------------------------- the rigs --- */
 
-// A rig on screen: its model, its joints' nodes, the space its root joints
-// hang in, the file's unit against the record's, and the state last posed.
-// The block binds each joint and grabbed part by node index alone; *nameOf*
-// names each by its node -- the name the record joined it by.
-/** @param {import('../../kernel/records.js').ArticulationBlockRig} record */
-function bindRig(THREE, record, resolve, nameOf) {
-  const model = new ArticulationModel({
-    ...record,
-    joints: record.joints.map((joint) => ({ ...joint, name: nameOf(joint.node) })),
-  });
-  const nodes = record.joints.map((joint) => resolve(joint.node));
-  const missing = record.joints.filter((_joint, i) => !nodes[i]).map((joint) => nameOf(joint.node));
+// A rig on screen: its model, its joints' nodes, each joint's frame (its
+// parent joint's node, or for a root the node it hangs under), the space each
+// joint's chain is solved in, and the state last posed. *found* is the
+// resolution of each of the rig's joints (resolve.js); *nameOf* names a node
+// as the file spells it. 'absent' for a rig none of whose joints is here.
+/** @param {import('../../kernel/records.js').ArticulationRig} record */
+function bindRig(THREE, json, record, found, resolve, nameOf) {
+  const joints = Array.isArray(record.joints) ? record.joints : [];
+  const tied = found.findIndex((entry) => entry.status === 'ambiguous');
+  if (tied >= 0) {
+    console.warn(`articulated_rig: ${record.name}: joint ${joints[tied]?.name} names several nodes (${found[tied].leaves.join(', ')}) -- ambiguous, the rig is not posed`);
+    return null;
+  }
+  const indices = found.map(single);
+  if (!joints.length || indices.every((index) => index === null)) return /** @type {'absent'} */ ('absent');
+  const nodes = indices.map((index) => (index === null ? null : resolve(index)));
+  const missing = joints.filter((_joint, i) => !nodes[i]).map((joint) => joint?.name);
   if (missing.length) {
     console.warn(`articulated_rig: ${record.name}: joints not in the scene: ${missing.join(', ')}`);
     return null;
   }
+  // Each joint named by its node, as the file spells it.
+  const model = new ArticulationModel({
+    ...record,
+    joints: joints.map((joint, i) => ({ ...joint, name: nameOf(indices[i]) })),
+  });
   // The model's parents, not the record's: it reads a missing one as a root.
-  const roots = nodes.filter((_node, i) => model.joints[i].parent === null);
-  const space = roots[0].parent;
-  if (roots.some((node) => node.parent !== space)) {
-    console.warn(`articulated_rig: ${record.name}: its root joints hang under different nodes`);
+  const frames = model.joints.map((joint, i) => (joint.parent === null ? nodes[i].parent : nodes[joint.parent]));
+  const spaces = model.joints.map((_joint, i) => nodes[model.chain(i)[0]].parent);
+  if (spaces.some((space) => !space)) {
+    console.warn(`articulated_rig: ${record.name}: a root joint hangs under nothing`);
     return null;
   }
-  const locals = nodes.map((node) => [node.position.toArray(), node.quaternion.toArray()]);
-  const unit = model.scaleOf(locals);
   const rig = {
     record,
     model,
     nodes,
-    space,
-    unit,
-    state: model.read(locals.map(([t, q]) => [scale(t, 1 / unit), q])),
+    frames,
+    spaces,
+    // The space of the first root's chain: every joint's, where the roots
+    // share the node they hang under (a DCC rig's group).
+    space: spaces[0],
+    // Whether a joint's node hangs under its frame: posed by its local alone.
+    nested: nodes.map((node, i) => node.parent === frames[i]),
+    state: [],
     posed: false,
     holds: new Map(),
     grab: [],
     helpers: [],
+    scratch: { a: new THREE.Matrix4(), b: new THREE.Matrix4(), v: new THREE.Vector3(), s: new THREE.Vector3(), q: new THREE.Quaternion(), one: new THREE.Vector3(1, 1, 1) },
   };
+  rig.state = model.read(localsOf(rig));
   for (const entry of record.grab || []) {
-    const node = resolve(entry.node);
-    if (node) rig.grab.push({ node, joint: entry.joint, name: nameOf(entry.node) });
+    const joint = entry?.joint;
+    if (!(Number.isInteger(joint) && joint >= 0 && joint < nodes.length)) {
+      console.warn(`articulated_rig: ${record.name}: grab part ${entry?.node} rides no joint of the rig (${joint}); it is not grabbable`);
+      continue;
+    }
+    // A part by its name under its joint's node: a production assembly
+    // repeats part names, and the joint says which one is meant.
+    const [hit] = resolveIndexed(indexNodes(json, { meshes: false, under: indices[joint] }), [{ name: entry.node }]);
+    const index = single(hit);
+    const node = index === null ? null : resolve(index);
+    if (!node) {
+      console.warn(`articulated_rig: ${record.name}: grab part ${entry.node} is ${hit.status === 'ambiguous' ? 'ambiguous' : 'not found'} under joint ${model.joints[joint].name}; it is not grabbable`);
+      continue;
+    }
+    rig.grab.push({ node, joint, name: nameOf(index) });
   }
   return rig;
+}
+
+// *node*'s world matrix without its own scale -- its place and turn: the
+// frame a joint's node gives the parts posed from it.
+function frameMatrix(rig, node, out) {
+  node.parent.updateWorldMatrix(true, false);
+  out.compose(node.position, node.quaternion, rig.scratch.one);
+  return out.premultiply(node.parent.matrixWorld);
+}
+
+// Each joint's local as the scene holds it: a nested node's own, else its
+// place and turn in its parent joint's frame.
+function localsOf(rig) {
+  const { a, b, v, s, q } = rig.scratch;
+  return rig.nodes.map((node, i) => {
+    if (rig.nested[i]) return [node.position.toArray(), node.quaternion.toArray()];
+    frameMatrix(rig, rig.frames[i], a).invert();
+    a.multiply(frameMatrix(rig, node, b)).decompose(v, q, s);
+    return [v.toArray(), q.toArray()];
+  });
 }
 
 // The pose on screen as a state, read with the last state as the hint so a
 // wound hinge or a ball past 90 degrees reads on rather than flipping.
 function readRig(rig) {
-  const locals = rig.nodes.map((node) => [scale(node.position.toArray(), 1 / rig.unit), node.quaternion.toArray()]);
-  return rig.model.read(locals, rig.state);
+  return rig.model.read(localsOf(rig), rig.state);
 }
 
+// Every part posed from its parent joint's pose, parents first: a nested
+// node takes its local as it stands, any other is placed where its parent
+// joint's frame and its local put it, its own scale kept.
 function applyRig(rig, state) {
+  const { a, b, v, s, q } = rig.scratch;
   rig.state = state;
-  rig.model.pose(state).forEach(([t, q], index) => {
+  rig.model.pose(state).forEach(([t, r], index) => {
     const node = rig.nodes[index];
-    node.position.fromArray(scale(t, rig.unit));
-    node.quaternion.fromArray(q);
+    if (rig.nested[index]) {
+      node.position.fromArray(t);
+      node.quaternion.fromArray(r);
+      return;
+    }
+    frameMatrix(rig, rig.frames[index], a);
+    a.multiply(b.compose(v.fromArray(t), q.fromArray(r), rig.scratch.one));
+    node.parent.updateWorldMatrix(true, false);
+    b.copy(node.parent.matrixWorld).invert().multiply(a).decompose(v, q, s);
+    node.position.copy(v);
+    node.quaternion.copy(q);
   });
 }
 
-// World <-> the rig's space (the root joints' parent), in record units.
-function toRig(THREE, rig, point) {
-  rig.space.updateWorldMatrix(true, false);
-  const local = rig.space.worldToLocal(point.clone());
-  return scale(local.toArray(), 1 / rig.unit);
+// World <-> the space joint *joint*'s chain is solved in (its root joint's
+// parent), in the record's metres as the file holds that space.
+function toRig(rig, joint, point) {
+  const space = rig.spaces[joint];
+  space.updateWorldMatrix(true, false);
+  return space.worldToLocal(point.clone()).toArray();
 }
 
-function spaceRotation(THREE, rig) {
-  rig.space.updateWorldMatrix(true, false);
+function spaceRotation(THREE, rig, joint) {
+  const space = rig.spaces[joint];
+  space.updateWorldMatrix(true, false);
   const q = new THREE.Quaternion();
-  rig.space.matrixWorld.decompose(new THREE.Vector3(), q, new THREE.Vector3());
+  space.matrixWorld.decompose(new THREE.Vector3(), q, new THREE.Vector3());
   return q;
 }
 
@@ -138,7 +212,7 @@ function handlerFor(THREE, session, rig, entry) {
   return {
     begin({ source, point }) {
       rig.state = readRig(rig);
-      const local = rig.model.toLocal(rig.state, entry.joint, toRig(THREE, rig, point));
+      const local = rig.model.toLocal(rig.state, entry.joint, toRig(rig, entry.joint, point));
       rig.holds.set(source, {
         joint: entry.joint,
         local,
@@ -153,11 +227,11 @@ function handlerFor(THREE, session, rig, entry) {
       let wanted = hold.rotation;
       if (rotation) {
         // A world turn seen from the rig's space: out of it, turn, back in.
-        const s = spaceRotation(THREE, rig);
+        const s = spaceRotation(THREE, rig, hold.joint);
         const turn = s.clone().invert().multiply(rotation).multiply(s);
         wanted = qmul(turn.toArray(), hold.rotation);
       }
-      const state = rig.model.solve(rig.state, hold.joint, hold.local, toRig(THREE, rig, point), wanted);
+      const state = rig.model.solve(rig.state, hold.joint, hold.local, toRig(rig, hold.joint, point), wanted);
       applyRig(rig, state);
       session.dirty = true;
     },
@@ -182,8 +256,8 @@ function channelLabel(rig, slot) {
 function formatValue(rig, slot, value) {
   const channel = rig.model.channels[slot][1];
   if (ROTATE_CHANNELS.includes(channel)) return `${value.toFixed(1)}°`;
-  // Record units times the file's unit is metres in a glTF.
-  return `${(value * rig.unit * 100).toFixed(1)} cm`;
+  // A slide is in metres: the record is in glTF's frame.
+  return `${(value * 100).toFixed(1)} cm`;
 }
 
 function buildPanel(viewer, session, rig) {
@@ -195,7 +269,7 @@ function buildPanel(viewer, session, rig) {
     label: 'Pose rigs',
   });
   const panel = rigWindow.section(`Articulated rig: ${rig.record.name}`);
-  const reach = rig.model.joints.reduce((sum, joint) => sum + norm(joint.t), 0) || 1;
+  const reach = rigReach(rig);
   rig.sliders = rig.model.channels.map((_c, slot) => {
     let [lo, hi] = rig.model.limits(slot);
     const rotation = ROTATE_CHANNELS.includes(rig.model.channels[slot][1]);
@@ -231,13 +305,29 @@ function buildPanel(viewer, session, rig) {
   });
   if (!viewer.renderer.xr.isPresenting) rigWindow.show();
   rig.panel = panel;
-  const size = 0.12 * reach * rig.unit;
-  for (const node of rig.nodes) {
+  // On each joint's anchor -- the point it turns about and the axes its
+  // channels turn and slide along (its pivot and rest axes, for the
+  // identity) -- in the joint's frame, which its node carries.
+  const size = 0.12 * reach;
+  rig.nodes.forEach((node, index) => {
     const helper = new viewer.THREE.AxesHelper(size);
+    const anchor = rig.model.joints[index].anchor;
+    if (anchor) {
+      helper.position.fromArray(anchor[0]);
+      helper.quaternion.fromArray(anchor[1]);
+    }
     helper.visible = false;
     node.add(helper);
     rig.helpers.push(helper);
-  }
+  });
+}
+
+// The rig's size: every joint's pivot from its parent's (a root's from its
+// space), pivot to pivot (the model's bones, a flat model's from its
+// anchors) -- the slide range a slider without limits spans and the joint
+// axes' size. 1 m for a rig with no length at all.
+function rigReach(rig) {
+  return rig.model.joints.reduce((sum, _joint, index) => sum + norm(rig.model._bone(index)), 0) || 1;
 }
 
 function refreshPanel(rig) {
@@ -253,24 +343,38 @@ function refreshPanel(rig) {
 
 function build(viewer, model, gltf) {
   const { THREE } = viewer;
-  const manifest = readManifest(gltf.parser);
-  if (!manifest || !Array.isArray(manifest.rigs) || !manifest.rigs.length) return null;
+  const record = readRecord(gltf.parser);
+  if (!record || !Array.isArray(record.rigs) || !record.rigs.length) return null;
+  const json = gltf.parser.json;
   const resolve = viewer.nodeResolver(gltf, model);
   const nameOf = (index) => viewer.nodeName(gltf, index);
+  const rigs = record.rigs.filter((rig) => rig && typeof rig === 'object');
+  // Every rig's joints as ONE assignment over every node: two rigs' joints
+  // never bind one node.
+  const joints = rigs.map((rig) => (Array.isArray(rig.joints) ? rig.joints : []));
+  const resolved = resolveIndexed(indexNodes(json, { meshes: false }), joints.flat());
   const session = { rigs: [], unregister: [], dirty: false, sinceRefresh: 0, wasPlaying: viewer.playing };
-  for (const record of manifest.rigs) {
+  let at = 0;
+  let outOfScope = 0;
+  rigs.forEach((rigRecord, i) => {
+    const found = resolved.slice(at, at + joints[i].length);
+    at += joints[i].length;
     let rig = null;
     try {
-      rig = bindRig(THREE, record, resolve, nameOf);
+      rig = bindRig(THREE, json, rigRecord, found, resolve, nameOf);
     } catch (error) {
-      console.warn(`articulated_rig: ${record?.name}: not readable`, error);
+      console.warn(`articulated_rig: ${rigRecord?.name}: not readable`, error);
     }
-    if (!rig) continue;
+    if (rig === 'absent') outOfScope += 1;
+    if (!rig || rig === 'absent') return;
     for (const entry of rig.grab) {
       session.unregister.push(viewer.grab.register(entry.node, handlerFor(THREE, session, rig, entry)));
     }
     buildPanel(viewer, session, rig);
     session.rigs.push(rig);
+  });
+  if (outOfScope) {
+    console.info(`articulated_rig: ${outOfScope} rig(s) the record covers are not in this file (an exported subset)`);
   }
   return session.rigs.length ? session : null;
 }
@@ -296,7 +400,7 @@ export default function articulatedRig(viewer) {
     try {
       session = build(viewer, model, gltf);
     } catch (error) {
-      console.warn('articulated_rig: could not read the articulation manifest', error);
+      console.warn('articulated_rig: could not read the articulation record', error);
     }
     // Hung on the model so it dies with it, and so a test can read what this
     // script made of the file without the script exposing anything global.

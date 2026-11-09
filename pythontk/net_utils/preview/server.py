@@ -771,6 +771,7 @@ class PreviewServer(LoggingMixin):
         try:
             with _mesh_convert().open_glb(src) as edit:
                 extras = edit.gltf.get("extras") or {}
+                animated = bool(edit.gltf.get("animations"))
         except Exception as error:  # noqa: BLE001 -- see the docstring
             self.logger.debug(
                 "Auto scripts: %s is not a readable GLB (%s).", src.name, error
@@ -778,11 +779,17 @@ class PreviewServer(LoggingMixin):
             return []
         if not isinstance(extras, dict):
             return []
+        carried = set(extras)
+        if animated:
+            # A file with clips is what the 'animation' record describes even
+            # where it ships none: a scene with no shots carries one take and
+            # no record, and still plays -- and records -- that take.
+            carried.add(SceneRecords.SHOTS.key)
         active = set(self.scripts)
         activated = [
             name
             for name, key in self.AUTO_SCRIPTS.items()
-            if key in extras and name not in active
+            if key in carried and name not in active
         ]
         for name in activated:
             self.add_script(name)

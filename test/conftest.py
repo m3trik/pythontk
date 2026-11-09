@@ -128,6 +128,34 @@ def find_mayapy():
     return str(found[-1]) if found else None
 
 
+def gltf_validator():
+    """The Khronos glTF Validator's executable, for a test that runs it.
+
+    Never installed here: a test reads what is on ``PATH`` or in the tools
+    folder (``PYTHONTK_TOOLS_DIR``, which CI points at a folder of the job's
+    own and fills before the suite runs; locally the user's install). Absent,
+    the test SKIPS with the reason -- and in CI (``CI`` set) it FAILS: the
+    open-format rule's proof must run there, never pass by not running.
+
+    Raises:
+        unittest.SkipTest: Not installed, outside CI.
+        AssertionError: Not installed, in CI.
+    """
+    from pythontk.file_utils.mesh_convert.gltf_validator import GltfValidator
+
+    found = GltfValidator.resolve(auto_install=False)
+    if found:
+        return found
+    reason = (
+        "the Khronos glTF Validator is not installed (on PATH, or in "
+        "PYTHONTK_TOOLS_DIR / ~/.pythontk/tools: "
+        "GltfValidator.resolve(auto_install=True) installs it)"
+    )
+    if os.environ.get("CI"):
+        raise AssertionError(f"CI runs the glTF Validator, but {reason}.")
+    raise unittest.SkipTest(reason)
+
+
 _BROWSER_RUNTIME = []
 
 

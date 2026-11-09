@@ -3,96 +3,133 @@
   SceneRecords -- do not edit; run the script after changing a
   declaration.
 
-  The blocks a deliverable GLB carries in its root extras: each one's key
-  -- its record's own -- and the schema version this page reads, and,
-  where it is declared, its shape. A feature reads a block by these,
-  never by a spelling of its own.
+  The records a deliverable GLB carries in its root extras -- each one
+  as it stands, a block in this page's word (readBlock) -- with its key,
+  the schema version this page reads, and, where it is declared, its
+  shape. A feature reads a block by these, never by a spelling of its own.
 */
 
 /**
- * A block a GLB carries in its root extras.
- * @typedef {object} GlbBlock
+ * A record a GLB carries in its root extras, as it stands.
+ * @typedef {object} GlbRecord
  * @property {string} key Its key in the root extras: its record's own.
  * @property {number} version Its schema version: the one this page reads.
  */
 
-/** The `animation` block. @type {Readonly<GlbBlock>} */
-export const SHOTS = Object.freeze({ key: 'animation', version: 2 });
-/** The `lightmaps` block. @type {Readonly<GlbBlock>} */
-export const LIGHTMAPS = Object.freeze({ key: 'lightmaps', version: 2 });
-/** The `shadows` block. @type {Readonly<GlbBlock>} */
-export const SHADOWS = Object.freeze({ key: 'shadows', version: 2 });
-/** The `articulation` block. @type {Readonly<GlbBlock>} */
-export const ARTICULATION = Object.freeze({ key: 'articulation', version: 1 });
-/** The `handoff` block. @type {Readonly<GlbBlock>} */
+/** The `animation` record. @type {Readonly<GlbRecord>} */
+export const SHOTS = Object.freeze({ key: 'animation', version: 3 });
+/** The `audio` record. @type {Readonly<GlbRecord>} */
+export const AUDIO = Object.freeze({ key: 'audio', version: 3 });
+/** The `lightmaps` record. @type {Readonly<GlbRecord>} */
+export const LIGHTMAPS = Object.freeze({ key: 'lightmaps', version: 3 });
+/** The `shadows` record. @type {Readonly<GlbRecord>} */
+export const SHADOWS = Object.freeze({ key: 'shadows', version: 3 });
+/** The `articulation` record. @type {Readonly<GlbRecord>} */
+export const ARTICULATION = Object.freeze({ key: 'articulation', version: 2 });
+/** The `render_effects` record. @type {Readonly<GlbRecord>} */
+export const VISIBILITY = Object.freeze({ key: 'render_effects', version: 2 });
+/** The `handoff` record. @type {Readonly<GlbRecord>} */
 export const HANDOFF = Object.freeze({ key: 'handoff', version: 3 });
-/** Every block above, for a pass over all of them. @type {ReadonlyArray<Readonly<GlbBlock>>} */
-export const BLOCKS = Object.freeze([SHOTS, LIGHTMAPS, SHADOWS, ARTICULATION, HANDOFF]);
+/** Every record above, for a pass over all of them. @type {ReadonlyArray<Readonly<GlbRecord>>} */
+export const BLOCKS = Object.freeze([SHOTS, AUDIO, LIGHTMAPS, SHADOWS, ARTICULATION, VISIBILITY, HANDOFF]);
 /** Root-extras keys of blocks a GLB written before these carries, which
  * nothing reads (SceneRecords.RETIRED_BLOCKS): a file holding one is
  * re-exported. @type {ReadonlyArray<string>} */
 export const RETIRED_BLOCK_KEYS = Object.freeze(['animation_web', 'lightmap_web', 'shadow_web', 'articulation_web', 'scene_sidecar']);
+/**
+ * The files the lightmaps record names -- its maps, its probe and the
+ * probe's highlight copies -- and the shadows record names -- each plane's
+ * horizon map, silhouette and atlas -- ride a GLB that carries the record,
+ * each as the bufferView whose glTF `name` is the file's name (the audio
+ * record's sounds ride none yet). A reader joins the record's name to that
+ * view by file name, both lower-cased (str.lower, toLowerCase); two views
+ * that join one name hold neither. The bufferView's `extras.mimeType` states
+ * its bytes -- the file itself where a glTF reader reads its format, else a
+ * web encoding of it: an HDR lightmap as 8-bit sRGB (`image/png`,
+ * `image/webp`, `image/ktx2`) whose decoded linear texels times
+ * `extras.scale` (a finite positive number) are the map, an HDR probe or
+ * highlight copy as Radiance RGBE (`image/vnd.radiance`). An FBX embeds each
+ * file itself, under the same name.
+ * The fields are SceneRecords.GLB_MEDIA's, camel-cased.
+ * @type {Readonly<{name: string, mimeType: string, scale: string, hdrWeb: ReadonlyArray<string>, radiance: string}>}
+ */
+export const GLB_MEDIA = Object.freeze({ name: 'name', mimeType: 'mimeType', scale: 'scale', hdrWeb: Object.freeze(['image/png', 'image/webp', 'image/ktx2']), radiance: 'image/vnd.radiance' });
+/** The UV set every lightmap the `lightmaps` record names is read
+ * through (LightmapRecord.UV_SET): no entry names one. @type {number} */
+export const LIGHTMAP_UV_SET = 1;
 
-/* ------------ the `AnimationBlock` block, declared in pythontk ------------ */
+/* ------------ the `AnimationRecord` block, declared in pythontk ------------ */
 
 /**
- * The `extras.animation` block: the scene's shots as the `animation` record
- * states them, and the file's clips by glTF animation index, each placed on
- * the authoring timeline.
- * @typedef {object} AnimationBlock
- * @property {number} version The block's own schema version (SceneRecords.SHOTS.glb.version).
- * @property {AnimationShot[]} shots The scene's shots, in start-frame order, as the 'animation' record states them -- every one, whatever clips the file holds.
- * @property {AnimationBlockClip[]} clips One entry per glTF animation, in the file's order.
- * @property {string} [default_clip] The name of the clip to open on: the first shot's clip that has channels, else the first clip that has channels, else the first shot's clip, else the first clip; absent when the file holds no clip.
- * @property {number} [fps] The frame rate every frame number here counts at: the 'animation' record's 'fps', else the 'render_effects' record's, else one derived from a shot's range and its clip's duration; absent when none gives one.
- * @property {'full'|'shots'|'both'} [clip_mode] The 'animation' record's 'clip_mode': how the exporter cut the takes the clips came from; absent when it declared none.
+ * The `animation` record's payload: per shot its description and its
+ * metadata, each joined by name to the take the file carries for it, and the
+ * scene's frame rate.
+ * @typedef {object} AnimationRecord
+ * @property {number} version The record's schema version (SceneRecords.SHOTS.version): 3. A GLB carries the record under the key its retired GLB block rode at version 2, so 2 is skipped -- two shapes under one key and version would be read half-way; a reader refuses 1 (the FBX record before one take per shot) and 2 (that GLB block) alike, and the cure is a re-export.
+ * @property {AnimationShot[]} shots The scene's shots in timeline order, the order of the file's takes -- a stale one (every object it names gone and nothing keyed in its frames) too, unless the scene leaves stale shots out. Empty in a scene that animates and declares no shot: the record then states the rate alone.
+ * @property {number} fps The scene's frame rate, the rate its takes were cut at: for a reader of a format that states none (a glTF's animations are in seconds), so a GLB, which carries this record as it stands, can be stepped frame by frame. A reader of a format that states its own (an FBX's time mode) uses that; the two agree (ExportVerifier.check_animation_rate).
  */
 
 /**
- * One shot: the span of the authoring timeline its take is cut from, and
- * what it shows.
+ * One shot: the take it is, by name, and what a clip cannot hold.
  * @typedef {object} AnimationShot
- * @property {string} clip The shot's clip name, unique ignoring case: the name of the take or animation cut for it (a 'full' file cuts none) and the join key to the imported animation clip.
- * @property {number} start The shot's first frame on the authoring timeline, a whole frame at the 'fps' beside it.
- * @property {number} end The shot's last frame on the authoring timeline (inclusive), a whole frame at the 'fps' beside it.
+ * @property {string} clip The shot's clip name, unique ignoring case: the name of the file's take for this shot (one take per shot, spanning its range) and the join key to the imported animation clip.
  * @property {string} [description] What the shot shows, as free text; absent when it has none.
+ * @property {object} [metadata] What the shot's author wrote for it, every value JSON: the keys the scene's Shot Manifest writes from what its sheet says (ShotManifest.MANIFEST_METADATA and the sheet's pass-through columns); absent when it has none. The tools' own bookkeeping on a shot stays in the scene.
+ */
+
+/* ------------ the `AudioRecord` block, declared in pythontk ------------ */
+
+/**
+ * The `audio` record's payload: the scene's sounds, cut into cues per clip,
+ * in seconds.
+ * @typedef {object} AudioRecord
+ * @property {number} version The record's schema version (SceneRecords.AUDIO.version).
+ * @property {AudioCue[]} cues Every cue, clip by clip in the order of the takes and by time within a clip: a sound that spans several clips is cut into one cue per clip, each starting at its offset into the sound and stopping at the cut. A sound in no clip is left out.
+ * @property {Object<string, string>} [media] The content digest of each audio file the delivery embeds, by the 'sound' that names it: the SHA-256 of the bytes inside, in lowercase hex, written by the pass that embedded them. A same-named sound found elsewhere stands in for it only when its bytes hash alike; else the delivery's own is taken. A sound it carries no file for is left out, and a file written without that pass (a raw export) carries no 'media' at all.
  */
 
 /**
- * One glTF animation: its name, its index, and the authoring frame its time
- * 0 sits on.
- * @typedef {object} AnimationBlockClip
- * @property {string} name The glTF animation's name ('animation_<index>' when it has none): the clip a shot whose 'clip' it is plays.
- * @property {number} animation The clip's index in the glTF's 'animations' array.
- * @property {number} [zero_frame] The authoring frame the clip's time 0 sits on, so a frame f is (f - zero_frame) / fps seconds into it: a shot's own clip opens on its 'start', the whole-timeline clip on its first key; present whenever the block states 'fps', unless the file declares no take and publishes no span for the clip.
+ * One cue: a sound that plays in one clip, from a time of that clip to its
+ * stop.
+ * @typedef {object} AudioCue
+ * @property {string} clip The clip that plays the cue: the name of the file's take for it (one take per shot, named after the shot), matched ignoring case; '' in a file with no shots, whose one take is the clip.
+ * @property {string} sound The sound that plays: the name of the audio file the delivery carries for it, extension included, matched ignoring case.
+ * @property {number} time When the sound starts, in seconds from the start of its clip.
+ * @property {number} offset Where in the sound it starts, in seconds from the sound's start: 0 for a sound heard from its beginning, more for one that began before its clip (a sound a cut between shots divides) or that its author trimmed at the head.
+ * @property {number} stop When the sound stops, in seconds from the start of its clip: its end on the timeline, or the end of its clip when it runs past it. No later than the clip's end, and after 'time'.
  */
 
-/* ------------ the `LightmapsBlock` block, declared in pythontk ------------ */
+/* ------------ the `LightmapRecord` block, declared in pythontk ------------ */
 
 /**
- * The `extras.lightmaps` block: the bake's lightmaps bound to the file's
- * materials, and the reflection probe embedded in its buffer.
- * @typedef {object} LightmapsBlock
- * @property {number} version The block's schema version (SceneRecords.LIGHTMAPS.glb.version); a reader reads the version it knows and refuses any other.
- * @property {'occlusion'|'emissive'} carrier The texture slot each lightmapped material carries its lightmap in, 8-bit sRGB decoded to linear, read through that texture's own texCoord: 'occlusion' (occlusionTexture) or 'emissive' (emissiveTexture).
- * @property {Object<string, LightmapsBlockMaterial>} materials {glTF material name: {intensity}}: each material carrying a lightmap -- the surface's whole diffuse light, direct and indirect, not ambient occlusion -- and the scalar its texels are multiplied by.
- * @property {LightmapsBlockProbe} [probe] The reflection probe the bake captured, the scene's environment; absent when it captured none or its image was not found.
- */
-
-/**
- * One lightmapped material: what its lightmap's texels are multiplied by.
- * @typedef {object} LightmapsBlockMaterial
- * @property {number} intensity The scalar its lightmap's decoded linear texels are multiplied by, restoring the bake's range.
+ * The `lightmaps` record: each baked object's lightmap, the reflection probe
+ * the bake captured and the lights it was baked from.
+ * @typedef {object} LightmapRecord
+ * @property {number} version The record's schema version (SceneRecords.LIGHTMAPS.version); a reader reads the version it knows and refuses any other.
+ * @property {number} [unit_scale] Metres per unit of every length in the record -- the probe's position and box, each baked light's position, size and radius; present exactly when the record holds a length.
+ * @property {LightmapEntry[]} objects Each baked object, one entry per node; never empty, as a scene with nothing baked carries no record.
+ * @property {LightmapProbe} [probe] The reflection probe the bake captured, the scene's environment; absent when it captured none.
+ * @property {LightmapBakedLight[]} [lights] The lights the maps were baked from; absent when none ships.
  */
 
 /**
- * The reflection probe the bake captured, embedded in the file: an
- * equirectangular Radiance HDR in one of its bufferViews, placed in metres.
- * @typedef {object} LightmapsBlockProbe
- * @property {number} bufferView The bufferView holding the probe image's Radiance (RGBE) bytes.
- * @property {[number, number, number]} position Where it was captured, in metres, in the scene's world space (glTF axes, +Y up).
- * @property {LightmapBox|null} box {min, max}: the box its reflections are projected onto, in metres in the same space; null for an open scene, whose probe is read as distant.
- * @property {LightmapsBlockHighlight[]} [highlights] Copies of the probe with the bake's lights drawn in, one per group of receivers; absent when the bake shipped no lights or none was drawn.
+ * One baked object: the node it lights and how its lightmap is read.
+ * @typedef {object} LightmapEntry
+ * @property {string} name The object's node name as the file spells it, namespace included ('NS:leaf'): the join key to the imported node, which a reader whose import drops the namespace matches by the name after the last ':'.
+ * @property {string} map The lightmap image's file name, no folder; the deliverable carries the image under that name (an FBX embeds it).
+ * @property {[number, number, number, number]} scaleOffset Its rect in the map, [scaleX, scaleY, offsetX, offsetY]: read at uv * [scaleX, scaleY] + [offsetX, offsetY], [1, 1, 0, 0] for a map of its own.
+ * @property {string[]} hierarchy Its node's path from the scene root, each name from the root down and its own last, namespaces kept: what tells apart objects that share a name.
+ */
+
+/**
+ * The reflection probe the bake captured: the room it lit, as an HDR seen
+ * from one point -- the reflections a lightmap cannot hold.
+ * @typedef {object} LightmapProbe
+ * @property {string} map The probe image's file name, no folder: an equirectangular linear HDR (top row +Y) the deliverable carries under that name.
+ * @property {[number, number, number]} position Where it was captured, in the file's world axes (right-handed, +Y up); times unit_scale, metres.
+ * @property {LightmapBox|null} box {min, max}: the box its reflections are projected onto, in the same space, a face open to the outside pushed far away; null for an open scene, whose probe is read as distant.
+ * @property {LightmapHighlight[]} [highlights] Copies of the probe, one per group of receivers; absent when the export drew none.
  */
 
 /**
@@ -103,30 +140,57 @@ export const RETIRED_BLOCK_KEYS = Object.freeze(['animation_web', 'lightmap_web'
  */
 
 /**
- * A highlight copy of the embedded probe: a layer with the bake's lights
- * drawn in, for the materials it lists.
- * @typedef {object} LightmapsBlockHighlight
- * @property {number} bufferView The bufferView holding the layer's Radiance (RGBE) bytes: radiance in the probe's layout and units, added to the probe (box-filtered down to the layer's size) and prefiltered as the probe is.
- * @property {string[]} materials The materials, by glTF name, whose surfaces reflect the probe plus this layer in the probe's place.
+ * A copy of the probe for one group of receivers (the record's assembly says
+ * how it is read).
+ * @typedef {object} LightmapHighlight
+ * @property {string} map The copy's file name, no folder: an equirectangular linear HDR (top row +Y) in the probe's layout and units, at its own size, a whole fraction of the probe's, the deliverable carries under that name.
+ * @property {LightmapNode[]} objects The mesh nodes that read this copy.
  */
 
-/* ------------ the `ShadowBlock` block, declared in pythontk ------------ */
+/**
+ * A mesh node, named as an `objects` entry names its object.
+ * @typedef {object} LightmapNode
+ * @property {string} name The node's name as the file spells it, namespace included.
+ * @property {string[]} hierarchy Its path from the scene root: each name from the root down, its own last.
+ */
 
 /**
- * The `extras.shadows` block of a GLB: the record's planes, each bound to
- * the file's glTF nodes and textures.
- * @typedef {object} ShadowBlock
- * @property {number} version The block's own schema version (SceneRecords.SHADOWS.glb.version), apart from the record's.
+ * A light the maps were baked from (the record's assembly says how a reader
+ * lights it).
+ * @typedef {object} LightmapBakedLight
+ * @property {'point'|'spot'|'rect'} type What kind it is: 'point', 'spot' or 'rect' (a rectangular area light).
+ * @property {[number, number, number]} position Where it is, in the file's world axes (right-handed, +Y up); times unit_scale, metres.
+ * @property {[number, number, number]} [direction] The unit vector a spot or rect faces, world; absent on a point light.
+ * @property {[number, number, number]} [right] A rect's width axis, a unit vector, world; a rect's alone.
+ * @property {[number, number, number]} color Its colour, linear Rec.709 RGB.
+ * @property {number} intensity A point's or spot's radiant intensity, the irradiance it gives one unit away (times unit_scale squared: one metre away); a rect's radiance, which no unit changes.
+ * @property {number} [angle] A spot's half angle to the outer edge of its cone, in radians, at most pi/2.
+ * @property {number} [penumbra] The share of a spot's angle its edge fades over, 0 to 1.
+ * @property {number} [radius] A point's or spot's source radius, in the record's unit; 0 for a true point.
+ * @property {number} [width] A rect's width along 'right', in the record's unit.
+ * @property {number} [height] A rect's height, in the record's unit.
+ */
+
+/* ------------ the `ShadowRecord` block, declared in pythontk ------------ */
+
+/**
+ * The `shadows` record's payload: the export's shadow planes, and the unit
+ * their lengths are in.
+ * @typedef {object} ShadowRecord
+ * @property {number} version The record's schema version (SceneRecords.SHADOWS.version); a reader reads the version it knows and refuses any other -- a version 2 record (a plane's 'type', its silhouette's image on the plane, no fade terms) is re-exported.
  * @property {number} unit_scale Metres per unit of every length in the record (0.01 for centimetres).
- * @property {ShadowBlockPlane[]} planes One entry per plane mesh node in the file (a name several nodes carry gives one each); a plane the file lacks, or cannot bind, is left out.
+ * @property {ShadowPlane[]} planes The export's shadow planes, one entry each.
  */
 
 /**
- * A plane bound to the file: its node, its source and contact nodes, and the
- * textures it samples, by index.
- * @typedef {object} ShadowBlockPlane
- * @property {'projected'|'horizon'} type projected: a silhouette drawn for one source position, re-placed as the source moves; horizon: a height-field map a shader marches for any source position.
- * @property {number} intensity The shadow's overall darkness, 0 to 1, which the plane's opacity never exceeds: a reader draws the lesser of the two, so a file whose material states no opacity draws this.
+ * One shadow plane of the record: its nodes by name, its horizon map, the
+ * placement's inputs (pythontk `ShadowProjection.model`) and its fade's
+ * terms (`ShadowProjection.fade`).
+ * @typedef {object} ShadowPlane
+ * @property {string} name The plane mesh node's name, namespace included: the join key to the imported plane (where an import drops namespaces, the part after the last ':' joins).
+ * @property {string} source The name of the node the shadow is cast from, or an empty string when it has none.
+ * @property {string} contact The name of the node the shadow is anchored to, at the footprint's centre on the target's underside, or an empty string when it has none.
+ * @property {number} intensity The shadow's overall darkness, 0 to 1: the fade's ceiling.
  * @property {'point'|'directional'} source_type point: the source shines from its position; directional: along one direction, wherever it stands (a sun).
  * @property {number} source_size A positional source's diameter, in the record's unit, which softens the shadow's edge (0 for a sharp edge, and for a directional source).
  * @property {number} source_angle A directional source's angular diameter, in radians (0 for a sharp edge, and for a positional source).
@@ -135,72 +199,128 @@ export const RETIRED_BLOCK_KEYS = Object.freeze(['animation_web', 'lightmap_web'
  * @property {number} radius The target's footprint radius (half its footprint's diagonal), in the record's unit.
  * @property {number} height The target's height above its contact, in the record's unit.
  * @property {number} max_stretch The cap on the shadow's length past the target, in target heights (6 is the length a sun 9.5 degrees up casts).
- * @property {[number, number, number, number]} canvas Where the texture's edges sit around the projected shadow, [u0, u1, w0, w1]: u1 the far edge in top-disk radii past where the target's top lands, u0 the near edge as a fraction of that far edge's distance from the anchor, w0 and w1 the sides as fractions of the shadow's width.
- * @property {number} node The plane mesh's glTF node index.
- * @property {number|null} source_node The source's glTF node index, or null when the file holds no single node of that name.
- * @property {number|null} contact_node The contact's glTF node index, or null when the file holds no single node of that name.
- * @property {number|null} texture_index The glTF texture index of a projected plane's colour map (its atlas once packed, which the quad's UVs then address), or null on a horizon plane, which the march shades.
- * @property {ShadowBlockHorizon} [horizon] The height-field map the plane is shaded from; present on every horizon plane the block carries.
+ * @property {[number, number, number, number]} canvas Where the quad's edges sit around the projected shadow, [u0, u1, w0, w1]: u1 the far edge in top-disk radii past where the target's top lands, u0 the near edge as a fraction of that far edge's distance from the anchor, w0 and w1 the sides as fractions of the shadow's width -- what a follow_source placement spans, and the edges the silhouette was drawn to.
+ * @property {number} falloff_power How fast the shadow lightens as it stretches past its footprint: the fade's exponent on the stretch.
+ * @property {number} fade_height The target's rise above the ground at which its shadow has faded out, in the record's unit.
+ * @property {number} source_ramp The source's height over the contact at which the shadow is all in, in the record's unit: the fade ramps in from none with the source at the contact's height -- the ramp the plane's producer previews (one unit of its rig: 0.01 in a metre record of a centimetre rig); over 0.
+ * @property {ShadowPlaneHorizon} horizon The height-field map the plane's shadow is marched from.
+ * @property {ShadowPlaneSilhouette} [silhouette] The plane's projected silhouette; absent when it has none. A reader without it draws the horizon.
  */
 
 /**
- * A horizon map bound to the file.
- * @typedef {object} ShadowBlockHorizon
+ * A plane's height-field shadow map, by file name, and where it sits in its
+ * image.
+ * @typedef {object} ShadowPlaneHorizon
  * @property {number} size Footprint pixels per side, S (a power of two); the image is S tall and S x (spans + 2) wide.
  * @property {number} spans Solid spans kept per pixel column, K.
  * @property {[number, number, number, number]} bounds The footprint the map covers, [a0, a1, b0, b1] along frame_a and frame_b from the contact node, in the record's unit.
  * @property {number} height_scale The height above the ground a 16-bit channel value of 65535 stands for, in the record's unit.
  * @property {[number, number, number]} frame_a The footprint's first horizontal axis, a unit vector in the contact node's local frame as exported (FBX/glTF axes, +Y up).
  * @property {[number, number, number]} frame_b The footprint's second horizontal axis, a unit vector in the same frame.
- * @property {[number, number, number, number]} rect The map's exact rect in its image (never inset), [scale_u, scale_v, offset_u, offset_v], origin top-left (glTF).
- * @property {number} texture_index The glTF texture index of the map, bound with no mipmaps and clamped: its texels are data, fetched whole, never colour-decoded.
- */
-
-/* ------------ the `ArticulationBlock` block, declared in pythontk ------------ */
-
-/**
- * The `extras.articulation` block: the record's rigs, bound to the file's
- * glTF nodes.
- * @typedef {object} ArticulationBlock
- * @property {number} version The block's own schema version (SceneRecords.ARTICULATION.glb.version).
- * @property {ArticulationBlockRig[]} rigs The rigs whose every joint is in the file.
+ * @property {string} texture The map image's file name: the shared horizon atlas once packed.
+ * @property {[number, number, number, number]} rect The map's exact rect in its image (never inset), [scale_u, scale_v, offset_u, offset_v], origin bottom-left.
  */
 
 /**
- * One rig bound to the file: its joints and grabbed parts carry node
- * indices.
- * @typedef {object} ArticulationBlockRig
+ * A plane's projected silhouette: the shadow drawn for one source position,
+ * re-placed as the source moves -- an extension, read by the GLB's readers
+ * alone.
+ * @typedef {object} ShadowPlaneSilhouette
+ * @property {string} texture The file name of the plane's own silhouette image (the shadow in its alpha).
+ * @property {ShadowPlaneAtlas} [atlas] Where the silhouette sits in the shared silhouette atlas; absent when the plane is not packed.
+ * @property {boolean} draw Whether a reader holding the silhouette draws it (true), or draws the horizon and keeps the silhouette as the fallback where it cannot march (false): the rig's authored choice.
+ */
+
+/**
+ * Where a plane's silhouette sits in the shared silhouette atlas.
+ * @typedef {object} ShadowPlaneAtlas
+ * @property {string} texture The atlas image's file name.
+ * @property {[number, number, number, number]} rect The plane's tile in the atlas, [scale_u, scale_v, offset_u, offset_v] (uv' = uv * scale + offset), origin bottom-left: the bounds the quad's UVs already address.
+ */
+
+/* ------------ the `ArticulationRecord` block, declared in pythontk ------------ */
+
+/**
+ * The `articulation` record's payload: every articulated rig in the scene.
+ * @typedef {object} ArticulationRecord
+ * @property {number} version The record's schema version (SceneRecords.ARTICULATION.version); a reader reads the version it knows and refuses any other -- a version 1 record (no anchor, lengths in the file's own units) is re-exported.
+ * @property {ArticulationRig[]} rigs The scene's articulated rigs.
+ */
+
+/**
+ * One rig: its joints, parents first, and the parts a hand grabs.
+ * @typedef {object} ArticulationRig
  * @property {string} name The rig's name.
- * @property {ArticulationBlockJoint[]} joints Its joints, each after its parent.
- * @property {ArticulationBlockGrab[]} grab The parts a hand takes hold of that resolved to a node.
+ * @property {ArticulationJoint[]} joints Its joints, each after its parent.
+ * @property {ArticulationGrab[]} grab The parts a hand takes hold of.
  */
 
 /**
- * A joint bound to the file: its pose, and the glTF node that carried its
- * name (whose own name it is).
- * @typedef {object} ArticulationBlockJoint
- * @property {number|null} parent An earlier joint's index, or null for a root (its parent is the rig's space).
- * @property {[number, number, number]} t The rest translate in the parent's space, in the file's units (a runtime measures its scale against the rest pose: ArticulationModel.scale_of).
- * @property {[number, number, number, number]} q The rest rotation (the DCC's joint orient), a quaternion x, y, z, w.
+ * One joint of the record: its pose, joined to its node by name.
+ * @typedef {object} ArticulationJoint
+ * @property {number|null} parent An earlier joint's index, or null for a root (its parent is the rig's space): the joint chain a reader poses the part from, whatever node its part hangs under.
+ * @property {[number, number, number]} t The rest translate in the parent joint's frame, in metres as glTF frames the file: an FBX's own value x 0.01 whatever its UnitScaleFactor, a GLB node's local exactly (a scale a node above carries scales it). A reader whose import converts the file's unit into the locals (an FBX importer applying its UnitScaleFactor) scales it by that conversion x 100.
+ * @property {[number, number, number, number]} q The rest rotation in the parent joint's frame (the DCC's joint orient), a quaternion x, y, z, w.
+ * @property {ArticulationAnchor} anchor The frame the channels turn and slide in, in the rest frame: the part poses as rest . anchor . pose(channels) . anchor^-1 (the identity: rest . pose(channels)).
  * @property {'xyz'|'yzx'|'zxy'|'xzy'|'yxz'|'zyx'} rotate_order The order the rotation channels compose in; the first letter applies first.
  * @property {ArticulationChannel[]} channels The channels it turns or slides on, in state order.
- * @property {number} node The joint's glTF node index.
+ * @property {string} name The joint node's name: the join key to the imported transform.
+ */
+
+/**
+ * The frame a joint's channels turn and slide in: a point and an orientation
+ * in the joint's REST frame. The identity -- the rest frame itself -- is a
+ * joint whose part nests on its pivot.
+ * @typedef {object} ArticulationAnchor
+ * @property {[number, number, number]} t The point the joint turns about, in its rest frame (metres, as 't' is).
+ * @property {[number, number, number, number]} q The orientation of the axes its channels turn about and slide along, in its rest frame: a quaternion x, y, z, w.
  */
 
 /**
  * One channel a joint turns or slides on, with its limits.
  * @typedef {object} ArticulationChannel
- * @property {'rx'|'ry'|'rz'|'tx'|'ty'|'tz'} channel rx/ry/rz turn about the rest frame's own axes (degrees); tx/ty/tz slide along them (the file's units, in the parent's space).
+ * @property {'rx'|'ry'|'rz'|'tx'|'ty'|'tz'} channel rx/ry/rz turn about the anchor's axes through its point (degrees); tx/ty/tz slide along them (metres, as 't' is).
  * @property {number|null} min The lower limit, or null for none.
  * @property {number|null} max The upper limit, or null for none.
  * @property {number} weight How readily a grab moves this channel against the others (1 = evenly).
  */
 
 /**
- * A grabbed part bound to its glTF node.
- * @typedef {object} ArticulationBlockGrab
- * @property {number} node The part's glTF node index: the one of its name under its joint's node.
+ * A part a hand grabs, and the joint it rides.
+ * @typedef {object} ArticulationGrab
+ * @property {string} node The part's node name; a runtime resolves it under its joint's node.
  * @property {number} joint The index of the joint the part rides.
+ */
+
+/* ------------ the `RenderEffectsRecord` block, declared in pythontk ------------ */
+
+/**
+ * The `render_effects` record's payload: which nodes and materials carry an
+ * animated effect, and the colours their curves scale.
+ * @typedef {object} RenderEffectsRecord
+ * @property {number} version The record's schema version (SceneRecords.VISIBILITY.version).
+ * @property {RenderEffectsTrack[]} tracks One per node that carries an animated effect.
+ * @property {RenderEffectsMaterial[]} [materials] One per material whose emission is animated; absent when none is.
+ */
+
+/**
+ * One node's effects: which channels its subtree carries, and the
+ * highlight's colour stops.
+ * @typedef {object} RenderEffectsTrack
+ * @property {string} node The node's name as its host names it: the join key to its curves (by the leaf after the last ':'). The node a curve plays on is its proxy's parent wherever the file carries the proxy; only a track with no proxy joins a node by this name, the exact name first, then the one node of its leaf, a tie never guessed.
+ * @property {string[]} channels The channels the node carries, each a curve on the transport: 'visibility' (stepped: shown at 1, hidden at 0), 'opacity' (the subtree's materials' alpha, 0..1) and 'highlight' (an added glow, 0..1).
+ * @property {[number, number, number]} [highlight_color] The highlight's colour at 1.0, linear RGB; absent for the default (white).
+ * @property {[number, number, number]} [highlight_color_dim] The highlight's colour at 0.0, linear RGB; absent for the default (black).
+ */
+
+/**
+ * One material whose emission is animated: the channel names it, the curve
+ * (a weight 0..1) rides the transport.
+ * @typedef {object} RenderEffectsMaterial
+ * @property {string} material The material's name, as the delivered material is named (the 'materials' record's entry); where an import drops the namespace, the name after the last ':' joins.
+ * @property {string[]} channels The material's animated channels: 'emission', its emission's weight 0..1.
+ * @property {[number, number, number]} [emission_color] The emission's colour at weight 1, linear RGB; absent: the material's own emissive colour.
+ * @property {number} [emission_strength] The emission's strength at weight 1 (a multiplier of the colour, above 1 for a glow brighter than white); absent: the material's own.
  */
 
 /* ------------ the `HandoffBlock` block, declared in pythontk ------------ */

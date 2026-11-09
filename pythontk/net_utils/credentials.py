@@ -88,12 +88,16 @@ class Credentials:
         if keyring:
             try:
                 keyring.set_password("pythontk", target_name, password)
+                user_entry = target_name + Credentials.KEYRING_USERNAME_SUFFIX
                 if username:
-                    keyring.set_password(
-                        "pythontk",
-                        target_name + Credentials.KEYRING_USERNAME_SUFFIX,
-                        username,
-                    )
+                    keyring.set_password("pythontk", user_entry, username)
+                else:
+                    # No username now: an older one must not read back
+                    # beside the new password.
+                    try:
+                        keyring.delete_password("pythontk", user_entry)
+                    except Exception:  # noqa: BLE001 -- none stored (PasswordDeleteError)
+                        pass
                 return True
             except Exception as e:
                 print(f"Keyring failed: {e}")

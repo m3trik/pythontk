@@ -156,6 +156,9 @@ class ShadowProjection:
     #: Default cap on the shadow's reach, in object heights (a sun at
     #: ``atan(1/6)`` = 9.5 deg elevation); the DCC ``maxStretch`` attr.
     DEFAULT_MAX_STRETCH = 6.0
+    #: Default exponent of the fade's elongation falloff (:meth:`fade`); the
+    #: DCC ``falloffPower`` attr.
+    DEFAULT_FALLOFF_POWER = 1.2
     EPS = 1.0e-6
 
     @staticmethod
@@ -263,6 +266,85 @@ class ShadowProjection:
             width=float(width),
             overhead=overhead,
         )
+
+    # ----------------------------------------------------------------- fade
+    @classmethod
+    def fade(
+        cls,
+        contact,
+        light=None,
+        ground: float = 0.0,
+        radius: float = 0.5,
+        height: float = 1.0,
+        *,
+        up: int = 1,
+        direction=None,
+        max_stretch: Optional[float] = None,
+        intensity: float = 1.0,
+        falloff_power: Optional[float] = None,
+        fade_height: Optional[float] = None,
+        source_ramp: float = 1.0,
+    ) -> float:
+        """How strongly the plane draws its shadow, 0 to *intensity*: the one
+        definition of a shadow plane's fade, which every reader evaluates each
+        frame from the same placement :meth:`model` makes.
+
+        ``fade = clamp(dist * source * rise, 0, 1)``, the lengths in metres:
+
+        - ``dist = intensity / max(0.001, stretch ** falloff_power)``, where
+          ``stretch = max(1, length / max(1e-4, 2 * radius))`` and ``length``
+          is the model's (:attr:`ShadowModel.length`): a shadow lightens as
+          it elongates past its footprint.
+        - ``source = clamp((L_up - C_up) / max(1e-4, source_ramp), 0, 1)``: none once
+          the source drops under the contact, all of it *source_ramp* over it -- the ramp the plane's producer previews
+          (one unit of its rig), which the record states as the plane's
+          ``source_ramp``. ``L`` is a directional source's far point
+          (:meth:`far_point`), as in the model.
+        - ``rise = clamp(1 - max(0, C_up - ground) / max(0.001, fade_height),
+          0, 1)``: a target rising off the ground fades out by *fade_height*.
+
+        The 1e-4 and 0.001 floors are guards, in metres as the model's are.
+
+        Parameters:
+            contact, light, ground, radius, height, up, direction,
+                max_stretch: As :meth:`model`, in metres.
+            intensity: The shadow's overall darkness, 0 to 1: the fade's
+                ceiling.
+            falloff_power: The elongation falloff's exponent
+                (:attr:`DEFAULT_FALLOFF_POWER` when None).
+            fade_height: The rise above the ground at which the shadow is
+                gone, in metres (twice *height*, the rigs' default, when None).
+            source_ramp: The source's height over the contact at which the
+                shadow is all in, in metres (the plane's ``source_ramp``
+                times the record's ``unit_scale``); positive, as the record
+                requires -- a file that does not is floored at 1e-4, as every
+                port floors it.
+
+        Returns:
+            The fade, ``0 <= fade <= intensity``.
+        """
+        if falloff_power is None:
+            falloff_power = cls.DEFAULT_FALLOFF_POWER
+        if fade_height is None:
+            fade_height = 2.0 * float(height)
+        c = np.asarray(contact, dtype=float).reshape(3)
+        if direction is not None:
+            light = cls.far_point(c, direction, max(height, 2.0 * radius))
+        model = cls.model(
+            c, light, ground, radius, height, up=up, max_stretch=max_stretch
+        )
+        light_up = float(np.asarray(light, dtype=float).reshape(3)[up])
+        contact_up = float(c[up])
+        stretch = max(1.0, model.length / max(1e-4, 2.0 * float(radius)))
+        dist = float(intensity) / max(0.001, stretch ** float(falloff_power))
+        source = min(
+            max((light_up - contact_up) / max(1e-4, float(source_ramp)), 0.0), 1.0
+        )
+        rise = 1.0 - max(0.0, contact_up - float(ground)) / max(
+            0.001, float(fade_height)
+        )
+        rise = min(max(rise, 0.0), 1.0)
+        return min(max(dist * source * rise, 0.0), 1.0)
 
     # -------------------------------------------------------------- project
     @classmethod
@@ -397,13 +479,15 @@ class ShadowConformance:
     -- a position, or the direction a sun shines -- over one bounding
     cylinder; the point the model projects through (a sun's
     :meth:`ShadowProjection.far_point`, which a port derives the same way);
-    the model the reference makes of it; and where a plane carrying the
-    case's canvas lands (:meth:`ShadowModel.placement`). The named cases come
-    first -- each clamp and fallback the model has -- then random ones, then
-    the guards: the model scales with its lengths but for its guard constants
-    (the overhead ``EPS``, the factors' 1e-4 floors, the far point's 1e-3
-    scale floor), so each guard case sits at the tiny scale where one binds,
-    and a port that changes a constant fails it.
+    the model the reference makes of it; where a plane carrying the case's
+    canvas lands (:meth:`ShadowModel.placement`); and how strongly it draws
+    (:meth:`ShadowProjection.fade`, from the plane's fade terms as the
+    ``shadows`` record names them, its lengths in metres). The named cases come first -- each clamp and fallback the
+    model has -- then random ones, then the guards: the model scales with its
+    lengths but for its guard constants (the overhead ``EPS``, the factors'
+    1e-4 floors, the far point's 1e-3 scale floor), so each guard case sits
+    at the tiny scale where one binds, and a port that changes a constant
+    fails it. Last come the fade's own cases, one per term that decides it.
 
     No case has a zero direction: :meth:`case` normalizes each one, and the
     reference raises on a zero one, so what a port does there is its own
@@ -416,10 +500,13 @@ class ShadowConformance:
     #: far point a sun is written as sits a million object sizes out, where one
     #: unit in the last place is ~5e-10 -- and the reference normalizes the
     #: (already unit) direction once more on the way (measured 4.7e-10).
+    #: The fade is the model's length through a power and three clamps, and
+    #: rounds alike.
     TOLERANCE: Dict[str, float] = {
         "source": 1.0e-8,
         "model": 1.0e-9,
         "placement": 1.0e-9,
+        "fade": 1.0e-9,
     }
 
     #: The canvas a plane whose record carries none is placed with (the
@@ -439,6 +526,10 @@ class ShadowConformance:
         height: float = 1.0,
         max_stretch: float = ShadowProjection.DEFAULT_MAX_STRETCH,
         canvas: Sequence[float] = CANVAS,
+        intensity: float = 1.0,
+        falloff_power: float = ShadowProjection.DEFAULT_FALLOFF_POWER,
+        fade_height: Optional[float] = None,
+        source_ramp: float = 1.0,
         name: str = "",
     ) -> Dict[str, Any]:
         """One case: its inputs and what the reference makes of them.
@@ -450,19 +541,25 @@ class ShadowConformance:
                 so a case carries the unit vector a port is handed.
             ground, radius, height, max_stretch: As :meth:`ShadowProjection.model`.
             canvas: The plane's canvas fractions (:meth:`ShadowModel.rect`).
+            intensity, falloff_power, fade_height, source_ramp: As
+                :meth:`ShadowProjection.fade` (*fade_height* twice *height*,
+                the rigs' default, when None).
             name: A label for a failure message.
 
         Returns:
             ``{"name", "input": {"contact", "light", "direction", "ground",
-            "radius", "height", "max_stretch", "canvas"}, "source", "model":
+            "radius", "height", "max_stretch", "canvas", "intensity",
+            "falloff_power", "fade_height", "source_ramp"}, "source", "model":
             {"anchor", "bearing", "k_base", "k_top", "reach", "base", "top",
             "width", "overhead"}, "placement": {"centre", "along",
-            "across"}}`` -- plain JSON-able values.
+            "across"}, "fade"}`` -- plain JSON-able values.
         """
+        if fade_height is None:
+            fade_height = 2.0 * float(height)
         contact = [float(v) for v in contact]
         if direction is not None:
-            unit = ShadowProjection._unit(direction)
-            direction = [float(v) for v in unit]
+            shine = ShadowProjection._unit(direction)
+            direction = [float(v) for v in shine]
             source = list(
                 ShadowProjection.far_point(
                     contact, direction, max(height, 2.0 * radius)
@@ -482,6 +579,19 @@ class ShadowConformance:
             max_stretch=max_stretch,
         )
         centre, along, across = model.placement(canvas)
+        fade = ShadowProjection.fade(
+            contact,
+            light,
+            ground,
+            radius,
+            height,
+            direction=direction,
+            max_stretch=max_stretch,
+            intensity=intensity,
+            falloff_power=falloff_power,
+            fade_height=fade_height,
+            source_ramp=source_ramp,
+        )
         return {
             "name": name,
             "input": {
@@ -493,6 +603,10 @@ class ShadowConformance:
                 "height": float(height),
                 "max_stretch": float(max_stretch),
                 "canvas": [float(f) for f in canvas],
+                "intensity": float(intensity),
+                "falloff_power": float(falloff_power),
+                "fade_height": float(fade_height),
+                "source_ramp": float(source_ramp),
             },
             "source": source,
             "model": {
@@ -507,6 +621,7 @@ class ShadowConformance:
                 "overhead": model.overhead,
             },
             "placement": {"centre": list(centre), "along": along, "across": across},
+            "fade": fade,
         }
 
     @classmethod
@@ -516,8 +631,8 @@ class ShadowConformance:
         Parameters:
             seed: The random stream's seed -- the same seed, the same cases.
             per_kind: Random cases of each kind (a point source, a sun) after
-                the named ones. The guard cases come last, after them, so
-                every earlier case keeps its place.
+                the named ones. The guard cases come after them, then the
+                fade's, so every earlier case keeps its place.
         """
         contact = (0.2, 0.0, 0.3)
         named = [
@@ -614,4 +729,69 @@ class ShadowConformance:
                 name="tiny_sun",
             ),
         ]
-        return {"tolerance": dict(cls.TOLERANCE), "cases": named + randoms + guards}
+        # The fade's own, one per term that decides it, fixed as the guards
+        # are. The flat ones (no falloff) leave the clamp under test alone.
+        flat = {"falloff_power": 0.0, "intensity": 0.8}
+        fades = [
+            # The source under the contact: nothing.
+            cls.case(
+                (0.0, 0.5, 0.0), (1.0, 0.4, 0.0), name="fade_source_below", **flat
+            ),
+            # A quarter of its ramp over it: a quarter of the way in.
+            cls.case(
+                (0.0, 0.5, 0.0), (1.0, 0.75, 0.0), name="fade_source_ramp", **flat
+            ),
+            # The same under a centimetre rig's ramp, one centimetre.
+            cls.case(
+                (0.0, 0.5, 0.0),
+                (1.0, 0.5025, 0.0),
+                source_ramp=0.01,
+                name="fade_ramp_cm",
+                **flat,
+            ),
+            # A target risen 0.3 of its fade height off the ground.
+            cls.case(
+                (0.0, 0.6, 0.0),
+                (0.5, 8.0, 0.0),
+                fade_height=2.0,
+                name="fade_rising",
+                **flat,
+            ),
+            # Past its fade height: gone.
+            cls.case(
+                (0.0, 2.5, 0.0),
+                (0.5, 8.0, 0.0),
+                fade_height=2.0,
+                name="fade_risen_away",
+            ),
+            # A long shadow lightened by its falloff.
+            cls.case(
+                contact,
+                (3.0, 1.6, -0.5),
+                intensity=0.6,
+                falloff_power=2.0,
+                name="fade_falloff",
+            ),
+            # A sun: its far point stands far over the contact.
+            cls.case(
+                contact,
+                direction=(-0.6, -0.5, 0.3),
+                intensity=0.9,
+                falloff_power=1.5,
+                name="fade_sun",
+            ),
+            # A file whose ramp is not over 0: the ramp's 1e-4 floor, the
+            # source half a floor over the contact (half way in), on the
+            # ground (no rise).
+            cls.case(
+                (0.0, 0.0, 0.0),
+                (1.0, 5e-5, 0.0),
+                source_ramp=0.0,
+                name="fade_ramp_floor",
+                **flat,
+            ),
+        ]
+        return {
+            "tolerance": dict(cls.TOLERANCE),
+            "cases": named + randoms + guards + fades,
+        }

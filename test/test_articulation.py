@@ -31,12 +31,18 @@ def _chain(*joints):
     return {"name": "rig", "joints": list(joints), "grab": []}
 
 
-def _joint(name, parent, t, q=(0.0, 0.0, 0.0, 1.0), order="xyz", **channels):
+_IDENTITY_ANCHOR = {"t": [0.0, 0.0, 0.0], "q": [0.0, 0.0, 0.0, 1.0]}
+
+
+def _joint(
+    name, parent, t, q=(0.0, 0.0, 0.0, 1.0), order="xyz", anchor=None, **channels
+):
     return {
         "name": name,
         "parent": parent,
         "t": list(t),
         "q": list(q),
+        "anchor": copy.deepcopy(anchor or _IDENTITY_ANCHOR),
         "rotate_order": order,
         "channels": [
             {"channel": c, "min": lim[0], "max": lim[1], "weight": 1.0}
@@ -204,18 +210,257 @@ class TestModelRead(unittest.TestCase):
         self.assertEqual(ArticulationModel._unwrap(-180.0, 0.0), 180.0)
         self.assertEqual(ArticulationModel._unwrap(180.0, 0.0), 180.0)
 
-    def test_scale_of_measures_the_runtimes_unit_on_joints_that_cannot_slide(self):
+    def test_no_unit_is_measured_the_record_is_in_metres(self):
+        """Articulation v2 (2026-11-08) states the record in glTF's frame,
+        in metres, and every reader's import already lands there (a glTF is
+        in metres; an engine's FBX importer converts the file's unit), so the
+        unit a runtime measured off the rest pose (``scale_of``) retired --
+        it was no truth an anchored hinge keeps either: its translation moves
+        as it turns. Added: 2026-11-08"""
+        self.assertFalse(hasattr(ArticulationModel, "scale_of"))
+        self.assertTrue(ptk.SceneRecords.ARTICULATION.in_frame)
+        self.assertEqual(ptk.SceneRecords.FRAME.length, "metre")
+
+
+class TestAnchor(unittest.TestCase):
+    """Articulation v2's anchor frame: a part turns as ``rest . A .
+    pose(channels) . A^-1``, its channels the anchor's -- a hinge about the
+    anchor's axes through its point, a slide along them. The identity anchor
+    is today's model, bit for bit. Added: 2026-11-08"""
+
+    def setUp(self):
+        self.rng = random.Random(23)
+
+    def test_the_identity_anchor_is_the_model_without_one_bit_for_bit(self):
+        """``rotation = q (x) Euler``, ``translation = t + q.(tx, ty, tz)``
+        spelled out here, compared with ``==``: an identity anchor leaves the
+        model exactly as v1 posed it."""
+        q = ptk.Quaternion.normalize((0.1, -0.2, 0.3, 0.9))
+        spec = _joint(
+            "a", None, (1.0, 2.0, 3.0), q=q, order="zxy",
+            rx=(None, None), rz=(None, None), tx=(None, None), ty=(None, None),
+        )
+        model = ArticulationModel(_chain(spec))
+        for _ in range(50):
+            state = [self.rng.uniform(-170, 170) for _ in range(2)] + [
+                self.rng.uniform(-3, 3) for _ in range(2)
+            ]
+            rx, rz, tx, ty = state
+            want_q = ptk.Quaternion.multiply(
+                q, ptk.Quaternion.from_euler("zxy", (rx, 0.0, rz))
+            )
+            rest_t = tuple(float(v) for v in spec["t"])
+            slide = ptk.Quaternion.rotate(q, (tx, ty, 0.0))
+            want_t = (rest_t[0] + slide[0], rest_t[1] + slide[1], rest_t[2] + slide[2])
+            self.assertEqual(model.local(state, 0), (want_t, want_q))
+
+    def test_an_anchored_hinge_turns_about_the_anchors_axis_through_its_point(self):
+        half = math.sqrt(0.5)
+        # The anchor at (2, 0, 0) of the rest frame, its z the rest frame's -y.
+        anchor = {"t": [2.0, 0.0, 0.0], "q": [half, 0.0, 0.0, half]}
         model = ArticulationModel(
             _chain(
-                _joint("a", None, (0, 2, 0)),
-                _joint("b", 0, (10, 0, 0), rz=(None, None)),
-                _joint("s", 1, (4, 0, 0), tx=(-1, 1)),
+                _joint("a", None, (0, 0, 0), anchor=anchor, rz=(None, None)),
+                _joint("b", 0, (4, 0, 0)),
             )
         )
-        pose = model.pose([10.0, 0.9])
-        scaled = [([v * 0.01 for v in t], q) for t, q in pose]
-        self.assertAlmostEqual(model.scale_of(scaled), 0.01, places=12)
-        self.assertEqual(model.scale_of([]), 1.0)
+        state = [90.0]
+        # The anchor's point stays where it is; the child's origin, 2 along
+        # the rest x from it, turns 90 degrees about the rest -y: to +z.
+        pivot = model.point(state, 0, (2.0, 0.0, 0.0))
+        for got, want in zip(pivot, (2.0, 0.0, 0.0)):
+            self.assertAlmostEqual(got, want, places=12)
+        for got, want in zip(model.world(state)[1][0], (2.0, 0.0, 2.0)):
+            self.assertAlmostEqual(got, want, places=12)
+
+    def test_an_anchored_slide_runs_along_the_anchors_axes(self):
+        half = math.sqrt(0.5)
+        anchor = {"t": [0.5, 0.5, 0.5], "q": [0.0, 0.0, half, half]}  # x -> +y
+        model = ArticulationModel(
+            _chain(_joint("s", None, (1, 0, 0), anchor=anchor, tx=(-2, 2)))
+        )
+        (t, q) = model.local([1.5], 0)
+        for got, want in zip(t, (1.0, 1.5, 0.0)):
+            self.assertAlmostEqual(got, want, places=12)
+        self.assertLess(_qdist(q, (0.0, 0.0, 0.0, 1.0)), 1e-12)
+
+    @staticmethod
+    def _nested(rig):
+        """``(rig, anchors)``: *rig* rebuilt with every joint ON its anchor --
+        each rest the anchor frame's, the anchor the identity -- the same
+        motion a DCC's nested rig makes (its frame is the anchored joint's
+        times its anchor)."""
+        model = ArticulationModel(rig)
+        anchors = [
+            (j["anchor"]["t"], ptk.Quaternion.normalize(j["anchor"]["q"]))
+            for j in rig["joints"]
+        ]
+        frames = []
+        for (p, q), (at, aq) in zip(model.world(model.rest_state()), anchors):
+            point = ptk.Quaternion.rotate(q, at)
+            frames.append(
+                (tuple(a + b for a, b in zip(p, point)), ptk.Quaternion.multiply(q, aq))
+            )
+        nested = copy.deepcopy(rig)
+        for index, joint in enumerate(nested["joints"]):
+            parent = joint["parent"]
+            pp, pq = (
+                ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0))
+                if parent is None
+                else frames[parent]
+            )
+            p, q = frames[index]
+            back = ptk.Quaternion.conjugate(pq)
+            joint["t"] = list(ptk.Quaternion.rotate(back, [a - b for a, b in zip(p, pp)]))
+            joint["q"] = list(ptk.Quaternion.multiply(back, q))
+            joint["anchor"] = copy.deepcopy(_IDENTITY_ANCHOR)
+        return nested, anchors
+
+    def test_read_and_solve_respect_the_anchor(self):
+        """Every anchored rig is the rig nested on its anchors: it poses
+        alike, reads its own poses back, and a grab solves it to the same
+        state -- the anchor's columns, pivots, reach and wrist are the nested
+        rig's -- for a grab dragged from rest, and lands one that starts
+        near its target."""
+        rigs = ArticulationConformance.rigs()
+        for name in ("anchored", "flat", "anchored_tree"):
+            model = ArticulationModel(rigs[name])
+            nested_rig, anchors = self._nested(rigs[name])
+            nested = ArticulationModel(nested_rig)
+            joint = len(model.joints) - 1
+            at, aq = anchors[joint]
+            with self.subTest(rig=name):
+                for _ in range(20):
+                    state = ArticulationConformance._random_state(model, self.rng)
+                    read = model.read(model.pose(state), hint=state)
+                    for got, want in zip(read, state):
+                        self.assertAlmostEqual(got, want, places=7)
+                    for (p, q), (np_, nq), (pt, pq) in zip(
+                        model.world(state), nested.world(state), anchors
+                    ):
+                        on = [a + b for a, b in zip(p, ptk.Quaternion.rotate(q, pt))]
+                        self.assertLess(math.dist(on, np_), 1e-12)
+                        self.assertLess(_qdist(ptk.Quaternion.multiply(q, pq), nq), 1e-12)
+                for _ in range(20):
+                    goal = ArticulationConformance._random_state(model, self.rng)
+                    local = [self.rng.uniform(-1, 1) for _ in range(3)]
+                    # The same held point, in the nested joint's frame.
+                    there = ptk.Quaternion.rotate(
+                        ptk.Quaternion.conjugate(aq), [a - b for a, b in zip(local, at)]
+                    )
+                    target = list(model.point(goal, joint, local))
+                    state, twin = model.rest_state(), nested.rest_state()
+                    start = model.point(state, joint, local)
+                    for f in range(1, 31):
+                        step = [a + (b - a) * f / 30 for a, b in zip(start, target)]
+                        state = model.solve(state, joint, local, step)
+                        twin = nested.solve(twin, joint, there, step)
+                    self.assertEqual(state, model.clamp(state))
+                    for got, want in zip(state, twin):
+                        self.assertAlmostEqual(got, want, delta=1e-4)
+                    near = model.clamp([v + self.rng.uniform(-3, 3) for v in goal])
+                    landed = model.solve(near, joint, local, target)
+                    reach = model._reach(model.chain(joint), local)
+                    miss = math.dist(model.point(landed, joint, local), target)
+                    self.assertLess(miss / reach, 0.01)
+
+    def test_an_anchored_ball_takes_the_hands_rotation(self):
+        """The wrist split under an anchor: the ball turns about its anchor's
+        point, so the chain above places THAT point, the held point lands,
+        and -- wherever no limit holds the chain -- the ball's world rotation
+        is the hand's, over a hold of a few frames from near the pose the
+        hand asks for. The ball's own turn never moves its anchor's point. Pinned 2026-11-08: the point landing alone let a
+        solve that dropped the hand's rotation, levered the whole held point
+        or skipped the anchor's frame pass."""
+        model = ArticulationModel(ArticulationConformance.rigs()["anchored"])
+        joint = len(model.joints) - 1
+        ball = [s for s, (j, _c) in enumerate(model.channels) if j == joint]
+        self.assertEqual({model.channels[s][1] for s in ball}, {"rx", "ry", "rz"})
+        pivot = model.joints[joint]["anchor"][0]
+        self.assertGreater(math.dist(pivot, (0.0, 0.0, 0.0)), 0.1, "off the pivot")
+        chain = [s for j in model.chain(joint) for s, (jj, _c) in enumerate(model.channels) if jj == j]
+
+        def free(state):
+            return all(
+                (lo is None or state[s] > lo + 1e-9) and (hi is None or state[s] < hi - 1e-9)
+                for s in chain
+                for lo, hi in [model.limits(s)]
+            )
+
+        turned_to = 0
+        for _ in range(20):
+            goal = ArticulationConformance._random_state(model, self.rng)
+            local = [self.rng.uniform(-1, 1) for _ in range(3)]
+            target = list(model.point(goal, joint, local))
+            rotation = model.world(goal)[joint][1]
+            # A hand holding the part a few frames, from a pose near the goal.
+            state = model.clamp([v + self.rng.uniform(-10, 10) for v in goal])
+            for _frame in range(10):
+                state = model.solve(state, joint, local, target, rotation)
+            self.assertLess(math.dist(model.point(state, joint, local), target), 1e-2)
+            if free(state):  # no limit held the chain: the ball took the turn
+                turned_to += 1
+                self.assertLess(
+                    _qdist(model.world(state)[joint][1], rotation),
+                    1e-9,
+                    "the ball takes the hand's rotation",
+                )
+            # The ball's own turn leaves its anchor's point where it was.
+            turned = list(goal)
+            for s in ball:
+                turned[s] = model.clamp(
+                    [v + (self.rng.uniform(-30, 30) if i == s else 0.0) for i, v in enumerate(goal)]
+                )[s]
+            self.assertLess(
+                math.dist(
+                    model.point(goal, joint, pivot), model.point(turned, joint, pivot)
+                ),
+                1e-12,
+            )
+        self.assertGreater(turned_to, 10, "most holds leave every channel free")
+
+    def test_a_flat_model_chains_by_its_joints_alone(self):
+        """A flat model -- every part a child of the root, its pivot at the
+        root's origin -- is a rig of identity rests, its hinges in its
+        anchors: each part's pose is its parent JOINT's times its own turn,
+        whatever its node hangs under, so the second hinge rides the first."""
+        rig = ArticulationConformance.rigs()["flat"]
+        model = ArticulationModel(rig)
+        self.assertTrue(
+            all(j["t"] == [0.0, 0.0, 0.0] and j["q"] == [0.0, 0.0, 0.0, 1.0]
+                for j in rig["joints"])
+        )
+        self.assertTrue(all(j["anchor"] != _IDENTITY_ANCHOR for j in rig["joints"]))
+        state = ArticulationConformance._random_state(model, self.rng)
+        world = model.world(state)
+        for index, joint in enumerate(model.joints):
+            p, q = model.local(state, index)
+            if joint["parent"] is not None:
+                pp, pq = world[joint["parent"]]
+                p = tuple(a + b for a, b in zip(pp, ptk.Quaternion.rotate(pq, p)))
+                q = ptk.Quaternion.multiply(pq, q)
+            self.assertLess(math.dist(p, world[index][0]), 1e-12)
+            self.assertLess(_qdist(q, world[index][1]), 1e-12)
+        # The child's anchor point rides the parent's turn.
+        child = next(i for i, j in enumerate(model.joints) if j["parent"] is not None)
+        point = rig["joints"][child]["anchor"]["t"]
+        parent = model.joints[child]["parent"]
+        self.assertLess(
+            math.dist(
+                model.point(state, child, point), model.point(state, parent, point)
+            ),
+            1e-12,
+        )
+
+    def test_a_rig_with_no_anchor_is_refused_naming_its_fix(self):
+        """A version 1 rig -- joints without an anchor -- is not v2's shape:
+        refused, naming the fix (a re-export), never defaulted."""
+        rig = _chain(_joint("a", None, (0, 0, 0), rz=(None, None)))
+        del rig["joints"][0]["anchor"]
+        with self.assertRaises(ValueError) as raised:
+            ArticulationModel(rig)
+        self.assertIn("missing required key 'anchor'", str(raised.exception))
+        self.assertIn("re-export", str(raised.exception))
 
 
 class TestModelSolve(unittest.TestCase):
@@ -533,10 +778,92 @@ class TestConformance(unittest.TestCase):
         a = ArticulationConformance.cases(seed=3, per_rig=2)
         b = ArticulationConformance.cases(seed=3, per_rig=2)
         self.assertEqual(json.dumps(a, sort_keys=True), json.dumps(b, sort_keys=True))
-        self.assertEqual(
-            set(a["tolerance"]), {"pose", "world", "read", "solve", "scale"}
-        )
+        self.assertEqual(set(a["tolerance"]), {"pose", "world", "read", "solve"})
         self.assertEqual(len(a["cases"]), 2 * len(ArticulationConformance.rigs()))
+        self.assertTrue(all("scale" not in case for case in a["cases"]))
+
+    def test_the_anchored_cases_are_appended_so_every_older_index_stands(self):
+        """v2's anchored rigs come after v1's eight, so a port's case ``i``
+        is the case it was: the same rig at the same state. Added:
+        2026-11-08"""
+        names = list(ArticulationConformance.rigs())
+        v1 = ["arm", "tree"] + [
+            f"ball_{o}" for o in ("xyz", "yzx", "zxy", "xzy", "yxz", "zyx")
+        ]
+        self.assertEqual(names[: len(v1)], v1)
+        self.assertEqual(
+            names[len(v1) :],
+            [
+                "anchored",
+                "flat",
+                "anchored_tree",
+                "offset_only",
+                "turn_only",
+                "hair_off_t",
+                "hair_off_q",
+                "negated_identity",
+                "unnormalised_identity",
+                "unnormalised_anchor",
+            ],
+        )
+        doc = ArticulationConformance.cases()
+        self.assertEqual(
+            [c["rig"] for c in doc["cases"]][: 4 * len(v1)],
+            [n for n in v1 for _ in range(4)],
+        )
+
+    def test_the_edge_rigs_sit_on_either_side_of_the_identity(self):
+        """The anchored arm with its anchors on the identity's edge: a pure
+        offset (an engine's default joint: the point off the pivot, the rest's axes)
+        and a pure turn, a hair off the identity in each -- each anchored --
+        and the identity spelt as -q and unnormalised, which take the
+        anchorless path; and the arm's own anchors unnormalised. A port that
+        ignores t or q, treats the identity by a tolerance, or reads an
+        anchor's q unnormalised, fails these. Added: 2026-11-08"""
+        rigs = ArticulationConformance.rigs()
+        base = rigs["anchored"]
+        for name, anchored in (
+            ("offset_only", True),
+            ("turn_only", True),
+            ("hair_off_t", True),
+            ("hair_off_q", True),
+            ("negated_identity", False),
+            ("unnormalised_identity", False),
+            ("unnormalised_anchor", True),
+        ):
+            with self.subTest(rig=name):
+                rig = rigs[name]
+                self.assertEqual(
+                    [{k: v for k, v in j.items() if k != "anchor"} for j in rig["joints"]],
+                    [{k: v for k, v in j.items() if k != "anchor"} for j in base["joints"]],
+                )
+                model = ArticulationModel(rig)
+                self.assertEqual(
+                    [j["anchor"] is not None for j in model.joints],
+                    [anchored] * len(model.joints),
+                )
+        offset = rigs["offset_only"]["joints"]
+        self.assertTrue(all(j["anchor"]["q"] == [0.0, 0.0, 0.0, 1.0] for j in offset))
+        self.assertTrue(all(any(j["anchor"]["t"]) for j in offset))
+        turn = rigs["turn_only"]["joints"]
+        self.assertTrue(all(j["anchor"]["t"] == [0.0, 0.0, 0.0] for j in turn))
+        self.assertTrue(all(j["anchor"]["q"] != [0.0, 0.0, 0.0, 1.0] for j in turn))
+
+    def test_the_anchored_rigs_cover_hinges_slides_a_ball_and_a_branch(self):
+        rigs = ArticulationConformance.rigs()
+        identity = {"t": [0.0, 0.0, 0.0], "q": [0.0, 0.0, 0.0, 1.0]}
+        for name in ("arm", "tree") + tuple(n for n in rigs if n.startswith("ball_")):
+            self.assertTrue(all(j["anchor"] == identity for j in rigs[name]["joints"]))
+        anchored = [
+            j
+            for name in ("anchored", "flat", "anchored_tree")
+            for j in rigs[name]["joints"]
+            if j["anchor"] != identity
+        ]
+        kinds = {c["channel"] for j in anchored for c in j["channels"]}
+        self.assertEqual(kinds, {"rx", "ry", "rz", "tx", "ty", "tz"})
+        parents = [j["parent"] for j in rigs["anchored_tree"]["joints"]]
+        self.assertGreater(len(parents), len(set(parents)), "a joint with two children")
 
     def test_the_reference_passes_its_own_cases(self):
         doc = ArticulationConformance.cases(seed=5, per_rig=3)
@@ -578,37 +905,61 @@ class TestRecordShape(unittest.TestCase):
     held to real payloads rather than to itself."""
 
     def test_the_conformance_rigs_are_records_of_the_declared_shape(self):
-        payload = {"version": 1, "rigs": list(ArticulationConformance.rigs().values())}
+        payload = {"version": 2, "rigs": list(ArticulationConformance.rigs().values())}
         res = ptk.ArticulationRecord.validate(payload)
         self.assertEqual(res.errors, [])
         self.assertEqual(res.warnings, [])
 
     def test_the_shape_is_the_records_declared_one(self):
         self.assertIs(ptk.SceneRecords.shape("articulation"), ptk.ArticulationRecord)
-        self.assertIs(ptk.SceneRecords.glb_shape("articulation"), ptk.ArticulationBlock)
+        # One layout, two containers: a GLB carries the record itself.
+        self.assertTrue(ptk.SceneRecords.ARTICULATION.glb_verbatim)
 
-    def test_the_retired_web_shapes_are_their_blocks(self):
-        """``ArticulationWeb`` and its parts (retired 2026-10-20 for the
-        ``ArticulationBlock`` family, removed in 0.18.0) warn, and serve as
-        the block shapes they were renamed to."""
-        from pythontk.geo_utils.articulation import record
+    def test_v2_is_in_glTFs_frame_with_an_anchor_on_every_joint(self):
+        """Articulation v2 (2026-11-08): every joint carries ``anchor: {t,
+        q}`` (required; the identity by default), the record is in glTF's
+        frame (metres), a GLB carries it as it stands, and a version 1 record
+        is refused, its version's help naming the fix. Added: 2026-11-08"""
+        spec = ptk.SceneRecords.ARTICULATION
+        self.assertEqual(spec.version, 2)
+        self.assertTrue(spec.in_frame)
+        self.assertTrue(spec.glb_verbatim)
+        schema = ptk.ArticulationRecord.json_schema()["$defs"]
+        self.assertIn("anchor", schema["ArticulationJoint"]["required"])
+        self.assertEqual(
+            set(schema["ArticulationAnchor"]["required"]), {"t", "q"}
+        )
+        joint = ptk.ArticulationRecord.skeleton()["rigs"][0]["joints"][0]
+        self.assertEqual(
+            joint["anchor"], {"t": [0.0, 0.0, 0.0], "q": [0.0, 0.0, 0.0, 1.0]}
+        )
+        v1 = {"version": 1, "rigs": []}
+        self.assertFalse(spec.is_current(v1))
+        (version,) = [
+            f for f in ptk.ArticulationRecord.describe() if f.name == "version"
+        ]
+        self.assertIn("version 1 record", version.help)
+        self.assertIn("re-exported", version.help)
 
-        for old, new in (
-            ("ArticulationWeb", "ArticulationBlock"),
-            ("ArticulationWebRig", "ArticulationBlockRig"),
-            ("ArticulationWebJoint", "ArticulationBlockJoint"),
-            ("ArticulationWebGrab", "ArticulationBlockGrab"),
-        ):
-            with self.subTest(name=old):
-                with self.assertWarns(DeprecationWarning):
-                    shape = getattr(record, old)()
-                self.assertIsInstance(shape, getattr(record, new))
+    def test_the_retired_block_shapes_name_their_new_home(self):
+        """The GLB block (``ArticulationBlock``, its parts and the retired
+        ``ArticulationWeb`` aliases) left with v2: a GLB carries the record
+        itself. Reading one at the root names where it went. The
+        ``ArticulationWeb`` aliases, noticed for 0.18.0 on 2026-10-24, are
+        held, deprecated, until their window closes (``HELD_UNTIL_0_22``;
+        ``test_scene_records.TestRetiredUntil022``). Added: 2026-11-08"""
+        with self.assertRaises(AttributeError) as raised:
+            getattr(ptk, "ArticulationBlock")
+        self.assertIn("ArticulationRecord", str(raised.exception))
+        self.assertEqual(
+            ptk.HELD_UNTIL_0_22["ArticulationWeb"], ("pythontk.ArticulationRecord", "0.22.0")
+        )
 
     def test_a_drifted_payload_is_named_where_it_drifted(self):
         rig = json.loads(json.dumps(ArticulationConformance.rigs()["arm"]))
         rig["joints"][1]["rotateOrder"] = rig["joints"][1].pop("rotate_order")
         rig["joints"][2]["channels"][0]["min"] = "-90"
-        res = ptk.ArticulationRecord.validate({"version": 1, "rigs": [rig]})
+        res = ptk.ArticulationRecord.validate({"version": 2, "rigs": [rig]})
         self.assertEqual(
             res.errors,
             [

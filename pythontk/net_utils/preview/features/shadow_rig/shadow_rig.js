@@ -1,37 +1,44 @@
 /*
   Shadow rig — drive the DCC shadow planes from the model's own source and
-  contact nodes, per frame, with the maps the conversion bound.
+  contact nodes, per frame, with the maps the file carries.
 
   A shadow rig (mayatk / blendertk `ShadowRig`) is a ground quad under a prop
-  whose transform a DCC expression re-places from the light every frame, and
-  whose texture is either a rasterized silhouette (the PROJECTED type: the
-  quad's UVs read one tile of an atlas) or a HORIZON map (a height-field bake
-  of the prop's footprint -- solid spans per pixel, a distance field and a
-  min/max pyramid -- that the shader marches toward the light). Neither
-  survives the FBX -> glTF hop as behaviour: the expression is baked to keys at
-  export and the horizon map is a data texture no material references.
+  whose transform a DCC expression re-places from the light every frame. Its
+  shadow is a HORIZON map (a height-field bake of the prop's footprint --
+  solid spans per pixel, a distance field and a min/max pyramid -- that the
+  shader marches toward the light), and, as an extension, a rasterized
+  SILHOUETTE (the quad's UVs read one tile of an atlas) the rig may choose to
+  draw instead (`silhouette.draw`: the PROJECTED rig). Neither survives the
+  FBX -> glTF hop as behaviour: the expression is baked to keys at export and
+  the maps are data no material references.
 
-  `MeshConvert.apply_glb_shadows` (pythontk) binds the maps into the file and
-  writes root `extras.shadows`: each plane's projection model, bound to the
-  file by index in place of every name -- the glTF NODE of the plane, of its
-  source and of its contact, the TEXTURE of each map -- and a horizon map's
-  rect in glTF top-left space. This script is the runtime half:
+  The file carries the `shadows` record as the DCC published it, in its root
+  `extras` -- one layout, two containers -- and every file the record names
+  (each plane's horizon map, silhouette and atlas) as the bufferView named by
+  that file (records.js GLB_MEDIA); `MeshConvert.apply_glb_shadows`
+  (pythontk) writes both. This script is the runtime half:
 
-    load   read the manifest; map node indices to Object3Ds through the
-           loader's association table (names are not unique); give every plane
-           one ShaderMaterial (both types in ONE program, `uMode`); merge the
-           projected planes that share a colour map and carry no fade track
-           into an InstancedMesh with per-instance rect and opacity/intensity
-           attributes. Horizon planes stay one mesh each (their per-frame
-           uniforms are a frame and a source, which instancing does not buy
-           enough to be worth a second program).
-    frame  evaluate the projection model (model.js beside this: a port of
-           ShadowProjection.model / ShadowModel.placement, pinned against it
-           by the reference's golden cases, `ptk.Conformance`)
-           from the source and contact nodes and place each plane -- or its
-           instance matrix -- the way the Maya expression does. A horizon
-           plane is fed its source in the contact frame just before it draws,
-           off world matrices the renderer has already refreshed.
+    load   read the record; resolve each plane to its mesh node, and its
+           source and contact to theirs, by the rule every reader resolves a
+           record's names by (kernel/resolve.js: the exact name, else the one
+           after the last ':'; a tie is never guessed); decode each map off
+           its view; give every plane one ShaderMaterial (both modes in ONE
+           program, `uMode`) -- the silhouette where the rig draws it and the
+           file holds it, else the horizon march, else the silhouette as the
+           fallback; merge the silhouette planes that share a map into an
+           InstancedMesh with per-instance rect and opacity attributes.
+           Horizon planes stay one mesh each (their per-frame uniforms are a
+           frame and a source, which instancing does not buy enough to be
+           worth a second program).
+    frame  evaluate the projection model and the fade (model.js beside this:
+           ports of ShadowProjection.model / ShadowModel.placement /
+           ShadowProjection.fade, pinned against them by the reference's
+           golden cases, `ptk.Conformance`) from the source and contact nodes;
+           place each following plane -- or its instance matrix -- the way
+           the Maya expression does, and draw every plane at its shadow times
+           its fade. A horizon plane is fed its source in the contact frame
+           just before it draws, off world matrices the renderer has already
+           refreshed.
     cache  a horizon plane does not march per screen pixel: its shadow is
            marched over the plane's own UVs into its slot of ONE R8 atlas
            (a texel per CACHE_TEXEL map pixels) and the plane samples that,
@@ -59,44 +66,48 @@
   plane's UVs address its tile of the atlas (the DCC remaps them into it, so a
   fallback viewer needs no transform): they are brought back to the unit
   square and their bounds become the plane's rect, applied per plane and per
-  instance -- so one quad serves a batch, each instance on its own tile.
+  instance -- so one quad serves a batch, each instance on its own tile. A
+  plane drawn from its own silhouette (no atlas in the file) reads all of it.
 
   A Z-up DCC's plane arrives in a Z-up frame: Blender's FBX exporter turns
   only the ROOT nodes upright and never the mesh data, so a blendertk quad
   lies in its local X/Y (normal +Z) and its contact's own axes are Blender's
   -- measured on blendertk pushes, a plane and a contact at the root and under
   one alike -- where a Y-up DCC's (Maya's) quad lies in X/Z. Told off the quad
-  (quadExtent; unitytk's ShadowPlaneController.IsZUp rule), so no producer
-  flag is needed: such a quad is turned onto the ground as it is placed
-  (Z_UP_PLANE) and its contact's frame read in the file's axes (Z_UP_FRAME),
-  the axes its record's frame is written in.
+  (quadExtent; unitytk's IsZUp rule), so no producer flag is needed: such a
+  quad is turned onto the ground as it is placed (Z_UP_PLANE) and its
+  contact's frame read in the file's axes (Z_UP_FRAME), the axes its record's
+  frame is written in.
 
-  Textures this script creates are its own: the page's disposeModel frees what
-  hangs off a model's materials, so the horizon maps (never on a material) and
-  the originals detached from the planes it takes over are disposed HERE, on
-  the next load. The InstancedMesh is a child of the model and dies with it.
-  A plane's fade keeps working: the page binds the KHR_animation_pointer ramp
-  to the ORIGINAL material, whose opacity this script copies every frame.
+  The maps: a horizon map is DATA, decoded here off its own bytes with
+  premultiplication and colour conversion off, and sampled with no mipmaps,
+  clamped (prepareDataTexture) -- the record reads its texels whole. A
+  silhouette is colour, decoded as the loader decodes an image, sRGB, sampled
+  as glTF's default sampler samples (repeat, mipmapped) -- as the page
+  sampled it when the file bound it as a texture.
+  Textures this script creates are its own: the page's disposeModel frees
+  what hangs off a model's materials, so the maps and the originals detached
+  from the planes it takes over are disposed HERE, on the next load. The
+  InstancedMesh is a child of the model and dies with it.
 
-  The record's `intensity` is the DCC's shadowIntensity, which the DCC has
-  ALREADY multiplied into the opacity it bakes (Maya's expression, Blender's
-  driver; Unity keeps it as `recordIntensity`, informational). So it applies
-  only to a plane whose opacity the file does not state: the converter writes
-  no fade track for a ramp that holds one value (glb/fades.py), and the
-  material's alpha then arrives at 1 -- measured on a real export, a bare
-  factor -- leaving the record's number the only statement of the authored
-  dial. A plane with a fade track takes its opacity from the ramp alone, and
-  one whose static alpha is below 1 from that alpha: the DCC's opacity never
-  exceeds its intensity, so an alpha under 1 is that opacity already stated.
+  The fade is the record's own: every frame, from the placement, whether or
+  not the plane follows its source, ShadowProjection.fade over the plane's
+  terms -- its source ramp the plane's `source_ramp` in metres (times
+  unit_scale: the ramp its producer previews), and its `intensity` the
+  ceiling, so it lands once. A plane whose source or contact does not
+  resolve (a selection export that left one behind) draws at `intensity`,
+  unplaced, and says so once in the console. The DCC bakes no fade, so
+  nothing of the file's material -- its alpha, an animation of it -- is read.
 
   Activate:  automatic -- PreviewServer.AUTO_SCRIPTS turns it on for any
              deliverable whose root extras carry `shadows`;
              or bridge.push(scripts=["shadow_rig"]).
 */
 
-import { readBlock } from '../../kernel/extras.js';
+import { mediaOf, readBlock } from '../../kernel/extras.js';
 import { SHADOWS } from '../../kernel/records.js';
-import { farPoint, placement, shadowModel } from './model.js';
+import { indexNodes, resolveEntries, resolveIndexed } from '../../kernel/resolve.js';
+import { DEFAULT_FALLOFF_POWER, farPoint, placement, shadowFade, shadowModel } from './model.js';
 
 //: Lift above the ground in DCC units (the Maya rig's GROUND_OFFSET), so the
 //: plane never z-fights the floor; times unit_scale at run time.
@@ -118,7 +129,6 @@ const Z_UP_PLANE = [0, Math.SQRT1_2, Math.SQRT1_2, 0];
 //: turn back from the one Blender's exporter gives its roots (unitytk's
 //: ZUpFrameAxes).
 const Z_UP_FRAME = [Math.SQRT1_2, 0, 0, Math.SQRT1_2];
-const ALPHA_POINTER = /^\/materials\/(\d+)\/pbrMetallicRoughness\/baseColorFactor$/;
 const RECT_IDENTITY = [1, 1, 0, 0];
 const CANVAS_DEFAULT = [-1, 1, -0.5, 0.5];
 //: A horizon cache texel, in map pixels: the shadow holds no detail finer than
@@ -682,29 +692,32 @@ void main() {
 
 /* ------------------------------------------------------------- the file --- */
 
-// The shadows record's block (the ROOT's extras, where the conversion
-// writes it and PreviewServer.AUTO_SCRIPTS looks).
-/** @returns {import('../../kernel/records.js').ShadowBlock | null} */
-function readManifest(parser) {
+// The shadows record as the file carries it (the ROOT's extras, where the
+// conversion puts it and PreviewServer.AUTO_SCRIPTS looks), in the schema
+// this page reads.
+/** @returns {import('../../kernel/records.js').ShadowRecord | null} */
+function readRecord(parser) {
   return readBlock(parser?.json?.extras, SHADOWS);
 }
 
-// glTF material indices a KHR_animation_pointer alpha ramp drives -- read off
-// the file the same way the page's fade shim reads it, so the two agree about
-// which planes fade. A fading plane keeps its own mesh: the page drives ONE
-// mesh per faded material, and an instance has no material of its own.
-function fadedMaterials(parser) {
-  const faded = new Set();
-  for (const animation of parser.json.animations || []) {
-    for (const channel of animation.channels || []) {
-      const target = channel.target || {};
-      if (target.path !== 'pointer') continue;
-      const pointer = target.extensions?.KHR_animation_pointer?.pointer || '';
-      const match = ALPHA_POINTER.exec(pointer);
-      if (match) faded.add(Number(match[1]));
+// The glTF node a plane's source or contact names, each name resolved alone
+// by the record rule over every node (resolve.js), against the file's index
+// built once (`names.index`: a file of tens of thousands of nodes and
+// hundreds of planes resolves in milliseconds, not seconds); null for a name
+// the file does not carry or carries on several nodes (warned: a plane never
+// follows a guess). `names.seen` remembers each name's answer for the session.
+function nodeNamed(json, name, role, plane, names) {
+  if (typeof name !== 'string' || !name) return null;
+  if (!names.seen.has(name)) {
+    if (!names.index) names.index = indexNodes(json, { meshes: false });
+    const [found] = resolveIndexed(names.index, [{ name }]);
+    const node = found.nodes && found.nodes.length === 1 ? found.nodes[0] : null;
+    if (found.status === 'ambiguous' || (found.nodes && found.nodes.length > 1)) {
+      console.warn(`shadow_rig: plane ${plane}: its ${role} ${name} names several nodes -- ambiguous, the plane stays as the file has it`);
     }
+    names.seen.set(name, node);
   }
-  return faded;
+  return names.seen.get(name);
 }
 
 /* ----------------------------------------------------------- the planes --- */
@@ -712,15 +725,21 @@ function fadedMaterials(parser) {
 const finite = (value, fallback) => (Number.isFinite(Number(value)) ? Number(value) : fallback);
 const flatRect = (rect) => (Array.isArray(rect) && rect.length === 4 ? rect.map(Number) : RECT_IDENTITY.slice());
 const vec3 = (value, fallback) => (Array.isArray(value) && value.length === 3 ? value.map(Number) : fallback.slice());
+const objectOr = (value) => (value && typeof value === 'object' ? value : null);
+// A rect from its image's bottom-left (the record's) to glTF's top-left:
+// ImgUtils.flip_rect_v.
+const topLeft = (rect) => [rect[0], rect[1], rect[2], 1 - rect[1] - rect[3]];
 
-// The plane's horizon map, validated and in metres; null when it is none this
-// shim can march (its size, spans, footprint or height scale out of range).
-// Its min/max pyramid stands log2(size) levels over level 0: the size is a
-// power of two.
-/** @param {import('../../kernel/records.js').ShadowBlockPlane} record */
-function horizonSpec(record, unit) {
-  const h = record.horizon;
-  if (!h || typeof h !== 'object') return null;
+// The plane's horizon map, validated and in metres, with the view its file
+// rides; null when it is none this shim can march (the file does not hold the
+// map, or its size, spans, footprint or height scale are out of range). Its
+// min/max pyramid stands log2(size) levels over level 0: the size is a power
+// of two.
+/** @param {import('../../kernel/records.js').ShadowPlane} record */
+function horizonSpec(json, record, unit) {
+  const h = objectOr(record.horizon);
+  if (!h) return null;
+  const media = mediaOf(json, h.texture);
   const size = Number(h.size);
   const spans = Number(h.spans);
   const levels = Math.round(Math.log2(size));
@@ -728,17 +747,17 @@ function horizonSpec(record, unit) {
     ? h.bounds.map((v) => Number(v) * unit)
     : null;
   const heightScale = Number(h.height_scale) * unit;
-  const ok = Number.isInteger(h.texture_index) && size >= 8 && spans >= 1 && bounds
+  const ok = media && size >= 8 && spans >= 1 && bounds
     && heightScale > 0 && bounds[1] > bounds[0] && bounds[3] > bounds[2];
   if (!ok) return null;
   return {
-    textureIndex: h.texture_index,
+    media,
     size,
     spans,
     levels,
     bounds,
     heightScale,
-    rect: flatRect(h.rect),
+    rect: topLeft(flatRect(h.rect)),
     frameA: vec3(h.frame_a, [1, 0, 0]),
     frameB: vec3(h.frame_b, [0, 0, 1]),
   };
@@ -807,38 +826,75 @@ function prepareDataTexture(THREE, texture) {
   texture.needsUpdate = true;
 }
 
-// The horizon map decoded from its own bytes rather than through the loader:
-// GLTFLoader decodes images with createImageBitmap at the browser's default
-// premultiplication, and a texel whose alpha is a small occupancy mask has
-// its other channels multiplied down and quantised on the way -- bits lost
-// before the shader ever sees them. Decoded here with premultiplication and
-// colour conversion both off; the loader's own texture is the fallback where
-// createImageBitmap does not exist.
-async function loadDataTexture(THREE, parser, textureIndex) {
-  const def = parser.json.textures?.[textureIndex];
-  const source = def?.extensions?.EXT_texture_webp?.source ?? def?.source;
-  const image = parser.json.images?.[source];
-  if (!image || typeof createImageBitmap !== 'function') {
-    const texture = await parser.getDependency('texture', textureIndex);
-    prepareDataTexture(THREE, texture);
+// A file's view decoded as the loader decodes an image (`parser.textureLoader`),
+// in glTF's texture space (no flip).
+async function loaderTexture(THREE, parser, media) {
+  const bytes = await parser.getDependency('bufferView', media.view);
+  const url = URL.createObjectURL(new Blob([bytes], { type: media.mimeType || 'image/png' }));
+  try {
+    const decoded = await parser.textureLoader.loadAsync(url);
+    const texture = decoded?.isTexture ? decoded : new THREE.Texture(decoded);
+    texture.flipY = false;
+    texture.needsUpdate = true;
     return texture;
+  } finally {
+    URL.revokeObjectURL(url);
   }
-  let blob;
-  if (image.bufferView !== undefined) {
-    const buffer = await parser.getDependency('bufferView', image.bufferView);
-    blob = new Blob([buffer], { type: image.mimeType || 'image/png' });
+}
+
+// A horizon map decoded from its own bytes rather than as the loader decodes
+// an image: createImageBitmap at the browser's default premultiplication
+// multiplies the other channels of a texel whose alpha is a small occupancy
+// mask down and quantises them -- bits lost before the shader ever sees them.
+// Decoded here with premultiplication and colour conversion both off; the
+// loader's own decode is the fallback where createImageBitmap does not exist.
+async function dataTexture(THREE, parser, media) {
+  let texture;
+  if (typeof createImageBitmap === 'function') {
+    const bytes = await parser.getDependency('bufferView', media.view);
+    const bitmap = await createImageBitmap(new Blob([bytes], { type: media.mimeType || 'image/png' }), {
+      premultiplyAlpha: 'none',
+      colorSpaceConversion: 'none',
+      imageOrientation: 'none',
+    });
+    texture = new THREE.Texture(bitmap);
   } else {
-    const url = THREE.LoaderUtils.resolveURL(image.uri, parser.options.path);
-    blob = await (await fetch(url)).blob();
+    texture = await loaderTexture(THREE, parser, media);
   }
-  const bitmap = await createImageBitmap(blob, {
-    premultiplyAlpha: 'none',
-    colorSpaceConversion: 'none',
-    imageOrientation: 'none',
-  });
-  const texture = new THREE.Texture(bitmap);
   prepareDataTexture(THREE, texture);
   return texture;
+}
+
+// A silhouette: colour, sRGB, sampled as glTF's default sampler samples
+// (repeat) -- what the page sampled it with when the file bound it as a
+// texture of no sampler of its own. A tile's gutter keeps its neighbours
+// (and the far edge) out of its bilinear taps either way.
+async function colourTexture(THREE, parser, media) {
+  const texture = await loaderTexture(THREE, parser, media);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  return texture;
+}
+
+// The session's one decode of a view, as data or as colour: planes sharing a
+// file (an atlas) share its texture. Owned by the session; a map that cannot
+// be decoded is said and left unbound.
+function viewTexture(THREE, session, parser, media, data) {
+  const key = `${data ? 'data' : 'colour'}:${media.view}`;
+  if (!session.textures.has(key)) {
+    session.textures.set(key, (data ? dataTexture : colourTexture)(THREE, parser, media).then(
+      (texture) => {
+        session.owned.push(texture);
+        return texture;
+      },
+      (error) => {
+        console.warn(`shadow_rig: the map in bufferView ${media.view} could not be read`, error);
+        return null;
+      },
+    ));
+  }
+  return session.textures.get(key);
 }
 
 const colorOf = (THREE, material) => (material.color ? material.color.clone() : new THREE.Color(1, 1, 1));
@@ -1110,23 +1166,17 @@ function keepDepthOff() {
   this.material.depthWrite = false;
 }
 
-// The colour map a plane samples, onto that material's uMap. Taken off the
-// material when it already carries exactly this texture (no second decode),
-// otherwise fetched through the parser -- which is the normal case on a real
-// export, where the atlas the block names is in the file but no material
-// points at it. A fetched texture is given the colour space the loader would
-// have given it in a base-colour slot; getDependency hands back the loader's
-// own cached instance, so a material already using it sees no change.
+// The colour map a silhouette plane samples, onto that material's uMap: the
+// plane's material's own map where the file holds no silhouette of its own,
+// otherwise the silhouette's view, decoded once for every plane sharing it.
 function attachMap(THREE, session, parser, plane, material) {
   if (plane.useOwnMap) {
     material.uniforms.uMap.value = plane.original.map;
     return;
   }
-  if (plane.mapIndex === null) return;
-  session.pending.push(parser.getDependency('texture', plane.mapIndex).then((texture) => {
-    texture.colorSpace = THREE.SRGBColorSpace;
-    material.uniforms.uMap.value = texture;
-    session.owned.push(texture);
+  if (!plane.silhouette) return;
+  session.pending.push(viewTexture(THREE, session, parser, plane.silhouette, false).then((texture) => {
+    if (texture) material.uniforms.uMap.value = texture;
   }));
 }
 
@@ -1134,11 +1184,10 @@ function attachMap(THREE, session, parser, plane, material) {
 // glTF node index -> its name as the file spells it (`viewer.nodeName`).
 function build(THREE, renderer, model, gltf, environment, resolve, nameOf) {
   const parser = gltf.parser;
-  const manifest = readManifest(parser);
-  if (!manifest || !Array.isArray(manifest.planes) || !manifest.planes.length) return null;
-  const unit = finite(manifest.unit_scale, 1) > 0 ? finite(manifest.unit_scale, 1) : 1;
-  const faded = fadedMaterials(parser);
-  const materialDefs = parser.json.materials || [];
+  const json = parser.json;
+  const record = readRecord(parser);
+  if (!record || !Array.isArray(record.planes) || !record.planes.length) return null;
+  const unit = finite(record.unit_scale, 1) > 0 ? finite(record.unit_scale, 1) : 1;
   const session = {
     model,
     unit,
@@ -1147,6 +1196,8 @@ function build(THREE, renderer, model, gltf, environment, resolve, nameOf) {
     batches: [],
     owned: [],
     pending: [],
+    // view -> its decode (viewTexture)
+    textures: new Map(),
     ready: null,
     // the horizon cache (see the header): on unless a caller turns it off
     cache: true,
@@ -1155,91 +1206,63 @@ function build(THREE, renderer, model, gltf, environment, resolve, nameOf) {
     frame: 0,
   };
 
-  for (const record of manifest.planes) {
-    // The block binds a plane by its node's index alone: its name is the
-    // node's, as the file spells it.
-    const name = nameOf(record.node);
-    const node = resolve(record.node);
-    const mesh = node && (node.isMesh ? node : node.children.find((child) => child.isMesh));
-    if (!mesh || Array.isArray(mesh.material) || !mesh.geometry) {
-      console.warn(`shadow_rig: plane ${name} (node ${record.node}) has no mesh to drive`);
-      continue;
+  // Each plane to its mesh node, the planes as ONE assignment (resolve.js);
+  // a plane the file does not carry (a selection export) is passed over.
+  const entries = record.planes.filter((entry) => entry && typeof entry === 'object');
+  const resolved = resolveEntries(json, entries);
+  // A file the record names that several bufferViews hold is held by none
+  // (records.js GLB_MEDIA), said as MeshConvert.verify_glb says it.
+  const tied = new Set();
+  for (const entry of entries) {
+    const silhouette = objectOr(entry.silhouette);
+    for (const file of [objectOr(entry.horizon)?.texture, silhouette?.texture, objectOr(silhouette?.atlas)?.texture]) {
+      const tie = {};
+      if (typeof file === 'string' && file) mediaOf(json, file, tie);
+      if (tie.tie) tied.add(file);
     }
-    const mode = record.type === 'horizon' ? 1 : 0;
-    const horizon = mode === 1 ? horizonSpec(record, unit) : null;
-    if (mode === 1 && !horizon) {
-      console.warn(`shadow_rig: plane ${name}: horizon record not readable by this viewer`);
-      continue;
-    }
-    const mapIndex = Number.isInteger(record.texture_index) ? record.texture_index : null;
-    if (mode === 0 && mapIndex === null) {
-      console.warn(`shadow_rig: plane ${name} has no colour map`);
-      continue;
-    }
-    const original = mesh.material;
-    // The material the mesh WEARS, through the loader's own association --
-    // the index the page's fade shim binds by, a material the fade pass
-    // isolated onto a clone included.
-    const materialIndex = parser.associations.get(original)?.materials;
-    const ownIndex = materialDefs[materialIndex]?.pbrMetallicRoughness?.baseColorTexture?.index;
-    const source = resolve(record.source_node);
-    const contact = resolve(record.contact_node);
-    const isFaded = faded.has(materialIndex);
-    // The quad's UVs, to the unit square: a projected plane's rect is their
-    // bounds -- its tile, once packed -- and a horizon plane's cache marches
-    // over them.
-    const rect = normaliseUv(mesh.geometry);
-    const plane = {
-      record,
-      name,
-      node,
-      mesh,
-      original,
-      mode,
-      horizon,
-      source,
-      contact,
-      follow: !!record.follow_source && !!source && !!contact,
-      directional: record.source_type === 'directional',
-      // Once: a fade track, or a static alpha below 1, already states the
-      // opacity the DCC multiplied it into (see the header).
-      intensity: isFaded || original.opacity < 1 ? 1 : finite(record.intensity, 1),
-      rect: mode === 0 ? rect : RECT_IDENTITY.slice(),
-      mapIndex,
-      useOwnMap: mode === 0 && ownIndex === mapIndex && !!original.map,
-      faded: isFaded,
-      extent: quadExtent(mesh.geometry),
-      ground: finite(record.ground, 0) * unit,
-      radius: finite(record.radius, 0.5) * unit,
-      height: finite(record.height, 1) * unit,
-      maxStretch: finite(record.max_stretch, 6),
-      sourceSize: finite(record.source_size, 0) * unit,
-      sourceAngle: finite(record.source_angle, 0),
-      canvas: Array.isArray(record.canvas) && record.canvas.length === 4
-        ? record.canvas.map(Number)
-        : CANVAS_DEFAULT.slice(),
-      material: null,
-      cache: null,
-      batch: null,
-      instance: -1,
-      lastOpacity: NaN,
-    };
-    session.planes.push(plane);
   }
+  if (tied.size) {
+    console.warn(`shadow_rig: ${tied.size} file(s) the record names are held by several bufferViews: none is read (${[...tied].join(', ')})`);
+  }
+  // The sources' and contacts' names, each resolved alone over one index of
+  // the file's nodes (nodeNamed).
+  const names = { index: null, seen: new Map() };
+  entries.forEach((entry, i) => {
+    const { nodes, status, leaves } = resolved[i];
+    if (status === 'ambiguous') {
+      console.warn(`shadow_rig: plane ${entry.name}: nothing tells it apart from a namesake (${leaves.join(', ')}); left as the file has it`);
+      return;
+    }
+    for (const index of nodes || []) {
+      const plane = makePlane(json, entry, index, resolve, nameOf, unit, names);
+      if (plane) session.planes.push(plane);
+    }
+  });
   if (!session.planes.length) return null;
+  // A plane whose fade cannot be evaluated draws at its intensity, unplaced:
+  // said once per plane, so a selection export that left its source (or its
+  // contact) behind is seen rather than read as a flat shadow.
+  const said = new Set();
+  for (const plane of session.planes) {
+    if ((plane.source && plane.contact) || said.has(plane.name)) continue;
+    said.add(plane.name);
+    const lost = [];
+    if (!plane.source) lost.push(`source ${plane.record.source || '(none named)'}`);
+    if (!plane.contact) lost.push(`contact ${plane.record.contact || '(none named)'}`);
+    console.warn(`shadow_rig: plane ${plane.name}: its ${lost.join(' and ')} does not resolve in this file -- it draws at its intensity (${plane.intensity}), unplaced and unfaded`);
+  }
+  for (const plane of session.planes) plane.opacity = opacityOf(THREE, session, plane).opacity;
 
-  // Batches: projected planes sharing one colour map, none of them faded.
-  // Keyed on the TEXTURE THE SHADER SAMPLES (the manifest's texture_index),
-  // never on whether the plane's material happens to carry it: a Maya
-  // standardSurface loses its file texture through the FBX hop, so on a real
-  // export every plane's material has no map at all while all three sample
-  // one atlas -- gating on the material left three separate meshes where the
-  // whole point of an atlas is one draw call.
+  // Batches: silhouette planes sharing one colour map. Keyed on the MAP THE
+  // SHADER SAMPLES (its file's view), never on whether the plane's material
+  // happens to carry it: a Maya standardSurface loses its file texture
+  // through the FBX hop, so on a real export every plane's material has no
+  // map at all while all three sample one atlas.
   const groups = new Map();
   for (const plane of session.planes) {
-    if (plane.mode !== 0 || plane.faded || plane.mapIndex === null) continue;
-    if (!groups.has(plane.mapIndex)) groups.set(plane.mapIndex, []);
-    groups.get(plane.mapIndex).push(plane);
+    if (plane.mode !== 0 || plane.mapKey === null) continue;
+    if (!groups.has(plane.mapKey)) groups.set(plane.mapKey, []);
+    groups.get(plane.mapKey).push(plane);
   }
   for (const [key, members] of groups) {
     if (members.length < 2) continue;
@@ -1272,8 +1295,9 @@ function build(THREE, renderer, model, gltf, environment, resolve, nameOf) {
       plane.extent = first.extent;
       plane.mesh.visible = false;
       iRect.setXYZW(i, plane.rect[0], plane.rect[1], plane.rect[2], plane.rect[3]);
-      iParams.setXY(i, plane.original.opacity, plane.intensity);
-      plane.lastOpacity = plane.original.opacity;
+      // The fade carries the intensity (ShadowProjection.fade): y stays 1.
+      iParams.setXY(i, plane.opacity, 1);
+      plane.lastOpacity = plane.opacity;
     });
     model.add(instanced);
     session.batches.push(batch);
@@ -1288,10 +1312,10 @@ function build(THREE, renderer, model, gltf, environment, resolve, nameOf) {
     if (plane.mode === 0) attachMap(THREE, session, parser, plane, material);
     const u = material.uniforms;
     u.uRect.value.fromArray(plane.rect);
-    u.uParams.value.set(plane.original.opacity, plane.intensity);
-    material.opacity = plane.original.opacity;
-    plane.lastOpacity = plane.original.opacity;
-    if (plane.horizon) {
+    u.uParams.value.set(plane.opacity, 1);
+    material.opacity = plane.opacity;
+    plane.lastOpacity = plane.opacity;
+    if (plane.mode === 1) {
       const h = plane.horizon;
       u.uHorizonRect.value.fromArray(h.rect);
       u.uHorizonParams.value.set(h.size, h.spans, h.levels, 0);
@@ -1303,14 +1327,13 @@ function build(THREE, renderer, model, gltf, environment, resolve, nameOf) {
       // FULL widths: the reference halves the source's size once, in the
       // shader. Halving here as well would quarter every penumbra.
       u.uSourceSize.value.set(plane.sourceSize, plane.sourceAngle);
-      session.pending.push(loadDataTexture(THREE, parser, h.textureIndex).then((texture) => {
+      session.pending.push(viewTexture(THREE, session, parser, h.media, true).then((texture) => {
         u.uHorizonMap.value = texture;
-        session.owned.push(texture);
       }));
     }
     plane.material = material;
     plane.mesh.material = material;
-    plane.mesh.onBeforeRender = plane.horizon
+    plane.mesh.onBeforeRender = plane.mode === 1
       ? function beforeHorizonDraw() {
         this.material.depthWrite = false;
         // a cached plane samples its rect: only the per-pixel march reads the
@@ -1322,7 +1345,7 @@ function build(THREE, renderer, model, gltf, environment, resolve, nameOf) {
     session.owned.push(material, plane.original);
   }
   // The horizon planes' one atlas (see the header).
-  const horizons = session.planes.filter((plane) => plane.horizon && plane.material);
+  const horizons = session.planes.filter((plane) => plane.mode === 1 && plane.material);
   if (horizons.length && renderer) {
     session.atlas = makeAtlas(THREE, renderer, horizons.length);
     session.owned.push(session.atlas.target);
@@ -1333,6 +1356,97 @@ function build(THREE, renderer, model, gltf, environment, resolve, nameOf) {
   }
   session.ready = Promise.all(session.pending).then(() => session);
   return session;
+}
+
+// One plane of the record on glTF node *index*, or null when the node has no
+// single-material mesh to drive or neither of its shadows is readable here.
+// Its mode: the silhouette (0) where the rig draws it (`silhouette.draw`)
+// and the file holds it, else the horizon march (1), else the silhouette as
+// the fallback a reader that cannot march draws (the record's rule; a reader
+// without the extension draws the horizon).
+/** @param {import('../../kernel/records.js').ShadowPlane} entry */
+function makePlane(json, entry, index, resolve, nameOf, unit, names) {
+  const name = nameOf(index);
+  const node = resolve(index);
+  const mesh = node && (node.isMesh ? node : node.children.find((child) => child.isMesh));
+  if (!mesh || Array.isArray(mesh.material) || !mesh.geometry) {
+    console.warn(`shadow_rig: plane ${name} (node ${index}) has no mesh to drive`);
+    return null;
+  }
+  const original = mesh.material;
+  // A silhouette is one naming its image (a rig writes none without one).
+  const declared = objectOr(entry.silhouette);
+  const silhouette = declared && typeof declared.texture === 'string' && declared.texture ? declared : null;
+  const atlas = objectOr(silhouette?.atlas);
+  // The silhouette's map, in the order the page has always looked: the atlas
+  // once packed (the quad's UVs address its tile), else the plane's
+  // material's own map, as the DCC drew it (through the same rect: a packed
+  // plane's map is the atlas), else the plane's own image -- read whole: it
+  // is the full canvas, never a tile.
+  const atlasMedia = atlas ? mediaOf(json, atlas.texture) : null;
+  const useOwnMap = !!silhouette && !atlasMedia && !!original.map;
+  const ownMedia = silhouette && !atlasMedia && !useOwnMap ? mediaOf(json, silhouette.texture) : null;
+  const silhouetteMedia = atlasMedia || ownMedia;
+  const drawable = !!silhouetteMedia || useOwnMap;
+  const horizon = horizonSpec(json, entry, unit);
+  let mode = 1;
+  if (silhouette?.draw === true && drawable) mode = 0;
+  else if (!horizon) {
+    if (!drawable) {
+      console.warn(`shadow_rig: plane ${name}: neither its horizon map nor a silhouette is readable by this viewer`);
+      return null;
+    }
+    mode = 0;
+  }
+  const source = nodeNamed(json, entry.source, 'source', name, names);
+  const contact = nodeNamed(json, entry.contact, 'contact', name, names);
+  const sourceNode = source === null ? null : resolve(source);
+  const contactNode = contact === null ? null : resolve(contact);
+  // The quad's UVs, to the unit square: a packed plane's rect is their
+  // bounds -- its tile -- and a horizon plane's cache marches over them.
+  const rect = normaliseUv(mesh.geometry);
+  const height = finite(entry.height, 1);
+  return {
+    record: entry,
+    name,
+    nodeIndex: index,
+    node,
+    mesh,
+    original,
+    mode,
+    horizon: mode === 1 ? horizon : null,
+    silhouette: mode === 0 ? silhouetteMedia : null,
+    source: sourceNode,
+    contact: contactNode,
+    follow: !!entry.follow_source && !!sourceNode && !!contactNode,
+    directional: entry.source_type === 'directional',
+    // The fade's ceiling; the whole draw where the fade cannot be evaluated.
+    intensity: finite(entry.intensity, 1),
+    rect: mode === 0 && !ownMedia ? rect : RECT_IDENTITY.slice(),
+    mapKey: mode !== 0 ? null : (silhouetteMedia ? `view:${silhouetteMedia.view}` : `own:${original.map.uuid}`),
+    useOwnMap: mode === 0 && useOwnMap,
+    extent: quadExtent(mesh.geometry),
+    ground: finite(entry.ground, 0) * unit,
+    radius: finite(entry.radius, 0.5) * unit,
+    height: height * unit,
+    maxStretch: finite(entry.max_stretch, 6),
+    falloffPower: finite(entry.falloff_power, DEFAULT_FALLOFF_POWER),
+    fadeHeight: finite(entry.fade_height, 2 * height) * unit,
+    // The fade's source ramp, metres: the plane's own (its producer's preview).
+    sourceRamp: finite(entry.source_ramp, 1) * unit,
+    sourceSize: finite(entry.source_size, 0) * unit,
+    sourceAngle: finite(entry.source_angle, 0),
+    // The plane's own: what a following placement spans, silhouette or none.
+    canvas: Array.isArray(entry.canvas) && entry.canvas.length === 4
+      ? entry.canvas.map(Number)
+      : CANVAS_DEFAULT.slice(),
+    material: null,
+    cache: null,
+    batch: null,
+    instance: -1,
+    opacity: 1,
+    lastOpacity: NaN,
+  };
 }
 
 function teardown(session) {
@@ -1392,17 +1506,12 @@ function modelMatrixOf(object, model, out) {
   return out;
 }
 
-// The Maya expression, applied: translate to the canvas centre, lifted off
-// the ground; rotateY = atan2(ux, uz) so local +Z is the bearing (the -Z edge
-// is the near edge, toward the light) and local +X is across it; scale the
-// quad's own size to the canvas extents. A Z-up quad is turned onto the
-// ground first (Z_UP_PLANE): its +Y runs along the bearing and its +X across
-// it the other way, so its canvas -- whose across fractions run along the DCC
-// quad's own +X -- is read mirrored across the bearing.
-function place(THREE, session, plane) {
+// Where the plane's contact and source stand in MODEL space -- composed
+// from fresh local matrices -- and the shadow model they make: `{contact,
+// light, shadow}`, a directional source's light its far point.
+function solve(THREE, session, plane) {
   const t = scratch(THREE);
-  const { model, unit } = session;
-  const { zUp } = plane.extent;
+  const { model } = session;
   modelMatrixOf(plane.contact, model, t.a);
   t.c.setFromMatrixPosition(t.a);
   const contact = [t.c.x, t.c.y, t.c.z];
@@ -1416,6 +1525,38 @@ function place(THREE, session, plane) {
     light = [t.s.x, t.s.y, t.s.z];
   }
   const shadow = shadowModel(contact, light, plane.ground, plane.radius, plane.height, plane.maxStretch);
+  return { contact, light, shadow };
+}
+
+// How strongly the plane draws this frame, and the model it was found from:
+// its fade (ShadowProjection.fade), never above its intensity, where its
+// source and contact resolve; its intensity, and no model, otherwise.
+function opacityOf(THREE, session, plane) {
+  if (!plane.source || !plane.contact) return { opacity: plane.intensity, shadow: null };
+  const { contact, light, shadow } = solve(THREE, session, plane);
+  const fade = shadowFade(
+    shadow, contact, light, plane.ground, plane.radius, plane.intensity,
+    plane.falloffPower, plane.fadeHeight, plane.sourceRamp,
+  );
+  return { opacity: Math.min(plane.intensity, fade), shadow };
+}
+
+// The Maya expression, applied: translate to the canvas centre, lifted off
+// the ground; rotateY = atan2(ux, uz) so local +Z is the bearing (the -Z edge
+// is the near edge, toward the light) and local +X is across it; scale the
+// quad's own size to the canvas extents. A Z-up quad is turned onto the
+// ground first (Z_UP_PLANE): its +Y runs along the bearing and its +X across
+// it the other way, so its canvas -- whose across fractions run along the DCC
+// quad's own +X -- is read mirrored across the bearing. Each producer writes
+// those sides in its own ground axes (w = (u[1], -u[0]): mayatk's in X/Z,
+// blendertk's in X/Y), which mirror each other in the file: measured on one
+// scene rigged in both, a lopsided canvas lands where each rig put it, a Y-up
+// quad's sides as written and a Z-up quad's swapped (test_shadow_web
+// `test_each_producers_canvas_sides_land_where_its_own_rig_put_them`).
+function place(THREE, session, plane, shadow) {
+  const t = scratch(THREE);
+  const { model, unit } = session;
+  const { zUp } = plane.extent;
   let canvas = plane.canvas;
   if (zUp) {
     canvas = t.canvas;
@@ -1512,25 +1653,21 @@ function feedSource(THREE, session, plane) {
 function update(THREE, renderer, session) {
   const t = scratch(THREE);
   for (const plane of session.planes) {
-    // The fade lives on the ORIGINAL material (the page bound the ramp there
-    // before this script swapped it); follow it whenever it moves, and let
-    // anything driving this material's own opacity directly win otherwise.
-    const opacity = plane.original.opacity;
-    if (plane.batch) {
-      if (opacity !== plane.lastOpacity) {
+    // The fade, every frame, from the placement (see the header).
+    const { opacity, shadow } = opacityOf(THREE, session, plane);
+    plane.opacity = opacity;
+    if (opacity !== plane.lastOpacity) {
+      plane.lastOpacity = opacity;
+      if (plane.batch) {
         plane.batch.iParams.setX(plane.instance, opacity);
         plane.batch.iParams.needsUpdate = true;
-        plane.lastOpacity = opacity;
-      }
-    } else {
-      if (opacity !== plane.lastOpacity) {
+      } else {
         plane.material.opacity = opacity;
-        plane.lastOpacity = opacity;
+        plane.material.uniforms.uParams.value.x = opacity;
       }
-      plane.material.uniforms.uParams.value.x = plane.material.opacity;
     }
     if (plane.follow) {
-      place(THREE, session, plane);
+      place(THREE, session, plane, shadow);
     } else if (plane.batch) {
       // Not following (or unable to): the instance rides the node's own
       // imported keys, exactly as the hidden mesh would.
@@ -1565,7 +1702,7 @@ export default function shadowRig(viewer) {
         THREE, viewer.renderer, model, gltf, viewer.scene.environment,
         viewer.nodeResolver(gltf, model), (index) => viewer.nodeName(gltf, index));
     } catch (error) {
-      console.warn('shadow_rig: could not read the shadow manifest', error);
+      console.warn('shadow_rig: could not read the shadows record', error);
     }
     // Hung on the model so it dies with it, and so a test can read what this
     // script made of the file without the script exposing anything global.

@@ -143,12 +143,42 @@ class ShotManifest(_ShotManifestInternal):
         "opacity": 1.0,
     }
 
-    #: Metadata keys the manifest writes on a shot (:meth:`_step_metadata`);
-    #: a build replaces these and the doc's pass-through columns, and keeps
-    #: every other key it finds.
-    MANIFEST_METADATA = frozenset(
-        ("section", "section_title", "csv_objects", "behaviors", "voice_text", "step")
-    )
+    #: What the manifest writes on a step's shot from what its user wrote in
+    #: the sheet: ``{metadata key: the step's value}``, ``None`` writing
+    #: nothing (:meth:`_step_metadata`).  Keyed by the store's declaration
+    #: of the manifest's own keys (``ShotStore.MANIFEST_FIELDS``, which a
+    #: store that never said what it ships ships; a test holds the two
+    #: equal), so a key added here is added there.
+    _STEP_FIELDS: Dict[str, Callable[[BuilderStep], Any]] = {
+        "section": lambda step: step.section,
+        "section_title": lambda step: step.section_title,
+        "csv_objects": lambda step: [
+            {"name": o.name, "kind": o.kind} for o in step.objects
+        ],
+        "behaviors": lambda step: [
+            {
+                "name": o.name,
+                "behavior": b,
+                "kind": o.kind,
+                "source_path": o.source_path,
+            }
+            for o in step.objects
+            for b in o.behaviors
+        ],
+        "voice_text": lambda step: (
+            step.audio if step.audio and step.audio.upper() != "N/A" else None
+        ),
+        # The binding: which doc step this shot is, whatever it is named.
+        "step": lambda step: step.step_id,
+    }
+
+    #: Metadata keys the manifest writes on a shot (:attr:`_STEP_FIELDS`;
+    #: declared once, ``ShotStore.MANIFEST_FIELDS``); a build replaces these
+    #: and the doc's pass-through columns, and keeps every other key it
+    #: finds.  With the sheet's columns they are what an export ships
+    #: (:meth:`authored_keys`); every other key is the tools' bookkeeping,
+    #: kept in the scene.
+    MANIFEST_METADATA = ShotStore.MANIFEST_FIELDS
 
     def __init__(
         self,
@@ -192,30 +222,36 @@ class ShotManifest(_ShotManifestInternal):
         step: BuilderStep,
         pass_through: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
-        """Build a metadata dict from a parsed step."""
-        meta: Dict[str, Any] = {
-            "section": step.section,
-            "section_title": step.section_title,
-            "csv_objects": [{"name": o.name, "kind": o.kind} for o in step.objects],
-            "behaviors": [
-                {
-                    "name": o.name,
-                    "behavior": b,
-                    "kind": o.kind,
-                    "source_path": o.source_path,
-                }
-                for o in step.objects
-                for b in o.behaviors
-            ],
-        }
-        if step.audio and step.audio.upper() != "N/A":
-            meta["voice_text"] = step.audio
-        # The binding: which doc step this shot is, whatever it is named.
-        meta["step"] = step.step_id
+        """Build a metadata dict from a parsed step (:attr:`_STEP_FIELDS`)."""
+        meta: Dict[str, Any] = {}
+        for key, value_of in ShotManifest._STEP_FIELDS.items():
+            value = value_of(step)
+            if value is not None:
+                meta[key] = value
         # A blank cell writes nothing (and, being the doc's column, takes out
         # the value it held -- _content_kwargs).
         meta.update({k: v for k, v in (pass_through or {}).items() if v})
         return meta
+
+    @classmethod
+    def authored_keys(cls, steps: Iterable[BuilderStep]) -> frozenset:
+        """The metadata keys the manifest authors on *steps*' shots: its own
+        (:attr:`MANIFEST_METADATA`) and every column the sheet passes through
+        (``ColumnMap.metadata_pass``) -- what a build hands the store as the
+        keys an export ships (``ShotStore.set_shipped_metadata``)."""
+        columns = {
+            key for step in steps for key in (getattr(step, "_pass_through", None) or ())
+        }
+        return cls.MANIFEST_METADATA | frozenset(columns)
+
+    def _ship_authored(self, steps: Iterable[BuilderStep]) -> None:
+        """Add the keys the manifest authors on *steps* (:meth:`authored_keys`)
+        to those the store's export ships.  Added, never replaced: steps read
+        back from the shots (``BuilderStep.from_shots``) say nothing of the
+        sheet's columns, which their shots still hold."""
+        self.store.set_shipped_metadata(
+            self.store.shipped_metadata | self.authored_keys(steps)
+        )
 
     # ---- scene hooks (overridable; pure defaults) ------------------------
 
@@ -834,6 +870,7 @@ class ShotManifest(_ShotManifestInternal):
             nothing.
         """
         seq = self._sequencer()
+        self._ship_authored(plan.step for plan in plans)
         made_ids: Dict[str, int] = {}  # step id -> the shot its insert made
         made: List[PlannedInsert] = []
         actions: Dict[str, str] = {}
@@ -1656,6 +1693,7 @@ class ShotManifest(_ShotManifestInternal):
         # Coalesce per-shot mutations into a single flush/save and a
         # single BatchComplete event for UI listeners.
         with self.store.batch_update():
+            self._ship_authored(ps.step for ps in plan)
             # Phase 1: removals
             for ps in plan:
                 if ps.action == "removed" and ps.existing_shot_id is not None:
@@ -1866,6 +1904,19 @@ class ShotManifest(_ShotManifestInternal):
 
         if keyframe_range_fn is None:
             keyframe_range_fn = self._keyframe_range
+        scanned: Dict[str, Any] = {}
+
+        def content_end(shot) -> Optional[float]:
+            """The end a trailing trim gives *shot*, by the host's sequencer
+            (``ShotSequencer.content_end``); ``None`` when it reads nothing
+            -- the pure default's, with no scene -- or fails."""
+            try:
+                if "seq" not in scanned:
+                    scanned["seq"] = self._sequencer()
+                return scanned["seq"].content_end(shot.shot_id)
+            except Exception:  # noqa: BLE001 -- a measure never costs the assess
+                log.debug("Shot content not scanned.", exc_info=True)
+                return None
 
         pairing = self.pair(steps)
         key = ShotStore.member_key
@@ -2015,6 +2066,9 @@ class ShotManifest(_ShotManifestInternal):
                         status = "missing_behavior"
                     else:
                         status = "stale_behavior" if stale else "valid"
+                    # Its own keys beside its behaviors' are content too: a
+                    # member that fades in AND slides ends at its keys.
+                    key_range = keyframe_range_fn(node)
                 elif built:
                     # User-animated: query actual keyframe extent
                     key_range = keyframe_range_fn(node)
@@ -2056,14 +2110,14 @@ class ShotManifest(_ShotManifestInternal):
                         )
                     )
 
-            # Compute shrinkable frames (unused tail)
+            # The unused tail: what Trim Trailing Space would cut.
             shrinkable = 0.0
             if built and shot is not None:
-                content_end = self._compute_content_end(
-                    step, shot, obj_statuses, self.recipe
+                used = self._compute_content_end(
+                    step, shot, obj_statuses, self.recipe, scanned=content_end(shot)
                 )
-                if content_end < shot.end:
-                    shrinkable = shot.end - content_end
+                if used < shot.end:
+                    shrinkable = shot.end - used
 
             results.append(
                 StepStatus(
@@ -2117,12 +2171,17 @@ class ShotManifest(_ShotManifestInternal):
         scene,
         obj_statuses: List[ObjectStatus],
         recipe=None,
+        scanned: Optional[float] = None,
     ) -> float:
         """Return the latest frame used by content in this step: each
         behavior's last key where the build puts it -- an object's point
         behaviors spread over the range (:meth:`Behaviors.anchor_overrides`,
         the one placement rule) and each placed by
-        :meth:`Behaviors.key_window` (an effect by the *recipe*)."""
+        :meth:`Behaviors.key_window` (an effect by the *recipe*) -- and the
+        shot's keys: *scanned*, where a trailing trim puts its end
+        (``ShotSequencer.content_end``: its own keys, window-scoped, the
+        system's samples left out), else each object's key extent
+        (``ObjectStatus.key_range``, whole-timeline)."""
         from pythontk.core_utils.engines.shots.manifest.behaviors import Behaviors
 
         latest = scene.start  # at minimum, content starts at scene start
@@ -2134,9 +2193,11 @@ class ShotManifest(_ShotManifestInternal):
                 )
                 if window is not None and window[1] > latest:
                     latest = window[1]
-            if obj_st.key_range:
+            if scanned is None and obj_st.key_range:
                 if obj_st.key_range[1] > latest:
                     latest = obj_st.key_range[1]
+        if scanned is not None and scanned > latest:
+            latest = scanned
         return latest
 
     # ---- from_csv --------------------------------------------------------

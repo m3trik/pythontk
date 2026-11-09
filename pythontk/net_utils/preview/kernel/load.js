@@ -14,7 +14,9 @@ import { emit } from './api.js';
 import { closeDialog } from './dialog.js';
 import { environmentLoaded } from './environment.js';
 import { formatBytes } from './format.js';
-import { applyLighting, applyLightmaps, resetLightmaps } from './lightmaps.js';
+import {
+  applyLighting, applyLightmaps, bindLightmaps, copyReaders, resetLightmaps,
+} from './lightmaps.js';
 import { syncLookdev } from './lookdev.js';
 import { refreshMenus } from './menus.js';
 import { current, disposeModel, layout, loader, measureBounds, setModel } from './model.js';
@@ -99,6 +101,14 @@ export async function load(sources, version) {
     probe = await loadProbe(part.gltf, probeIssues);
     if (probe) break;
   }
+  // The bake's lightmaps, bound onto the parsed scene -- each map decoded off
+  // its file's buffer -- before the check below for the same reason, and
+  // before the render effects' tracks: an object that lights unlike another
+  // wearing its material takes a copy of it here, which its fade or glow must
+  // drive (the tracks bind the file's material through the loader's
+  // association, which the copy carries).
+  const lightmapIssues = [];
+  const bake = await bindLightmaps(loaded.map((part) => part.gltf), lightmapIssues);
   if (generation !== loadGeneration) {
     if (probe) disposeProbe(probe);
     // Parsed but never shown; free them rather than leak them.
@@ -151,11 +161,15 @@ export async function load(sources, version) {
   // are set rather than after. The first part that publishes one.
   const recipe = loaded.find((part) => readExtras(part.gltf, HANDOFF)?.rendering);
   readRenderingPolicy((recipe || loaded[0]).gltf);
-  const lightmapped = applyLightmaps(loaded.map((part) => part.gltf), issues);
-  // After the lightmaps: the probe's lookup chains onto the baked shader edit.
+  issues.push(...lightmapIssues);
+  const lightmapped = applyLightmaps(bake);
+  // After the lightmaps: the probe's lookup chains onto the baked shader edit,
+  // and each highlight copy goes on the materials its record's nodes wear.
   issues.push(...probeIssues);
-  if (probe) useProbe(probe, root);
-  else releaseProbe();
+  if (probe) {
+    for (const copy of probe.copies) copy.readers = copyReaders(probe.gltf, copy.index);
+    useProbe(probe, root);
+  } else releaseProbe();
   applyLighting();
   syncLookdev();
   // The whole set as one deliverable, for the passes that read it whole: the
@@ -170,7 +184,8 @@ export async function load(sources, version) {
   // look alike until the difference is blamed on the baker. See measureModel
   // for the units, and why the count is no longer a fraction of materials.
   loadTiming.setupMs = performance.now() - settingUp;
-  const specs = measureModel(whole.gltf, { ...loadTiming, clips: clipCount, animated }, issues);
+  const specs = measureModel(
+    whole.gltf, { ...loadTiming, clips: clipCount, animated, primary: loaded[0].gltf }, issues);
   const materialCount = specs.materials.instances;
   setSpecs(specs);
   showSpecs(specs);

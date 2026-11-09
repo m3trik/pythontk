@@ -5,175 +5,320 @@
 Every FBX and GLB a scene exports states itself in-band: the scene's records ride the file, and the file's `handoff` says how to read them. Everything below is generated from the declarations every writer and reader is held to -- `pythontk.SceneRecords`, `HandoffRecord` and each record's declared shape -- so it cannot drift from what the readers enforce.
 
 - **One shape per block.** `version`, its fundamentals, and anything else under `extras`; a reader ignores an extra it does not know.
-- **One key per record, in every file.** The FBX holds a record as a JSON string user property on a node named `data_export`; the GLB holds its block -- bound to the file's node, texture and buffer indices -- as an object in the root `extras`, under the same key.
+- **One key per record, in every file.** The FBX holds a record as a JSON string user property on a node named `data_export`; the GLB holds the record itself -- the same version and shape, its names resolved in the GLB's own scene -- as an object in the root `extras`, under the same key.
 - **One version a reader reads.** A record or block of another version is refused, with a warning, and the file is re-exported; no reader keeps a branch for an older shape.
 - **One frame.** A record whose version is in the frame (`x-in-frame` in the schema) states its values in metres, right-handed with +Y up and +Z forward, rotations as a unit quaternion (x, y, z, w) and times in seconds (glTF 2.0's frame); any other states its units in its assembly.
-- **One transport.** An animated material value (opacity, highlight) rides on a child transform of the animated object in an FBX, named `<object>__<channel>` and carrying the `curveProxy` user property, whose `scale.x` holds the curve, and on the property itself in a GLB, through `KHR_animation_pointer` channels. A record animating anything else states its own carrier in its assembly.
+- **One transport.** An animated value rides, in an FBX, on a curve proxy per take: a transform named `<target>__<channel>`, the target by its leaf name (no path, no namespace: a reader joins a record's node or material to its curve by that leaf), carrying the `curveProxy` user property, whose `scale.x` holds the curve -- a child of the node for a node channel (visibility, opacity, highlight), of the export's carrier node for a material channel (emission). A node channel plays on its proxy's parent wherever the file carries the proxy; only a track with no proxy joins a node by name, the exact name first, then the one node of its leaf, a tie never guessed; visibility steps. In a GLB it rides on the property itself, per clip, through `KHR_animation_pointer` channels, presence as a stepped scale of the node. A record animating anything else states its own carrier in its assembly.
+- **One media transport.** The files the lightmaps record names -- its maps, its probe and the probe's highlight copies -- and the shadows record names -- each plane's horizon map, silhouette and atlas -- ride a GLB that carries the record, each as the bufferView whose glTF `name` is the file's name (the audio record's sounds ride none yet). A reader joins the record's name to that view by file name, both lower-cased (str.lower, toLowerCase); two views that join one name hold neither. The bufferView's `extras.mimeType` states its bytes -- the file itself where a glTF reader reads its format, else a web encoding of it: an HDR lightmap as 8-bit sRGB (`image/png`, `image/webp`, `image/ktx2`) whose decoded linear texels times `extras.scale` (a finite positive number) are the map, an HDR probe or highlight copy as Radiance RGBE (`image/vnd.radiance`). An FBX embeds each file itself, under the same name.
 - **Extensions name their readers.** A field only some readers use is optional and names them ("Read only by ..."; `x-readers` in the schema); every other reader ignores it, and its generated types leave it out.
 - **One published schema.** `scene_records.schema.json`, beside this file, states all of it as JSON Schema (draft 2020-12).
 
 | Record | In the FBX | In the GLB | Read by | Holds |
 |---|---|---|---|---|
-| [`materials`](#materials) | `data_export.materials` v1 | -- | unity, glb | every material as glTF 2.0 states it: its factors, the embedded map behind each, alpha mode, double-sidedness and unlit |
-| [`animation`](#animation) | `data_export.animation` v1 | `extras.animation` v2 | unity, glb, verifier | shot definitions -- per clip its frame range ('start'/'end', the take the clip is cut from) and any description; the scene fps and the declared clip mode; the clip name is the join key to the imported animation clip |
-| [`audio`](#audio) | `data_export.audio` v2 | -- | unity | audio events with the frames they fire on, scoped to their clip, and 'fps', the rate those frames count at |
-| [`lightmaps`](#lightmaps) | `data_export.lightmaps` v2 | `extras.lightmaps` v2 | unity, glb | per-object baked-lightmap records: map file name, uvIndex, scaleOffset, and the object's scene hierarchy (which tells apart objects that share a name); and the bake's reflection probe, when it captured one: its HDR's file name, capture point and projection box; and the lights the maps were baked from, for the highlights a lightmap cannot hold -- every length times unit_scale is metres |
-| [`shadows`](#shadows) | `data_export.shadows` v2 | `extras.shadows` v2 | unity, glb | projected-shadow planes: per plane its node name, type, silhouette texture and intensity, the source and contact it follows and the projection model's constants, and, when packed or baked, its atlas rect and horizon map -- every length times unit_scale is metres |
-| [`articulation`](#articulation) | `data_export.articulation` v1 | `extras.articulation` v1 | unity, glb | articulated rigs: per rig its joints (node name, parent, rest translate and orient, rotate order, channels with limits and grab weights) and the parts a hand grabs, each with the joint it rides |
-| [`emissive_groups`](#emissive_groups) | `data_export.emissive_groups` v2 | -- | unity | named emissive material groups and their weights |
-| [`render_effects`](#render_effects) | `data_export.render_effects` v1 | -- | glb, verifier | each node's keyed render effects: 'visibility' as stepped on/off frames, the authored 'opacity' ramp, and the 'highlight' ramp with its colour stops ('highlight_color', 'highlight_color_dim'); with 'fps' and each take's first/last authored frame ('clip_span'); on a shot scene keying none, the exporter's measured whole-timeline clip origin alone |
-| [`handoff`](#handoff) | `data_export.handoff` v3 | `extras.handoff` v3 | unity, glb | the standalone-reader contract: the approved scene part by part and the lighting it was approved under |
+| [`materials`](#materials) | `data_export.materials` v2 | -- | unity, glb | every material as glTF 2.0 states it, literally: a glTF document of the file's materials, textures, images (by file name) and samplers -- metal and roughness packed into one image, KHR_texture_transform, KHR_materials_unlit and KHR_materials_emissive_strength |
+| [`animation`](#animation) | `data_export.animation` v3 | `extras.animation` v3 | unity, glb, verifier | shot definitions -- per shot its clip name, the name of the file's take for it, and what a clip cannot hold: its description and its metadata -- and the scene's frame rate (a scene that animates and declares no shot states the rate alone); the clip name is the join key to the imported animation clip |
+| [`audio`](#audio) | `data_export.audio` v3 | `extras.audio` v3 | unity, glb | the scene's sounds cut into cues per clip: each the sound (the delivered audio file's name), when it starts and stops in seconds from the clip's start, and where in the sound it starts; the cues are the source's, and what a Unity user adds in the model importer's Events tab is Unity's |
+| [`lightmaps`](#lightmaps) | `data_export.lightmaps` v3 | `extras.lightmaps` v3 | unity, glb | per-object baked-lightmap records: map file name, scaleOffset, and the object's scene hierarchy (which tells apart objects that share a name); the bake's reflection probe, when it captured one -- its HDR's file name, capture point and projection box -- with copies of it for groups of receivers; and the lights the maps were baked from -- every length times unit_scale is metres |
+| [`shadows`](#shadows) | `data_export.shadows` v3 | `extras.shadows` v3 | unity, glb | shadow planes: per plane its node name, the source and contact it follows, its horizon map, the projection model's constants and its fade's terms, and its projected silhouette (an extension) -- every length times unit_scale is metres |
+| [`articulation`](#articulation) | `data_export.articulation` v2 | `extras.articulation` v2 | unity, glb | articulated rigs: per rig its joints (node name, parent joint, rest translate and rotation, the anchor frame its channels turn and slide in, rotate order, channels with limits and grab weights) and the parts a hand grabs, each with the joint it rides -- in metres |
+| [`render_effects`](#render_effects) | `data_export.render_effects` v2 | `extras.render_effects` v2 | unity, glb, verifier | which nodes carry an animated render effect -- 'visibility', 'opacity', 'highlight' with its colour stops 'highlight_color' and 'highlight_color_dim' -- and which materials an animated 'emission'; each curve rides the file's animated-value transport, per clip |
+| [`handoff`](#handoff) | `data_export.handoff` v3 | `extras.handoff` v3 | glb | the standalone-reader contract: the approved scene part by part and the lighting it was approved under |
 
 ## materials
 
-Every material as glTF 2.0 states it: its factors, the embedded map behind each, alpha mode, double-sidedness and unlit.
+Every material as glTF 2.0 states it, literally: a glTF document of the file's materials, textures, images (by file name) and samplers -- metal and roughness packed into one image, KHR_texture_transform, KHR_materials_unlit and KHR_materials_emissive_strength.
 
-### In the FBX: `data_export.materials`, version 1
+### In the FBX: `data_export.materials`, version 2
 
-Every material's inputs are exactly as its 'materials' entry states them, whatever an importer makes of the file's own material (how each is lit is the lighting parts'): glTF 2.0 metallic-roughness, each factor linear and multiplied by its map, every map on UV set 0, colour and emission maps sRGB, the others linear with metal, roughness and occlusion read from R, opacity the base colour's alpha (MASK cuts at 'alphaCutoff', BLEND blends), 'unlit' shows the base colour alone. An entry's 'name' is the material's in the file, namespace included; where an import drops the namespace, the name after the last ':' joins.
+Every material's inputs are exactly as its 'materials' entry states them, whatever an importer makes of the file's own material (how each is lit is the lighting parts'): the record is a glTF 2.0 document -- the record's 'version' aside -- read as glTF reads one: metallic-roughness, each factor linear and multiplied by its map, every map on UV set 0 through its KHR_texture_transform, colour and emission maps sRGB, the others linear, metal from B and roughness from G of the one packed image (occlusion from R), opacity the base colour's alpha (MASK cuts at 'alphaCutoff', BLEND blends), emission the factor times KHR_materials_emissive_strength, KHR_materials_unlit the base colour alone. Each image is the file the delivery carries under its 'uri'. An entry's 'name' is the material's in the file, namespace included; where an import drops the namespace, the name after the last ':' joins. A GLB's materials are the record's own, so it carries no copy.
 
 #### MaterialRecord
 
-The ``materials`` record's payload: every material the file's meshes use.
+The ``materials`` record's payload: a glTF 2.0 document holding every material the file's meshes use, and the record's version.
 
 | Key | Required | Description | Example |
 |---|---|---|---|
-| `version` | yes | The record's schema version (SceneRecords.MATERIALS.version). |  |
+| `version` | yes | The record's schema version (SceneRecords.MATERIALS.version): 2. Not glTF's: a reader reading the record as a glTF document leaves it out. A reader refuses 1 (the flat shape); the cure is a re-export. |  |
+| `asset` | yes | glTF's asset: version '2.0'. | see *MaterialAsset* below |
+| `extensionsUsed` | no | The glTF extensions the materials and textures use; absent when none. |  |
 | `materials` | yes | Every material, in the file's order. | see *MaterialEntry* below (list) |
+| `textures` | no | The textures the materials sample; absent when none. | see *MaterialTexture* below (list) |
+| `images` | no | The images the textures read, by file name; absent when none. | see *MaterialImage* below (list) |
+| `samplers` | no | The samplers the textures name; absent when every one repeats. | see *MaterialSampler* below (list) |
+
+##### MaterialAsset
+
+glTF's ``asset``: the version of glTF the record is.
+
+| Key | Required | Description | Example |
+|---|---|---|---|
+| `version` | yes | The glTF version: '2.0'. |  |
 
 ##### MaterialEntry
 
-One material as glTF 2.0's metallic-roughness model states it: each factor linear and multiplied by its map, each map an image the file embeds, named by file name and read through UV set 0.
+One material, as a glTF 2.0 ``material``.
 
 | Key | Required | Description | Example |
 |---|---|---|---|
-| `name` | yes | The material's name as the file names it, namespace included ('ns:name'): the join key to the imported material. A reader whose import drops the namespace matches the name after the last ':'. |  |
-| `baseColorFactor` | yes | Linear RGBA; A is the opacity. | `[1.0, 1.0, 1.0, 1.0]` |
-| `baseColorTexture` | no | The colour map (sRGB); its alpha is the opacity. |  |
-| `metallicFactor` | yes | 0 dielectric to 1 metal. | `1.0` |
-| `metallicTexture` | no | Metalness map (linear), read from R. |  |
-| `roughnessFactor` | yes | 0 mirror to 1 matte. | `1.0` |
-| `roughnessTexture` | no | Roughness map (linear), read from R. |  |
-| `occlusionTexture` | no | Ambient-occlusion map (linear), read from R; it darkens only the environment's light, and a lightmapped object takes none (its bake holds the occlusion). |  |
-| `normalTexture` | no | Tangent-space normal map, +Y up (glTF's convention), linear. |  |
-| `normalScale` | no | Scales the normal map's X and Y; 1 is the map as authored. | `1.0` |
-| `emissiveFactor` | yes | Linear RGB emission; may exceed 1. | `[0.0, 0.0, 0.0]` |
-| `emissiveTexture` | no | The emission map (sRGB). |  |
-| `alphaMode` | yes | OPAQUE ignores the opacity; MASK cuts at alphaCutoff; BLEND blends (sorted, no depth write). One of: OPAQUE, MASK, BLEND. | `"OPAQUE"` |
+| `name` | yes | The material's name as the file names it, namespace included ('ns:name'): the join key to the imported material (the FBX material this describes; in a GLB, the material itself). A reader whose import drops the namespace matches the name after the last ':'. |  |
+| `pbrMetallicRoughness` | yes | Its metallic-roughness values. | see *MaterialPbr* below |
+| `normalTexture` | no | The tangent-space normal map (linear). | see *MaterialNormalTextureInfo* below |
+| `occlusionTexture` | no | The ambient-occlusion map (linear), read from R. | see *MaterialOcclusionTextureInfo* below |
+| `emissiveTexture` | no | The emission map (sRGB). | see *MaterialTextureInfo* below |
+| `emissiveFactor` | yes | Linear RGB emission, each 0-1: emission above 1 is this times KHR_materials_emissive_strength. |  |
+| `alphaMode` | yes | OPAQUE ignores the opacity; MASK cuts at alphaCutoff; BLEND blends (sorted, no depth write). One of: OPAQUE, MASK, BLEND. |  |
 | `alphaCutoff` | no | MASK only: the opacity below which a pixel is cut. |  |
-| `doubleSided` | no | Both faces render. | `false` |
-| `unlit` | no | Shows its base colour and opacity alone: no light, reflection or emission. | `false` |
+| `doubleSided` | yes | Both faces render. |  |
+| `extensions` | no | KHR_materials_unlit and KHR_materials_emissive_strength, when used. | see *MaterialExtensions* below |
+
+###### MaterialPbr
+
+glTF's metallic-roughness model: each factor linear and multiplied by its map.
+
+| Key | Required | Description | Example |
+|---|---|---|---|
+| `baseColorFactor` | yes | Linear RGBA, each 0-1; A is the opacity. |  |
+| `baseColorTexture` | no | The colour map (sRGB); its alpha is the opacity. | see *MaterialTextureInfo* below |
+| `metallicFactor` | yes | 0 dielectric to 1 metal. |  |
+| `roughnessFactor` | yes | 0 mirror to 1 matte. |  |
+| `metallicRoughnessTexture` | no | The packed map (linear): roughness in G, metal in B -- and the occlusion in R where the material's occlusion map is packed with them. A channel the material does not map is white, so its factor carries it. | see *MaterialTextureInfo* below |
+
+###### MaterialTextureInfo
+
+A map's binding: the texture it samples, through UV set 0.
+
+| Key | Required | Description | Example |
+|---|---|---|---|
+| `index` | yes | The texture, by its index in 'textures'. |  |
+| `extensions` | no | KHR_texture_transform, when the map's UVs are transformed. | see *MaterialTextureExtensions* below |
+
+###### MaterialTextureExtensions
+
+The extensions a map's binding carries.
+
+| Key | Required | Description | Example |
+|---|---|---|---|
+| `KHR_texture_transform` | no | The map's UV transform; absent when it has none. | see *MaterialTextureTransform* below |
+
+###### MaterialTextureTransform
+
+``KHR_texture_transform``: how a map's UVs are offset and scaled, in glTF's UV space (origin top left).
+
+| Key | Required | Description | Example |
+|---|---|---|---|
+| `offset` | no | The UV offset, applied after the scale; [0, 0] is none. |  |
+| `scale` | no | The UV scale; [1, 1] is none. |  |
+
+###### MaterialNormalTextureInfo
+
+The normal map's binding: tangent space, +Y up (glTF's convention).
+
+| Key | Required | Description | Example |
+|---|---|---|---|
+| `index` | yes | The texture, by its index in 'textures'. |  |
+| `scale` | no | Scales the normal map's X and Y; absent (1) is the map as authored. |  |
+| `extensions` | no | KHR_texture_transform, when the map's UVs are transformed. | see *MaterialTextureExtensions* below |
+
+###### MaterialTextureExtensions
+
+The extensions a map's binding carries.
+
+| Key | Required | Description | Example |
+|---|---|---|---|
+| `KHR_texture_transform` | no | The map's UV transform; absent when it has none. | see *MaterialTextureTransform* below |
+
+###### MaterialTextureTransform
+
+``KHR_texture_transform``: how a map's UVs are offset and scaled, in glTF's UV space (origin top left).
+
+| Key | Required | Description | Example |
+|---|---|---|---|
+| `offset` | no | The UV offset, applied after the scale; [0, 0] is none. |  |
+| `scale` | no | The UV scale; [1, 1] is none. |  |
+
+###### MaterialOcclusionTextureInfo
+
+The occlusion map's binding, read from R: it darkens only the environment's light. A lightmap holds its object's occlusion, so the producer exports a material only lightmapped objects wear without one; a material that lightmapped and unbaked objects share keeps it, the export warned with the fix: no reader rule applies.
+
+| Key | Required | Description | Example |
+|---|---|---|---|
+| `index` | yes | The texture, by its index in 'textures': the packed metallicRoughness image when occlusion is packed with them. |  |
+| `extensions` | no | KHR_texture_transform, when the map's UVs are transformed. | see *MaterialTextureExtensions* below |
+
+###### MaterialTextureExtensions
+
+The extensions a map's binding carries.
+
+| Key | Required | Description | Example |
+|---|---|---|---|
+| `KHR_texture_transform` | no | The map's UV transform; absent when it has none. | see *MaterialTextureTransform* below |
+
+###### MaterialTextureTransform
+
+``KHR_texture_transform``: how a map's UVs are offset and scaled, in glTF's UV space (origin top left).
+
+| Key | Required | Description | Example |
+|---|---|---|---|
+| `offset` | no | The UV offset, applied after the scale; [0, 0] is none. |  |
+| `scale` | no | The UV scale; [1, 1] is none. |  |
+
+###### MaterialTextureInfo
+
+A map's binding: the texture it samples, through UV set 0.
+
+| Key | Required | Description | Example |
+|---|---|---|---|
+| `index` | yes | The texture, by its index in 'textures'. |  |
+| `extensions` | no | KHR_texture_transform, when the map's UVs are transformed. | see *MaterialTextureExtensions* below |
+
+###### MaterialTextureExtensions
+
+The extensions a map's binding carries.
+
+| Key | Required | Description | Example |
+|---|---|---|---|
+| `KHR_texture_transform` | no | The map's UV transform; absent when it has none. | see *MaterialTextureTransform* below |
+
+###### MaterialTextureTransform
+
+``KHR_texture_transform``: how a map's UVs are offset and scaled, in glTF's UV space (origin top left).
+
+| Key | Required | Description | Example |
+|---|---|---|---|
+| `offset` | no | The UV offset, applied after the scale; [0, 0] is none. |  |
+| `scale` | no | The UV scale; [1, 1] is none. |  |
+
+###### MaterialExtensions
+
+The extensions a material carries.
+
+| Key | Required | Description | Example |
+|---|---|---|---|
+| `KHR_materials_unlit` | no | Shows its base colour and opacity alone: no light, reflection or emission (metallic 0 and roughness 1 for a reader that lights it anyway). | see *MaterialUnlit* below |
+| `KHR_materials_emissive_strength` | no | Emission above 1, carried as the strength. | see *MaterialEmissiveStrength* below |
+
+###### MaterialUnlit
+
+``KHR_materials_unlit``: an empty object.
+
+| Key | Required | Description | Example |
+|---|---|---|---|
+
+###### MaterialEmissiveStrength
+
+``KHR_materials_emissive_strength``: emission above 1.
+
+| Key | Required | Description | Example |
+|---|---|---|---|
+| `emissiveStrength` | yes | Multiplies emissiveFactor (whose peak is then 1); above 1. |  |
+
+##### MaterialTexture
+
+A glTF ``texture``: an image and how it is sampled.
+
+| Key | Required | Description | Example |
+|---|---|---|---|
+| `source` | yes | The image, by its index in 'images'. |  |
+| `sampler` | no | The sampler, by its index in 'samplers'; absent: repeat, auto filtering. |  |
+
+##### MaterialImage
+
+A glTF ``image``, named by the file the delivery carries.
+
+| Key | Required | Description | Example |
+|---|---|---|---|
+| `uri` | yes | The image's file name (no folder): the file travels with the delivery (embedded in an FBX under this name; in a GLB, in its buffer). |  |
+
+##### MaterialSampler
+
+A glTF ``sampler``.
+
+| Key | Required | Description | Example |
+|---|---|---|---|
+| `magFilter` | no | NEAREST 9728 or LINEAR 9729. One of: 9728, 9729. |  |
+| `minFilter` | no | A WebGL minification filter. One of: 9728, 9729, 9984, 9985, 9986, 9987. |  |
+| `wrapS` | no | CLAMP_TO_EDGE 33071, MIRRORED_REPEAT 33648 or REPEAT 10497. One of: 33071, 33648, 10497. |  |
+| `wrapT` | no | As wrapS, for V. One of: 33071, 33648, 10497. |  |
 
 ## animation
 
-Shot definitions -- per clip its frame range ('start'/'end', the take the clip is cut from) and any description; the scene fps and the declared clip mode; the clip name is the join key to the imported animation clip.
+Shot definitions -- per shot its clip name, the name of the file's take for it, and what a clip cannot hold: its description and its metadata -- and the scene's frame rate (a scene that animates and declares no shot states the rate alone); the clip name is the join key to the imported animation clip.
 
-### In the FBX: `data_export.animation`, version 1
+### In the FBX: `data_export.animation`, version 3
 
-The animation is the file's takes, each shot joined to its take by 'clip', the take's name. 'clip_mode' says how the takes were cut: 'shots', one take per shot; 'full', one whole-timeline take in which a shot is the window 'start'..'end'; 'both' (or absent), both, the whole-timeline take being the longest one no shot names. 'start' and 'end' are frames of the authoring timeline at 'fps'; 'description' says what a shot shows.
+The animation is the file's takes, one per shot, each named after its shot and spanning its range on the timeline; a file with no shots carries one take of the whole timeline, and a record with no shots stating its rate (none when nothing is animated). Each shot joins its take by 'clip', the take's name: 'description' says what it shows and 'metadata' is the key/value data its author wrote for it (the Shot Manifest's keys; the tools' bookkeeping stays in the scene). 'fps' is the scene's frame rate, for a reader of a format that holds none (a glTF, whose animations are in seconds); a reader of one that states its own (an FBX's time mode) uses that. In a GLB the record rides as it stands, under its key in the root extras, and each take is the glTF animation of its name: the takes played in turn are the whole sequence.
 
 #### AnimationRecord
 
-The ``animation`` record's payload: the scene's shots, each one take of the file.
+The ``animation`` record's payload: per shot its description and its metadata, each joined by name to the take the file carries for it, and the scene's frame rate.
 
 | Key | Required | Description | Example |
 |---|---|---|---|
-| `version` | yes | The record's schema version (SceneRecords.SHOTS.version). | `1` |
-| `fps` | yes | The scene's frame rate: how many of the authoring timeline's frames, which every 'start' and 'end' counts, make one second. | `30.0` |
-| `shots` | yes | The scene's shots in start-frame order -- a stale one (every object it names gone and nothing keyed in its frames) too, unless the scene leaves stale shots out. | see *AnimationShot* below (list) |
-| `clip_mode` | no | How the exporter cut the file's takes: 'shots', one per shot; 'full', one whole-timeline take in which each shot is the window 'start'..'end'; 'both', both; absent when no exporter declared one (an authoring-time publish, an export outside the Scene Exporter), which reads as 'both'. One of: full, shots, both. | `"shots"` |
+| `version` | yes | The record's schema version (SceneRecords.SHOTS.version): 3. A GLB carries the record under the key its retired GLB block rode at version 2, so 2 is skipped -- two shapes under one key and version would be read half-way; a reader refuses 1 (the FBX record before one take per shot) and 2 (that GLB block) alike, and the cure is a re-export. | `3` |
+| `shots` | yes | The scene's shots in timeline order, the order of the file's takes -- a stale one (every object it names gone and nothing keyed in its frames) too, unless the scene leaves stale shots out. Empty in a scene that animates and declares no shot: the record then states the rate alone. | see *AnimationShot* below (list) |
+| `fps` | yes | The scene's frame rate, the rate its takes were cut at: for a reader of a format that states none (a glTF's animations are in seconds), so a GLB, which carries this record as it stands, can be stepped frame by frame. A reader of a format that states its own (an FBX's time mode) uses that; the two agree (ExportVerifier.check_animation_rate). | `30.0` |
 
 ##### AnimationShot
 
-One shot: the span of the authoring timeline its take is cut from, and what it shows.
+One shot: the take it is, by name, and what a clip cannot hold.
 
 | Key | Required | Description | Example |
 |---|---|---|---|
-| `clip` | yes | The shot's clip name, unique ignoring case: the name of the take or animation cut for it (a 'full' file cuts none) and the join key to the imported animation clip. | `"Intro"` |
-| `start` | yes | The shot's first frame on the authoring timeline, a whole frame at the 'fps' beside it. | `1` |
-| `end` | yes | The shot's last frame on the authoring timeline (inclusive), a whole frame at the 'fps' beside it. | `120` |
+| `clip` | yes | The shot's clip name, unique ignoring case: the name of the file's take for this shot (one take per shot, spanning its range) and the join key to the imported animation clip. | `"Intro"` |
 | `description` | no | What the shot shows, as free text; absent when it has none. | `"The door swings open."` |
+| `metadata` | no | What the shot's author wrote for it, every value JSON: the keys the scene's Shot Manifest writes from what its sheet says (ShotManifest.MANIFEST_METADATA and the sheet's pass-through columns); absent when it has none. The tools' own bookkeeping on a shot stays in the scene. | `{"section": "A"}` |
 
-### In the GLB: `extras.animation`, version 2
+### In the GLB: `extras.animation`, version 3
 
-The clips, by glTF animation index, open on 'default_clip'. 'shots' are the scene's shots whatever clips the file holds: a shot plays the clip its 'clip' names, else (a 'full' file, or a take that was not cut) its window 'start'..'end' of the whole-timeline clip, the one no shot names. A clip's 'zero_frame' is the authoring frame its t=0 sits on, so a frame f is (f - zero_frame) / fps seconds into it. A STEP 'scale' channel driving a node to zero is its keyed visibility, not authored scale: glTF has no visibility channel. KHR_animation_pointer channels on a material are its authored opacity fade (baseColorFactor alpha) and highlight (emissiveFactor, added to the material's own); a runtime without the extension plays a fade by binding each channel to that material's alpha.
-
-#### AnimationBlock
-
-The ``extras.animation`` block: the scene's shots as the ``animation`` record states them, and the file's clips by glTF animation index, each placed on the authoring timeline.
-
-| Key | Required | Description | Example |
-|---|---|---|---|
-| `version` | yes | The block's own schema version (SceneRecords.SHOTS.glb.version). | `2` |
-| `shots` | yes | The scene's shots, in start-frame order, as the 'animation' record states them -- every one, whatever clips the file holds. | see *AnimationShot* below (list) |
-| `clips` | yes | One entry per glTF animation, in the file's order. | see *AnimationBlockClip* below (list) |
-| `default_clip` | no | The name of the clip to open on: the first shot's clip that has channels, else the first clip that has channels, else the first shot's clip, else the first clip; absent when the file holds no clip. | `"Intro"` |
-| `fps` | no | The frame rate every frame number here counts at: the 'animation' record's 'fps', else the 'render_effects' record's, else one derived from a shot's range and its clip's duration; absent when none gives one. | `30.0` |
-| `clip_mode` | no | The 'animation' record's 'clip_mode': how the exporter cut the takes the clips came from; absent when it declared none. One of: full, shots, both. | `"shots"` |
-
-##### AnimationShot
-
-One shot: the span of the authoring timeline its take is cut from, and what it shows.
-
-| Key | Required | Description | Example |
-|---|---|---|---|
-| `clip` | yes | The shot's clip name, unique ignoring case: the name of the take or animation cut for it (a 'full' file cuts none) and the join key to the imported animation clip. | `"Intro"` |
-| `start` | yes | The shot's first frame on the authoring timeline, a whole frame at the 'fps' beside it. | `1` |
-| `end` | yes | The shot's last frame on the authoring timeline (inclusive), a whole frame at the 'fps' beside it. | `120` |
-| `description` | no | What the shot shows, as free text; absent when it has none. | `"The door swings open."` |
-
-##### AnimationBlockClip
-
-One glTF animation: its name, its index, and the authoring frame its time 0 sits on.
-
-| Key | Required | Description | Example |
-|---|---|---|---|
-| `name` | yes | The glTF animation's name ('animation_<index>' when it has none): the clip a shot whose 'clip' it is plays. | `"Intro"` |
-| `animation` | yes | The clip's index in the glTF's 'animations' array. | `1` |
-| `zero_frame` | no | The authoring frame the clip's time 0 sits on, so a frame f is (f - zero_frame) / fps seconds into it: a shot's own clip opens on its 'start', the whole-timeline clip on its first key; present whenever the block states 'fps', unless the file declares no take and publishes no span for the clip. | `1.0` |
+The record itself, as the FBX carries it: the same version and shape, its names resolved in the GLB's own scene.
 
 ## audio
 
-Audio events with the frames they fire on, scoped to their clip, and 'fps', the rate those frames count at.
+The scene's sounds cut into cues per clip: each the sound (the delivered audio file's name), when it starts and stops in seconds from the clip's start, and where in the sound it starts; the cues are the source's, and what a Unity user adds in the model importer's Events tab is Unity's.
 
-### In the FBX: `data_export.audio`, version 2
+### In the FBX: `data_export.audio`, version 3
 
-Each event plays its audio track 'frame' frames into its 'clip' (at the record's 'fps'); an event whose 'clip' is empty plays in every clip, its frame counted from the first frame the file's animation holds. The track's file rides the file as media of its own, joined to the event's 'name' by file stem without regard to case; 'media', where the file states it, gives the SHA-256 of the bytes it carries by that name, and a same-named file found elsewhere stands in for it only when its bytes hash alike.
+Each cue plays its 'sound' in its 'clip' -- the file's take of that name, or the file's one take when 'clip' is empty (a file with no shots) -- from 'time' to 'stop', seconds from the clip's start, starting 'offset' seconds into the sound; a sound also ends when the clip that started it stops playing. A sound that spans several clips has a cue in each, its offset carrying on where the cut left it. The cues are the source's, rewritten at every delivery like the keys they time; what a Unity user adds in the model importer's Events tab is Unity's and stays. The sound's file rides the file as media of its own, joined to 'sound' by file name without regard to case; 'media', where the file states it, gives the SHA-256 of the bytes it carries by that name, and a same-named file found elsewhere stands in for it only when its bytes hash alike. In a GLB the record rides as it stands, under its key in the root extras, each clip the glTF animation of its name.
 
 #### AudioRecord
 
-The ``audio`` record's payload: the scene's audio events, each scoped to the clip that plays it.
+The ``audio`` record's payload: the scene's sounds, cut into cues per clip, in seconds.
 
 | Key | Required | Description | Example |
 |---|---|---|---|
-| `version` | yes | The record's schema version (SceneRecords.AUDIO.version). | `2` |
-| `events` | yes | Every event in authoring-timeline order: a scoped one listed once for each take that holds its frame (one outside every take is left out), an unscoped one once. | see *AudioCue* below (list) |
-| `fps` | yes | The scene's frame rate: how many of the frames every event's 'frame' counts make one second. | `30.0` |
-| `media` | no | The content digest of each audio file the deliverable embeds, by the event name that is its stem: the SHA-256 of the bytes inside, in lowercase hex, written by the pass that embedded them. A same-named clip found elsewhere stands in for the track only when its bytes hash alike; else the deliverable's own is taken. A track it carries no file for is left out, and a file written without that pass (a raw export) or before 2026-10-31 carries no 'media' at all. | `{"Footstep": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b8…` |
+| `version` | yes | The record's schema version (SceneRecords.AUDIO.version). | `3` |
+| `cues` | yes | Every cue, clip by clip in the order of the takes and by time within a clip: a sound that spans several clips is cut into one cue per clip, each starting at its offset into the sound and stopping at the cut. A sound in no clip is left out. | see *AudioCue* below (list) |
+| `media` | no | The content digest of each audio file the delivery embeds, by the 'sound' that names it: the SHA-256 of the bytes inside, in lowercase hex, written by the pass that embedded them. A same-named sound found elsewhere stands in for it only when its bytes hash alike; else the delivery's own is taken. A sound it carries no file for is left out, and a file written without that pass (a raw export) carries no 'media' at all. | `{"footstep.wav": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2…` |
 
 ##### AudioCue
 
-One audio event: a track that starts on a frame of the clip that plays it.
+One cue: a sound that plays in one clip, from a time of that clip to its stop.
 
 | Key | Required | Description | Example |
 |---|---|---|---|
-| `clip` | yes | The take that plays the event, as the 'animation' record's 'clip' names it (matched ignoring case), or '' when the file has no shot takes and every clip plays it. | `"Intro"` |
-| `frame` | yes | The frame the track starts on, a whole number of frames at the record's 'fps' from the start of its clip: its take's 'start', or for an unscoped event the first frame of the whole-timeline take. | `12` |
-| `name` | yes | The track that plays: the audio file whose stem it is, ignoring case, which the deliverable carries as media of its own. | `"footstep"` |
+| `clip` | yes | The clip that plays the cue: the name of the file's take for it (one take per shot, named after the shot), matched ignoring case; '' in a file with no shots, whose one take is the clip. | `"Intro"` |
+| `sound` | yes | The sound that plays: the name of the audio file the delivery carries for it, extension included, matched ignoring case. | `"footstep.wav"` |
+| `time` | yes | When the sound starts, in seconds from the start of its clip. | `0.4` |
+| `offset` | yes | Where in the sound it starts, in seconds from the sound's start: 0 for a sound heard from its beginning, more for one that began before its clip (a sound a cut between shots divides) or that its author trimmed at the head. | `0.0` |
+| `stop` | yes | When the sound stops, in seconds from the start of its clip: its end on the timeline, or the end of its clip when it runs past it. No later than the clip's end, and after 'time'. | `1.2` |
+
+### In the GLB: `extras.audio`, version 3
+
+The record itself, as the FBX carries it: the same version and shape, its names resolved in the GLB's own scene.
 
 ## lightmaps
 
-Per-object baked-lightmap records: map file name, uvIndex, scaleOffset, and the object's scene hierarchy (which tells apart objects that share a name); and the bake's reflection probe, when it captured one: its HDR's file name, capture point and projection box; and the lights the maps were baked from, for the highlights a lightmap cannot hold -- every length times unit_scale is metres.
+Per-object baked-lightmap records: map file name, scaleOffset, and the object's scene hierarchy (which tells apart objects that share a name); the bake's reflection probe, when it captured one -- its HDR's file name, capture point and projection box -- with copies of it for groups of receivers; and the lights the maps were baked from -- every length times unit_scale is metres.
 
-### In the FBX: `data_export.lightmaps`, version 2
+### In the FBX: `data_export.lightmaps`, version 3
 
-Each 'objects' entry lights one object with a baked lightmap: the image 'map' names, wired to no material, read through UV set 'uvIndex' (0-based: 1 is the second UV set) at uv * [scaleX, scaleY] + [offsetX, offsetY] from 'scaleOffset' (in the file's own V-up UVs), non-directional and applied as stored, linear. The object is the node 'name' names (its namespace aside), 'hierarchy' -- its path from the scene root, namespaces kept, its own name last -- telling apart objects that share a name; a tie nothing settles is left unlit rather than guessed. The map is the object's whole diffuse light and its material stays as authored (rendering.lightmappedMaterials). Every length in the record times 'unit_scale' is metres.
+Each 'objects' entry lights one object with a baked lightmap: the image 'map' names, wired to no material, read through the object's second UV set (index 1) -- where Unity's lightmaps and glTF's TEXCOORD_1 read one -- at uv * [scaleX, scaleY] + [offsetX, offsetY] from 'scaleOffset' (in the file's own V-up UVs), non-directional and applied as stored, linear. The object is the node 'name' names (its namespace aside), 'hierarchy' -- its path from the scene root, namespaces kept, its own name last -- telling apart objects that share a name; a tie nothing settles is left unlit rather than guessed. The map is the object's whole diffuse light, its occlusion included ('materials' says what that leaves of its material's occlusion map). Every length in the record times 'unit_scale' is metres.
 
-*When `probe` is present:* 'probe' is the reflection probe the bake captured: the scene's environment (rendering.environment).
+*When `probe` is present:* 'probe' is the reflection probe the bake captured: the scene's environment (rendering.environment). Its 'map' holds the bake's lights as well, drawn in as the capture point sees them.
 
-*When `lights` is present:* 'lights' are the lights the maps were baked from, for their HIGHLIGHTS alone -- the diffuse light of each is already in the maps, so a reader that lights them must light their specular only, or the scene is lit twice. Each is 'type' point, spot or rect at 'position', a spot or rect facing 'direction' (a rect's width along 'right'), its 'color' linear Rec.709, 'intensity' its radiant intensity for a point or spot (the irradiance it gives one unit away) and its radiance for a rect, a spot's half 'angle' (radians) and soft 'penumbra' share, a rect's 'width' and 'height', a source's 'radius'.
+*When `lights` is present:* 'lights' are the lights the maps were baked from, for a delivery with no probe: while the record has one, a reader lights none of them -- the probe's map holds their highlights, which would count twice. Otherwise their HIGHLIGHTS alone: the diffuse light of each is already in the maps, so a reader that lights them must light their specular only, or the scene is lit twice. Each is 'type' point, spot or rect at 'position', a spot or rect facing 'direction' (a rect's width along 'right'), its 'color' linear Rec.709, 'intensity' its radiant intensity for a point or spot (the irradiance it gives one unit away) and its radiance for a rect, a spot's half 'angle' (radians) and soft 'penumbra' share, a rect's 'width' and 'height', a source's 'radius'.
 
-*When `probe.highlights` is present:* 'probe.highlights' are the bake's lights already drawn for groups of receivers, so a reader that uses them lights none of 'lights' (the highlights would count twice): each names a 'map', a Radiance layer in the probe's layout and units to add to the probe (box-filtered down to the layer's size) and prefilter as the probe is, and the 'objects' ('name' and 'hierarchy', as above) that take that sum in the probe's place (diffuse irradiance and reflections alike), box-projected from the same 'position' and 'box'.
+*When `probe.highlights` is present:* 'probe.highlights' are COMPLETE copies of the probe, one per group of receivers: each names a 'map', the environment with the bake's lights drawn where box projection shows them true for that group, and the 'objects' ('name' and 'hierarchy', as above) that take it in the probe's place (diffuse irradiance and reflections alike), box-projected from the same 'position' and 'box'; a node is under one copy at most.
 
 #### LightmapRecord
 
@@ -182,10 +327,10 @@ The ``lightmaps`` record: each baked object's lightmap, the reflection probe the
 | Key | Required | Description | Example |
 |---|---|---|---|
 | `version` | yes | The record's schema version (SceneRecords.LIGHTMAPS.version); a reader reads the version it knows and refuses any other. |  |
-| `unit_scale` | no | Metres per unit of every length in the record -- the probe's position and box, each light's position, size and radius; present exactly when 'probe' or 'lights' is. |  |
+| `unit_scale` | no | Metres per unit of every length in the record -- the probe's position and box, each baked light's position, size and radius; present exactly when the record holds a length. |  |
 | `objects` | yes | Each baked object, one entry per node; never empty, as a scene with nothing baked carries no record. | see *LightmapEntry* below (list) |
 | `probe` | no | The reflection probe the bake captured, the scene's environment; absent when it captured none. | see *LightmapProbe* below |
-| `lights` | no | The lights the maps were baked from, for their highlights alone; absent when none ships. | see *LightmapBakedLight* below (list) |
+| `lights` | no | The lights the maps were baked from; absent when none ships. Read only by glb. | see *LightmapBakedLight* below (list) |
 
 ##### LightmapEntry
 
@@ -195,7 +340,6 @@ One baked object: the node it lights and how its lightmap is read.
 |---|---|---|---|
 | `name` | yes | The object's node name as the file spells it, namespace included ('NS:leaf'): the join key to the imported node, which a reader whose import drops the namespace matches by the name after the last ':'. |  |
 | `map` | yes | The lightmap image's file name, no folder; the deliverable carries the image under that name (an FBX embeds it). |  |
-| `uvIndex` | yes | The UV set the map is read through, 0-based: 1 is the second set. | `1` |
 | `scaleOffset` | yes | Its rect in the map, [scaleX, scaleY, offsetX, offsetY]: read at uv * [scaleX, scaleY] + [offsetX, offsetY], [1, 1, 0, 0] for a map of its own. | `[1.0, 1.0, 0.0, 0.0]` |
 | `hierarchy` | yes | Its node's path from the scene root, each name from the root down and its own last, namespaces kept: what tells apart objects that share a name. | `[]` |
 
@@ -208,7 +352,7 @@ The reflection probe the bake captured: the room it lit, as an HDR seen from one
 | `map` | yes | The probe image's file name, no folder: an equirectangular linear HDR (top row +Y) the deliverable carries under that name. |  |
 | `position` | yes | Where it was captured, in the file's world axes (right-handed, +Y up); times unit_scale, metres. |  |
 | `box` | yes | {min, max}: the box its reflections are projected onto, in the same space, a face open to the outside pushed far away; null for an open scene, whose probe is read as distant. | see *LightmapBox* below |
-| `highlights` | no | Copies of the probe with the bake's lights drawn in, one per group of receivers -- a reader that uses them lights none of 'lights', or the highlights count twice; absent when the export drew none. | see *LightmapHighlight* below (list) |
+| `highlights` | no | Copies of the probe, one per group of receivers; absent when the export drew none. Read only by glb. | see *LightmapHighlight* below (list) |
 
 ###### LightmapBox
 
@@ -221,12 +365,12 @@ An axis-aligned box, by its least and greatest corners.
 
 ###### LightmapHighlight
 
-A copy of the probe with the bake's lights drawn in, for one group of receivers: each light where box projection shows it true for them.
+A copy of the probe for one group of receivers (the record's assembly says how it is read).
 
 | Key | Required | Description | Example |
 |---|---|---|---|
-| `map` | yes | The copy's file name, no folder: a Radiance (.hdr) layer in the probe's layout and units, added to the probe (box-filtered down to the layer's size) and prefiltered as the probe is. |  |
-| `objects` | yes | The mesh nodes that reflect the probe plus this layer in the probe's place, box-projected from its position and box; a node is under one copy at most. | see *LightmapNode* below (list) |
+| `map` | yes | The copy's file name, no folder: an equirectangular linear HDR (top row +Y) in the probe's layout and units, at its own size, a whole fraction of the probe's, the deliverable carries under that name. |  |
+| `objects` | yes | The mesh nodes that read this copy. | see *LightmapNode* below (list) |
 
 ###### LightmapNode
 
@@ -239,7 +383,7 @@ A mesh node, named as an ``objects`` entry names its object.
 
 ##### LightmapBakedLight
 
-A light the maps were baked from, for its highlight alone: its diffuse light is already in the maps, so a reader that lights it lights its specular only, or the scene is lit twice.
+A light the maps were baked from (the record's assembly says how a reader lights it).
 
 | Key | Required | Description | Example |
 |---|---|---|---|
@@ -255,73 +399,21 @@ A light the maps were baked from, for its highlight alone: its diffuse light is 
 | `width` | no | A rect's width along 'right', in the record's unit. |  |
 | `height` | no | A rect's height, in the record's unit. |  |
 
-### In the GLB: `extras.lightmaps`, version 2
+### In the GLB: `extras.lightmaps`, version 3
 
-Each material in 'materials' carries a baked lightmap in the texture slot 'carrier' names (occlusion: occlusionTexture) -- its RGB, read through that texture's texCoord and KHR_texture_transform, not glTF's red-only occlusion -- 8-bit sRGB decoded to linear, times its 'intensity': the surface's diffuse light, direct and indirect, and not ambient occlusion.
-
-*When `probe` is present:* 'probe' is the reflection probe the bake captured: the scene's environment (rendering.environment).
-
-#### LightmapsBlock
-
-The ``extras.lightmaps`` block: the bake's lightmaps bound to the file's materials, and the reflection probe embedded in its buffer.
-
-| Key | Required | Description | Example |
-|---|---|---|---|
-| `version` | yes | The block's schema version (SceneRecords.LIGHTMAPS.glb.version); a reader reads the version it knows and refuses any other. |  |
-| `carrier` | yes | The texture slot each lightmapped material carries its lightmap in, 8-bit sRGB decoded to linear, read through that texture's own texCoord: 'occlusion' (occlusionTexture) or 'emissive' (emissiveTexture). One of: occlusion, emissive. |  |
-| `materials` | yes | {glTF material name: {intensity}}: each material carrying a lightmap -- the surface's whole diffuse light, direct and indirect, not ambient occlusion -- and the scalar its texels are multiplied by. | see *LightmapsBlockMaterial* below |
-| `probe` | no | The reflection probe the bake captured, the scene's environment; absent when it captured none or its image was not found. | see *LightmapsBlockProbe* below |
-
-##### LightmapsBlockMaterial
-
-One lightmapped material: what its lightmap's texels are multiplied by.
-
-| Key | Required | Description | Example |
-|---|---|---|---|
-| `intensity` | yes | The scalar its lightmap's decoded linear texels are multiplied by, restoring the bake's range. |  |
-
-##### LightmapsBlockProbe
-
-The reflection probe the bake captured, embedded in the file: an equirectangular Radiance HDR in one of its bufferViews, placed in metres.
-
-| Key | Required | Description | Example |
-|---|---|---|---|
-| `bufferView` | yes | The bufferView holding the probe image's Radiance (RGBE) bytes. |  |
-| `position` | yes | Where it was captured, in metres, in the scene's world space (glTF axes, +Y up). |  |
-| `box` | yes | {min, max}: the box its reflections are projected onto, in metres in the same space; null for an open scene, whose probe is read as distant. | see *LightmapBox* below |
-| `highlights` | no | Copies of the probe with the bake's lights drawn in, one per group of receivers; absent when the bake shipped no lights or none was drawn. | see *LightmapsBlockHighlight* below (list) |
-
-###### LightmapBox
-
-An axis-aligned box, by its least and greatest corners.
-
-| Key | Required | Description | Example |
-|---|---|---|---|
-| `min` | yes | The least corner (x, y, z), in the space and unit of the probe holding the box. |  |
-| `max` | yes | The greatest corner (x, y, z), in the same space and unit. |  |
-
-###### LightmapsBlockHighlight
-
-A highlight copy of the embedded probe: a layer with the bake's lights drawn in, for the materials it lists.
-
-| Key | Required | Description | Example |
-|---|---|---|---|
-| `bufferView` | yes | The bufferView holding the layer's Radiance (RGBE) bytes: radiance in the probe's layout and units, added to the probe (box-filtered down to the layer's size) and prefiltered as the probe is. |  |
-| `materials` | yes | The materials, by glTF name, whose surfaces reflect the probe plus this layer in the probe's place. | `[]` |
+The record itself, as the FBX carries it: the same version and shape, its names resolved in the GLB's own scene.
 
 ## shadows
 
-Projected-shadow planes: per plane its node name, type, silhouette texture and intensity, the source and contact it follows and the projection model's constants, and, when packed or baked, its atlas rect and horizon map -- every length times unit_scale is metres.
+Shadow planes: per plane its node name, the source and contact it follows, its horizon map, the projection model's constants and its fade's terms, and its projected silhouette (an extension) -- every length times unit_scale is metres.
 
-### In the FBX: `data_export.shadows`, version 2
+### In the FBX: `data_export.shadows`, version 3
 
-A plane, its source and its contact are the nodes named 'name', 'source' and 'contact'. Each plane is a ground quad, centred on its node's origin, showing the shadow its source casts from the prop standing on its contact; every length in the record times 'unit_scale' is metres, and up is +Y. It draws in its material's colour at alpha = shadow * min(the material's opacity, 'intensity'). Its source places the shadow alone and lights nothing.
+A plane, its source and its contact are the nodes named 'name', 'source' and 'contact'. Each plane is a ground quad, centred on its node's origin, showing the shadow its source casts from the prop standing on its contact; every length in the record times 'unit_scale' is metres, and up is +Y. It draws in its material's colour at alpha = shadow * fade (both below), its shadow marched from its horizon map. Its source places the shadow alone and lights nothing. All in metres, with .xz a point's horizontal (x, z) part, C the contact's position and L the source's -- a directional source's is C - s*1e6*max(height, 2*radius), s the unit direction it shines, its node's local -Y: d = C.xz - L.xz, dist = |d|, u = d/dist ((0, 1) when dist < 1e-6), k_max = 1 + max_stretch, k_base = clamp((L.y - ground)/max(1e-4, L.y - C.y), 0, k_max), k_top = clamp((L.y - ground)/max(1e-4, L.y - C.y - height), 0, min(k_max, k_base + max_stretch*height/max(dist, 1e-6))), reach = max(0, dist*(k_top - k_base)), width = 2*radius*max(k_top, k_base) and anchor = L.xz + d*k_base. Every plane fades, evaluated each frame from those terms whether or not it follows its source: fade = clamp(intensity/max(0.001, stretch^falloff_power) * clamp((L.y - C.y)/source_ramp, 0, 1) * clamp(1 - max(0, C.y - ground)/max(0.001, fade_height), 0, 1), 0, 1), with stretch = max(1, (reach + radius*(k_base + k_top))/max(1e-4, 2*radius)): the shadow lightens as it stretches, ramps in over 'source_ramp' as the source rises over the contact, and fades out as the prop rises off the ground. A plane whose source or contact does not resolve draws at 'intensity'. A plane's shadow is marched from its map, the image 'horizon.texture' names, at 'horizon.rect' ([scale_u, scale_v, offset_u, offset_v] of the image from its bottom-left). The map is data, its texels read whole (never filtered or colour-decoded; what is interpolated below is decoded values): S = 'size' texels tall and S*(K + 2) wide, K = 'spans', S x S tiles side by side whose texel (i, j) -- column i, row j counted from the map's top row -- is the footprint pixel whose low corner is (a0 + i*pa, b0 + j*pb), with 'bounds' [a0, a1, b0, b1], pa = (a1 - a0)/S, pb = (b1 - b0)/S, p = min(pa, pb) and aspect = max(pa, pb)/p. With w = 256*first byte + second, H16 = w/65535*height_scale and H8 = byte/255*height_scale: tile k < K holds a span per pixel, from lo = H16(R, G) to hi = H16(B, A) above the ground (hi = 0: none), a pixel holding any span being solid; tile K the distance D to the nearest solid pixel, w(R, G)/64 in p, and that pixel's hull, top H8(B), bottom H8(A); tile K + 1, in its left half, a min/max pyramid that only speeds the march (a reader may ignore it) and, when its texel (S/2, S/2) is (83, 72, 1, 165), at texel (S/2 + i/2, j/2) a solid pixel's distance I to the nearest empty one (0 on an empty pixel), byte/4 in p: R for even i and j, G odd i, B odd j, A both odd. The shadow at a fragment F is marched in the contact's frame -- origin C, axes a = 'frame_a', b = 'frame_b' and up = +Y, each turned first +90 degrees about X when the quad lies in its local X/Y, then by the contact's world rotation (never its scale) -- from the ground point (P, g) under F: P = ((F - C).a, (F - C).b), g = ((0, 'ground', 0) - C).up, F's own height dropped. v is the unit vector from (P, g) toward the source, in that frame (against the way a directional source shines, its node's local -Y), with v.ab its (a, b) part and v.up its up part; rho = asin(min(1, 'source_size'/2/the source's distance from (P, g))), or for a directional source 'source_angle'/2 ('source_angle' is in radians); no shadow where v.up <= 0 or c = |v.ab| < 1e-9. From rise = side = 0, clear = infinity and no hit, visit in order each pixel the line P + t*v.ab/c (t >= 0) crosses inside the footprint, over [t0, t1]: h0 = t0*v.up/c, h1 = t1*v.up/c, tm = (t0 + t1)/2. A span blocks when h1 >= lo and h0 <= hi, otherwise its gap is max(lo - h1, h0 - hi); rise = max(rise, (hi - h0)*c^2/tm) over every span with hi >= h0, blocking or not. A blocking pixel sets hit and side = max(side, max(I - aspect/2, 0)*p*c/tm) (infinite without I); before any hit, any other sets clear = min(clear, e/tm), e its least gap*c^2 when solid, otherwise hypot(max(D - aspect/2, 0)*p*c, c^2*the gap from [h0, h1] to [bottom, top], 0 where they overlap). I, D, bottom and top are read bilinearly at the line's point at tm, texel centres at +0.5, each corner clamped to the tile. Stop once hit and min(rise, side) >= rho. shadow = (hit ? 1 : 0) when rho = 0, else disc(hit ? -min(rise, side)/rho : clear/rho), disc(x) = (acos(x) - x*sqrt(1 - x^2))/pi over x clamped to [-1, 1]: the share of the source's disc one edge hides, an approximation that is the approved look. Cheapest: march into a texture over the quad's UVs, a texel per 3 map pixels, sampled bilinearly, again only when the source, the quad or the ground moves relative to the contact.
 
-*When `planes.type` is "projected":* A projected plane's shadow is the alpha of the image 'texture' names ('atlas.texture' once packed) through the quad's own UVs, which then address its tile; its colour is the material's times that map's.
+*When `planes.follow_source` is true:* With 'follow_source' a runtime re-places the quad every frame (otherwise its imported keys stand), from its 'canvas' and far = max(reach + canvas[1]*radius*k_top, 0). Turn the quad so its along axis -- local +Z on a quad lying in its local X/Z, +Y on one lying in X/Y (a Z-up exporter's) -- runs along u and its normal (+Y, or +Z) up, which puts its own +X along up x u (X/Z) or u x up (X/Y); then scale it from its own size (its mesh's extent along each axis) and move it, 0.01 of the record's unit above the ground, to span canvas[0]*far..far along u and canvas[2]*width..canvas[3]*width along its own +X, both from the anchor -- the across span follows the quad's +X, as its silhouette's u axis does, so it mirrors with the quad.
 
-*When `planes.follow_source` is true:* With 'follow_source' a runtime re-places the quad every frame (otherwise its imported keys stand). All in metres, with .xz a point's horizontal (x, z) part, C the contact's position and L the source's -- a directional source's is C - s*1e6*max(height, 2*radius), s the unit direction it shines, its node's local -Y: d = C.xz - L.xz, dist = |d|, u = d/dist ((0, 1) when dist < 1e-6), k_max = 1 + max_stretch, k_base = clamp((L.y - ground)/max(1e-4, L.y - C.y), 0, k_max), k_top = clamp((L.y - ground)/max(1e-4, L.y - C.y - height), 0, min(k_max, k_base + max_stretch*height/max(dist, 1e-6))), reach = max(0, dist*(k_top - k_base)), width = 2*radius*max(k_top, k_base), anchor = L.xz + d*k_base and far = max(reach + canvas[1]*radius*k_top, 0). Turn the quad so its along axis -- local +Z on a quad lying in its local X/Z, +Y on one lying in X/Y (a Z-up exporter's) -- runs along u and its normal (+Y, or +Z) up, which puts its own +X along up x u (X/Z) or u x up (X/Y); then scale it from its own size (its mesh's extent along each axis) and move it, 0.01 of the record's unit above the ground, to span canvas[0]*far..far along u and canvas[2]*width..canvas[3]*width along its own +X, both from the anchor -- the across span follows the quad's +X, as its silhouette's u axis does, so it mirrors with the quad.
-
-*When `planes.type` is "horizon":* A horizon plane's shadow is marched from its map, the image 'horizon.texture' names, at 'horizon.rect' ([scale_u, scale_v, offset_u, offset_v] of the image from its bottom-left). The map is data, its texels read whole (never filtered or colour-decoded; what is interpolated below is decoded values): S = 'size' texels tall and S*(K + 2) wide, K = 'spans', S x S tiles side by side whose texel (i, j) -- column i, row j counted from the map's top row -- is the footprint pixel whose low corner is (a0 + i*pa, b0 + j*pb), with 'bounds' [a0, a1, b0, b1], pa = (a1 - a0)/S, pb = (b1 - b0)/S, p = min(pa, pb) and aspect = max(pa, pb)/p. With w = 256*first byte + second, H16 = w/65535*height_scale and H8 = byte/255*height_scale: tile k < K holds a span per pixel, from lo = H16(R, G) to hi = H16(B, A) above the ground (hi = 0: none), a pixel holding any span being solid; tile K the distance D to the nearest solid pixel, w(R, G)/64 in p, and that pixel's hull, top H8(B), bottom H8(A); tile K + 1, in its left half, a min/max pyramid that only speeds the march (a reader may ignore it) and, when its texel (S/2, S/2) is (83, 72, 1, 165), at texel (S/2 + i/2, j/2) a solid pixel's distance I to the nearest empty one (0 on an empty pixel), byte/4 in p: R for even i and j, G odd i, B odd j, A both odd. The shadow at a fragment F is marched in the contact's frame -- origin C, axes a = 'frame_a', b = 'frame_b' and up = +Y, each turned first +90 degrees about X when the quad lies in its local X/Y, then by the contact's world rotation (never its scale) -- from the ground point (P, g) under F: P = ((F - C).a, (F - C).b), g = ((0, 'ground', 0) - C).up, F's own height dropped. v is the unit vector from (P, g) toward the source, in that frame (against the way a directional source shines, its node's local -Y), with v.ab its (a, b) part and v.up its up part; rho = asin(min(1, 'source_size'/2/the source's distance from (P, g))), or for a directional source 'source_angle'/2 ('source_angle' is in radians); no shadow where v.up <= 0 or c = |v.ab| < 1e-9. From rise = side = 0, clear = infinity and no hit, visit in order each pixel the line P + t*v.ab/c (t >= 0) crosses inside the footprint, over [t0, t1]: h0 = t0*v.up/c, h1 = t1*v.up/c, tm = (t0 + t1)/2. A span blocks when h1 >= lo and h0 <= hi, otherwise its gap is max(lo - h1, h0 - hi); rise = max(rise, (hi - h0)*c^2/tm) over every span with hi >= h0, blocking or not. A blocking pixel sets hit and side = max(side, max(I - aspect/2, 0)*p*c/tm) (infinite without I); before any hit, any other sets clear = min(clear, e/tm), e its least gap*c^2 when solid, otherwise hypot(max(D - aspect/2, 0)*p*c, c^2*the gap from [h0, h1] to [bottom, top], 0 where they overlap). I, D, bottom and top are read bilinearly at the line's point at tm, texel centres at +0.5, each corner clamped to the tile. Stop once hit and min(rise, side) >= rho. shadow = (hit ? 1 : 0) when rho = 0, else disc(hit ? -min(rise, side)/rho : clear/rho), disc(x) = (acos(x) - x*sqrt(1 - x^2))/pi over x clamped to [-1, 1]: the share of the source's disc one edge hides, an approximation that is the approved look. Cheapest: march into a texture over the quad's UVs, a texel per 3 map pixels, sampled bilinearly, again only when the source, the quad or the ground moves relative to the contact.
+*When `planes.silhouette` is present:* 'silhouette' is the plane's projected silhouette, an extension a reader may ignore (it then draws the horizon). With 'silhouette.draw' a reader holding it draws the plane's shadow as the alpha of the image 'silhouette.texture' names ('silhouette.atlas.texture' once packed) through the quad's own UVs, which then address its tile, its colour the material's times that map's; without it, the silhouette is the fallback of a reader that cannot march the horizon.
 
 #### ShadowRecord
 
@@ -329,18 +421,20 @@ The ``shadows`` record's payload: the export's shadow planes, and the unit their
 
 | Key | Required | Description | Example |
 |---|---|---|---|
-| `version` | yes | The record's schema version (SceneRecords.SHADOWS.version). |  |
+| `version` | yes | The record's schema version (SceneRecords.SHADOWS.version); a reader reads the version it knows and refuses any other -- a version 2 record (a plane's 'type', its silhouette's image on the plane, no fade terms) is re-exported. |  |
 | `unit_scale` | yes | Metres per unit of every length in the record (0.01 for centimetres). |  |
 | `planes` | yes | The export's shadow planes, one entry each. | see *ShadowPlane* below (list) |
 
 ##### ShadowPlane
 
-One shadow plane of the record, joined to its nodes and images by name.
+One shadow plane of the record: its nodes by name, its horizon map, the placement's inputs (pythontk ``ShadowProjection.model``) and its fade's terms (``ShadowProjection.fade``).
 
 | Key | Required | Description | Example |
 |---|---|---|---|
-| `type` | yes | projected: a silhouette drawn for one source position, re-placed as the source moves; horizon: a height-field map a shader marches for any source position. One of: projected, horizon. | `"projected"` |
-| `intensity` | yes | The shadow's overall darkness, 0 to 1, which the plane's opacity never exceeds: a reader draws the lesser of the two, so a file whose material states no opacity draws this. | `1.0` |
+| `name` | yes | The plane mesh node's name, namespace included: the join key to the imported plane (where an import drops namespaces, the part after the last ':' joins). |  |
+| `source` | yes | The name of the node the shadow is cast from, or an empty string when it has none. | `""` |
+| `contact` | yes | The name of the node the shadow is anchored to, at the footprint's centre on the target's underside, or an empty string when it has none. | `""` |
+| `intensity` | yes | The shadow's overall darkness, 0 to 1: the fade's ceiling. | `1.0` |
 | `source_type` | yes | point: the source shines from its position; directional: along one direction, wherever it stands (a sun). One of: point, directional. | `"point"` |
 | `source_size` | yes | A positional source's diameter, in the record's unit, which softens the shadow's edge (0 for a sharp edge, and for a directional source). | `0.0` |
 | `source_angle` | yes | A directional source's angular diameter, in radians (0 for a sharp edge, and for a positional source). | `0.0` |
@@ -349,26 +443,16 @@ One shadow plane of the record, joined to its nodes and images by name.
 | `radius` | yes | The target's footprint radius (half its footprint's diagonal), in the record's unit. | `0.5` |
 | `height` | yes | The target's height above its contact, in the record's unit. | `1.0` |
 | `max_stretch` | yes | The cap on the shadow's length past the target, in target heights (6 is the length a sun 9.5 degrees up casts). | `6.0` |
-| `canvas` | yes | Where the texture's edges sit around the projected shadow, [u0, u1, w0, w1]: u1 the far edge in top-disk radii past where the target's top lands, u0 the near edge as a fraction of that far edge's distance from the anchor, w0 and w1 the sides as fractions of the shadow's width. | `[-1.0, 1.0, -0.5, 0.5]` |
-| `name` | yes | The plane mesh node's name, namespace included: the join key to the imported plane (where an import drops namespaces, the part after the last ':' joins). |  |
-| `texture` | yes | The file name of the plane's own silhouette image (the shadow in its alpha), or an empty string when it has none. |  |
-| `source` | yes | The name of the node the shadow is cast from, or an empty string when it has none. | `""` |
-| `contact` | yes | The name of the node the shadow is anchored to, at the footprint's centre on the target's underside, or an empty string when it has none. | `""` |
-| `atlas` | no | Where the silhouette sits in the shared silhouette atlas; absent when the plane is not packed. | see *ShadowPlaneAtlas* below |
-| `horizon` | no | The height-field map a horizon plane is shaded from; absent on a projected plane and on a horizon plane not yet baked. | see *ShadowPlaneHorizon* below |
-
-###### ShadowPlaneAtlas
-
-Where a plane's silhouette sits in the shared silhouette atlas.
-
-| Key | Required | Description | Example |
-|---|---|---|---|
-| `texture` | yes | The atlas image's file name. |  |
-| `rect` | yes | The plane's tile in the atlas, [scale_u, scale_v, offset_u, offset_v] (uv' = uv * scale + offset), origin bottom-left: the bounds the quad's UVs already address. |  |
+| `canvas` | yes | Where the quad's edges sit around the projected shadow, [u0, u1, w0, w1]: u1 the far edge in top-disk radii past where the target's top lands, u0 the near edge as a fraction of that far edge's distance from the anchor, w0 and w1 the sides as fractions of the shadow's width -- what a follow_source placement spans, and the edges the silhouette was drawn to. | `[-1.0, 1.0, -0.5, 0.5]` |
+| `falloff_power` | yes | How fast the shadow lightens as it stretches past its footprint: the fade's exponent on the stretch. | `1.2` |
+| `fade_height` | yes | The target's rise above the ground at which its shadow has faded out, in the record's unit. | `2.0` |
+| `source_ramp` | yes | The source's height over the contact at which the shadow is all in, in the record's unit: the fade ramps in from none with the source at the contact's height -- the ramp the plane's producer previews (one unit of its rig: 0.01 in a metre record of a centimetre rig); over 0. | `1.0` |
+| `horizon` | yes | The height-field map the plane's shadow is marched from. | see *ShadowPlaneHorizon* below |
+| `silhouette` | no | The plane's projected silhouette; absent when it has none. A reader without it draws the horizon. Read only by glb. | see *ShadowPlaneSilhouette* below |
 
 ###### ShadowPlaneHorizon
 
-A horizon plane's height-field shadow map, by file name, and where it sits in its image.
+A plane's height-field shadow map, by file name, and where it sits in its image.
 
 | Key | Required | Description | Example |
 |---|---|---|---|
@@ -381,71 +465,36 @@ A horizon plane's height-field shadow map, by file name, and where it sits in it
 | `texture` | yes | The map image's file name: the shared horizon atlas once packed. |  |
 | `rect` | yes | The map's exact rect in its image (never inset), [scale_u, scale_v, offset_u, offset_v], origin bottom-left. |  |
 
-### In the GLB: `extras.shadows`, version 2
+###### ShadowPlaneSilhouette
 
-A plane, its source and its contact are the glTF nodes 'node', 'source_node' and 'contact_node' (null where the file holds no single node of that name). Each plane is a ground quad, centred on its node's origin, showing the shadow its source casts from the prop standing on its contact; every length in the record times 'unit_scale' is metres, and up is +Y. It draws in its material's colour at alpha = shadow * min(the material's opacity, 'intensity'). Its source places the shadow alone and lights nothing.
-
-*When `planes.type` is "projected":* A projected plane's shadow is the alpha of texture 'texture_index' (its atlas once packed) through the quad's own UVs, which then address its tile; its colour is the material's times that map's.
-
-*When `planes.follow_source` is true:* With 'follow_source' a runtime re-places the quad every frame (otherwise its imported keys stand). All in metres, with .xz a point's horizontal (x, z) part, C the contact's position and L the source's -- a directional source's is C - s*1e6*max(height, 2*radius), s the unit direction it shines, its node's local -Y: d = C.xz - L.xz, dist = |d|, u = d/dist ((0, 1) when dist < 1e-6), k_max = 1 + max_stretch, k_base = clamp((L.y - ground)/max(1e-4, L.y - C.y), 0, k_max), k_top = clamp((L.y - ground)/max(1e-4, L.y - C.y - height), 0, min(k_max, k_base + max_stretch*height/max(dist, 1e-6))), reach = max(0, dist*(k_top - k_base)), width = 2*radius*max(k_top, k_base), anchor = L.xz + d*k_base and far = max(reach + canvas[1]*radius*k_top, 0). Turn the quad so its along axis -- local +Z on a quad lying in its local X/Z, +Y on one lying in X/Y (a Z-up exporter's) -- runs along u and its normal (+Y, or +Z) up, which puts its own +X along up x u (X/Z) or u x up (X/Y); then scale it from its own size (its mesh's extent along each axis) and move it, 0.01 of the record's unit above the ground, to span canvas[0]*far..far along u and canvas[2]*width..canvas[3]*width along its own +X, both from the anchor -- the across span follows the quad's +X, as its silhouette's u axis does, so it mirrors with the quad.
-
-*When `planes.type` is "horizon":* A horizon plane's shadow is marched from its map, texture 'horizon.texture_index', at 'horizon.rect' ([scale_u, scale_v, offset_u, offset_v] of the image from its top-left). The map is data, its texels read whole (never filtered or colour-decoded; what is interpolated below is decoded values): S = 'size' texels tall and S*(K + 2) wide, K = 'spans', S x S tiles side by side whose texel (i, j) -- column i, row j counted from the map's top row -- is the footprint pixel whose low corner is (a0 + i*pa, b0 + j*pb), with 'bounds' [a0, a1, b0, b1], pa = (a1 - a0)/S, pb = (b1 - b0)/S, p = min(pa, pb) and aspect = max(pa, pb)/p. With w = 256*first byte + second, H16 = w/65535*height_scale and H8 = byte/255*height_scale: tile k < K holds a span per pixel, from lo = H16(R, G) to hi = H16(B, A) above the ground (hi = 0: none), a pixel holding any span being solid; tile K the distance D to the nearest solid pixel, w(R, G)/64 in p, and that pixel's hull, top H8(B), bottom H8(A); tile K + 1, in its left half, a min/max pyramid that only speeds the march (a reader may ignore it) and, when its texel (S/2, S/2) is (83, 72, 1, 165), at texel (S/2 + i/2, j/2) a solid pixel's distance I to the nearest empty one (0 on an empty pixel), byte/4 in p: R for even i and j, G odd i, B odd j, A both odd. The shadow at a fragment F is marched in the contact's frame -- origin C, axes a = 'frame_a', b = 'frame_b' and up = +Y, each turned first +90 degrees about X when the quad lies in its local X/Y, then by the contact's world rotation (never its scale) -- from the ground point (P, g) under F: P = ((F - C).a, (F - C).b), g = ((0, 'ground', 0) - C).up, F's own height dropped. v is the unit vector from (P, g) toward the source, in that frame (against the way a directional source shines, its node's local -Y), with v.ab its (a, b) part and v.up its up part; rho = asin(min(1, 'source_size'/2/the source's distance from (P, g))), or for a directional source 'source_angle'/2 ('source_angle' is in radians); no shadow where v.up <= 0 or c = |v.ab| < 1e-9. From rise = side = 0, clear = infinity and no hit, visit in order each pixel the line P + t*v.ab/c (t >= 0) crosses inside the footprint, over [t0, t1]: h0 = t0*v.up/c, h1 = t1*v.up/c, tm = (t0 + t1)/2. A span blocks when h1 >= lo and h0 <= hi, otherwise its gap is max(lo - h1, h0 - hi); rise = max(rise, (hi - h0)*c^2/tm) over every span with hi >= h0, blocking or not. A blocking pixel sets hit and side = max(side, max(I - aspect/2, 0)*p*c/tm) (infinite without I); before any hit, any other sets clear = min(clear, e/tm), e its least gap*c^2 when solid, otherwise hypot(max(D - aspect/2, 0)*p*c, c^2*the gap from [h0, h1] to [bottom, top], 0 where they overlap). I, D, bottom and top are read bilinearly at the line's point at tm, texel centres at +0.5, each corner clamped to the tile. Stop once hit and min(rise, side) >= rho. shadow = (hit ? 1 : 0) when rho = 0, else disc(hit ? -min(rise, side)/rho : clear/rho), disc(x) = (acos(x) - x*sqrt(1 - x^2))/pi over x clamped to [-1, 1]: the share of the source's disc one edge hides, an approximation that is the approved look. Cheapest: march into a texture over the quad's UVs, a texel per 3 map pixels, sampled bilinearly, again only when the source, the quad or the ground moves relative to the contact.
-
-#### ShadowBlock
-
-The ``extras.shadows`` block of a GLB: the record's planes, each bound to the file's glTF nodes and textures.
+A plane's projected silhouette: the shadow drawn for one source position, re-placed as the source moves -- an extension, read by the GLB's readers alone.
 
 | Key | Required | Description | Example |
 |---|---|---|---|
-| `version` | yes | The block's own schema version (SceneRecords.SHADOWS.glb.version), apart from the record's. |  |
-| `unit_scale` | yes | Metres per unit of every length in the record (0.01 for centimetres). |  |
-| `planes` | yes | One entry per plane mesh node in the file (a name several nodes carry gives one each); a plane the file lacks, or cannot bind, is left out. | see *ShadowBlockPlane* below (list) |
+| `texture` | yes | The file name of the plane's own silhouette image (the shadow in its alpha). |  |
+| `atlas` | no | Where the silhouette sits in the shared silhouette atlas; absent when the plane is not packed. | see *ShadowPlaneAtlas* below |
+| `draw` | yes | Whether a reader holding the silhouette draws it (true), or draws the horizon and keeps the silhouette as the fallback where it cannot march (false): the rig's authored choice. | `true` |
 
-##### ShadowBlockPlane
+###### ShadowPlaneAtlas
 
-A plane bound to the file: its node, its source and contact nodes, and the textures it samples, by index.
-
-| Key | Required | Description | Example |
-|---|---|---|---|
-| `type` | yes | projected: a silhouette drawn for one source position, re-placed as the source moves; horizon: a height-field map a shader marches for any source position. One of: projected, horizon. | `"projected"` |
-| `intensity` | yes | The shadow's overall darkness, 0 to 1, which the plane's opacity never exceeds: a reader draws the lesser of the two, so a file whose material states no opacity draws this. | `1.0` |
-| `source_type` | yes | point: the source shines from its position; directional: along one direction, wherever it stands (a sun). One of: point, directional. | `"point"` |
-| `source_size` | yes | A positional source's diameter, in the record's unit, which softens the shadow's edge (0 for a sharp edge, and for a directional source). | `0.0` |
-| `source_angle` | yes | A directional source's angular diameter, in radians (0 for a sharp edge, and for a positional source). | `0.0` |
-| `follow_source` | yes | Whether a runtime re-places the plane from its source and contact every frame (both must resolve); false plays the imported animation. | `false` |
-| `ground` | yes | The ground plane's height along the up axis, in the record's unit. | `0.0` |
-| `radius` | yes | The target's footprint radius (half its footprint's diagonal), in the record's unit. | `0.5` |
-| `height` | yes | The target's height above its contact, in the record's unit. | `1.0` |
-| `max_stretch` | yes | The cap on the shadow's length past the target, in target heights (6 is the length a sun 9.5 degrees up casts). | `6.0` |
-| `canvas` | yes | Where the texture's edges sit around the projected shadow, [u0, u1, w0, w1]: u1 the far edge in top-disk radii past where the target's top lands, u0 the near edge as a fraction of that far edge's distance from the anchor, w0 and w1 the sides as fractions of the shadow's width. | `[-1.0, 1.0, -0.5, 0.5]` |
-| `node` | yes | The plane mesh's glTF node index. |  |
-| `source_node` | yes | The source's glTF node index, or null when the file holds no single node of that name. |  |
-| `contact_node` | yes | The contact's glTF node index, or null when the file holds no single node of that name. |  |
-| `texture_index` | yes | The glTF texture index of a projected plane's colour map (its atlas once packed, which the quad's UVs then address), or null on a horizon plane, which the march shades. |  |
-| `horizon` | no | The height-field map the plane is shaded from; present on every horizon plane the block carries. | see *ShadowBlockHorizon* below |
-
-###### ShadowBlockHorizon
-
-A horizon map bound to the file.
+Where a plane's silhouette sits in the shared silhouette atlas.
 
 | Key | Required | Description | Example |
 |---|---|---|---|
-| `size` | yes | Footprint pixels per side, S (a power of two); the image is S tall and S x (spans + 2) wide. |  |
-| `spans` | yes | Solid spans kept per pixel column, K. |  |
-| `bounds` | yes | The footprint the map covers, [a0, a1, b0, b1] along frame_a and frame_b from the contact node, in the record's unit. |  |
-| `height_scale` | yes | The height above the ground a 16-bit channel value of 65535 stands for, in the record's unit. |  |
-| `frame_a` | yes | The footprint's first horizontal axis, a unit vector in the contact node's local frame as exported (FBX/glTF axes, +Y up). |  |
-| `frame_b` | yes | The footprint's second horizontal axis, a unit vector in the same frame. |  |
-| `rect` | yes | The map's exact rect in its image (never inset), [scale_u, scale_v, offset_u, offset_v], origin top-left (glTF). |  |
-| `texture_index` | yes | The glTF texture index of the map, bound with no mipmaps and clamped: its texels are data, fetched whole, never colour-decoded. |  |
+| `texture` | yes | The atlas image's file name. |  |
+| `rect` | yes | The plane's tile in the atlas, [scale_u, scale_v, offset_u, offset_v] (uv' = uv * scale + offset), origin bottom-left: the bounds the quad's UVs already address. |  |
+
+### In the GLB: `extras.shadows`, version 3
+
+The record itself, as the FBX carries it: the same version and shape, its names resolved in the GLB's own scene.
 
 ## articulation
 
-Articulated rigs: per rig its joints (node name, parent, rest translate and orient, rotate order, channels with limits and grab weights) and the parts a hand grabs, each with the joint it rides.
+Articulated rigs: per rig its joints (node name, parent joint, rest translate and rotation, the anchor frame its channels turn and slide in, rotate order, channels with limits and grab weights) and the parts a hand grabs, each with the joint it rides -- in metres.
 
-### In the FBX: `data_export.articulation`, version 1
+### In the FBX: `data_export.articulation`, version 2
 
-Each rig poses its joints as rotation = rest (x) Euler(channels) and translation = rest + rest.(tx, ty, tz), every channel within its limits (degrees), and a grabbed part rides its joint; a grab moves the channels of the joints from the part up to the rig's root, each in proportion to its 'weight' and within its limits. Joints are found by node name; the rest translations are in the file's own axes, their unit the ratio of the imported rest translations to them. The imported pose is the rest pose, and the takes play the joints' own keys.
+Each rig poses its joints along its joint chain: a joint's pose is its 'parent' joint's -- for a root, the space that root's own node hangs in, so each root's chain poses in its own root's space (a rig's roots may hang under different nodes) -- times rest . A . pose(channels) . A^-1, where rest is the joint's 't' and 'q' in its parent joint's frame, A its 'anchor' ('t' and 'q', in the rest frame) and pose(channels) the slide (tx, ty, tz) along A's axes after the turn Euler(rotate_order; rx, ry, rz) about them in degrees, every channel within its limits. The identity anchor -- 't' 0, 'q' (0, 0, 0, 1), a joint whose part nests on its pivot -- poses rest . pose(channels). A part is placed at its joint's pose whatever node it hangs under (a flat model's parts all under the root chain alike), and a grabbed part rides its joint; a grab moves the channels of the joints from the part up to the rig's root, each in proportion to its 'weight' and within its limits. Joints and grabbed parts are found by node name (the name after the last ':' where an import drops the namespace; a name two nodes answer binds neither). Every value is in its parent joint's frame as the file holds that node: lengths (the rest and anchor translations, a slide and its limits) in metres as glTF frames the file -- an FBX's own value x 0.01 whatever its UnitScaleFactor, a GLB node's local exactly -- and rotations as quaternions (x, y, z, w); a scale a node above carries (a writer's unit on the export's root, a scaled prop) scales the rig with it. A reader whose import converts the file's unit into the locals (an FBX importer applying the file's UnitScaleFactor and its own global scale) scales every length by that conversion x 100. The imported pose is the rest pose, and the takes play the joints' own keys.
 
 #### ArticulationRecord
 
@@ -453,7 +502,7 @@ The ``articulation`` record's payload: every articulated rig in the scene.
 
 | Key | Required | Description | Example |
 |---|---|---|---|
-| `version` | yes | The record's schema version (SceneRecords.ARTICULATION.version). |  |
+| `version` | yes | The record's schema version (SceneRecords.ARTICULATION.version); a reader reads the version it knows and refuses any other -- a version 1 record (no anchor, lengths in the file's own units) is re-exported. |  |
 | `rigs` | yes | The scene's articulated rigs. | see *ArticulationRig* below (list) |
 
 ##### ArticulationRig
@@ -472,12 +521,22 @@ One joint of the record: its pose, joined to its node by name.
 
 | Key | Required | Description | Example |
 |---|---|---|---|
-| `parent` | yes | An earlier joint's index, or null for a root (its parent is the rig's space). |  |
-| `t` | yes | The rest translate in the parent's space, in the file's units (a runtime measures its scale against the rest pose: ArticulationModel.scale_of). |  |
-| `q` | yes | The rest rotation (the DCC's joint orient), a quaternion x, y, z, w. |  |
+| `parent` | yes | An earlier joint's index, or null for a root (its parent is the rig's space): the joint chain a reader poses the part from, whatever node its part hangs under. |  |
+| `t` | yes | The rest translate in the parent joint's frame, in metres as glTF frames the file: an FBX's own value x 0.01 whatever its UnitScaleFactor, a GLB node's local exactly (a scale a node above carries scales it). A reader whose import converts the file's unit into the locals (an FBX importer applying its UnitScaleFactor) scales it by that conversion x 100. |  |
+| `q` | yes | The rest rotation in the parent joint's frame (the DCC's joint orient), a quaternion x, y, z, w. |  |
+| `anchor` | yes | The frame the channels turn and slide in, in the rest frame: the part poses as rest . anchor . pose(channels) . anchor^-1 (the identity: rest . pose(channels)). | see *ArticulationAnchor* below |
 | `rotate_order` | yes | The order the rotation channels compose in; the first letter applies first. One of: xyz, yzx, zxy, xzy, yxz, zyx. |  |
 | `channels` | yes | The channels it turns or slides on, in state order. | see *ArticulationChannel* below (list) |
 | `name` | yes | The joint node's name: the join key to the imported transform. |  |
+
+###### ArticulationAnchor
+
+The frame a joint's channels turn and slide in: a point and an orientation in the joint's REST frame. The identity -- the rest frame itself -- is a joint whose part nests on its pivot.
+
+| Key | Required | Description | Example |
+|---|---|---|---|
+| `t` | yes | The point the joint turns about, in its rest frame (metres, as 't' is). | `[0.0, 0.0, 0.0]` |
+| `q` | yes | The orientation of the axes its channels turn about and slide along, in its rest frame: a quaternion x, y, z, w. | `[0.0, 0.0, 0.0, 1.0]` |
 
 ###### ArticulationChannel
 
@@ -485,7 +544,7 @@ One channel a joint turns or slides on, with its limits.
 
 | Key | Required | Description | Example |
 |---|---|---|---|
-| `channel` | yes | rx/ry/rz turn about the rest frame's own axes (degrees); tx/ty/tz slide along them (the file's units, in the parent's space). One of: rx, ry, rz, tx, ty, tz. |  |
+| `channel` | yes | rx/ry/rz turn about the anchor's axes through its point (degrees); tx/ty/tz slide along them (metres, as 't' is). One of: rx, ry, rz, tx, ty, tz. |  |
 | `min` | yes | The lower limit, or null for none. |  |
 | `max` | yes | The upper limit, or null for none. |  |
 | `weight` | yes | How readily a grab moves this channel against the others (1 = evenly). | `1.0` |
@@ -499,125 +558,53 @@ A part a hand grabs, and the joint it rides.
 | `node` | yes | The part's node name; a runtime resolves it under its joint's node. |  |
 | `joint` | yes | The index of the joint the part rides. |  |
 
-### In the GLB: `extras.articulation`, version 1
+### In the GLB: `extras.articulation`, version 2
 
-Per rig its joints -- the glTF node index, the parent joint, the rest translate and rotation in the parent's space, the rotate order and the channels (rx/ry/rz degrees, tx/ty/tz a slide along the rest axes) with their limits -- and the parts a hand grabs, each with its node index and the joint it rides. A joint poses as rotation = rest (x) Euler(channels) and translation = rest + rest.(tx, ty, tz), every channel within its limits: the built state is that pose at the clips' keys, the rest pose without them. A hand that grabs a part moves the channels of the joints from it up to the rig's root, each in proportion to its 'weight' and within its limits; a runtime measures its unit factor off the rest translations.
-
-#### ArticulationBlock
-
-The ``extras.articulation`` block: the record's rigs, bound to the file's glTF nodes.
-
-| Key | Required | Description | Example |
-|---|---|---|---|
-| `version` | yes | The block's own schema version (SceneRecords.ARTICULATION.glb.version). |  |
-| `rigs` | yes | The rigs whose every joint is in the file. | see *ArticulationBlockRig* below (list) |
-
-##### ArticulationBlockRig
-
-One rig bound to the file: its joints and grabbed parts carry node indices.
-
-| Key | Required | Description | Example |
-|---|---|---|---|
-| `name` | yes | The rig's name. |  |
-| `joints` | yes | Its joints, each after its parent. | see *ArticulationBlockJoint* below (list) |
-| `grab` | yes | The parts a hand takes hold of that resolved to a node. | see *ArticulationBlockGrab* below (list) |
-
-###### ArticulationBlockJoint
-
-A joint bound to the file: its pose, and the glTF node that carried its name (whose own name it is).
-
-| Key | Required | Description | Example |
-|---|---|---|---|
-| `parent` | yes | An earlier joint's index, or null for a root (its parent is the rig's space). |  |
-| `t` | yes | The rest translate in the parent's space, in the file's units (a runtime measures its scale against the rest pose: ArticulationModel.scale_of). |  |
-| `q` | yes | The rest rotation (the DCC's joint orient), a quaternion x, y, z, w. |  |
-| `rotate_order` | yes | The order the rotation channels compose in; the first letter applies first. One of: xyz, yzx, zxy, xzy, yxz, zyx. |  |
-| `channels` | yes | The channels it turns or slides on, in state order. | see *ArticulationChannel* below (list) |
-| `node` | yes | The joint's glTF node index. |  |
-
-###### ArticulationChannel
-
-One channel a joint turns or slides on, with its limits.
-
-| Key | Required | Description | Example |
-|---|---|---|---|
-| `channel` | yes | rx/ry/rz turn about the rest frame's own axes (degrees); tx/ty/tz slide along them (the file's units, in the parent's space). One of: rx, ry, rz, tx, ty, tz. |  |
-| `min` | yes | The lower limit, or null for none. |  |
-| `max` | yes | The upper limit, or null for none. |  |
-| `weight` | yes | How readily a grab moves this channel against the others (1 = evenly). | `1.0` |
-
-###### ArticulationBlockGrab
-
-A grabbed part bound to its glTF node.
-
-| Key | Required | Description | Example |
-|---|---|---|---|
-| `node` | yes | The part's glTF node index: the one of its name under its joint's node. |  |
-| `joint` | yes | The index of the joint the part rides. |  |
-
-## emissive_groups
-
-Named emissive material groups and their weights.
-
-### In the FBX: `data_export.emissive_groups`, version 2
-
-Each group gates the emission of the region its 'slot' selects (0-3: R, G, B, A of the mask 'encoding' names -- the vertex colours 'color_set', or the texture 'mask' read through UV set 'uv_channel'), its weight starting at 'default'. A group naming 'attr' has that weight animated: a keyed property of that name on the model's root, or a child node named 'attr' whose scale.x carries the curve.
-
-#### EmissiveGroupsRecord
-
-The ``emissive_groups`` record's payload: named emissive regions and how a mesh encodes membership in them (:meth:`RegionMaskManifest.to_dict`).
-
-| Key | Required | Description | Example |
-|---|---|---|---|
-| `version` | yes | The record's schema version (SceneRecords.EMISSIVE_GROUPS.version). |  |
-| `encoding` | yes | How membership is encoded: 'vertex-color' (a mesh colour set) or 'channels' (an RGBA mask texture). One of: vertex-color, channels. |  |
-| `groups` | yes | The groups, each gating one slot's channel. | see *EmissiveGroupsEntry* below (list) |
-| `color_set` | no | The mesh colour set membership rides in; with 'vertex-color' only. |  |
-| `mask` | no | The mask texture's file name, no folder; with 'channels' only. |  |
-| `uv_channel` | no | The UV set the mask texture is read through; with 'channels' only. |  |
-
-##### EmissiveGroupsEntry
-
-One region group: the mask channel it gates and its weight.
-
-| Key | Required | Description | Example |
-|---|---|---|---|
-| `name` | yes | The group's name: the key a consumer binds its weight by. |  |
-| `slot` | yes | The mask channel the group gates (0-3: R, G, B, A) -- a stable contract, never reassigned once given. One of: 0, 1, 2, 3. |  |
-| `default` | yes | The weight a consumer applies when nothing overrides it (1.0 = on). | `1.0` |
-| `attr` | no | The property whose animation carries the group's keyed weight: on the model's root, or a child node of that name whose scale.x carries the curve. Absent when the weight is not keyed. |  |
+The record itself, as the FBX carries it: the same version and shape, its names resolved in the GLB's own scene.
 
 ## render_effects
 
-Each node's keyed render effects: 'visibility' as stepped on/off frames, the authored 'opacity' ramp, and the 'highlight' ramp with its colour stops ('highlight_color', 'highlight_color_dim'); with 'fps' and each take's first/last authored frame ('clip_span'); on a shot scene keying none, the exporter's measured whole-timeline clip origin alone.
+Which nodes carry an animated render effect -- 'visibility', 'opacity', 'highlight' with its colour stops 'highlight_color' and 'highlight_color_dim' -- and which materials an animated 'emission'; each curve rides the file's animated-value transport, per clip.
 
-### In the FBX: `data_export.render_effects`, version 1
+### In the FBX: `data_export.render_effects`, version 2
 
-Render effects over time, per 'tracks' entry and the subtree under its 'node', each a list of [frame, value] keys: 'visibility' shows (1) or hides (0) it, stepped; 'opacity' is its materials' alpha, hidden at 0; 'highlight' adds an emission to its materials' own, blended from 'highlight_color_dim' at 0 to 'highlight_color' at 1. The same curves ride the file itself: each affected object carries 'opacity' / 'highlight' (and 'highlightColor' / 'highlightColorDim') properties, keyed through a child '<object>__opacity' / '<object>__highlight' node whose scale.x holds the curve -- transport, not content.
+Render effects over time, per 'tracks' entry on the subtree under its 'node' and per 'materials' entry on every material of that name, each channel it names a curve the file carries on its animated-value transport, in each clip it plays in (a clip with no curve for it holds the rest value). 'visibility' shows the subtree at 1 and hides it at 0, stepped. 'opacity' is its materials' alpha: a material keeps its authored alpha mode (opaque, sorted, shadowed, writing depth) while its opacity is 1, is blended only while its opacity is below 1, and its renderer is hidden at 0. 'highlight' is a glow, blended from 'highlight_color_dim' (default black) at 0 to 'highlight_color' (default white) at 1: while it is above 0 the material's emission is the glow added to its uniform emission, and a mapped emission is set aside for those moments only -- at rest the map is back. 'emission' is a material's emission weight, 0 to 1, scaling 'emission_color' times 'emission_strength' (the material's own where absent), its map kept. In an FBX each curve is the '<target>__<channel>' proxy's scale.x: transport, not content.
 
 #### RenderEffectsRecord
 
-The ``render_effects`` record's payload: the keyed visibility and the effect ramps per node, and the whole timeline's span.
+The ``render_effects`` record's payload: which nodes and materials carry an animated effect, and the colours their curves scale.
 
 | Key | Required | Description | Example |
 |---|---|---|---|
-| `version` | yes | The record's schema version (SceneRecords.VISIBILITY.version). |  |
-| `tracks` | yes | One per node that carries a keyed effect; empty when only spans ride. | see *RenderEffectsTrack* below (list) |
-| `fps` | no | The rate every frame number here is quoted in; absent when unknown. |  |
-| `clip_span` | no | The first and last frame each named stack carries -- the whole timeline's under '*' (MeshConvert.DEFAULT_CLIP_SPAN) -- which places every clip cut from it. |  |
+| `version` | yes | The record's schema version (SceneRecords.VISIBILITY.version). | `2` |
+| `tracks` | yes | One per node that carries an animated effect. | see *RenderEffectsTrack* below (list) |
+| `materials` | no | One per material whose emission is animated; absent when none is. | see *RenderEffectsMaterial* below (list) |
 
 ##### RenderEffectsTrack
 
-One node's tracks: its presence and the effect ramps it carries.
+One node's effects: which channels its subtree carries, and the highlight's colour stops.
 
 | Key | Required | Description | Example |
 |---|---|---|---|
-| `node` | yes | The node's name, without namespace: the join key to the file's node. |  |
-| `visibility` | no | Stepped presence keys ([[frame, 0 or 1], ...]); absent when not keyed. |  |
-| `opacity` | no | The fade ramp ([[frame, 0..1], ...], linear): the node's presence where it has no visibility keys; absent when not keyed. |  |
-| `highlight` | no | The highlight ramp ([[frame, 0..1], ...], linear); absent when not keyed. |  |
-| `highlight_color` | no | The highlight's colour at 1.0, linear RGB; absent for the default. |  |
-| `highlight_color_dim` | no | The highlight's colour at 0.0, linear RGB; absent for the default. |  |
+| `node` | yes | The node's name as its host names it: the join key to its curves (by the leaf after the last ':'). The node a curve plays on is its proxy's parent wherever the file carries the proxy; only a track with no proxy joins a node by this name, the exact name first, then the one node of its leaf, a tie never guessed. | `"SIGN"` |
+| `channels` | yes | The channels the node carries, each a curve on the transport: 'visibility' (stepped: shown at 1, hidden at 0), 'opacity' (the subtree's materials' alpha, 0..1) and 'highlight' (an added glow, 0..1). | `["opacity", "highlight"]` |
+| `highlight_color` | no | The highlight's colour at 1.0, linear RGB; absent for the default (white). | `[0.1, 0.4, 1.0]` |
+| `highlight_color_dim` | no | The highlight's colour at 0.0, linear RGB; absent for the default (black). | `[0.0, 0.0, 0.0]` |
+
+##### RenderEffectsMaterial
+
+One material whose emission is animated: the channel names it, the curve (a weight 0..1) rides the transport.
+
+| Key | Required | Description | Example |
+|---|---|---|---|
+| `material` | yes | The material's name, as the delivered material is named (the 'materials' record's entry); where an import drops the namespace, the name after the last ':' joins. | `"screen_mat"` |
+| `channels` | yes | The material's animated channels: 'emission', its emission's weight 0..1. | `["emission"]` |
+| `emission_color` | no | The emission's colour at weight 1, linear RGB; absent: the material's own emissive colour. | `[1.0, 0.5, 0.0]` |
+| `emission_strength` | no | The emission's strength at weight 1 (a multiplier of the colour, above 1 for a glow brighter than white); absent: the material's own. | `4.0` |
+
+### In the GLB: `extras.render_effects`, version 2
+
+The record itself, as the FBX carries it: the same version and shape, its names resolved in the GLB's own scene.
 
 ## handoff
 

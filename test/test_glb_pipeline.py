@@ -197,10 +197,10 @@ class GlbPipelineTestCase(unittest.TestCase):
             built = GlbPipeline.build(self._stub_fbx())
         self.assertEqual(
             list(built["timings"]),
-            ["takes", "downsize", "fbx2gltf", "passes", "textures", "total"],
+            ["downsize", "fbx2gltf", "passes", "textures", "total"],
         )
         whole = self._build(self._stub_fbx(), downsize=False)["timings"]
-        self.assertEqual(list(whole), ["takes", "convert", "textures", "total"])
+        self.assertEqual(list(whole), ["convert", "textures", "total"])
         stages = sum(v for k, v in whole.items() if k != "total")
         self.assertLessEqual(stages, whole["total"] + 0.01, "stages overlap")
 
@@ -383,71 +383,38 @@ class GlbPipelineTestCase(unittest.TestCase):
         ):
             return GlbPipeline.build(src, **kwargs)
 
-    def test_declared_shot_takes_never_reach_the_converter(self):
-        """The converter reads a copy holding only the whole-timeline stack;
-        the caller's allocator owns it and is told the original is superseded."""
-        src = self._animated_fbx(declared=["Shot_A", "Shot_B"])
-        minted, released = [], []
-
-        def allocate(extension):
-            path = self.temp.path(extension=extension)
-            minted.append(path)
-            return path
-
-        built = self._build_reading_takes(
-            src, scratch_path=allocate, release_source=released.append
-        )
-        self.assertEqual(self.read_takes, ["Take 001"])
-        self.assertEqual(built["takes"]["takes"], ["Shot_A", "Shot_B"])
-        # The downsize stage also asks the allocator for a path; nothing in a
-        # media-less file qualifies, so only the strip's copy is kept.
-        self.assertEqual(built["scratch"], [built["src"]])
-        self.assertEqual(minted[0], built["src"])
-        self.assertEqual(released, [src])
-        from pythontk.file_utils.mesh_convert.fbx_file import FbxFile
-
-        self.assertEqual(
-            FbxFile.load(src).take_names(), ["Take 001", "Shot_A", "Shot_B"]
-        )
-
-    def test_undeclared_takes_or_no_stack_left_to_cut_from_reads_the_original(self):
-        for declared in (None, [], ["Take 001", "Shot_A", "Shot_B"]):
+    def test_every_take_reaches_the_converter_as_the_file_carries_it(self):
+        """One take per shot (2026-11-05): the shots' takes ARE the GLB's
+        clips, so none is stripped from the converter's input -- a file of
+        shot takes, one of a whole-timeline take beside them (the exporter
+        drops that one before it gets here) and one declaring nothing all
+        reach the converter whole, read from the caller's own file, and the
+        report has no take stage."""
+        for declared in (None, ["Shot_A", "Shot_B"], ["Take 001", "Shot_A", "Shot_B"]):
             with self.subTest(declared=declared):
                 src = self._animated_fbx(declared=declared)
                 built = self._build_reading_takes(src)
                 self.assertEqual(built["src"], src)
-                self.assertIsNone(built["takes"])
+                self.assertNotIn("takes", built)
+                self.assertNotIn("takes", built["timings"])
                 self.assertEqual(self.read_takes, ["Take 001", "Shot_A", "Shot_B"])
+        self.assertNotIn("_drop_split_takes", vars(GlbPipeline))
 
-    def test_the_downsize_reads_the_stripped_copy_and_the_intermediate_is_released(
-        self,
-    ):
-        """Two payload stages chain: the downsize reads the strip's output, and
-        with no caller allocator the intermediate goes as soon as it is superseded."""
+    def test_the_downsize_reads_the_callers_fbx_and_its_copy_is_released(self):
+        """The one payload stage left reads the caller's file, and with no
+        caller allocator its copy goes once the build returns."""
         from test_fbx_media import png_bytes
 
         src = self._animated_fbx(
             declared=["Shot_A", "Shot_B"], media={"wall.png": png_bytes((512, 256))}
         )
-        seen = []
-
-        def spy(path):
-            seen.append(path)
-
-        with unittest.mock.patch.object(
-            TempArtifacts, "release", autospec=True
-        ) as release:
-            release.side_effect = lambda store, path: spy(path) or True
-            built = self._build_reading_takes(
-                src, texture_params={"image_format": "WEBP", "max_size": 128}
-            )
-        self.assertEqual(self.read_takes, ["Take 001"])
-        self.assertEqual(built["downsized"]["resized"], 1)
-        self.assertEqual(len(built["scratch"]), 2)
-        self.assertEqual(
-            seen, [built["scratch"][0]], "only OUR intermediate is released"
+        built = self._build_reading_takes(
+            src, texture_params={"image_format": "WEBP", "max_size": 128}
         )
-        self.assertEqual(built["src"], built["scratch"][1])
+        self.assertEqual(self.read_takes, ["Take 001", "Shot_A", "Shot_B"])
+        self.assertEqual(built["downsized"]["resized"], 1)
+        self.assertEqual(built["scratch"], [built["src"]])
+        self.assertNotEqual(built["src"], src)
 
     def test_the_glb_lands_beside_the_callers_fbx_whatever_the_converter_read(self):
         """No *dst* means beside *src* -- the caller's FBX -- even when a payload
@@ -457,7 +424,6 @@ class GlbPipelineTestCase(unittest.TestCase):
         Added: 2026-09-12
         """
         cases = {
-            "split takes": (self._animated_fbx(declared=["Shot_A", "Shot_B"]), None),
             "downsize": (
                 self._real_fbx(),
                 {"image_format": "WEBP", "max_size": 128},
@@ -527,103 +493,6 @@ class GlbPipelineTestCase(unittest.TestCase):
         self.assertTrue(any("sidecar skipped" in m for m in caught.output))
 
 
-class TestDeclaredTakes(unittest.TestCase):
-    """Which takes an FBX declares: the shot record's clips, each carrying its
-    range (since 0.11.0). The take list an older file carried (``fbx_takes``)
-    is no record a reader reads -- such a file is re-exported."""
-
-    class _Fbx:
-        def __init__(self, props):
-            self.props = props
-
-        def user_properties(self, name):
-            return self.props.get(name, [])
-
-    def test_the_shot_record_is_read(self):
-        fbx = self._Fbx(
-            {
-                "animation": [
-                    b'{"version": 1, "shots": [{"clip": "A", "start": 1, "end": 9}]}'
-                ],
-                "fbx_takes": [b'[{"name": "legacy"}]'],
-            }
-        )
-        self.assertEqual(GlbPipeline._declared_takes(fbx), {"A"})
-
-    def test_every_carrier_is_read(self):
-        """An imported reference brings its own carrier and clips."""
-        fbx = self._Fbx(
-            {
-                "animation": [
-                    b'{"shots": [{"clip": "A", "start": 1, "end": 9}]}',
-                    b'{"shots": [{"clip": "B", "start": 20, "end": 30}]}',
-                ]
-            }
-        )
-        self.assertEqual(GlbPipeline._declared_takes(fbx), {"A", "B"})
-
-    def test_a_clip_without_its_range_declares_no_take(self):
-        fbx = self._Fbx(
-            {
-                "animation": [b'{"shots": [{"clip": "A"}]}'],
-                "fbx_takes": [b'[{"name": "legacy"}]'],
-            }
-        )
-        self.assertEqual(GlbPipeline._declared_takes(fbx), set())
-
-    def test_the_retired_take_list_is_read_by_no_reader(self):
-        fbx = self._Fbx({"fbx_takes": [b'[{"name": "legacy"}]', b""]})
-        self.assertEqual(GlbPipeline._declared_takes(fbx), set())
-        self.assertEqual(GlbPipeline._declared_takes(self._Fbx({})), set())
-
-
-class TestDropSplitTakes(unittest.TestCase):
-    """The converter's shot takes go whenever a whole-timeline stack survives
-    to cut them from. The rebuild's origin is measured from the file the
-    conversion reads (``MeshConvert._stamp_clip_spans``), so a producer that
-    published none no longer leaves the GLB with no shot clip (measured
-    2026-10-04: ``Take 001`` alone)."""
-
-    class _Fbx(TestDeclaredTakes._Fbx):
-        def take_names(self):
-            return ["Take 001", "A", "B"]
-
-    SHOTS = (
-        b'{"version": 1, "shots": [{"clip": "A", "start": 1, "end": 20},'
-        b' {"clip": "B", "start": 21, "end": 40}]}'
-    )
-
-    def _drop(self, props):
-        """Run the strip over a fake FBX carrying *props*; the patched
-        ``FbxMedia.drop_takes`` and the report."""
-        from pythontk.file_utils.mesh_convert.fbx_file import FbxFile
-        from pythontk.file_utils.mesh_convert.fbx_media import FbxMedia
-
-        report = {"src": "in.fbx", "scratch": []}
-        outcome = {"takes": ["A", "B"], "objects": {"AnimationStack": 2}}
-        with (
-            unittest.mock.patch.object(FbxFile, "is_fbx", return_value=True),
-            unittest.mock.patch.object(FbxFile, "load", return_value=self._Fbx(props)),
-            unittest.mock.patch.object(
-                FbxMedia, "drop_takes", return_value=outcome
-            ) as drop,
-        ):
-            GlbPipeline._drop_split_takes(
-                "in.fbx",
-                lambda extension: "scratch" + extension,
-                lambda path: None,
-                report,
-                unittest.mock.Mock(),
-                lambda message: None,
-            )
-        return drop, report
-
-    def test_the_split_goes_without_a_published_origin(self):
-        drop, report = self._drop({"animation": [self.SHOTS]})
-        drop.assert_called_once()
-        self.assertEqual(report["src"], "scratch.fbx")
-
-
 class TestEmbeddedDependencies(GlbPipelineTestCase):
     """A GLB built from a DELIVERED FBX reads the maps the FBX carries.
 
@@ -636,7 +505,7 @@ class TestEmbeddedDependencies(GlbPipelineTestCase):
 
     LIGHTMAPS = {
         "version": SceneRecords.LIGHTMAPS.version,
-        "objects": [{"name": "Crate", "map": "Room_Lightmap.exr", "uvIndex": 1}],
+        "objects": [{"name": "Crate", "map": "Room_Lightmap.exr", "scaleOffset": [1.0, 1.0, 0.0, 0.0], "hierarchy": ["Crate"]}],
     }
 
     def _delivered_fbx(self):

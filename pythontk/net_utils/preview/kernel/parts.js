@@ -101,28 +101,22 @@ function retarget(clip, partRoot) {
   }
 }
 
-// The parts' `animation` blocks as one: each clip's index moved past the
-// clips of the parts before it, each shot kept once (the parts of one scene
-// state the same shots), and the frame rate and the clip to open on taken
-// from the first part that names them. Null when no part has one.
+// The parts' `animation` records as one: each shot kept once (the parts of
+// one scene state the same shots), joined by name to whichever part's clip
+// carries it, and the frame rate taken from the first part that states one.
+// Null when no part has one.
 function mergedShots(loaded) {
   let merged = null;
-  let offset = 0;
   for (const { gltf } of loaded) {
-    /** @type {import('./records.js').AnimationBlock} */
-    const block = readExtras(gltf, SHOTS);
-    if (block) {
-      if (!merged) merged = { ...block, clips: [], shots: [] };
-      if (merged.fps === undefined && block.fps !== undefined) merged.fps = block.fps;
-      if (!merged.default_clip && block.default_clip) merged.default_clip = block.default_clip;
-      for (const entry of block.clips || []) {
-        merged.clips.push({ ...entry, animation: entry.animation + offset });
-      }
-      for (const shot of block.shots || []) {
+    /** @type {import('./records.js').AnimationRecord} */
+    const record = readExtras(gltf, SHOTS);
+    if (record) {
+      if (!merged) merged = { ...record, shots: [] };
+      if (merged.fps === undefined && record.fps !== undefined) merged.fps = record.fps;
+      for (const shot of record.shots || []) {
         if (!merged.shots.some((kept) => kept.clip === shot.clip)) merged.shots.push(shot);
       }
     }
-    offset += (gltf.animations || []).length;
   }
   return merged;
 }

@@ -46,6 +46,21 @@ class TestIdentity(unittest.TestCase):
         self.assertFalse(HandoffRecord.CARRIERS["fbx"].blocks, "the records themselves")
         self.assertTrue(HandoffRecord.CARRIERS["glb"].blocks, "each record's block")
 
+    def test_no_carrier_states_the_probes_highlight_copies(self):
+        """Lightmaps v3 (2026-11-07): the copies are the lightmaps row's on
+        every carrier, so the per-carrier seam that said them -- always empty
+        since -- is gone, and no lighting row holds a clause that renders
+        nothing. Added: 2026-11-07"""
+        import dataclasses
+
+        self.assertNotIn(
+            "highlights", {f.name for f in dataclasses.fields(HandoffCarrier)}
+        )
+        for row in HandoffRecord._LIGHTING_ROWS:
+            for clause in row.get("clauses", ()):
+                with self.subTest(part=row["part"], text=clause.text[:40]):
+                    self.assertNotIn("{highlights}", clause.text)
+
     def test_a_record_has_one_key_on_every_carrier(self):
         """One name per record across both files (2026-10-20): each carrier
         addresses a record by its key after its own prefix -- the FBX's
@@ -223,7 +238,8 @@ class TestInstructions(unittest.TestCase):
         own, as that module was last exported alone; both readers here prefer
         the scene's own node per record and join file names without case."""
         text = HandoffRecord.instructions("fbx")
-        self.assertIn("named exactly 'data_export'", text)
+        self.assertIn("named exactly 'data_export' at the root of the file", text)
+        self.assertIn("one under a group", text)
         self.assertIn("counts only where the scene's own node has none", text)
         self.assertIn(
             f"a '{HandoffRecord.KEY}' there describes that module, not this file", text
@@ -262,7 +278,7 @@ class TestInstructions(unittest.TestCase):
         # apply the map as stored -- so a reader told it is a multiplier
         # "restoring the bake's range" would apply it twice.
         row = SceneRecords.LIGHTMAPS.assembly
-        for field in ("'scaleOffset'", "'uvIndex'", "applied as stored"):
+        for field in ("'scaleOffset'", "second UV set (index 1)", "applied as stored"):
             with self.subTest(field=field):
                 self.assertIn(field, row)
         self.assertNotIn("restoring the bake's range", text + row)
@@ -283,27 +299,38 @@ class TestAssembly(unittest.TestCase):
         one export line up row by row; the GLB states its materials in glTF's
         own terms, a row of its own."""
         held = [spec.key for spec in SceneRecords.glb_records()]
+        effects = SceneRecords.VISIBILITY.key
         self.assertEqual(
             held,
             [
                 SceneRecords.SHOTS.key,
+                SceneRecords.AUDIO.key,
                 SceneRecords.LIGHTMAPS.key,
                 SceneRecords.SHADOWS.key,
                 SceneRecords.ARTICULATION.key,
+                effects,
             ],
         )
         fbx = HandoffRecord.assembly("fbx", reversed(held))
         glb = HandoffRecord.assembly("glb", held)
         self.assertEqual(_parts(fbx), ["geometry", *held, *LIGHTING])
+        # The GLB's own render_effects row (the transport the format forces
+        # apart) and the record it carries itself are one part: one row.
         self.assertEqual(
-            _parts(glb), ["geometry", SceneRecords.MATERIALS.key, *held, *LIGHTING]
+            _parts(glb),
+            ["geometry", SceneRecords.MATERIALS.key, effects, *held[:-1], *LIGHTING],
         )
+        (row,) = [r for r in glb if r["part"] == effects]
+        self.assertEqual(row["data"], [f"extras.{effects}"])
+        self.assertTrue(row["spec"].startswith(SceneRecords.VISIBILITY.assembly_for(None)))
+        self.assertIn("KHR_animation_pointer", row["spec"])
 
     def test_the_fbx_states_the_record_and_the_glb_its_block(self):
         """A carrier's row says what IT holds, at the same key: the FBX the
-        record itself (:meth:`RecordSpec.assembly_for`), the GLB the block
-        bound to the file (:meth:`GlbBlock.assembly_for`) -- whole, when only
-        the keys are known."""
+        record (:meth:`RecordSpec.assembly_for`), and the GLB the same, the
+        record it carries as it stands (every one since 2026-11-08: no
+        record rides a block bound to the file) -- whole, when only the keys
+        are known."""
         held = [SceneRecords.LIGHTMAPS.key, SceneRecords.SHOTS.key]
         fbx = {row["part"]: row for row in HandoffRecord.assembly("fbx", held)}
         glb = {row["part"]: row for row in HandoffRecord.assembly("glb", held)}
@@ -312,48 +339,50 @@ class TestAssembly(unittest.TestCase):
                 self.assertEqual(fbx[spec.key]["data"], [f"data_export.{spec.key}"])
                 self.assertEqual(fbx[spec.key]["spec"], spec.assembly_for())
                 self.assertEqual(glb[spec.key]["data"], [f"extras.{spec.key}"])
-                self.assertEqual(glb[spec.key]["spec"], spec.glb.assembly_for())
+                self.assertTrue(spec.glb_verbatim, "the record itself")
+                self.assertEqual(glb[spec.key]["spec"], spec.assembly_for())
 
     def test_a_records_row_states_what_its_payload_uses(self):
-        """A shadows record of still projected planes is told nothing of the
-        placement or the horizon march; one with a horizon plane is told the
-        march -- in each carrier's own addresses."""
+        """A shadows record of still planes with no silhouette is told the
+        model, the fade and the horizon march (every v3 plane uses them) and
+        nothing of the re-placement or the silhouette; one whose plane
+        follows its source and draws a silhouette is told both -- one text in
+        both carriers, the GLB carrying the record itself."""
         shadows = SceneRecords.SHADOWS.key
-        still = {"planes": [{"type": "projected", "follow_source": False}]}
-        marched = {"planes": [{"type": "horizon", "follow_source": False}]}
+        still = {"planes": [{"follow_source": False}]}
+        drawn = {"planes": [{"follow_source": True, "silhouette": {"draw": True}}]}
         for carrier in HandoffRecord.CARRIERS:
             with self.subTest(carrier=carrier):
                 rows = {
                     r["part"]: r["spec"]
                     for r in HandoffRecord.assembly(carrier, {shadows: still})
                 }
-                self.assertNotIn("k_base", rows[shadows])
-                self.assertNotIn("disc(x)", rows[shadows])
+                for always in ("k_base", "Every plane fades", "disc(x)"):
+                    self.assertIn(always, rows[shadows])
+                self.assertIn("'horizon.texture' names", rows[shadows])
+                self.assertNotIn("Turn the quad", rows[shadows])
+                self.assertNotIn("'silhouette' is", rows[shadows])
                 text = {
                     r["part"]: r["spec"]
                     for r in HandoffRecord.assembly(
-                        carrier, {shadows: json.dumps(marched)}
+                        carrier, {shadows: json.dumps(drawn)}
                     )
                 }[shadows]
-                self.assertIn("disc(x)", text)
-                self.assertIn(
-                    "'horizon.texture_index'"
-                    if carrier == "glb"
-                    else "'horizon.texture' names",
-                    text,
-                )
+                self.assertIn("Turn the quad", text)
+                self.assertIn("'silhouette.texture' names", text)
 
     def test_a_glb_names_only_the_records_it_carries_a_block_for(self):
-        """A record a GLB carries no block for -- the audio events, the
-        materials it states as glTF's own -- is no part of it; the FBX, which
-        holds the records themselves, names each."""
+        """A record a GLB carries no block for -- the materials it states as
+        glTF's own -- is no part of it; the FBX, which
+        holds the records themselves, names each. The audio cues ride both
+        files as they stand (one layout, two containers; 2026-11-05)."""
         audio, materials = SceneRecords.AUDIO, SceneRecords.MATERIALS
-        self.assertIsNone(audio.glb)
-        self.assertIsNone(materials.glb)
+        self.assertFalse(materials.glb_verbatim)
+        self.assertTrue(audio.glb_verbatim)
         held = [audio.key, materials.key]
         self.assertEqual(
             _parts(HandoffRecord.assembly("glb", held)),
-            ["geometry", materials.key, *UNLIT],
+            ["geometry", materials.key, SceneRecords.VISIBILITY.key, audio.key, *UNLIT],
         )
         self.assertEqual(
             _parts(HandoffRecord.assembly("fbx", held)),
@@ -408,8 +437,11 @@ class TestAssembly(unittest.TestCase):
         """The GLB's materials are complete glTF materials, its own content;
         the FBX's, without a record, are only its own to go by."""
         glb = HandoffRecord.assembly("glb", [])
-        self.assertEqual(_parts(glb), ["geometry", SceneRecords.MATERIALS.key, *UNLIT])
-        self.assertEqual([row["data"] for row in glb[:2]], [[], []])
+        self.assertEqual(
+            _parts(glb),
+            ["geometry", SceneRecords.MATERIALS.key, SceneRecords.VISIBILITY.key, *UNLIT],
+        )
+        self.assertEqual([row["data"] for row in glb[:3]], [[], [], []])
         fbx = HandoffRecord.assembly("fbx", [])
         self.assertEqual(_parts(fbx), ["geometry", *UNLIT])
         self.assertEqual(fbx[0]["data"], [])
@@ -488,7 +520,9 @@ class TestLighting(unittest.TestCase):
     def test_a_file_is_told_only_what_its_records_use(self):
         """No lightmaps: no lightmapped-material rule, no probe, no key-light
         switch. Lightmaps without a probe: the rule, still no probe. A probe:
-        its text, and on a GLB its highlight copies only where it has them."""
+        its text. Its highlight copies are the lightmaps row's on every
+        carrier (lightmaps v3, 2026-11-07: a GLB carries the record itself),
+        never the lighting rows'."""
         lightmaps = SceneRecords.LIGHTMAPS.key
         cases = {
             "nothing": {},
@@ -512,14 +546,16 @@ class TestLighting(unittest.TestCase):
                 self.assertNotIn("equirectangular", seen["lightmaps"]["environment"])
                 self.assertIn("equirectangular", seen["probe"]["environment"])
                 self.assertNotIn("COPIES", seen["probe"]["environment"])
-                if carrier == "glb":
-                    self.assertIn("COPIES", seen["highlights"]["environment"])
+                self.assertNotIn("COPIES", seen["highlights"]["environment"])
                 for spec in seen["highlights"].values():
                     self.assertNotIn("{", spec.replace("{min, max}", ""))
 
     def test_each_carrier_says_where_it_holds_the_probe(self):
         """An FBX reader sent after a GLB address found no probe and dropped
-        the environment (2026-10-14): each carrier names its own."""
+        the environment (2026-10-14): each carrier names its own. From
+        lightmaps v3 (2026-11-07) a GLB carries the record itself: its probe's
+        file rides as the bufferView named by its file name, in the record's
+        own units, and every lightmap is applied as stored in both."""
         fbx = {r["part"]: r["spec"] for r in HandoffRecord.lighting("fbx")}
         glb = {r["part"]: r["spec"] for r in HandoffRecord.lighting("glb")}
         self.assertIn("data_export.lightmaps.probe", fbx["environment"])
@@ -527,29 +563,38 @@ class TestLighting(unittest.TestCase):
         self.assertNotIn("extras.", " ".join(fbx.values()))
         self.assertNotIn("bufferView", " ".join(fbx.values()))
         self.assertIn("extras.lightmaps.probe", glb["environment"])
-        self.assertIn("'bufferView'", glb["environment"])
-        self.assertIn("'highlights'", glb["environment"])
-        self.assertIn(
-            "that material's 'intensity' in extras.lightmaps",
-            glb["lightmapped_materials"],
-        )
-        self.assertIn("1, the map applied as stored", fbx["lightmapped_materials"])
+        self.assertIn("the bufferView named by that file name", glb["environment"])
+        self.assertIn("unit_scale", glb["environment"])
+        self.assertNotIn("'bufferView'", glb["environment"], "no index binds it")
+        for carrier in (fbx, glb):
+            self.assertIn("1, the map applied as stored", carrier["lightmapped_materials"])
+            self.assertNotIn("'highlights'", carrier["environment"])
+            self.assertNotIn("ambient-occlusion map", carrier["lightmapped_materials"])
+        self.assertIn("extras.scale", glb["lightmapped_materials"])
 
-    def test_the_probe_level_is_stated_for_both_lightmap_conventions(self):
-        """``probeIntensity`` is three.js'; a renderer compositing the texel
-        as albedo x texel keeps the balance at 1 -- a bare number sends a
-        Unity build to a third of the approved reflections -- but lights the
-        scene pi times brighter than approved, so the text says how it
-        matches: its lightmaps at 1/pi and the probe at ``probeIntensity``
-        (a cold reader found the absolute level unstated, 2026-10-20)."""
+    def test_a_glbs_materials_are_the_records_lightmapped_or_not(self):
+        """Lightmaps v3 (2026-11-07): a GLB's lightmaps ride bufferViews of
+        their own, never a material's occlusion slot, so a lightmapped file's
+        materials row states no exception to the materials record."""
+        held = {SceneRecords.LIGHTMAPS.key: {"objects": []}}
+        rows = {r["part"]: r["spec"] for r in HandoffRecord.assembly("glb", held)}
+        self.assertNotIn("occlusionTexture", rows[SceneRecords.MATERIALS.key])
+
+    def test_the_lightmap_convention_is_one_every_reader_draws_by(self):
+        """One convention (2026-11-07): a texel is a white card's radiance,
+        drawn as stored -- texel x albedo, as an engine's lightmap path draws it
+        and the approved look does -- and the probe plays as captured, at
+        ``probeIntensity`` 1. No reader scales either by 1/pi any more (a cold
+        reader once found the absolute level unstated, 2026-10-20)."""
+        self.assertEqual(HandoffRecord.RENDERING_POLICY["environment"]["probeIntensity"], 1.0)
         for carrier in HandoffRecord.CARRIERS:
             spec = {r["part"]: r["spec"] for r in HandoffRecord.lighting(carrier)}[
                 "environment"
             ]
             with self.subTest(carrier=carrier):
-                self.assertIn("'probeIntensity' (1/pi)", spec)
-                self.assertIn("with its lightmaps scaled by 1/pi", spec)
-                self.assertIn("pi times brighter than approved", spec)
+                self.assertIn("plays as captured ('probeIntensity', 1)", spec)
+                self.assertIn("drawn as stored: a surface's baked diffuse is texel x albedo", spec)
+                self.assertNotIn("1/pi", spec)
 
     def test_the_formulas_are_the_rows_not_the_values(self):
         """The policy is values alone; what each means is its row's."""

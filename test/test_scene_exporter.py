@@ -54,6 +54,11 @@ class _StubTasks:
         return len(overridden) == len(checks)
 
 
+def _rest_value(spec):
+    """A row reader, named by target in a test."""
+    return True, f"rest:{spec.get('setChecked')}"
+
+
 class _Exporter(SceneExporterBase):
     TASK_MANAGER_CLASS = _StubTasks
 
@@ -724,6 +729,123 @@ class TestRunConfigFromValues(unittest.TestCase):
             SceneExporterBase.SETTINGS_DEFINITIONS["output_format"]["object_name"],
             "cmb004",
         )
+
+
+class TestExportWithValues(unittest.TestCase):
+    """A headless run with a panel's values: what a hand-off (Unity Scripts'
+    Send to Unity) runs the Scene Exporter with, a few rows changed."""
+
+    def _exporter(self):
+        exporter = _Exporter()
+        tm = exporter.task_manager
+        tm.task_definitions = {
+            "export_data_node": {"widget_type": "QCheckBox", "setText": "Export Data", "setChecked": True},
+            "set_workspace": {"widget_type": "QCheckBox", "setChecked": True},
+            "bake_range": {"widget_type": "ComboBox", "add": {"Off": None, "Scene": "scene", "Keys": "keys"}, "setCurrentIndex": 1},
+            "mode": {"widget_type": "ComboBox", "add": lambda: {"Visible": "visible", "All": "all"}},
+            "ignore_groups": {"widget_type": "QLineEdit", "setPlaceholderText": "names"},
+        }
+        tm.check_definitions = {
+            "check_floor": {"widget_type": "SpinBox", "object_name": "floor_depth", "setValue": 0.5, "value_method": "value"},
+            "check_paths": {"widget_type": "QCheckBox", "setChecked": False},
+        }
+        exporter._definition_tables_cache = None
+        return exporter
+
+    def test_a_run_takes_the_values_with_its_overrides_and_format(self):
+        exporter = self._exporter()
+        seen = {}
+
+        def perform_export(**kwargs):
+            seen.update(kwargs)
+            exporter.export_path = os.path.join(kwargs["export_dir"], "crate.fbx")
+            return True
+
+        exporter.perform_export = perform_export
+        values = {"export_data_node": True, "set_workspace": True, "bake_range": "scene"}
+        path = exporter.export_with_values("C:/out", ["crate"], values, "crate", overrides={"set_workspace": False})
+        self.assertEqual(path, os.path.join("C:/out", "crate.fbx"))
+        tasks = seen["tasks"]
+        self.assertEqual(tasks["output_format"], "fbx")
+        self.assertTrue(tasks["export_data_node"])
+        self.assertNotIn("set_workspace", tasks, "an override switched it off")
+        self.assertEqual(seen["objects"], ["crate"])
+        self.assertFalse(seen["export_visible"], "the given objects are the scope")
+
+    def test_a_failed_run_returns_nothing_and_an_unknown_row_refuses(self):
+        exporter = self._exporter()
+        exporter.perform_export = lambda **kwargs: False
+        self.assertIsNone(exporter.export_with_values("C:/out", ["crate"], {}))
+        with self.assertRaisesRegex(KeyError, "no_such_row"):
+            exporter.export_with_values("C:/out", ["crate"], {}, overrides={"no_such_row": True})
+
+
+class TestSceneExportHandoff(unittest.TestCase):
+    """A hand-off whose payload is the Scene Exporter's deliverable (Unity
+    Scripts' Send to Unity): the host configures its exporter, the run is
+    written once."""
+
+    def _bridge(self, path):
+        from pythontk.core_utils.engines.scene_export.scene_exporter import SceneExportHandoff
+
+        seen = {}
+
+        class _Exporter2(_Exporter):
+            ROW_DEFAULT = staticmethod(lambda spec: (True, spec.get("setChecked", False)))
+
+            def export_with_values(self, export_dir, objects, values, output_name=None, overrides=None, output_format="fbx"):
+                seen.update(export_dir=export_dir, objects=objects, values=values, name=output_name, overrides=overrides)
+                return path
+
+        class _Bridge(SceneExportHandoff):
+            SCENE_EXPORTER = _Exporter2
+            SCENE_EXPORT_OVERRIDES = {"set_workspace": False}
+            logger = None
+
+            def _scratch_dir(self, request, name):
+                return "C:/scratch/" + name
+
+            def _default_asset_name(self, objects):
+                return "crate"
+
+        bridge = _Bridge()
+        bridge._seen_exporter = _Exporter2
+        return bridge, seen
+
+    def test_the_payload_is_the_exporters_file(self):
+        bridge, seen = self._bridge("C:/scratch/export/crate.fbx")
+        original = bridge._seen_exporter.definition_tables
+
+        def tables(self):
+            return ({"export_data_node": {"widget_type": "QCheckBox", "setChecked": True}}, {})
+
+        bridge._seen_exporter.definition_tables = tables
+        self.addCleanup(setattr, bridge._seen_exporter, "definition_tables", original)
+        payload = bridge.produce_scene_export(["crate"], object())
+        self.assertEqual(payload.primary, "C:/scratch/export/crate.fbx")
+        self.assertEqual(payload.extras["default_asset_name"], "crate")
+        self.assertEqual(seen["values"], {"export_data_node": True}, "the panel's rest values")
+        self.assertEqual(seen["overrides"], {"set_workspace": False})
+        self.assertEqual(seen["export_dir"], "C:/scratch/export")
+        # Kept for the send's check-failure dialog (its words and buttons).
+        self.assertIsInstance(bridge.exporter, bridge._seen_exporter)
+
+    def test_a_stopped_export_delivers_nothing(self):
+        bridge, _seen = self._bridge(None)
+        self.assertIsNone(bridge.produce_scene_export(["crate"], object()))
+
+    def test_a_dotted_target_names_the_reader(self):
+        """A host names its reader by target, imported on use (uitk's
+        ``WidgetSpec.default`` is one): naming it costs nothing at import."""
+        exporter = _Exporter()
+        exporter.ROW_DEFAULT = f"{__name__}:_rest_value"
+        exporter.task_manager.task_definitions = {"export_data_node": {"setChecked": True}}
+        exporter._definition_tables_cache = None
+        self.assertEqual(exporter.panel_defaults(), {"export_data_node": "rest:True"})
+
+    def test_an_exporter_must_be_configured(self):
+        with self.assertRaises(NotImplementedError):
+            _Exporter().panel_defaults()
 
 
 class TestRootExport(unittest.TestCase):

@@ -1,29 +1,27 @@
 import * as THREE from 'three';
 import { el } from './dom.js';
+import { fileMaterialKey } from './lightmaps.js';
 import { materialsOf } from './model.js';
 import { SHOTS } from './records.js';
 import { readExtras } from './scene.js';
 
-// A shot-split deliverable ships one clip per shot AND, on the Maya route, the
-// whole-timeline take its FBX exporter keeps alongside them — so `animations[0]`
-// is routinely the entire timeline rather than the first shot, and every clip's
-// own keyframe times are rebased to zero, which loses where each shot sat.
-// `extras.animation` (MeshConvert.apply_glb_animations) is the file's own
-// answer: it states the scene's shots -- every one, whatever clips the file
-// holds -- and each clip by index with the authoring frame its t=0 sits on,
-// and names the one to open on. Without the block this still plays — the
-// clips are listed in file order under their own names — it just cannot say
-// which of them are shots.
+// A shot deliverable ships one clip per shot: the FBX's takes, one per shot,
+// each named after it and spanning its range, converted one glTF animation
+// each, every clip's own keyframe times rebased to zero. `extras.animation` is
+// the scene's own `animation` record, carried as the FBX holds it
+// (MeshConvert.apply_glb_animations): its shots in timeline order -- every
+// one, whatever clips the file holds, each with its description and metadata
+// -- and the scene's frame rate (`fps`), which glTF cannot hold. A shot plays
+// the animation its `clip` NAMES, and the shots' clips played in turn are the
+// whole sequence. Without the record this still plays -- the clips are listed
+// in file order under their own names -- it just cannot say which of them are
+// shots, nor the rate they were cut at.
 export let mixer = null;
-// The deliverable's `animation` block, kept past setupAnimation: a script
-// recording a clip needs the AUTHORING frame rate and frame numbers, and those
-// live in the manifest rather than on the three.js clip (which knows only
-// seconds). Null on a file that ships no manifest.
+// The deliverable's `animation` record, kept past setupAnimation: the shots'
+// descriptions are read off it by clip name, and a recorder reads its rate.
+// Null on a file that ships none.
 let animationManifest = null;
-// The manifest's shots in start order, sorted once per model: the readout
-// looks one up on every rendered frame (timelineShot).
-let timelineShots = [];
-export let clips = [];        // [{clip, meta}] in PICKER order — declared shots first
+export let clips = [];        // [{clip, meta}] in PICKER order -- the sequence, then the shots
 let action = null;
 let clipIndex = -1;
 // Autoplay, deliberately: in an immersive session the DOM overlay is not
@@ -33,132 +31,82 @@ export let playing = true;
 let scrubbing = false;
 let lastTick = -1;   // last playhead position written to the DOM (0-1000)
 // Last shot label written beside the playhead, so a segment change redraws the
-// readout even when the playhead has not moved a visible amount — scrubbing
+// readout even when the playhead has not moved a visible amount -- scrubbing
 // slowly across a shot boundary is exactly when the label matters most, and it
 // is the one case where the tick can repeat while the answer changes.
 let lastShot = null;
-// The synthetic whole-timeline entry, built from the shots when the file ships
-// no continuous clip of its own (Animation Clips: "Shots Only"). Null while a
-// real clip is selected — `activeSequence` is what the transport branches on,
-// so a file that HAS a whole-timeline clip keeps the plain single-action path.
+// The whole sequence: the shot clips played in turn. Null while a single clip
+// is selected -- `activeSequence` is what the transport branches on.
 let sequence = null;
 let activeSequence = null;
-let sequenceTime = 0;      // playhead in seconds along the authoring span
+let sequenceTime = 0;      // playhead in seconds along the sequence
 let sequenceSegment = null;
 
-// The frame range is what makes two clips that both start at t=0 tellable
-// apart. "(full range)" is only said when something else IS a shot — with no
-// shots at all, every clip is the full range and the label would be noise.
-//
-// "empty" is said of a clip whose glTF animation has no channels: a declared
-// shot whose range holds still bakes no curve, so it arrives named and carrying
-// nothing. Picking it plays 0.00s, which reads as broken animation unless the
-// label admits the clip itself is empty. Told by the clip the loader built
-// from those channels, which has no tracks -- so a clip of a set of parts
+// "empty" is said of a clip whose glTF animation has no channels: a shot that
+// holds still bakes no curve, so it arrives named and carrying nothing.
+// Picking it plays 0.00s, which reads as broken animation unless the label
+// admits the clip itself is empty. Told by the clip the loader built from
+// those channels, which has no tracks -- so a clip of a set of parts
 // (parts.js) is told just as a lone file's is.
-function clipLabel(entry, anyDeclared) {
-  if (entry.sequence) {
-    const s = entry.sequence;
-    return `${s.name}  (${s.startFrame}–${s.endFrame}, ${s.shotCount} shots)`;
-  }
-  const meta = entry.meta;
-  const hollow = !entry.clip.tracks.length;
-  const empty = hollow ? ', empty' : '';
-  if (meta?.declared && typeof meta.start_frame === 'number') {
-    return `${entry.clip.name}  (${meta.start_frame}–${meta.end_frame}${empty})`;
-  }
-  if (anyDeclared && !meta?.declared) return `${entry.clip.name}  (full range)`;
-  return hollow ? `${entry.clip.name}  (empty)` : entry.clip.name;
+function clipLabel(entry) {
+  if (entry.sequence) return `${entry.sequence.name}  (${entry.sequence.shotCount} shots)`;
+  return entry.clip.tracks.length ? entry.clip.name : `${entry.clip.name}  (empty)`;
 }
 
-// A clip's block entry joined to the shot it plays, by name: the block states
-// each shot once (the FBX record's, inherited whole) and each clip once (by
-// glTF index), and this is the one place the two meet -- every reader below
-// takes the joined meta. `declared` is whether a shot plays this clip; the
-// rest of the file's clips (the whole-timeline one) are not shots. Null for
-// a clip the block does not list.
-function clipMeta(entry, shots) {
-  if (!entry) return null;
-  const shot = shots.get(entry.name);
-  if (!shot) return { ...entry, declared: false };
+// A clip joined to the shot it plays, BY NAME -- the shot's `clip` is its
+// take's name, which the conversion guarantees is the animation's
+// (MeshConvert.apply_glb_animations) -- and this is the one place the two
+// meet: every reader below takes the joined meta. `name` is the clip's,
+// `animation` its index in the file, `shot` whether a shot plays it.
+function clipMeta(clip, index, shots) {
+  const name = clip.name || `animation_${index}`;
+  const shot = shots.get(name);
+  if (!shot) return { name, animation: index, shot: false };
   return {
-    ...entry,
-    declared: true,
-    start_frame: shot.start,
-    end_frame: shot.end,
+    name,
+    animation: index,
+    shot: true,
     ...(shot.description ? { description: shot.description } : {}),
+    ...(shot.metadata ? { metadata: shot.metadata } : {}),
   };
 }
 
-// The authoring frame the WHOLE-TIMELINE clip stands at *seconds*: its
-// zero_frame plus the time at the block's fps. Null on a clip that is a shot,
-// or one the block does not place.
-function timelineFrame(entry, seconds) {
-  const meta = entry?.meta;
-  const fps = Number(animationManifest?.fps) || 0;
-  if (!meta || meta.declared || typeof meta.zero_frame !== 'number' || !fps) return null;
-  return meta.zero_frame + seconds * fps;
+// The scene's frame rate as the record states it, or 0 when it states none
+// (an older or a foreign GLB): the page guesses none -- a rate read off a
+// clip's key spacing is wrong wherever key reduction left a gap.
+function recordFps() {
+  const fps = Number(animationManifest?.fps);
+  return Number.isFinite(fps) && fps > 0 ? fps : 0;
 }
 
-// The block's shot standing at authoring *frame*: the last one that has
-// started, and whether the frame is past its end (a gap, holding). Null
-// before the first shot starts -- a lead-in, which is still a frame.
-function shotAtFrame(frame) {
-  let found = null;
-  for (const shot of timelineShots) {
-    if (shot.start <= frame + 1e-6) found = shot; else break;
-  }
-  return found && { shot: found, held: frame > found.end + 1e-6 };
-}
-
-// The shot the WHOLE-TIMELINE clip is standing in at *seconds*. The block
-// states every shot whatever clips the file holds, and a 'full' file holds
-// none of its own -- each shot is its window of this clip, placed by the
-// clip's zero_frame. Null where timelineFrame or shotAtFrame is.
-function timelineShot(entry, seconds) {
-  const frame = timelineFrame(entry, seconds);
-  return frame === null ? null : shotAtFrame(frame);
-}
-
-// The block's shot the SEQUENCE stands in at *seconds* when that shot has no
-// segment: one that holds still bakes no curve, and the build drops the empty
-// clip (prune_glb_animations), so the pose on screen is a neighbour's, held
-// -- but the frames are still that shot's. Null when the shot has a segment
-// (segmentAt answers for it) or before the first shot.
-function stillShotAt(seconds) {
-  if (!activeSequence) return null;
-  const placed = shotAtFrame(activeSequence.startFrame + seconds * activeSequence.fps);
-  if (!placed) return null;
-  const moving = activeSequence.segments.some((s) => s.entry.meta?.name === placed.shot.clip);
-  return moving ? null : placed;
-}
-
-// --- authored alpha ramps (KHR_animation_pointer) ---------------------------
+// --- animated render effects (KHR_animation_pointer) ------------------------
 // glTF animates translation, rotation, scale and morph weights -- and nothing
-// else. A material fade rides in `animations` only through KHR_animation_pointer,
-// which lets a channel target any property by JSON pointer; the deliverable
-// writes each authored ramp that way (MeshConvert.apply_glb_fades), on a
-// material cloned per faded subtree so nothing else sampling it fades too.
-// three.js does not implement the extension (checked against 0.180, well past
-// the 0.169 pinned above): GLTFLoader SKIPS a channel with no `target.node`, so
-// the clips arrive playable but silently minus their fades.
+// else. A material fade, highlight or animated emission rides in `animations`
+// only through KHR_animation_pointer, which lets a channel target any property
+// by JSON pointer; the deliverable writes each effect's curve that way
+// (MeshConvert.apply_glb_fades), on a material copied per animated subtree so
+// nothing else sampling it moves too. three.js does not implement the
+// extension (checked against 0.180, well past the 0.169 pinned above):
+// GLTFLoader SKIPS a channel with no `target.node`, so the clips arrive
+// playable but silently minus their effects.
 //
 // This is the shim, and it is deliberately small: it translates the file's own
 // pointer channels into native keyframe tracks on the loaded clips, and from
-// then on the mixer plays a fade exactly the way it plays a translation -- same
-// playhead, same scrub, same pause, no per-frame code and no frame arithmetic.
-// The GLB is the single statement of the fade; the day three.js ships support,
-// this function deletes and nothing else changes.
+// then on the mixer plays an effect exactly the way it plays a translation --
+// same playhead, same scrub, same pause, no frame arithmetic. The GLB is the
+// single statement of each curve; the day three.js ships support, the track
+// building deletes and only the render-effect rules below remain.
 // The material properties a pointer can reach, and how each lane reaches the
-// three.js material. One row per channel the exporter's table writes
+// three.js material. One row per property the exporter's table writes
 // (pythontk `glb.fades.CHANNELS`): alpha is the fourth lane of the base colour
-// factor and lands on `material.opacity`; a highlight is the whole VEC3
-// emissive factor and lands on `material.emissive` as a colour track. Adding a
-// channel there is adding a row here; the wiring below is shared.
+// factor and lands on `material.opacity`; a highlight or an animated emission
+// is the whole VEC3 emissive factor and lands on `material.emissive` as a
+// colour track. Adding a channel there is adding a row here; the wiring below
+// is shared.
 const POINTER_BINDINGS = [
   {
     pointer: /^\/materials\/(\d+)\/pbrMetallicRoughness\/baseColorFactor$/,
-    blended: true,
+    fades: true,
     track(mesh, material, times, output, count) {
       // The whole VEC4 is animated (glTF has no pointer to one component); the
       // alpha is its fourth lane. RGB is the material's own and is left to it.
@@ -169,7 +117,7 @@ const POINTER_BINDINGS = [
   },
   {
     pointer: /^\/materials\/(\d+)\/emissiveFactor$/,
-    blended: false,
+    fades: false,
     track(mesh, material, times, output, count) {
       // glTF factors are linear, as is the material's working colour space.
       const rgb = new Float32Array(count * 3);
@@ -183,42 +131,112 @@ const POINTER_BINDINGS = [
   },
 ];
 
-// A blended surface writes depth only while it is OPAQUE.
+// The property the shim keys a highlight's glow on: 1 while the highlight is
+// above 0, else 0, stepped -- the spans the exporter states on the channel
+// (`extras.render_effects.active`), since glTF cannot animate a texture's
+// presence. A plain number on the material so the mixer can drive it, and
+// restore it to 0 when no playing clip does.
+const GLOWING = 'renderEffectsGlowing';
+
+// The render-effect rules, per drawn MESH, on the state the mixer just set --
+// derived, never a second copy of a curve, so scrubbing, pausing and clip
+// switches are all covered without any of them being named here.
 //
-// glTF says nothing about depth, so GLTFLoader derives it: `alphaMode: BLEND`
-// becomes `transparent = true, depthWrite = false`. That is right for a window
-// and wrong for a solid object that merely happens to fade, and alphaMode is a
-// property of the MATERIAL, not of the clip -- so an object that fades in
-// during one shot renders with depth writes off in all twelve. With no depth
-// written, a closed mesh draws its far faces over its near ones in index
-// order, which reads exactly like inverted normals (measured on the production
-// assembly: 15 materials, every one of them depthWrite false at full alpha).
+// Opaque at rest (the `render_effects` contract): a material keeps its
+// authored alpha mode -- opaque, sorted with the opaque pass, writing depth --
+// while its opacity is 1, and is blended only while its opacity is below 1.
+// glTF says nothing about depth, so GLTFLoader derives it from alphaMode; a
+// fading copy of an opaque material arrives opaque, and its blending is
+// switched on here for the frames it fades and back off at full opacity. A
+// solid object that wrote no depth would draw its far faces over its near
+// ones (measured on the production assembly when every faded material shipped
+// BLEND: it reads exactly like inverted normals), and one blended at full
+// opacity would sort with the transparent pass for no reason. At 0 its node
+// is hidden by the deliverable's own presence gate (a stepped scale).
 //
-// Restoring it wholesale would be the opposite bug -- an object at alpha 0.2
-// would punch a hole in whatever is drawn behind it -- so the state follows
-// the alpha the mixer is currently driving. This is DERIVED state, not a
-// second copy of the fade: it reads whatever opacity the mixer set, so
-// scrubbing, pausing and clip switches are all covered without any of them
-// being named here. `onBeforeRender` runs before the draw's GL state is set,
-// so the change lands on the same frame; `this` is the mesh, and it is one
-// shared function rather than a closure per mesh.
-function depthFromOpacity() {
-  this.material.depthWrite = this.material.opacity >= 0.999;
+// The highlight over a map: while the highlight is above 0 the glow is the
+// highlight itself, and the material's mapped emission is set aside for those
+// moments (glTF emission is factor x map, and a map hides an added glow:
+// measured 2026-09-05 on a production board, the channel was written and
+// nothing changed on screen); at rest the map, and its strength, are back.
+//
+// `onBeforeRender` runs before the draw's GL state is set, so a change lands
+// on the same frame; `this` is the mesh, and it is one shared function rather
+// than a closure per mesh. A program switch (`needsUpdate`) happens only on
+// the frames a state flips.
+function renderEffectRules() {
+  const material = this.material;
+  const rest = material.userData.renderEffectsRest;
+  if (!rest) return;
+  if (rest.fades) {
+    const fading = material.opacity < 0.999;
+    if (rest.legacy) {
+      // A file built before `render_effects` v2 ships its fade copies BLEND
+      // for good: depth follows the alpha, as the page has always drawn it.
+      material.depthWrite = !fading;
+    } else {
+      const transparent = rest.transparent || fading;
+      if (material.transparent !== transparent) {
+        material.transparent = transparent;
+        material.needsUpdate = true;
+      }
+      material.depthWrite = rest.depthWrite && !fading;
+    }
+  }
+  if (rest.glows) {
+    const glowing = material[GLOWING] > 0.5;
+    if ((material.emissiveMap === null) !== glowing) {
+      material.emissiveMap = glowing ? null : rest.emissiveMap;
+      material.emissiveIntensity = glowing ? 1 : rest.emissiveIntensity;
+      material.needsUpdate = true;
+    }
+  }
 }
 
-// The rule is per MATERIAL but has to be installed on every MESH wearing one.
-// The track binding needs a single representative mesh per material instance
-// (two would drive the same property twice a frame), and a faded subtree can
-// hold several meshes sharing its cloned material -- so installing only on the
-// representative leaves the rule stale the moment that one is frustum-culled
-// and another is not.
-function installDepthRule(scene, materials) {
+// What a material is at rest, read once before any rule touches it: what the
+// rules switch back to.
+function restOf(material) {
+  if (!material.userData.renderEffectsRest) {
+    material.userData.renderEffectsRest = {
+      fades: false,
+      glows: false,
+      legacy: false,
+      transparent: material.transparent,
+      depthWrite: material.depthWrite,
+      emissiveMap: material.emissiveMap || null,
+      emissiveIntensity: material.emissiveIntensity ?? 1,
+    };
+  }
+  return material.userData.renderEffectsRest;
+}
+
+// The rules are per MATERIAL but have to be installed on every MESH wearing
+// one. The track binding needs a single representative mesh per material
+// instance (two would drive the same property twice a frame), and an
+// animated subtree can hold several meshes sharing its copied material -- so
+// installing only on the representative leaves the rule stale the moment
+// that one is frustum-culled and another is not.
+function installRules(scene, materials) {
   if (!materials.size) return;
   scene.traverse((node) => {
     if (node.isMesh && !Array.isArray(node.material) && materials.has(node.material)) {
-      node.onBeforeRender = depthFromOpacity;
+      node.onBeforeRender = renderEffectRules;
     }
   });
+}
+
+// The glow track of a highlight channel over a mapped material, or null: the
+// channel's stated spans, stepped.
+function glowTrack(mesh, material, channel) {
+  const active = channel.extras?.render_effects?.active;
+  if (!material.emissiveMap || !Array.isArray(active) || !active.length) return null;
+  if (material[GLOWING] === undefined) material[GLOWING] = 0;
+  return new THREE.NumberKeyframeTrack(
+    `${mesh.uuid}.material.${GLOWING}`,
+    active.map((run) => Number(run[0])),
+    active.map((run) => (run[1] ? 1 : 0)),
+    THREE.InterpolateDiscrete,
+  );
 }
 
 // Returns `{tracks, materials}`: the tracks wired (one per clip, channel and
@@ -232,8 +250,8 @@ export async function wirePointerTracks(gltf) {
   // glTF material index -> the three.js materials the loader built from it.
   // Through the loader's own association map, which it carries onto the
   // variants it clones (vertex colours, flat shading), rather than by name:
-  // the cloned fade material keeps its source's NAME on purpose, so the
-  // lightmap pass -- which binds by name -- still recognises it.
+  // the copied material keeps its source's NAME on purpose, so the lightmap
+  // pass -- which binds by name -- still recognises it.
   const byIndex = new Map();
   gltf.scene.traverse((node) => {
     // A multi-material mesh has no `.material.opacity` to bind; the loader
@@ -251,8 +269,10 @@ export async function wirePointerTracks(gltf) {
   });
 
   let wired = 0;
-  const blended = new Set();
-  const animated = new Set();  // glTF material indices a track now drives
+  const ruled = new Set();
+  // The file's materials a track now drives: by glTF index, a copy the
+  // lightmap bind made apart from its original (fileMaterialKey).
+  const animated = new Set();
   for (let i = 0; i < defs.length; i += 1) {
     const clip = gltf.animations[i];
     if (!clip) continue;
@@ -269,7 +289,7 @@ export async function wirePointerTracks(gltf) {
       if (!binding) continue;
       const owners = byIndex.get(Number(match[1]));
       if (!owners) continue;
-      animated.add(Number(match[1]));
+      for (const material of owners.keys()) animated.add(fileMaterialKey(material, parser.associations));
       const sampler = defs[i].samplers[channel.sampler];
       const [input, output] = await Promise.all([
         parser.getDependency('accessor', sampler.input),
@@ -281,100 +301,80 @@ export async function wirePointerTracks(gltf) {
         // production assembly ships two `prop533`), and a name binding would
         // drive the first match and leave the rest at full alpha.
         clip.tracks.push(binding.track(mesh, material, times, output, input.count));
-        if (binding.blended) {
-          // alphaMode BLEND already set transparent + depthWrite off at load;
-          // stated here too so a file whose clone lost it still fades.
-          material.transparent = true;
-          blended.add(material);
+        const rest = restOf(material);
+        if (binding.fades) {
+          rest.fades = true;
+          // A channel that does not say what it plays is an older file's.
+          rest.legacy = !channel.extras?.render_effects;
+          ruled.add(material);
+        }
+        const glow = glowTrack(mesh, material, channel);
+        if (glow) {
+          clip.tracks.push(glow);
+          rest.glows = true;
+          ruled.add(material);
         }
         wired += 1;
       }
     }
     clip.resetDuration();
   }
-  installDepthRule(gltf.scene, blended);
+  installRules(gltf.scene, ruled);
   return { tracks: wired, materials: animated.size };
 }
 
-// Shots laid back onto the timeline they were cut from. The clips carry their
-// own frame range, so the sequence is reconstructible without the stack they
-// came from -- which is the whole point: shipping both halves costs the file
-// the same performance twice (66.5 MB on the production assembly), and the
-// half a shot-switching player never reads is the continuous one.
-//
-// Placed at their AUTHORED frames rather than end to end. The shots on that
-// assembly sit 15 frames apart, and concatenating them would run the sequence
-// short and put every shot at the wrong time -- a different thing from what
-// the whole-timeline clip played. A gap holds the previous shot's last pose,
-// which is what the continuous clip did there too.
+// The whole sequence: the shots' clips played in turn, in the record's order
+// -- the takes' timeline order. Each clip is its take, which spans its shot,
+// so the clips in turn are the sequence; no whole-timeline clip is needed (a
+// file with shots carries none). A clip's duration is the span BETWEEN its
+// first and last frames, so each cut HOLDS the clip's last frame for one
+// frame at the record's rate before the next clip's first: laid end to end
+// on its duration alone, every shot after the first would play one frame
+// early, its last frame never shown. A file that states no rate cannot say
+// how long a frame is, and plays them end to end. A shot whose clip holds no
+// curve -- which this build never ships (each shot's take is held to its window,
+// _Animation._hold_take_spans), a file built elsewhere may -- arrives empty
+// or not at all: it has no length to play and is passed over.
 function buildSequence(entries, manifest) {
-  const fps = Number(manifest?.fps) || 0;
-  if (!fps) return null;   // frames cannot be placed in time without it
-  // Only when the file ships no continuous clip of its own: with one present
-  // the picker would offer two ways to watch the same thing, and the real one
-  // is exact where this is a reconstruction.
-  if (entries.some((entry) => !entry.meta?.declared)) return null;
-  // The TIMELINE is every declared shot -- the block's `shots`, which states
-  // each one whatever clips the file holds -- and the SEGMENTS are the clips
-  // that carry a curve. A shot whose range holds still bakes nothing: its
-  // clip arrives empty, or not at all once the build drops it
-  // (prune_glb_animations). Measured off the clips, the span would lose it,
-  // and a still shot at either end would fall out of the sequence -- the
-  // whole-timeline clip played through those frames, holding the pose around
-  // them, which is what the gap rule below already does (stillShotAt names
-  // them).
-  // BOTH bounds, not just the start: the span is measured across every
-  // declared shot, so one missing an end makes `last` NaN and the whole
-  // sequence NaN-long -- a transport that divides by it draws nothing and
-  // never recovers. A shot the manifest describes only half of is not a shot
-  // this can place.
-  const placed = (manifest?.shots || []).filter((shot) => (
-    typeof shot.start === 'number' && typeof shot.end === 'number'
-  ));
-  if (placed.length < 2) return null;
-  const shots = entries
-    .filter((e) => (
-      typeof e.meta?.start_frame === 'number' && typeof e.meta?.end_frame === 'number'
-      && e.clip.duration > 0
-    ))
-    .sort((a, b) => a.meta.start_frame - b.meta.start_frame);
-  if (!shots.length) return null;
-
-  const first = Math.min(...placed.map((shot) => shot.start));
-  const last = Math.max(...placed.map((shot) => shot.end));
-  const segments = shots.map((entry) => ({
-    entry,
-    offset: (entry.meta.start_frame - first) / fps,
-    duration: entry.clip.duration,
-  }));
+  const byName = new Map(entries.map((entry) => [entry.meta.name, entry]));
+  const ordered = (manifest?.shots || [])
+    .map((shot) => byName.get(shot.clip))
+    .filter((entry) => entry && entry.clip.duration > 0);
+  if (ordered.length < 2) return null;
+  const fps = recordFps();
+  const hold = fps ? 1 / fps : 0;
+  let offset = 0;
+  const segments = ordered.map((entry, index) => {
+    const segment = { entry, offset, duration: entry.clip.duration };
+    offset += entry.clip.duration + (index < ordered.length - 1 ? hold : 0);
+    return segment;
+  });
   return {
     segments,
-    shotCount: placed.length,
+    shotCount: segments.length,
     fps,
-    startFrame: first,
-    endFrame: last,
-    duration: (last - first) / fps,
+    duration: offset,
     name: 'FULL SEQUENCE',
   };
 }
 
-// The segment a global time lands in: the LAST one that has started. A time
-// inside a gap therefore resolves to the shot before it, whose pose is then
-// held -- rather than to nothing, which would leave the model at whatever the
-// previous frame drew.
+// The segment a sequence time lands in: the LAST one that has started, so the
+// frame a cut holds is the clip before it, and the sequence's end still poses
+// the last shot's last frame. Within a billionth: a recorder posing frame i
+// at i / fps meets a segment's offset summed the other way round.
 function segmentAt(seconds) {
   if (!sequence) return null;
   let found = sequence.segments[0];
   for (const segment of sequence.segments) {
-    if (segment.offset <= seconds) found = segment; else break;
+    if (segment.offset <= seconds + 1e-9) found = segment; else break;
   }
   return found;
 }
 
 // Pose the model at `seconds` along the sequence. The segment's action is
 // driven by ASSIGNING its time, never by letting the mixer advance it: two
-// actions must never accumulate time at once, and the gap hold depends on the
-// clamp below rather than on where the mixer happened to get to.
+// actions must never accumulate time at once, and the hold at a cut depends on
+// the clamp below rather than on where the mixer happened to get to.
 function applySequence(seconds) {
   if (!sequence || !mixer) return;
   const segment = segmentAt(seconds);
@@ -394,10 +394,10 @@ function applySequence(seconds) {
   mixer.update(0);
 }
 
-// *manifest* is the deliverable's `animation` block -- read off *gltf* by
-// default; a set of parts hands in theirs merged (parts.js), its clip indices
-// already into the merged `animations`.
-/** @param {import('./records.js').AnimationBlock | null} [manifest] */
+// *manifest* is the deliverable's `animation` record -- read off *gltf* by
+// default; a set of parts hands in theirs merged (parts.js), whose clips the
+// merged `animations` hold by name.
+/** @param {import('./records.js').AnimationRecord | null} [manifest] */
 export function setupAnimation(gltf, manifest = readExtras(gltf, SHOTS)) {
   // Reset FIRST: a model swap must not leave the previous model's mixer driving
   // the frame loop, nor its clip names in the picker.
@@ -415,7 +415,6 @@ export function setupAnimation(gltf, manifest = readExtras(gltf, SHOTS)) {
   sequenceTime = 0;
 
   animationManifest = null;
-  timelineShots = [];
 
   const animations = gltf.animations || [];
   if (!animations.length) {
@@ -424,27 +423,24 @@ export function setupAnimation(gltf, manifest = readExtras(gltf, SHOTS)) {
   }
 
   animationManifest = manifest;
-  timelineShots = [...(manifest?.shots || [])].sort((a, b) => a.start - b.start);
-  // Joined on the glTF animation INDEX, which is what the block carries it by —
-  // names are what a user reads, not a key: nothing stops two AnimStacks from
-  // sharing one, and a name join would then hand one clip the other's frame
-  // range. The block is written from this same file, so the indices agree.
-  const byIndex = new Map((manifest?.clips || []).map((entry) => [entry.animation, entry]));
+  // Joined by NAME: a shot's clip is the animation of its name in this file,
+  // or in any of a set of parts -- the record binds nothing to an index.
   const shots = new Map((manifest?.shots || []).map((shot) => [shot.clip, shot]));
   const entries = animations.map((clip, index) => ({
     clip,
-    meta: clipMeta(byIndex.get(index), shots),
+    meta: clipMeta(clip, index, shots),
   }));
-  const anyDeclared = entries.some((entry) => entry.meta?.declared);
-  // Declared shots first in the PICKER only. The glTF's own `animations` order
-  // is left exactly as written, so a consumer keying on animation index still
-  // reads the file the way every other reader does.
-  clips = anyDeclared
-    ? [...entries.filter((e) => e.meta?.declared), ...entries.filter((e) => !e.meta?.declared)]
-    : entries;
+  // Shots first in the PICKER only, each group in the file's order -- the
+  // takes' timeline order. The glTF's own `animations` order is left exactly
+  // as written, so a consumer keying on animation index still reads the file
+  // the way every other reader does.
+  clips = [
+    ...entries.filter((entry) => entry.meta?.shot),
+    ...entries.filter((entry) => !entry.meta?.shot),
+  ];
 
-  // FIRST in the picker when it exists: a deliverable that ships only shots is
-  // still a sequence, and "watch the whole thing" is what a reviewer opens.
+  // FIRST in the picker when it exists: a deliverable of shots is a
+  // sequence, and "watch the whole thing" is one pick away.
   sequence = buildSequence(entries, manifest);
   if (sequence) clips = [{ clip: null, meta: null, sequence }, ...clips];
 
@@ -452,73 +448,50 @@ export function setupAnimation(gltf, manifest = readExtras(gltf, SHOTS)) {
   el.clipSelect.replaceChildren(...clips.map((entry, index) => {
     const option = document.createElement('option');
     option.value = String(index);
-    option.textContent = clipLabel(entry, anyDeclared);
+    option.textContent = clipLabel(entry);
     return option;
   }));
   el.clipSelect.hidden = clips.length < 2;
   el.anim.hidden = false;
 
-  // The file's own answer to "which one first", falling back to the picker's
-  // first entry — which is already a declared shot whenever there is one.
-  // Resolved through the manifest entry's INDEX rather than by comparing the
-  // glTF clip's name, so it lands on the same clip the index join above did.
-  const named = (manifest?.clips || []).find((entry) => entry.name === manifest.default_clip);
-  const wanted = named
-    ? clips.findIndex((entry) => entry.meta?.animation === named.animation)
-    : -1;
-  selectClip(wanted >= 0 ? wanted : 0);
+  // Opened on the first shot's clip that plays, else the first clip that
+  // plays, else the first shot's, else the first -- read off the record's
+  // shots, as the retired block named the clip to open on. Not the sequence: a
+  // reviewer opens on a shot, the whole thing one pick away. Never a clip
+  // with no channels while one plays: that shows 0.00s of nothing, which
+  // reads as broken animation rather than as a shot that holds (the build
+  // drops such clips, prune_glb_animations; a file handed in directly may
+  // still carry one).
+  const isShot = (entry) => !entry.sequence && Boolean(entry.meta?.shot);
+  const plays = (entry) => !entry.sequence && entry.clip.tracks.length > 0;
+  const opening = [(entry) => isShot(entry) && plays(entry), plays, isShot]
+    .map((test) => clips.findIndex(test))
+    .find((index) => index >= 0);
+  selectClip(opening ?? 0);
   // The FILE's clip count, not the picker's row count: a script reading this
   // off the 'load' event is asking what the deliverable carries, and the
-  // synthetic whole-timeline entry is the page's reconstruction rather than
-  // something the file ships.
+  // sequence entry is the page's composition rather than something the file
+  // ships.
   return animations.length;
 }
 
-// What is selected, in the terms a recorder needs: seconds for the transport,
-// frames and a rate for the FILE it writes. The two must agree — a movie of a
-// shot is compared against a viewport playblast of the same frames, so its
-// length and its numbering are not the page's to round.
-//
-// The frame rate is the deliverable's, never the display's: the page renders at
-// whatever the device manages, and a recording sampled at that rate would be a
-// screen capture rather than a playblast.
+// What is selected, in the terms a recorder needs: its length in seconds,
+// glTF's unit, and the scene's frame rate (`fps`), which the record states
+// for a file whose format holds none -- the rate a recording steps it at,
+// never the display's: the page renders at whatever the device manages, and
+// a recording sampled at that rate would be a screen capture rather than a
+// playblast. 0 on a file that states none: the page guesses none (a rate read
+// off a clip's key spacing is wrong wherever key reduction left a gap), and a
+// reader that steps frames then brings its own (the playblast asks). No
+// frame numbers: a shot is named, and need not start at any frame.
 export function clipInfo() {
   const entry = clips[clipIndex];
   if (!entry) return null;
-  const fps = Number(animationManifest?.fps) || 0;
-  if (entry.sequence) {
-    return {
-      name: entry.sequence.name,
-      duration: entry.sequence.duration,
-      fps: entry.sequence.fps,
-      startFrame: entry.sequence.startFrame,
-      endFrame: entry.sequence.endFrame,
-      sequence: true,
-    };
-  }
-  const duration = entry.clip?.duration || 0;
-  // The authoring frame the clip's t=0 sits on: a shot's declared start, else
-  // the clip's zero_frame -- the frame the readout counts the whole-timeline
-  // clip from (timelineFrame), so a recording names and stamps the frames the
-  // transport shows -- else 0 for a clip the block does not place.
-  const meta = entry.meta;
-  const start = typeof meta?.start_frame === 'number' ? meta.start_frame
-    : typeof meta?.zero_frame === 'number' ? meta.zero_frame : 0;
-  // The clip's OWN length decides the end, not the manifest's end_frame: a
-  // whole-timeline clip carries no declared range, and a declared one whose
-  // curve is shorter than its range would otherwise ask for frames that do not
-  // exist. A duration is the span BETWEEN the outer frames, so the last frame
-  // is start + duration*fps and the count that spans them is one more than
-  // that -- the same arithmetic the sequence's own startFrame/endFrame satisfy,
-  // which is what lets a recorder count frames one way for both.
-  const spans = fps ? Math.round(duration * fps) : 0;
   return {
-    name: entry.clip?.name || 'clip',
-    duration,
-    fps,
-    startFrame: start,
-    endFrame: start + spans,
-    sequence: false,
+    name: entry.sequence ? entry.sequence.name : entry.clip?.name || 'clip',
+    duration: entry.sequence ? entry.sequence.duration : entry.clip?.duration || 0,
+    fps: recordFps(),
+    sequence: Boolean(entry.sequence),
   };
 }
 
@@ -534,6 +507,7 @@ export function selectClip(index) {
     action = null;
     applySequence(0);
     lastTick = -1;
+    lastShot = null;
     updateTransport();
     return;
   }
@@ -583,7 +557,7 @@ export function seek(fraction) {
 
 function updateTransport() {
   // The sequence reports its OWN clock, not the segment's: the playhead spans
-  // the whole timeline, and the segment's local time would send it jumping
+  // the whole sequence, and the segment's local time would send it jumping
   // back to zero at every shot boundary.
   if (!activeSequence && !action) return;
   const duration = activeSequence
@@ -592,7 +566,7 @@ function updateTransport() {
   const at = activeSequence ? sequenceTime : action.time;
   const tick = duration ? Math.round((at / duration) * 1000) : 0;
   const shot = shotLabel(at);
-  // This runs once per rendered frame — 120 times a second in a headset — and
+  // This runs once per rendered frame -- 120 times a second in a headset -- and
   // the playhead only moves a VISIBLE amount 1000 times per clip. Writing the
   // same two DOM values on every other frame is pure cost on the device least
   // able to afford it. `lastTick` is reset by selectClip, so a clip swap that
@@ -603,59 +577,32 @@ function updateTransport() {
   // Not while the user owns the slider: writing the playhead back into the
   // control being dragged fights the drag.
   if (!scrubbing) el.scrub.value = String(tick);
-  // The authoring frame beside the seconds, for the sequence and the
-  // whole-timeline clip: it is the number a reviewer reads back to the
-  // animator, and the shot ranges are quoted in it. Read apart from the shot
-  // lookup: a lead-in frame before the first shot is still a frame.
-  const authored = activeSequence
-    ? activeSequence.startFrame + at * activeSequence.fps
-    : timelineFrame(clips[clipIndex], at);
-  const frame = authored === null ? '' : `  f${Math.round(authored)}`;
   el.clipTime.textContent =
-    `${shot ? `${shot} · ` : ''}${at.toFixed(2)} / ${duration.toFixed(2)}s${frame}`;
+    `${shot ? `${shot} · ` : ''}${at.toFixed(2)} / ${duration.toFixed(2)}s`;
 }
 
 // Which shot the playhead is standing in, for the readout: on the sequence,
-// and on the whole-timeline clip, where each shot is a window (timelineShot).
-// A shot's own clip has none: the picker already names what is playing, and
-// repeating it beside the playhead would be noise.
-//
-// A time inside a GAP resolves to the shot before it — that is the pose on
-// screen, held, exactly as the whole-timeline clip played it — so it is labelled
-// as a hold rather than named outright. Without that the readout claims a shot
-// is playing through frames it does not cover, which is the one reading of this
-// label that could send someone looking for a bug in the shot.
+// the shot whose clip is playing. A single clip has none: the picker already
+// names what is playing, and repeating it beside the playhead would be noise.
 export function shotLabel(seconds) {
-  if (!activeSequence || !sequenceSegment) {
-    const placed = activeSequence ? null : timelineShot(clips[clipIndex], seconds);
-    if (!placed) return null;
-    return placed.held ? `${placed.shot.clip} (hold)` : placed.shot.clip;
-  }
-  const still = stillShotAt(seconds);
-  if (still) return still.held ? `${still.shot.clip} (hold)` : still.shot.clip;
-  const entry = sequenceSegment.entry;
-  const name = entry.meta?.name || entry.clip?.name || 'shot';
-  const held = seconds > sequenceSegment.offset + sequenceSegment.duration + 1e-6;
-  return held ? `${name} (hold)` : name;
+  if (!activeSequence) return null;
+  const segment = segmentAt(seconds);
+  if (!segment) return null;
+  return segment.entry.meta?.name || segment.entry.clip?.name || 'shot';
 }
 
-// The note the DCC's Shots panel carries for whatever the page is posed at —
-// the segment's on the sequence, the selected clip's on a single shot. Unlike
-// `shotLabel` it answers on BOTH, because its one reader is a burn-in rather
-// than the readout: the picker naming a clip does not put its description in
-// the movie, and a description is the half of a shot record a reviewer
-// watching the file cannot otherwise see.
+// The note the DCC's Shots panel carries for whatever the page is posed at --
+// the segment's shot on the sequence, the selected clip's on a single shot,
+// read off the block's shots by clip name. Unlike `shotLabel` it answers on
+// BOTH, because its one reader is a burn-in rather than the readout: the
+// picker naming a clip does not put its description in the movie, and a
+// description is the half of a shot record a reviewer watching the file
+// cannot otherwise see.
 //
 // Empty is null, not '': `extras.animation` omits the key on a shot with
 // no note (MeshConvert.apply_glb_animations writes only truthy fields), and a
 // caller should not have to tell "no description" from "an empty one".
 export function shotDescription() {
-  if (!activeSequence && action) {
-    const placed = timelineShot(clips[clipIndex], action.time);
-    if (placed) return placed.shot.description || null;
-  }
-  const still = stillShotAt(sequenceTime);
-  if (still) return still.shot.description || null;
   const entry = activeSequence && sequenceSegment
     ? sequenceSegment.entry
     : clips[clipIndex];
@@ -663,11 +610,9 @@ export function shotDescription() {
 }
 
 // Whether any shot of the model on screen carries a description -- what
-// decides that there is a caption to offer (captions.js). The block's shots,
-// not just its clips: a 'full' file's shots have no clip of their own.
+// decides that there is a caption to offer (captions.js).
 export function hasDescriptions() {
-  return (animationManifest?.shots || []).some((shot) => Boolean(shot.description))
-    || clips.some((entry) => Boolean(entry.meta?.description));
+  return (animationManifest?.shots || []).some((shot) => Boolean(shot.description));
 }
 
 // Whether the user owns the scrubber (a drag, an arrow key) -- the transport

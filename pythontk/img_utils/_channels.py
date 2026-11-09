@@ -146,21 +146,20 @@ class _ImgChannelInternal:
         for ch in channels[:n_channels]:
             img_input = channel_files.get(ch)
             if img_input:
-                # Load image once to avoid double I/O
-                img_obj = cls.ensure_image(img_input)
+                # Load image once to avoid double I/O; a 16-bit, 32-bit or
+                # float map is scaled to 8 bits at its value
+                # (``ImgUtils.convert_mode``), never clipped at 255.
+                img_obj = cls.ensure_image(img_input, mode="L")
 
                 # Optimization: Check if image is constant
                 # This avoids expensive resizing artifacts for small constant maps
                 is_const, const_color = cls.is_image_constant(img_obj)
 
                 if is_const:
-                    # Convert constant color to grayscale
-                    # Create 1x1 temp image to handle color conversion correctly
-                    temp_img = Image.new(img_obj.mode, (1, 1), const_color)
-                    gray_val = temp_img.convert("L").getpixel((0, 0))
+                    gray_val = const_color[0] if isinstance(const_color, tuple) else const_color
                     band = cls.create_image("L", size, color=gray_val)
                 else:
-                    band = img_obj.convert("L").resize(size)
+                    band = img_obj.resize(size)
             elif ch in "GB" and allow_duplicate and r_img is not None:
                 # Duplicate R into G/B if only R is used
                 band = r_img

@@ -14,7 +14,6 @@ the other passes through the facade it holds (``self._mc``).
 import logging
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from pythontk.core_utils.engines.scene_export.scene_records import SceneRecords
 from pythontk.file_utils.mesh_convert.glb.edit import GlbTarget
 
 logger = logging.getLogger(__name__)
@@ -182,13 +181,7 @@ class _Materials:
         with self._mc.open_glb(glb) as edit:
             for mat in edit.materials:
                 name = mat.get("name")
-                if not name or (
-                    known is not None
-                    and (
-                        name in known
-                        or self._mc._lightmaps._lightmap_clone_base(name) in known
-                    )
-                ):
+                if not name or (known is not None and name in known):
                     continue
                 pbr = mat.get("pbrMetallicRoughness") or {}
                 tex = (pbr.get("metallicRoughnessTexture") or {}).get("index")
@@ -197,11 +190,17 @@ class _Materials:
                 img_idx = edit.image_for_texture(tex)
                 if img_idx is None:
                     continue
-                # A zero factor cancels the texture, so nothing it carries can
-                # be destructive -- but it is still unvalidated data.
-                harmful = pbr.get("metallicFactor", 1.0) != 0 and edit.channel_extrema(
-                    img_idx, self._mc._ORM_HARMFUL_CHANNEL
-                ) == (255, 255)
+                # Metal everywhere is a full blue channel at a factor of 1 or
+                # more: below it the factor is the metal (a constant over a
+                # roughness map packs blue white, its fill), and a zero factor
+                # cancels the texture -- still unvalidated data, never harmful.
+                factor = pbr.get("metallicFactor", 1.0)
+                harmful = (
+                    isinstance(factor, (int, float))
+                    and factor >= 1.0
+                    and edit.channel_extrema(img_idx, self._mc._ORM_HARMFUL_CHANNEL)
+                    == (255, 255)
+                )
                 if harmful:
                     finding = self._mc.ORM_FINDING_METALLIC_FULL
                 elif known is not None:
@@ -267,12 +266,21 @@ class _Materials:
         scale = float(scale)
         changed = 0
         with self._mc.open_glb(glb) as edit:
-            named = None
+            worn = None
             if lightmapped_only:
-                block = SceneRecords.glb_block(edit.gltf, SceneRecords.LIGHTMAPS)
-                named = set((block or {}).get("materials") or ())
-            for material in edit.materials:
-                if named is not None and material.get("name") not in named:
+                # The materials the nodes the record lights wear (``lit_nodes``):
+                # a material those nodes share with unbaked ones is written for
+                # all of its wearers, as its occlusion is kept for all of them
+                # (``MaterialFamilies.without_baked_occlusion``).
+                meshes = edit.gltf.get("meshes") or []
+                nodes = edit.gltf.get("nodes") or []
+                worn = {
+                    prim.get("material")
+                    for index in self._mc.lit_nodes(edit.gltf)
+                    for prim in meshes[nodes[index]["mesh"]].get("primitives") or []
+                }
+            for index, material in enumerate(edit.materials):
+                if worn is not None and index not in worn:
                     continue
                 normal = material.get("normalTexture")
                 # No normal map means nothing to scale -- writing the key

@@ -25,14 +25,14 @@ Deployment -- READ THIS BEFORE EDITING
 This file is consumed two ways, and the second one is why it must stay
 **standard-library only** and free of ``pythontk`` imports:
 
-1. **Imported** -- by a plugin that loads in place from the checkout and
-   bootstraps ``sys.path`` back to it (``extapps.substance_workflow``'s Painter
-   plugin). It just imports this module.
-2. **Staged** -- by a plugin *installed* into the host's own plugin folder
-   (mayatk / blendertk's ``marmoset_rpc`` + ``substance_rpc``). Those payloads
-   are symlinked or copied into Toolbag / Painter and must be self-contained:
-   there is no ``pythontk`` on the host's ``sys.path``. So this file is copied
-   verbatim into each payload as ``_rpc_core.py``.
+1. **Imported** -- by a process of ours that hosts a service
+   (``look_capture serve``), and by this package's tests.
+2. **Staged** -- by a plugin that runs inside a host app (the ``marmoset_rpc``
+   and ``substance_rpc`` payloads of mayatk / blendertk, and extapps' vendored
+   ``substance_rpc``). Those payloads are installed into, or loaded by, Toolbag /
+   Painter and must be self-contained: there is no ``pythontk`` on the host's
+   ``sys.path``. So this file is copied verbatim into each payload as
+   ``_rpc_core.py``.
 
 The staged copies are byte-identical artifacts, not forks. Regenerate with
 ``python m3trik/scripts/sync_rpc_core.py``; ``--check`` fails on drift (CI gate).
@@ -47,10 +47,11 @@ import os
 import queue
 import sys
 import threading
+import time
 import traceback
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-__all__ = ["OpRegistry", "MainThreadMarshaller", "RpcPlugin"]
+__all__ = ["OpRegistry", "MainThreadMarshaller", "RpcInstances", "RpcPlugin"]
 
 
 # --------------------------------------------------------------------- registry
@@ -370,6 +371,10 @@ class _ReusableServer(HTTPServer):
         super().handle_error(request, client_address)
 
 
+#: ``Host`` names a local client reaches this server by (beside its bound address).
+_LOOPBACK_NAMES = ("127.0.0.1", "localhost", "::1")
+
+
 def _make_handler(plugin):
     """Build the request handler class bound to *plugin*.
 
@@ -385,10 +390,45 @@ def _make_handler(plugin):
             else:
                 self._respond(404, {"ok": False, "error": f"GET {self.path!r}"})
 
+        def _refusal(self):
+            """``(status, why)`` when a web page sent this request, else ``None``.
+
+            A page in the person's browser may POST to loopback without asking
+            (a "simple" request: a text/plain body, no CORS preflight), so an op
+            -- one that evaluates code above all -- would run for any site open
+            while the host app is. A browser marks a page's request with
+            ``Origin``; a JSON body is one a page sends only after a preflight
+            this server never answers; and a ``Host`` that is not this server's
+            address is a DNS-rebound name. :class:`RpcClient` sends none of them.
+            """
+            if self.headers.get("Origin") is not None:
+                return 403, "a web page's request (it carries Origin)"
+            kind = (self.headers.get("Content-Type") or "").split(";")[0].strip()
+            if kind.lower() != "application/json":
+                return 415, f"Content-Type {kind or '(none)'!r}: send application/json"
+            name = (self.headers.get("Host") or "").rsplit(":", 1)[0].strip("[]")
+            if name.lower() not in _LOOPBACK_NAMES + (str(self.server.server_address[0]),):
+                return 403, f"Host {name!r} is not this server"
+            # Fails closed: an announced plugin between servings has no token,
+            # and then nothing passes.
+            if plugin.announce and (
+                not plugin.token or self.headers.get("Authorization") != f"Bearer {plugin.token}"
+            ):
+                return 401, "no token, or not this instance's (read its record)"
+            return None
+
         def do_POST(self):  # noqa: N802
             try:
                 length = int(self.headers.get("Content-Length", "0") or "0")
                 raw = self.rfile.read(length).decode("utf-8")
+            except Exception as exc:  # noqa: BLE001
+                self._respond(400, {"ok": False, "error": f"Bad request: {exc}"})
+                return
+            refused = self._refusal()  # the body is read first: unread, a reset hides the answer
+            if refused is not None:
+                self._respond(refused[0], {"ok": False, "error": f"Refused: {refused[1]}."})
+                return
+            try:
                 req = json.loads(raw) if raw else {}
             except Exception as exc:  # noqa: BLE001
                 self._respond(400, {"ok": False, "error": f"Bad JSON: {exc}"})
@@ -447,6 +487,129 @@ def _make_handler(plugin):
     return _Handler
 
 
+# -------------------------------------------------------------------- instances
+class RpcInstances(object):
+    """Instance records: how a client finds a running plugin by what it is.
+
+    A plugin started with ``announce=True`` writes one JSON record per process,
+    ``<folder>/<label>/<id>.json``, and removes it when it stops::
+
+        {"id", "label", "pid", "host", "port", "token", "started", "state": {...}}
+
+    ``state`` is the host's to fill (:meth:`RpcPlugin.set_state`): what it has
+    open, whether it is busy. A port is then whatever the OS gave (any number of
+    instances, none fighting for one port), and the record says which is which.
+    The folder is the person's own, so the token in it proves a caller is one of
+    their processes (loopback is shared by every user of a machine): every op
+    call to an announced plugin must carry it. A record whose process is gone
+    (a crash leaves one) is pruned by the next reader. Prior art: Jupyter's
+    runtime connection files (``jpserver-<pid>.json``).
+    """
+
+    #: The records' folder under the per-user cache root.
+    SUBDIR = "rpc"
+    #: Overrides the cache root, as ``UserConfig.cache_dir`` reads it.
+    CACHE_ROOT_ENV_VAR = "PYTHONTK_CACHE_ROOT"
+    _WRAPPER = "pythontk"
+
+    @classmethod
+    def folder(cls, label=None):
+        """The records folder (*label*'s, when given), not created.
+
+        Resolved as ``UserConfig.cache_dir(SUBDIR)`` is -- this file runs where
+        pythontk is not importable, so it repeats that resolution, and a test
+        pins the two to one answer.
+        """
+        from pathlib import Path  # noqa: PLC0415 -- only this path needs it
+
+        override = os.environ.get(cls.CACHE_ROOT_ENV_VAR)
+        if override:
+            root = Path(os.path.expandvars(os.path.expanduser(override)))
+        elif sys.platform == "win32":
+            base = os.environ.get("LOCALAPPDATA") or os.path.join(
+                os.path.expanduser("~"), "AppData", "Local"
+            )
+            root = Path(base) / cls._WRAPPER / "cache"
+        elif sys.platform == "darwin":
+            root = Path(os.path.expanduser("~"), "Library", "Caches", cls._WRAPPER)
+        else:
+            xdg = os.environ.get("XDG_CACHE_HOME", "")
+            base = xdg if os.path.isabs(xdg) else os.path.join(os.path.expanduser("~"), ".cache")
+            root = Path(base) / cls._WRAPPER
+        if not root.is_absolute():
+            root = root.absolute()
+        folder = root / cls.SUBDIR
+        return folder / label if label else folder
+
+    @staticmethod
+    def pid_alive(pid):
+        """True while *pid* runs (a process another user owns counts as running)."""
+        try:
+            pid = int(pid)
+        except (TypeError, ValueError):
+            return False
+        if sys.platform == "win32":
+            import ctypes  # noqa: PLC0415
+
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            handle = kernel32.OpenProcess(0x00100000, False, pid)  # SYNCHRONIZE
+            if not handle:
+                return ctypes.get_last_error() == 5  # access denied: it is there
+            try:  # a handle outlives its process: wait on it instead
+                return kernel32.WaitForSingleObject(handle, 0) == 0x102
+            finally:
+                kernel32.CloseHandle(handle)
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        return True
+
+    @classmethod
+    def write(cls, record):
+        """Write *record* (its ``label`` and ``id`` name the file), atomically."""
+        folder = cls.folder(record["label"])
+        folder.mkdir(parents=True, exist_ok=True)
+        if os.name != "nt":  # the token is the person's: theirs alone to read
+            os.chmod(str(folder), 0o700)
+        path = folder / f"{record['id']}.json"
+        part = path.with_suffix(".json.part")
+        part.write_text(json.dumps(record, default=str), encoding="utf-8")
+        if os.name != "nt":
+            os.chmod(str(part), 0o600)
+        os.replace(str(part), str(path))
+        return path
+
+    @classmethod
+    def remove(cls, label, instance_id):
+        """Delete one record; one already gone is fine."""
+        try:
+            (cls.folder(label) / f"{instance_id}.json").unlink()
+        except OSError:
+            pass
+
+    @classmethod
+    def read(cls, label):
+        """Every live record of *label*, oldest first; dead ones are deleted."""
+        folder = cls.folder(label)
+        records = []
+        for path in sorted(folder.glob("*.json")) if folder.is_dir() else ():
+            try:
+                record = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue  # mid-replace, or not ours
+            if not cls.pid_alive(record.get("pid")):
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
+                continue
+            records.append(record)
+        return sorted(records, key=lambda r: r.get("started", 0))
+
+
 # ------------------------------------------------------------------- the facade
 class RpcPlugin(object):
     """One host plugin: a registry, a marshaller, and the server that joins them.
@@ -457,6 +620,15 @@ class RpcPlugin(object):
     * ``POST /``         -> ``{"op": "<name>", "kwargs": {...}}``
     * ``POST /describe`` -> ``{"op": "<name>" | ""}``
 
+    A POST a web page could send (an ``Origin`` header, a body that is not
+    ``application/json``, a ``Host`` that is not this server) is refused before
+    any op runs: a page open in the person's browser never reaches an op.
+
+    Started with ``announce=True``, it also writes its instance record
+    (:class:`RpcInstances`): a client finds it by what it is and has open
+    (:meth:`RpcClient.instances`), and every op call must carry the record's
+    token (:meth:`RpcClient.for_instance`).
+
     A host plugin's ``__init__.py`` builds one of these and re-exports what its
     op modules need::
 
@@ -464,7 +636,7 @@ class RpcPlugin(object):
 
         PLUGIN = RpcPlugin(
             label="marmoset_rpc", host_module="mset",
-            env_prefix="MARMOSET_RPC", default_port=8765,
+            env_prefix="MARMOSET_RPC", default_port=0, announce=True,
         )
         register = PLUGIN.registry.register
         run_on_main_thread = PLUGIN.marshaller.run
@@ -480,6 +652,8 @@ class RpcPlugin(object):
         default_port,
         host="127.0.0.1",
         main_thread_timeout=60.0,
+        announce=False,
+        pump=None,
     ):
         """
         Parameters:
@@ -492,6 +666,13 @@ class RpcPlugin(object):
             host: Bind address. Loopback by default -- this is a local control
                 channel, not a service.
             main_thread_timeout: Seconds a marshalled op may take.
+            announce: Write an instance record while serving, and require its
+                token on every op call (:class:`RpcInstances`).
+            pump: For a host whose Python cannot keep a thread running (one
+                that ends when a plugin's script returns with a thread alive): ``pump(tick)``
+                arranges for ``tick()`` to run on the host's own loop (an update
+                callback), and :meth:`start` serves through it, no thread: each
+                tick handles the requests waiting, on the host's thread.
         """
         self.label = label
         self.host_module = host_module
@@ -504,6 +685,14 @@ class RpcPlugin(object):
         )
         self._server = None
         self._thread = None
+        self.pump = pump
+        self._pumped = False
+        self.announce = announce
+        #: This serving's record id and token (``None`` until it serves announced).
+        self.instance_id = None
+        self.token = None
+        self._state = {}
+        self._started = None
         self._register_builtins()
 
     @staticmethod
@@ -568,6 +757,16 @@ class RpcPlugin(object):
             """Describe *op* (or every op when empty) as ``{name, doc, params}``."""
             return self.registry.describe(op or None)
 
+        @self.registry.register("system.identity")
+        def _identity():
+            """This instance: ``{id, label, pid, state}`` (its record, without the token)."""
+            return {
+                "id": self.instance_id,
+                "label": self.label,
+                "pid": os.getpid(),
+                "state": dict(self._state),
+            }
+
     # ------------------------------------------------------------ environment
     def _env(self, suffix, default=None):
         """Read this plugin's ``<PREFIX>_<SUFFIX>`` environment variable."""
@@ -612,8 +811,12 @@ class RpcPlugin(object):
         """The bound ``(host, port)``, or ``None`` when not running."""
         return None if self._server is None else self._server.server_address
 
+    #: Requests a pumped server handles per tick, at most (the rest wait a tick).
+    PUMP_BATCH = 8
+
     def start(self, port=None, host=None):
-        """Bind and serve on a daemon thread. Idempotent.
+        """Bind and serve on a daemon thread (with :attr:`pump`: from the host's
+        loop, no thread). Idempotent.
 
         The thread is a daemon so the server dies with the host process; no
         explicit shutdown is required for normal use.
@@ -624,16 +827,43 @@ class RpcPlugin(object):
         bind_host = self.host if host is None else host
         bind_port = self.port if port is None else port
 
-        self._server = _ReusableServer((bind_host, bind_port), _make_handler(self))
+        server = _ReusableServer((bind_host, bind_port), _make_handler(self))
+        address = server.server_address  # port 0: the one the OS picked
+        try:
+            # Before the first request is served: its token is in force from it.
+            self._open_record(address)
+        except Exception:
+            server.server_close()  # unannounced, nobody could reach it: no server either
+            raise
+        self._server = server
+        if self.pump is not None:
+            server.timeout = 0  # handle_request returns at once when nothing waits
+            self._pumped = True
+            self.pump(self._tick)
+            print(f"[{self.label}] listening on http://{address[0]}:{address[1]} (from the host's loop)")
+            return address
         self._thread = threading.Thread(
-            target=self._server.serve_forever,
+            target=server.serve_forever,
             daemon=True,
             name=f"{self.label}-server",
         )
         self._thread.start()
-        address = self._server.server_address  # port 0: the one the OS picked
         print(f"[{self.label}] listening on http://{address[0]}:{address[1]}")
         return address
+
+    def _tick(self):
+        """One turn of a pumped server: the requests waiting now, on this thread."""
+        import selectors  # noqa: PLC0415
+
+        server = self._server
+        if server is None or not self._pumped:
+            return
+        with selectors.DefaultSelector() as selector:
+            selector.register(server.socket, selectors.EVENT_READ)
+            for _ in range(self.PUMP_BATCH):
+                if self._server is not server or not selector.select(0):
+                    return
+                server.handle_request()
 
     def serve(self, port=None, host=None):
         """Bind and serve on the CALLING thread until :meth:`stop`; blocks.
@@ -653,6 +883,12 @@ class RpcPlugin(object):
         server = _ReusableServer((bind_host, bind_port), _make_handler(self))
         self._server, self._thread = server, threading.current_thread()
         address = server.server_address  # port 0: the one the OS picked
+        try:
+            self._open_record(address)
+        except Exception:
+            self._server = self._thread = None
+            server.server_close()
+            raise
         print(f"[{self.label}] serving on http://{address[0]}:{address[1]}", flush=True)
         try:
             server.serve_forever()
@@ -660,6 +896,48 @@ class RpcPlugin(object):
             server.server_close()
             if self._server is server:
                 self._server = self._thread = None
+                self._close_record()
+
+    # ---------------------------------------------------------------- record
+    def set_state(self, **fields):
+        """Merge *fields* into this instance's ``state`` (what the host has open,
+        whether it is busy) and rewrite its record when it serves announced."""
+        self._state.update(fields)
+        if self.instance_id is not None:
+            self._write_record()
+
+    def _open_record(self, address):
+        """Start this serving's record and token (``announce`` only)."""
+        if not self.announce:
+            return
+        import secrets  # noqa: PLC0415
+        import uuid  # noqa: PLC0415
+
+        self.instance_id = uuid.uuid4().hex
+        self.token = secrets.token_urlsafe(24)
+        self._address = address
+        self._started = time.time()
+        self._write_record()
+
+    def _write_record(self):
+        RpcInstances.write(
+            {
+                "id": self.instance_id,
+                "label": self.label,
+                "pid": os.getpid(),
+                "host": self._address[0],
+                "port": self._address[1],
+                "token": self.token,
+                "started": self._started,
+                "state": dict(self._state),
+            }
+        )
+
+    def _close_record(self):
+        """Withdraw the record; the token goes with it."""
+        if self.instance_id is not None:
+            RpcInstances.remove(self.label, self.instance_id)
+        self.instance_id = self.token = None
 
     def stop(self):
         """Shut the server down (host teardown hook, tests, hot-reload, an op).
@@ -672,6 +950,12 @@ class RpcPlugin(object):
             return
         server = self._server
         self._server = None
+        self._close_record()
+        if self._pumped:
+            # No serve loop to end (``shutdown`` would wait for one forever).
+            self._pumped = False
+            server.server_close()
+            return
 
         def finish():
             server.shutdown()

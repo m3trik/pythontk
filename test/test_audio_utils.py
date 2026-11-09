@@ -778,120 +778,211 @@ class TestMemoDuration(BaseTestCase):
         self.assertEqual(len(self.reads), 4)
 
 
-class TestScopeEvents(BaseTestCase):
-    """``scope_events``: the ``audio`` record's events, each in the take that
-    plays it -- the one rule both DCCs' audio producers ship by."""
+#: The rate the cut's cases are stated at.
+CUT_FPS = 30.0
 
-    TAKES = [
-        {"name": "Intro", "start": 1, "end": 20},
-        {"name": "Fight", "start": 21, "end": 60},
-    ]
 
-    def test_an_event_lands_in_its_take_rebased_to_the_take_start(self):
-        scoped, dropped = AudioUtils.scope_events(
-            [(5, "steps"), (30, "punch")], self.TAKES
+def _cues(sounds, takes, window=None):
+    """``[(clip, sound, time, offset, stop)]`` in frames at :data:`CUT_FPS` --
+    what :meth:`AudioUtils.clip_cues` cuts, read back on the frame grid so a
+    case states it as the timeline does -- and the dropped list."""
+    cues, dropped = AudioUtils.clip_cues(sounds, takes, CUT_FPS, window=window)
+    return [
+        (
+            c["clip"],
+            c["sound"],
+            round(c["time"] * CUT_FPS, 4),
+            round(c["offset"] * CUT_FPS, 4),
+            round(c["stop"] * CUT_FPS, 4),
+        )
+        for c in cues
+    ], dropped
+
+
+def _take(name, start, end):
+    return {"name": name, "start": start, "end": end}
+
+
+
+class TestClipCues(BaseTestCase):
+    """``clip_cues``: the ``audio`` record's cues, each sound cut per clip in
+    seconds from the clip's start -- the one rule both DCCs' audio producers
+    ship by. Every case is stated in frames at 30 fps (time, offset into the
+    sound, stop), the cues themselves being seconds. Added: 2026-11-05"""
+
+    CONTIGUOUS = [_take("Intro", 1, 40), _take("Fight", 40, 80)]
+
+    def test_a_sound_inside_one_shot_is_one_cue_counted_from_its_clip(self):
+        cues, dropped = _cues(
+            [{"sound": "a.wav", "start": 10, "stop": 20}], self.CONTIGUOUS
+        )
+        self.assertEqual(cues, [("Intro", "a.wav", 9, 0, 19)])
+        self.assertEqual(dropped, [])
+
+    def test_the_cues_are_seconds(self):
+        cues, _ = AudioUtils.clip_cues(
+            [{"sound": "a.wav", "start": 16, "stop": 46}], [_take("Intro", 1, 80)], 30.0
+        )
+        self.assertEqual(cues, [
+            {"clip": "Intro", "sound": "a.wav", "time": 0.5, "offset": 0.0, "stop": 1.5}
+        ])
+
+    def test_a_sound_across_a_cut_is_two_cues_each_stopping_at_the_cut(self):
+        """Contiguous shots share frame 40: the sound stops at Intro's end
+        and Fight plays it on from 10 frames into the sound."""
+        cues, _ = _cues([{"sound": "a.wav", "start": 30, "stop": 50}], self.CONTIGUOUS)
+        self.assertEqual(
+            cues,
+            [("Intro", "a.wav", 29, 0, 39), ("Fight", "a.wav", 0, 10, 10)],
+        )
+
+    def test_a_sound_across_a_gap_plays_on_in_the_next_shot_at_its_offset(self):
+        cues, dropped = _cues(
+            [{"sound": "a.wav", "start": 30, "stop": 70}],
+            [_take("Intro", 1, 40), _take("Outro", 60, 80)],
         )
         self.assertEqual(
-            scoped,
-            [
-                {"clip": "Intro", "frame": 4, "name": "steps"},
-                {"clip": "Fight", "frame": 9, "name": "punch"},
-            ],
+            cues,
+            [("Intro", "a.wav", 29, 0, 39), ("Outro", "a.wav", 0, 30, 10)],
         )
         self.assertEqual(dropped, [])
 
-    def test_an_event_on_a_shared_boundary_plays_in_both_takes(self):
-        takes = [
-            {"name": "A", "start": 1, "end": 10},
-            {"name": "B", "start": 10, "end": 20},
-        ]
-        scoped, _ = AudioUtils.scope_events([(10, "hit")], takes)
-        self.assertEqual(
-            [(e["clip"], e["frame"]) for e in scoped], [("A", 9), ("B", 0)]
+    def test_a_sound_starting_before_its_shot_starts_at_its_offset(self):
+        cues, dropped = _cues(
+            [{"sound": "a.wav", "start": 35, "stop": 55}], [_take("Fight", 40, 80)]
         )
-
-    def test_an_event_outside_every_take_is_dropped_and_named(self):
-        scoped, dropped = AudioUtils.scope_events([(80, "late")], self.TAKES)
-        self.assertEqual(scoped, [])
-        self.assertEqual(dropped, ["late@80"])
-
-    def test_without_takes_events_ship_unscoped_from_the_origin(self):
-        scoped, dropped = AudioUtils.scope_events([(10, "steps")], [], origin=4)
-        self.assertEqual(scoped, [{"clip": "", "frame": 6, "name": "steps"}])
+        self.assertEqual(cues, [("Fight", "a.wav", 0, 5, 15)])
         self.assertEqual(dropped, [])
 
-    def test_an_unscoped_event_before_the_origin_is_dropped_and_named(self):
-        # Before the clip's first frame it can never fire: shipped, it was a
-        # negative frame Unity's importer skips without a word.
-        scoped, dropped = AudioUtils.scope_events(
-            [(2, "early"), (4, "first"), (9, "steps")], [], origin=4
+    def test_a_sound_longer_than_its_clip_stops_at_the_clips_end(self):
+        cues, _ = _cues([{"sound": "a.wav", "start": 70, "stop": 200}], self.CONTIGUOUS)
+        self.assertEqual(cues, [("Fight", "a.wav", 30, 0, 40)])
+
+    def test_a_sound_with_no_known_end_stops_at_its_clips_end(self):
+        """A stop on every cue: the producer keys an end on every track, and
+        a sound whose end it cannot measure ends with its clip."""
+        cues, _ = _cues([{"sound": "a.wav", "start": 70, "stop": None}], self.CONTIGUOUS)
+        self.assertEqual(cues, [("Fight", "a.wav", 30, 0, 40)])
+
+    def test_the_authors_head_trim_adds_to_the_offset(self):
+        """A sound its author trimmed at the head starts into its file."""
+        cues, _ = _cues(
+            [{"sound": "a.wav", "start": 30, "stop": 50, "offset": 0.5}],
+            self.CONTIGUOUS,
         )
         self.assertEqual(
-            scoped,
+            cues,
+            [("Intro", "a.wav", 29, 15, 39), ("Fight", "a.wav", 0, 25, 10)],
+        )
+
+    def test_a_sound_in_no_clip_is_dropped_and_named(self):
+        cues, dropped = _cues(
             [
-                {"clip": "", "frame": 0, "name": "first"},
-                {"clip": "", "frame": 5, "name": "steps"},
+                {"sound": "late.wav", "start": 130, "stop": 140},
+                {"sound": "edge.wav", "start": 80, "stop": 90},
             ],
+            self.CONTIGUOUS,
         )
-        self.assertEqual(dropped, ["early@2"])
+        self.assertEqual(cues, [])
+        self.assertEqual(dropped, ["late.wav@130", "edge.wav@80"])
 
-    def test_a_take_missing_its_name_or_range_scopes_nothing(self):
-        broken = [{"name": "NoEnd", "start": 1}, {"start": 1, "end": 50}]
-        scoped, _ = AudioUtils.scope_events([(5, "steps")], broken, origin=1)
+    def test_the_cues_run_clip_by_clip_in_take_order_then_by_time(self):
+        cues, _ = _cues(
+            [
+                {"sound": "b.wav", "start": 60, "stop": 62},
+                {"sound": "a.wav", "start": 50, "stop": 52},
+                {"sound": "c.wav", "start": 5, "stop": 6},
+            ],
+            self.CONTIGUOUS,
+        )
         self.assertEqual(
-            scoped,
-            [{"clip": "", "frame": 4, "name": "steps"}],
-            "no usable take: unscoped, never a phantom take swallowing events",
+            [(c[0], c[1]) for c in cues],
+            [("Intro", "c.wav"), ("Fight", "a.wav"), ("Fight", "b.wav")],
         )
-        scoped, _ = AudioUtils.scope_events([(5, "steps")], broken + self.TAKES[:1])
-        self.assertEqual(scoped, [{"clip": "Intro", "frame": 4, "name": "steps"}])
 
-    def test_fractional_frames_round(self):
-        scoped, _ = AudioUtils.scope_events([(10.6, "steps")], [], origin=0.0)
-        self.assertEqual(scoped[0]["frame"], 11)
+    def test_no_sound_cuts_no_cue(self):
+        self.assertEqual(AudioUtils.clip_cues([], self.CONTIGUOUS, CUT_FPS), ([], []))
+
+    def test_a_shotless_take_counts_from_the_window_it_declares(self):
+        """The S2 case (2026-11-05): the file's one take holds keys 0-100
+        under a 20-80 range; counted from 20, a cue at 50 played 20 frames
+        early. The window is the file's: measured off it once written (its
+        declared window fitted to the keys, ``FbxMedia.fit_take_windows``)."""
+        sound = [{"sound": "a.wav", "start": 50, "stop": 60}]
+        measured, _ = _cues(sound, [], window=(0, 100))
+        self.assertEqual(measured, [("", "a.wav", 50, 0, 60)])
+        declared, _ = _cues(sound, [], window=(20, 80))
+        self.assertEqual(declared, [("", "a.wav", 30, 0, 40)])
+
+    def test_a_shotless_file_holding_nothing_has_no_clip_to_cue(self):
+        cues, dropped = _cues([{"sound": "a.wav", "start": 50, "stop": 60}], [], window=None)
+        self.assertEqual(cues, [])
+        self.assertEqual(dropped, ["a.wav@50"])
+
+    def test_a_take_missing_its_name_or_range_cuts_nothing(self):
+        """Defaulted, it would be a phantom take swallowing frame-0 sounds."""
+        cues, dropped = _cues(
+            [{"sound": "a.wav", "start": 0, "stop": 5}],
+            [{"name": "X", "start": None, "end": 10}, {"start": 0, "end": 10}],
+            window=(0, 10),
+        )
+        self.assertEqual(cues, [("", "a.wav", 0, 0, 5)])
+        self.assertEqual(dropped, [])
 
 
 class TestMediaDigests(BaseTestCase):
     """``media_digests``: the ``audio`` record's ``media`` -- the content
-    digest of each track file a deliverable embeds, by the event name whose
-    stem it is -- what a reader compares a same-named clip against before it
-    stands that clip in for the deliverable's own. Two models each embedding a
-    different ``door.wav``: Unity bound the first model's clip for the second
-    (2026-10-19; matched by content since 2026-10-31). Given the bytes inside,
-    never a path: the FBX's dependency pass digests what it embedded."""
+    digest of each sound file a delivery embeds, by the cue's ``sound``, the
+    file name it is delivered under -- what a reader compares a same-named
+    sound against before it stands that sound in for the delivery's own. Two
+    models each embedding a different ``door.wav``: Unity bound the first
+    model's clip for the second (2026-10-19; matched by content since
+    2026-10-31). Given the bytes inside, never a path: the FBX's dependency
+    pass digests what it embedded."""
 
     @staticmethod
-    def events(*names):
-        return [{"clip": "", "frame": i, "name": n} for i, n in enumerate(names)]
+    def cues(*sounds):
+        return [
+            {"clip": "", "sound": s, "time": 0.0, "offset": 0.0, "stop": 1.0}
+            for s in sounds
+        ]
 
-    def test_each_audio_file_is_the_sha256_of_its_bytes_by_the_events_name(self):
+    def test_each_audio_file_is_the_sha256_of_its_bytes_by_the_cues_sound(self):
         files = {"door.wav": b"door one", "Lamp Hum.mp3": b"hum"}
         self.assertEqual(
-            AudioUtils.media_digests(self.events("door", "lamp hum"), files),
+            AudioUtils.media_digests(self.cues("door.wav", "lamp hum.MP3"), files),
             {
-                "door": hashlib.sha256(b"door one").hexdigest(),
-                "lamp hum": hashlib.sha256(b"hum").hexdigest(),
+                "door.wav": hashlib.sha256(b"door one").hexdigest(),
+                "lamp hum.MP3": hashlib.sha256(b"hum").hexdigest(),
             },
         )
 
-    def test_a_track_with_no_file_inside_is_left_out_and_a_name_is_digested_once(self):
+    def test_a_sound_with_no_file_inside_is_left_out_and_a_name_is_digested_once(self):
         files = {"door.wav": b"door one"}
-        media = AudioUtils.media_digests(self.events("door", "ghost", "door"), files)
-        self.assertEqual(media, {"door": hashlib.sha256(b"door one").hexdigest()})
+        media = AudioUtils.media_digests(
+            self.cues("door.wav", "ghost.wav", "door.wav"), files
+        )
+        self.assertEqual(media, {"door.wav": hashlib.sha256(b"door one").hexdigest()})
 
-    def test_only_audio_files_answer_and_a_stem_two_share_names_none(self):
-        """A texture of the stem is no clip; two clips of one stem leave the
-        reader nothing to tell apart, so it gets no digest (the file reads as
-        one from before them)."""
+    def test_only_audio_files_answer_and_a_name_two_share_names_none(self):
+        """A texture is no sound, and a file name only one file holds is the
+        sound's: another extension is another sound; two files whose names
+        differ in case alone leave the reader nothing to tell apart."""
         self.assertEqual(
             AudioUtils.media_digests(
-                self.events("door", "bell"),
-                {"door.png": b"wood", "door.wav": b"door", "bell.wav": b"a", "bell.ogg": b"b"},
+                self.cues("door.wav", "bell.wav", "door.png"),
+                {
+                    "door.png": b"wood",
+                    "door.wav": b"door",
+                    "bell.wav": b"a",
+                    "Bell.WAV": b"b",
+                    "door.ogg": b"c",
+                },
             ),
-            {"door": hashlib.sha256(b"door").hexdigest()},
+            {"door.wav": hashlib.sha256(b"door").hexdigest()},
         )
 
-    def test_no_events_digest_nothing(self):
+    def test_no_cues_digest_nothing(self):
         self.assertEqual(AudioUtils.media_digests([], {"door.wav": b"door"}), {})
 
 

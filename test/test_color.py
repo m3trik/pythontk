@@ -385,6 +385,34 @@ class TestPalette(unittest.TestCase):
         self.assertIsNotNone(fg)
         self.assertIsNotNone(bg)
 
+    def test_every_status_theme_has_every_tier(self):
+        """A theme missing a tier would leave the UI that reads it uncoloured."""
+        Palette = self._cls()
+        tiers = set(Palette.STATUS_THEMES["dark"])
+        self.assertTrue({"success", "critical"} <= tiers)
+        for theme in Palette.STATUS_THEMES:
+            with self.subTest(theme=theme):
+                self.assertEqual(set(Palette.status(theme)), tiers)
+        self.assertEqual(Palette.status("no-such-theme"), Palette.status())
+
+    def test_the_log_colors_are_the_status_tiers(self):
+        """One severity scheme: a log's WARNING / ERROR / SUCCESS / CRITICAL /
+        DEBUG are the status palette's, and LoggingMixin reads them."""
+        from pythontk import LoggingMixin
+
+        Palette = self._cls()
+        status = Palette.status()
+        for level, tier in (
+            ("WARNING", "warn"),
+            ("ERROR", "error"),
+            ("SUCCESS", "success"),
+            ("CRITICAL", "critical"),
+            ("DEBUG", "locked"),
+        ):
+            with self.subTest(level=level):
+                self.assertEqual(str(Palette.log()[level]), str(status[tier][0]))
+                self.assertEqual(LoggingMixin.LOG_COLORS[level], str(status[tier][0]))
+
     def test_status_alias_workflow(self):
         """Full intended workflow: defaults + domain aliases."""
         Palette = self._cls()

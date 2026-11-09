@@ -12,7 +12,7 @@ Example::
 
     results = RpcJob.run_batch(
         [RpcJob.Call("system.version"), RpcJob.Call("scene.list_materials")],
-        client=RpcClient(port=8765, app_label="Marmoset"),
+        client=RpcClient(label="marmoset_rpc", app_label="Marmoset"),  # then client.attach()
     )
     for r in results:
         print(r.op, r.ok, r.value if r.ok else r.error)

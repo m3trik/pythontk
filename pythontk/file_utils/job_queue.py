@@ -40,16 +40,22 @@ class JobQueue:
         >>> queue.serve(handle_job, setup=open_scene)   # the worker process
     """
 
+    # The queue's layout, declared once as data: a worker in another language
+    # reads these names, its constants generated from here, never retyped.
     WORKER = "worker.json"
     STOP = "stop"
     LEASE = "lease.json"
     _STATES = ("queued", "running", "done", "failed")
-    _SUFFIX = {
+    #: Each job state's file suffix, ``<id><suffix>``.
+    SUFFIXES = {
         "queued": ".job.json",
         "running": ".running.json",
         "done": ".done.json",
         "failed": ".failed.json",
     }
+    #: The heartbeat's ``state`` values (:meth:`worker`).
+    WORKER_STATES = ("starting", "serving", "stopped")
+    _STARTING, _SERVING, _STOPPED = WORKER_STATES
 
     def __init__(self, root: str):
         self.root = str(root)
@@ -57,7 +63,7 @@ class JobQueue:
 
     # ------------------------------------------------------------------ files
     def _path(self, job_id: str, state: str) -> str:
-        return os.path.join(self.root, job_id + self._SUFFIX[state])
+        return os.path.join(self.root, job_id + self.SUFFIXES[state])
 
     def _read(self, path: str) -> Optional[Dict[str, Any]]:
         # A file being replaced can refuse a reader for a moment on Windows.
@@ -104,6 +110,18 @@ class JobQueue:
             raise RuntimeError(f"Job {job_id} failed: {failed.get('error')}")
         raise LookupError(f"Job {job_id} is {self.status(job_id) or 'unknown'}.")
 
+    def outcome(self, job_id: str) -> Optional[Dict[str, Any]]:
+        """A finished job's whole record with its ``state`` (``"done"``: its
+        ``result``; ``"failed"``: its ``error``), and whatever else the worker
+        wrote beside them; ``None`` while it is unfinished or unknown. For a
+        caller that reports more than :meth:`result` returns (a worker in
+        another language writes its own fields)."""
+        for state in ("done", "failed"):
+            record = self._read(self._path(job_id, state))
+            if record is not None:
+                return dict(record, state=state)
+        return None
+
     def wait(
         self,
         job_id: str,
@@ -137,7 +155,7 @@ class JobQueue:
                 idle_since = None
             elif (
                 worker
-                and worker.get("state") != "stopped"
+                and worker.get("state") != self._STOPPED
                 and self.status(job_id) == "running"
             ):  # it died with this job; one still queued waits for the next worker
                 raise RuntimeError(
@@ -165,7 +183,7 @@ class JobQueue:
         worker = self.worker()
         return bool(
             worker
-            and worker.get("state") != "stopped"
+            and worker.get("state") != self._STOPPED
             and time.time() - float(worker.get("beat", 0)) < stale
         )
 
@@ -276,8 +294,8 @@ class JobQueue:
         if left is not None and left <= 0:  # a caller gone before this worker came up
             self.lease(None)
         for name in sorted(os.listdir(self.root)):  # a dead worker's job
-            if name.endswith(self._SUFFIX["running"]):
-                job_id = name[: -len(self._SUFFIX["running"])]
+            if name.endswith(self.SUFFIXES["running"]):
+                job_id = name[: -len(self.SUFFIXES["running"])]
                 self._write(
                     self._path(job_id, "failed"),
                     {"error": "the worker running it died before it finished"},
@@ -286,7 +304,7 @@ class JobQueue:
         self._state = {
             "pid": os.getpid(),
             "host": socket.gethostname(),
-            "state": "starting",
+            "state": self._STARTING,
             "job": None,
             "started": time.time(),
         }
@@ -306,9 +324,9 @@ class JobQueue:
             except BaseException as error:  # no worker: say so, and why
                 self._done.set()
                 self._thread.join()
-                self._beat(state="stopped", error=repr(error))
+                self._beat(state=self._STOPPED, error=repr(error))
                 raise
-        self._beat(state="serving")
+        self._beat(state=self._SERVING)
 
     def _beat(self, **fields: Any) -> None:
         with self._lock:
@@ -361,7 +379,7 @@ class JobQueue:
         """Stop being the worker: the heartbeat says ``stopped`` and a stop request is spent."""
         self._done.set()
         self._thread.join()
-        self._beat(state="stopped", job=None)
+        self._beat(state=self._STOPPED, job=None)
         try:
             os.remove(os.path.join(self.root, self.STOP))
         except FileNotFoundError:
@@ -373,7 +391,7 @@ class JobQueue:
             names = sorted(os.listdir(self.root))
         except FileNotFoundError:
             return None
-        suffix = self._SUFFIX["queued"]
+        suffix = self.SUFFIXES["queued"]
         for name in names:
             if name.endswith(suffix):
                 return name[: -len(suffix)]

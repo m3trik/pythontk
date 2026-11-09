@@ -17,6 +17,7 @@ Pure-Python, DCC-free.  Covers:
   writer-backed path (park / ordered / land) and the +INF envelope cap.
 """
 
+import json
 import os
 import sys
 import shutil
@@ -1361,24 +1362,141 @@ class TestShotStoreSerialisation(_ShotTest):
         )
 
     def test_to_export_view_shape(self):
-        """One record, one join key: each clip carries its own range, so
-        there is no second take list to disagree with it; an empty
-        description is left out rather than written as "". A clip ships what
-        a reader of the file uses -- never its members or its production
-        section (2026-10-20), which the takes and the scene's store hold."""
+        """One record, one join key: a shot ships what a clip cannot hold --
+        its description and its shipped metadata (``shipped_metadata``) --
+        joined to its take by clip name; its frames are the take's (one take
+        per shot), so the record states none (version 2, 2026-11-05). An
+        empty description or metadata is left out rather than written empty,
+        and a shot never ships its members nor a key not shipped (the tools'
+        bookkeeping, which stays in the scene)."""
         s = _store([])
-        s.define_shot("Intro_Shot", 0, 10, objects=["|grp|hero"], description="d")
-        s.define_shot("Plain", 20, 30)
+        s.set_shipped_metadata(["section", "beats"])
+        s.define_shot(
+            "Intro_Shot",
+            0,
+            10,
+            objects=["|grp|hero"],
+            description="d",
+            metadata={"section": "A", "beats": (1, 2), "object_status": {}},
+        )
+        s.define_shot("Plain", 20, 30, metadata={"step_link": "A"})
         view = s.to_export_view()
         self.assertEqual(list(view), [SceneRecords.SHOTS.key])
         meta = view[SceneRecords.SHOTS.key]
-        self.assertNotIn("takes", meta)
+        # The scene's rate rides too: what a GLB, carrying the record as it
+        # stands, cannot hold (24, the pure store's).
+        self.assertEqual(meta, {"version": 3, "shots": meta["shots"], "fps": 24.0})
         self.assertEqual(
             meta["shots"][0],
-            {"clip": "Intro_Shot", "start": 0, "end": 10, "description": "d"},
+            {
+                "clip": "Intro_Shot",
+                "description": "d",
+                # A tuple ships as JSON spells it.
+                "metadata": {"section": "A", "beats": [1, 2]},
+            },
         )
-        # Nothing to say: no description key.
-        self.assertEqual(meta["shots"][1], {"clip": "Plain", "start": 20, "end": 30})
+        # Nothing to say: the clip alone.
+        self.assertEqual(meta["shots"][1], {"clip": "Plain"})
+
+    def test_a_scene_saved_before_shipped_metadata_ships_the_manifests_fields(self):
+        """A store saved before it declared what ships (no
+        ``shipped_metadata`` in its data: every scene built before
+        2026-11-05) ships the manifest's own fields
+        (``ShotStore.MANIFEST_FIELDS``) -- never nothing until someone builds
+        again -- and still none of the tools' bookkeeping."""
+        s = _store([])
+        s.set_shipped_metadata(["section"])
+        s.define_shot(
+            "A01",
+            0,
+            10,
+            metadata={"section": "A", "object_status": {}, "manifest_built": 1},
+        )
+        data = s.to_dict()
+        del data["shipped_metadata"]
+        old = ShotStore.from_dict(data)
+        self.assertEqual(old.shipped_metadata, ShotStore.MANIFEST_FIELDS)
+        (entry,) = old.to_export_view()[SceneRecords.SHOTS.key]["shots"]
+        self.assertEqual(entry, {"clip": "A01", "metadata": {"section": "A"}})
+
+    def test_a_store_that_ships_no_metadata_says_so_and_ships_none(self):
+        """An explicit empty ``shipped_metadata`` is a choice, kept as made:
+        the shots ship their clips alone."""
+        s = _store([])
+        s.set_shipped_metadata([])
+        s.define_shot("A01", 0, 10, metadata={"section": "A", "step": "A01"})
+        reopened = ShotStore.from_dict(s.to_dict())
+        self.assertEqual(reopened.shipped_metadata, frozenset())
+        (entry,) = reopened.to_export_view()[SceneRecords.SHOTS.key]["shots"]
+        self.assertEqual(entry, {"clip": "A01"})
+
+    def test_a_metadata_value_json_cannot_hold_ships_as_its_string_warned(self):
+        """The metadata dict is the scene's: a shipped value JSON cannot hold
+        is shipped as its string form (the stored record's own rule) and
+        said, naming the shot."""
+        s = _store([])
+        s.set_shipped_metadata(["tags", "ok"])
+        s.define_shot("Odd", 0, 10, metadata={"tags": {"b"}, "ok": 1})
+        with self.assertLogs(level="WARNING") as logged:
+            (entry,) = s.to_export_view()[SceneRecords.SHOTS.key]["shots"]
+        self.assertEqual(entry["metadata"], {"tags": "{'b'}", "ok": 1})
+        self.assertTrue(any("'Odd'" in line for line in logged.output), logged.output)
+
+    def test_no_machine_path_reaches_the_export_view(self):
+        """A behavior's ``source_path`` (the author's audio file) is the
+        authoring store's: the shot keeps it, so the manifest re-keys from it,
+        but the delivery's record carries name, behavior and kind only
+        (``ShotStore.AUTHORING_ONLY_KEYS``) -- an FBX or GLB never ships a
+        machine path."""
+        path = "C:\\Users\\artist\\vo\\vo_01.wav"
+        s = ShotStore()
+        s.define_shot(
+            "Intro",
+            1,
+            100,
+            metadata={
+                "behaviors": [
+                    {
+                        "name": "vo_01",
+                        "behavior": "play",
+                        "kind": "audio",
+                        "source_path": path,
+                    }
+                ]
+            },
+        )
+        view = s.to_export_view()
+        (entry,) = view[SceneRecords.SHOTS.key]["shots"]
+        self.assertEqual(
+            entry["metadata"]["behaviors"],
+            [{"name": "vo_01", "behavior": "play", "kind": "audio"}],
+        )
+        self.assertNotIn("vo_01.wav", json.dumps(view))
+        self.assertNotIn("Users", json.dumps(view))
+        # The authoring store keeps it.
+        (shot,) = s.sorted_shots()
+        self.assertEqual(shot.metadata["behaviors"][0]["source_path"], path)
+
+    def test_the_takes_are_the_stores_one_per_shot_named_by_the_record(self):
+        """``ShotStore.declared_takes``: the export-time take list -- each
+        shot's clip name and range, in timeline order, named by the same
+        pass that names the record's clips."""
+        s = _store([])
+        s.define_shot("Late", 20, 30)
+        s.define_shot("Early", 0, 10)
+        s.clip_name_strategy = "sequence"
+        ShotStore.set_active(s)
+        self.addCleanup(ShotStore.clear_active)
+        self.assertEqual(
+            ShotStore.declared_takes(),
+            [
+                {"name": "010_Early", "start": 0, "end": 10},
+                {"name": "020_Late", "start": 20, "end": 30},
+            ],
+        )
+        (record,) = s.export_records()
+        clips = [e["clip"] for e in record.payload["shots"]]
+        self.assertEqual(clips, [t["name"] for t in ShotStore.declared_takes()])
 
 
 class TestPersistedPayloadPinned(_ShotTest):
@@ -2127,12 +2245,13 @@ class TestShotNames(_ShotTest):
             s.define_shot(name, i * 10, i * 10 + 5)
         self.assertEqual(self._clips(s), names)
         # ... and through the stored JSON record the deliverable carries, and
-        # the take list every reader derives from it.
+        # the take list the export splits.
         (shots_rec,) = s.export_records()
         decoded = shots_rec.spec.decode(shots_rec.text)
         self.assertEqual([r["clip"] for r in decoded["shots"]], names)
-        takes = SceneRecords.declared_takes({SceneRecords.SHOTS.key: decoded}.get)
-        self.assertEqual([t["name"] for t in takes], names)
+        ShotStore.set_active(s)
+        self.addCleanup(ShotStore.clear_active)
+        self.assertEqual([t["name"] for t in ShotStore.declared_takes()], names)
 
     def test_descriptions_travel_verbatim(self):
         """JSON holds any text, so a description is never refused or respelled."""
@@ -2684,19 +2803,11 @@ class TestExportViewRefresh(_ShotTest):
 
     def test_empty_store_export_view_is_the_clearing_payload(self):
         # Pinned literally: this is what a DCC subclass writes onto its carrier
-        # for an empty store, and empty channels are what clear it.  ``fps``
-        # qualifies the frame numbers the clips' ranges are expressed in, so
-        # it rides the envelope even when there are none.
+        # for an empty store, and empty channels are what clear it.
         store = ShotStore([])
         self.assertEqual(
             store.to_export_view(),
-            {
-                SceneRecords.SHOTS.key: {
-                    "version": 1,
-                    "fps": store.scene_fps,
-                    "shots": [],
-                },
-            },
+            {SceneRecords.SHOTS.key: {"version": 3, "shots": [], "fps": 24.0}},
         )
 
     def test_empty_store_still_publishes(self):
@@ -2723,36 +2834,81 @@ class TestExportViewRefresh(_ShotTest):
         self.assertEqual(
             record.payload,
             {
-                "version": 1,
-                # The rate the clip frames below are counted in -- without it
-                # they are unitless to every consumer that did not author the
-                # scene (MeshConvert.apply_glb_animations reads this back out
-                # of the delivered GLB).
-                "fps": store.scene_fps,
-                # Each clip carries its own range: the take list IS the clips
-                # (one record, one join key); no members or section ship.
-                "shots": [{"clip": "Intro", "start": 0, "end": 10, "description": "d"}],
+                "version": 3,
+                # What a clip cannot hold, joined to its take by name: the
+                # take is the timing (one per shot), so no frame or clip mode
+                # ships, and no member -- and the scene's rate, which a GLB
+                # carrying the record cannot hold.
+                "shots": [{"clip": "Intro", "description": "d"}],
+                "fps": 24.0,
             },
         )
         self.assertNotIn("fbx_takes", record.payload)
 
-    def test_export_records_declare_the_context_clip_mode(self):
-        """The producer form: the exporter's Animation Clips decision is an
-        INPUT on the record, never patched on afterwards, and an empty store
-        yields nothing -- which a commit turns into a clear."""
+    def test_export_records_publish_one_form_whatever_the_context(self):
+        """The producer form: there is one form (one take per shot), so no
+        exporter decision rides the record, and an empty store yields
+        nothing -- which a commit turns into a clear."""
         from pythontk.core_utils.engines.scene_export.export_snapshot import (
             ExportContext,
         )
 
         store = ShotStore([])
-        self.assertIsNone(store.export_records(ExportContext(clip_mode="full")))
+        self.assertIsNone(store.export_records(ExportContext()))
         store.snap_whole_frames = False
         store.define_shot("Intro", 0, 10)
-        (record,) = store.export_records(ExportContext(clip_mode="full"))
+        (record,) = store.export_records(ExportContext())
         self.assertEqual(record.spec, SceneRecords.SHOTS)
-        self.assertEqual(record.payload["clip_mode"], "full")
-        self.assertEqual(record.payload["shots"][0]["clip"], "Intro")
-        self.assertNotIn("clip_mode", store.export_records()[0].payload)
+        self.assertEqual(
+            record.payload, {"version": 3, "shots": [{"clip": "Intro"}], "fps": 24.0}
+        )
+        self.assertEqual(store.export_records()[0].payload, record.payload)
+
+    def test_an_animated_scene_with_no_shots_ships_its_rate(self):
+        """The frame rate is the scene's animation's, not its shots': a scene
+        that animates and declares no shot still ships the record --
+        ``{version, shots: [], fps}`` -- so its GLB states its rate and a
+        playblast need not ask. A scene that animates nothing ships none.
+        Added: 2026-11-05."""
+        from pythontk.core_utils.engines.scene_export.export_snapshot import (
+            ExportContext,
+        )
+
+        class _Animated(shot_model.PureShotsHost):
+            def has_animation(self):
+                return True
+
+        animated = ShotStore([], host=_Animated())
+        (record,) = animated.export_records(ExportContext())
+        self.assertEqual(
+            record.payload,
+            {"version": SceneRecords.SHOTS.version, "shots": [], "fps": 24.0},
+        )
+        self.assertEqual(SceneRecords.problems(SceneRecords.SHOTS, record.payload), [])
+        self.assertIsNone(ShotStore([]).export_records(ExportContext()))
+
+    def test_a_write_that_carries_no_animation_ships_no_rate(self):
+        """What THIS write carries decides, not the scene: an animated scene
+        exported with its animation off (``ExportContext.animated`` False,
+        which each DCC's ``FbxUtils.export_context`` reads off its writer)
+        ships no record -- no animation exported, no record. A context that
+        cannot say (``None``: a context built without a writer) leaves it to
+        the scene. Added: 2026-11-05."""
+        from pythontk.core_utils.engines.scene_export.export_snapshot import (
+            ExportContext,
+        )
+
+        class _Animated(shot_model.PureShotsHost):
+            def has_animation(self):
+                return True
+
+        animated = ShotStore([], host=_Animated())
+        self.assertIsNone(animated.export_records(ExportContext(animated=False)))
+        (record,) = animated.export_records(ExportContext(animated=True))
+        self.assertEqual(record.payload["shots"], [])
+        self.assertIsNotNone(animated.export_records(ExportContext()))
+        static = ShotStore([])
+        self.assertIsNone(static.export_records(ExportContext(animated=True)))
 
     def test_refresh_republishes_on_every_call(self):
         # The refresh is the canonical *pre-export* step: it must reproject
@@ -3033,7 +3189,7 @@ class TestStaleShots(_ShotTest):
 
         store = self._gone_and_kept()
         self.assertFalse(store.drop_stale_shots, "kept unless asked")
-        ctx = ExportContext(clip_mode="shots")
+        ctx = ExportContext()
         (record,) = store.export_records(ctx)
         self.assertEqual(
             [e["clip"] for e in record.payload["shots"]], ["Gone", "Kept"]
@@ -3051,7 +3207,7 @@ class TestStaleShots(_ShotTest):
         store = self._gone_and_kept()
         store.drop_stale_shots = True
         store.clip_name_strategy = "sequence"
-        ctx = ExportContext(clip_mode="shots")
+        ctx = ExportContext()
         (record,) = store.export_records(ctx)
         (entry,) = record.payload["shots"]
         # Named BEFORE the stale shot is left out: "sequence" numbers clips

@@ -410,7 +410,10 @@ class TestExportRun(unittest.TestCase):
         tasks = {key: True for key in ExportRun.MODE_KEYS}
         tasks.update({"smart_bake": True, "check_framerate": "ntsc"})
         run, remaining, _notes = ExportRun.from_tasks(tasks)  # "version": refused
-        self.assertEqual(set(remaining), {"smart_bake", "check_framerate"})
+        # The one task a run adds: the take split every FBX write arms.
+        self.assertEqual(
+            set(remaining), {"smart_bake", "check_framerate", "apply_declared_takes"}
+        )
         self.assertEqual(remaining["check_framerate"], "ntsc")
         self.assertTrue(run.texture_write_back)
         self.assertTrue(run.animation_write_back)
@@ -427,7 +430,7 @@ class TestExportRun(unittest.TestCase):
             {"drop_rig_apparatus": True, "output_format": "fbx_glb"}
         )
         self.assertTrue(run.drop_rig_apparatus)
-        self.assertEqual((remaining, notes), ({}, []))
+        self.assertEqual((remaining, notes), ({"apply_declared_takes": True}, []))
         run, _t, notes = ExportRun.from_tasks(
             {"drop_rig_apparatus": True, "output_format": "usd"}
         )
@@ -465,7 +468,9 @@ class TestExportRun(unittest.TestCase):
             (run.secondary_max_size, run.uastc_rdo, run.glb_key_tolerance),
             (2048, 1.0, 1e-4),
         )
-        self.assertEqual(set(remaining), {"smart_bake", "optimize_keys"})
+        self.assertEqual(
+            set(remaining), {"smart_bake", "optimize_keys", "apply_declared_takes"}
+        )
         off = ExportRun.from_tasks(
             {"secondary_max_size": 0, "uastc_rdo": None, "glb_key_tolerance": "x"}
         )[0]
@@ -526,7 +531,7 @@ class TestExportRun(unittest.TestCase):
                 **hygiene,
             }
         )
-        self.assertEqual(set(remaining), {"smart_bake"})
+        self.assertEqual(set(remaining), {"smart_bake", "apply_declared_takes"})
         self.assertEqual(run.glb_key_tolerance, 1e-4, "read before the pop")
         self.assertFalse(run.optimize_keys_level, "SmartBake's own pass rides it")
         self.assertEqual([lvl for lvl, _ in notes], ["info"])
@@ -536,7 +541,11 @@ class TestExportRun(unittest.TestCase):
         run, remaining, notes = ExportRun.from_tasks(
             {"output_format": "fbx_glb", "glb_key_tolerance": 1e-4, **hygiene}
         )
-        self.assertEqual(set(remaining), set(hygiene), "the FBX ships: all kept")
+        self.assertEqual(
+            set(remaining),
+            set(hygiene) | {"apply_declared_takes"},
+            "the FBX ships: all kept",
+        )
         self.assertEqual(run.optimize_keys_level, "extremes")
         self.assertEqual(notes, [])
         _run, remaining, notes = ExportRun.from_tasks(
@@ -544,7 +553,7 @@ class TestExportRun(unittest.TestCase):
         )
         self.assertEqual(
             (set(remaining), notes),
-            ({"smart_bake"}, []),
+            ({"smart_bake", "apply_declared_takes"}, []),
             "nothing to skip, nothing said",
         )
 
@@ -629,32 +638,52 @@ class TestExportRun(unittest.TestCase):
         )
         self.assertEqual(run.optimize_keys_level, "extremes")
 
-    def test_the_clip_mode_resolver_is_one_copy_for_both_exporters(self):
-        """A pre-combo preset's boolean still names the deliverable it meant;
-        an unknown mode is refused, named."""
-        self.assertEqual(ExportRun.clip_mode(True), "both")
-        self.assertEqual(ExportRun.clip_mode(False), "full")
-        self.assertEqual(ExportRun.clip_mode(None), "full")
-        self.assertEqual(ExportRun.clip_mode(" Shots "), "shots")
-        with self.assertRaises(ValueError):
-            ExportRun.clip_mode("everything")
+    def test_every_fbx_write_splits_one_take_per_shot(self):
+        """One form (2026-11-05): every run that writes an FBX arms the take
+        split -- a caller that names no task included -- and a USD run, which
+        writes no take, arms none."""
+        for output_format in ("fbx", "fbx_glb", "glb"):
+            with self.subTest(output_format):
+                run, tasks, notes = ExportRun.from_tasks(
+                    {"output_format": output_format}
+                )
+                self.assertIs(tasks.get("apply_declared_takes"), True)
+                self.assertTrue(run.splits_takes)
+                self.assertEqual(notes, [])
+        run, tasks, notes = ExportRun.from_tasks(
+            {"output_format": "usd", "apply_declared_takes": True}
+        )
+        self.assertNotIn("apply_declared_takes", tasks)
+        self.assertFalse(run.splits_takes)
+        self.assertFalse(ExportRun().with_tasks({}).splits_takes)
 
-    def test_splits_takes_is_a_shot_bearing_clips_row(self):
-        run = ExportRun.from_tasks({})[0]
-        for value, expected in (
-            ("shots", True),
-            ("both", True),
-            (True, True),
-            ("full", False),
-            (False, False),
-            ("everything", False),  # the task raises on it, naming it
+    def test_a_retired_animation_clips_mode_is_ignored_and_said(self):
+        """A preset or headless caller still naming a mode (full / shots /
+        both, or the boolean a pre-combo preset stored) gets one take per
+        shot whatever it names, said once; the retired names answer through
+        the moved-names table."""
+        import pythontk
+
+        for value in ("full", "shots", "both", False, "everything"):
+            with self.subTest(value=value):
+                run, tasks, notes = ExportRun.from_tasks(
+                    {"apply_declared_takes": value}
+                )
+                self.assertIs(tasks["apply_declared_takes"], True)
+                self.assertTrue(run.splits_takes)
+                ((level, message),) = notes
+                self.assertEqual(level, "info")
+                self.assertIn("one take per shot", message)
+        for name in (
+            "ExportProfile.ANIMATION_CLIPS_OPTIONS",
+            "ExportRun.clip_mode",
+            "ExportRun.animation_clips_mode",
+            "ExportContext.clip_mode",
+            "ExportContext.clip_span",
         ):
-            self.assertIs(
-                run.with_tasks({"apply_declared_takes": value}).splits_takes,
-                expected,
-                value,
-            )
-        self.assertFalse(run.with_tasks({}).splits_takes, "the row off splits nothing")
+            self.assertIn(name, pythontk.MOVED_NAMES)
+        self.assertFalse(hasattr(ExportProfile, "ANIMATION_CLIPS_OPTIONS"))
+        self.assertFalse(hasattr(ExportRun, "clip_mode"))
 
     def test_the_run_is_a_frozen_value_object(self):
         run = ExportRun.from_tasks({"output_format": "glb"})[0]
@@ -1114,8 +1143,8 @@ class TestRetiredPresetRows(unittest.TestCase):
     def test_the_retired_keys_are_the_rows_the_notes_speak_for(self):
         """What a panel's saved state drops once said (2026-10-19): a check
         whose fix the panel offers and whose own row it does not, the Baked
-        Reflections row, and the writability check -- each only while the
-        panel does not build it."""
+        Reflections row, the Animation Clips row (2026-11-05) and the
+        writability check -- each only while the panel does not build it."""
         self.assertEqual(
             ExportProfile.retired_row_keys(self.FIXES, {}),
             (
@@ -1123,15 +1152,37 @@ class TestRetiredPresetRows(unittest.TestCase):
                 "check_floating_point_keys",
                 "check_untied_keyframes",
                 "baked_reflections",
+                "animation_clips",
                 "check_output_writable",
             ),
         )
         offered = {"check_untied_keyframes": {}, "check_output_writable": {}}
         self.assertEqual(
             ExportProfile.retired_row_keys(
-                {**self.FIXES, "baked_reflections": {}}, offered
+                {**self.FIXES, "baked_reflections": {}, "apply_declared_takes": {}},
+                offered,
             ),
             ("check_mangled_names", "check_floating_point_keys"),
+        )
+
+    def test_a_saved_animation_clips_mode_is_said_once_and_ignored(self):
+        """A preset or panel state an earlier panel saved carries the retired
+        Animation Clips row: it loads with the key ignored, and the load says
+        what it no longer does -- nothing while the panel still builds it."""
+        notes = ExportProfile.retired_row_notes(
+            {"animation_clips": "Shots + Full Sequence"}, self.FIXES, {}
+        )
+        ((level, message),) = notes
+        self.assertEqual(level, "info")
+        self.assertIn("Animation Clips to Shots + Full Sequence", message)
+        self.assertIn("one take per shot", message)
+        self.assertEqual(
+            ExportProfile.retired_row_notes(
+                {"animation_clips": "Shots Only"},
+                {**self.FIXES, "apply_declared_takes": {}},
+                {},
+            ),
+            [],
         )
 
 
@@ -1212,9 +1263,6 @@ class TestRunTables(unittest.TestCase):
         self.assertEqual(rates[0], ("OFF", None))
         self.assertTrue(all("fps" in label for label, _ in rates[1:]), rates)
         self.assertEqual(list(ExportProfile.BAKE_RANGE_OPTIONS.values())[0], None)
-        self.assertEqual(
-            list(ExportProfile.ANIMATION_CLIPS_OPTIONS.values())[-1], "both"
-        )
 
 
 if __name__ == "__main__":

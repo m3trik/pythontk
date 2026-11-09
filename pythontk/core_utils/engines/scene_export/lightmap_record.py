@@ -1,33 +1,42 @@
 # !/usr/bin/python
 # coding=utf-8
-"""The ``lightmaps`` record and its GLB block: what a bake publishes, declared once.
+"""The ``lightmaps`` record: what a bake publishes, declared once.
 
 Both hosts' bakers publish the record (mayatk's and blendertk's
 ``LightmapRecords``) and every reader takes it (the GLB build, unitytk's
-importer). :meth:`LightmapRecord.payload` is what a producer publishes; a
-reader reads the current schema alone (``SceneRecords.LIGHTMAPS.is_current``).
+importer, the WebXR viewer). :meth:`LightmapRecord.payload` is what a
+producer publishes; a reader reads the current schema alone
+(``SceneRecords.LIGHTMAPS.is_current``).
 
-Both shapes are typed :class:`~pythontk.SchemaSpec` declarations, so this one
-definition validates a payload (``LightmapRecord.validate(payload)``),
-publishes its JSON Schema, and is what ``m3trik/scripts/sync_scene_records.py``
-generates the other languages' types from:
-
-- :class:`LightmapRecord` -- the record on a deliverable's ``data_export``
-  carrier: each baked object's lightmap, the reflection probe the bake
-  captured and the lights it was baked from, every length at one
-  ``unit_scale``.
-- :class:`LightmapsBlock` -- the ``extras.lightmaps`` block a GLB carries
-  (``MeshConvert.lightmaps_block``): each lightmapped material's intensity,
-  the texture slot its map rides in, and the probe embedded in the file's
-  buffer, in metres.
+:class:`LightmapRecord` is a typed :class:`~pythontk.SchemaSpec` declaration,
+so this one definition validates a payload (``LightmapRecord.validate(
+payload)``), publishes its JSON Schema, and is what
+``m3trik/scripts/sync_scene_records.py`` generates the other languages' types
+from: each baked object's lightmap (read through the second UV set, which no
+entry names: :attr:`LightmapRecord.UV_SET`), the reflection probe the bake
+captured -- the bake's lights drawn into it, and complete copies of it for
+groups of receivers -- and the lights it was baked from, every length at one
+``unit_scale``. One layout, two containers: an FBX carries it on its
+``data_export`` carrier, a GLB as it stands in its root ``extras``
+(``RecordSpec.glb_verbatim``), the files it names riding each as media
+(``SceneRecords.GLB_MEDIA``).
 
 Change a field together with its producers, and bump the version it is
-declared under (``SceneRecords.LIGHTMAPS.version``; the block's
-``SceneRecords.LIGHTMAPS.glb.version``).
+declared under (``SceneRecords.LIGHTMAPS.version``).
 """
 
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Tuple,
+)
 
 from pythontk.core_utils.engines.scene_export.scene_records import SceneRecords
 from pythontk.core_utils.schema_spec import SchemaSpec
@@ -72,25 +81,22 @@ class LightmapNode(SchemaSpec):
 
 @dataclass
 class LightmapHighlight(SchemaSpec):
-    """A copy of the probe with the bake's lights drawn in, for one group of
-    receivers: each light where box projection shows it true for them."""
+    """A copy of the probe for one group of receivers (the record's assembly
+    says how it is read)."""
 
     TYPED = True
 
     map: str = _field(
         help=(
-            "The copy's file name, no folder: a Radiance (.hdr) layer in the "
-            "probe's layout and units, added to the probe (box-filtered down to "
-            "the layer's size) and prefiltered as the probe is."
+            "The copy's file name, no folder: an equirectangular linear HDR "
+            "(top row +Y) in the probe's layout and units, at its own size, a "
+            "whole fraction of the probe's, the deliverable carries under that "
+            "name."
         ),
         required=True,
     )
     objects: List[LightmapNode] = _field(
-        help=(
-            "The mesh nodes that reflect the probe plus this layer in the "
-            "probe's place, box-projected from its position and box; a node is "
-            "under one copy at most."
-        ),
+        help="The mesh nodes that read this copy.",
         required=True,
         nested=[LightmapNode],
         default_factory=list,
@@ -128,11 +134,13 @@ class LightmapProbe(SchemaSpec):
     )
     highlights: List[LightmapHighlight] = _field(
         help=(
-            "Copies of the probe with the bake's lights drawn in, one per group "
-            "of receivers -- a reader that uses them lights none of 'lights', or "
-            "the highlights count twice; absent when the export drew none."
+            "Copies of the probe, one per group of receivers; absent when the "
+            "export drew none."
         ),
         nested=[LightmapHighlight],
+        # An extension: a reader that picks reflection probes by volume, not
+        # per node, reads the probe alone, which holds the highlights.
+        readers=("glb",),
     )
 
 
@@ -157,11 +165,6 @@ class LightmapEntry(SchemaSpec):
         ),
         required=True,
     )
-    uvIndex: int = _field(
-        help="The UV set the map is read through, 0-based: 1 is the second set.",
-        required=True,
-        default=1,
-    )
     scaleOffset: Tuple[float, float, float, float] = _field(
         help=(
             "Its rect in the map, [scaleX, scaleY, offsetX, offsetY]: read at "
@@ -184,9 +187,8 @@ class LightmapEntry(SchemaSpec):
 
 @dataclass
 class LightmapBakedLight(SchemaSpec):
-    """A light the maps were baked from, for its highlight alone: its diffuse
-    light is already in the maps, so a reader that lights it lights its
-    specular only, or the scene is lit twice."""
+    """A light the maps were baked from (the record's assembly says how a
+    reader lights it)."""
 
     TYPED = True
     #: The kinds of light a record carries (mayatk ``LightUtils.SPECULAR_KINDS``).
@@ -259,8 +261,8 @@ class LightmapRecord(SchemaSpec):
     unit_scale: float = _field(
         help=(
             "Metres per unit of every length in the record -- the probe's "
-            "position and box, each light's position, size and radius; present "
-            "exactly when 'probe' or 'lights' is."
+            "position and box, each baked light's position, size and radius; "
+            "present exactly when the record holds a length."
         ),
     )
     objects: List[LightmapEntry] = _field(
@@ -280,12 +282,124 @@ class LightmapRecord(SchemaSpec):
         nested=LightmapProbe,
     )
     lights: List[LightmapBakedLight] = _field(
-        help=(
-            "The lights the maps were baked from, for their highlights alone; "
-            "absent when none ships."
-        ),
+        help="The lights the maps were baked from; absent when none ships.",
         nested=[LightmapBakedLight],
+        # An extension: a reader with no light that adds its specular alone
+        # reads none of them.
+        readers=("glb",),
     )
+
+    #: The UV set every map is read through, 0-based: the second, where an
+    #: engine reads a lightmap (glTF's TEXCOORD_1). The record states it
+    #: once, in its contract; no entry names it.
+    UV_SET = 1
+
+    class UvSetRefused(ValueError):
+        """A record that would read some object's map through the wrong UV
+        set: its producer publishes none (:meth:`check_uv_sets`)."""
+
+    @classmethod
+    def check_uv_sets(cls, placed: Iterable[Sequence[Any]], fix: str) -> None:
+        """Refuse a record some of whose maps sit off the second UV set.
+
+        The one refusal both hosts' producers raise: every map is read
+        through :attr:`UV_SET`, so an object whose lightmap UVs are another
+        set -- or whose committed set is gone, renamed or removed since the
+        bake, leaving the second slot to whatever set is there -- would be
+        lit through the wrong UVs: the record is not published, and the
+        message names each object and the fix.
+
+        Parameters:
+            placed: ``(object name, its committed lightmap UV set's name,
+                that set's index)`` for each baked object whose marker names
+                a set; the index ``None`` where the object no longer has it.
+            fix: What the host's user does to put a set in the second slot.
+
+        Raises:
+            UvSetRefused: Some set's index is not :attr:`UV_SET`.
+        """
+        off = [
+            (
+                f"{name} ({uv_set!r} at index {index})"
+                if index is not None
+                else f"{name} ({uv_set!r}, which it no longer has)"
+            )
+            for name, uv_set, index in placed
+            if index != cls.UV_SET
+        ]
+        if off:
+            raise cls.UvSetRefused(
+                "Lightmaps not published: every map is read through the "
+                f"second UV set (index {cls.UV_SET}), where an engine reads a "
+                f"lightmap (glTF's TEXCOORD_1), and {len(off)} object(s) "
+                f"hold no lightmap set there: {', '.join(off)}. {fix}"
+            )
+
+    @classmethod
+    def unless_refused(
+        cls,
+        build: Callable[[], Any],
+        logger: Any,
+        note: Optional[Callable[[str], Any]] = None,
+    ) -> Any:
+        """*build()*'s record, or ``None`` when it is refused
+        (:class:`UvSetRefused`): no write carries a record that reads a map
+        through the wrong UVs, and the work that published goes on.
+
+        Parameters:
+            build: Builds the record; anything else it raises propagates.
+            logger: Where an authoring-time publish (a bake, a revert) says
+                the refusal, at warning.
+            note: Takes the refusal's sentence instead -- an export's
+                producer passes ``ExportContext.note``: the export's report
+                says it, and the snapshot clears the record (a raise was a
+                failed producer, whose stale stored record shipped).
+        """
+        try:
+            return build()
+        except cls.UvSetRefused as refusal:
+            if note is not None:
+                note(str(refusal))
+            else:
+                logger.warning("%s", refusal)
+            return None
+
+    @classmethod
+    def withheld(
+        cls,
+        ctx: Any,
+        store: Any,
+        placed: Callable[[], Iterable[Sequence[Any]]],
+        fix: str,
+    ) -> Dict[str, str]:
+        """``{"lightmaps": why}`` when the write of *ctx* ships the record
+        *store* holds as it stands and that copy is refused now, else ``{}``
+        -- what both hosts' ``LightmapRecords.withheld`` answer for
+        ``ExportContext.withheld``.
+
+        A hand-off ships the authored record as stored
+        (``ExportContext.refreshes``), and a lightmap set moved, renamed or
+        removed since the bake published leaves that copy reading a map
+        through the wrong UVs: refused as its producer refuses one
+        (:meth:`check_uv_sets`), the write ships no lightmaps and the scene
+        keeps its record. A write whose producer runs refuses for itself
+        (:meth:`unless_refused`).
+
+        Parameters:
+            ctx: The write's ``ExportContext``.
+            store: The scene's store.
+            placed: The host's :meth:`check_uv_sets` placements for what the
+                write ships, asked only when a current record is stored.
+            fix: The host's fix, as its producer states it.
+        """
+        spec = SceneRecords.LIGHTMAPS
+        if ctx.refreshes(spec) or not spec.is_current(spec.load(store)):
+            return {}
+        try:
+            cls.check_uv_sets(placed(), fix)
+        except cls.UvSetRefused as refusal:
+            return {spec.key: str(refusal)}
+        return {}
 
     @classmethod
     def payload(
@@ -299,7 +413,8 @@ class LightmapRecord(SchemaSpec):
 
         Parameters:
             objects: Each baked object's entry (``name``, ``hierarchy``,
-                ``map``, ``uvIndex``, ``scaleOffset``).
+                ``map``, ``scaleOffset``), its map read through the second UV
+                set (:meth:`check_uv_sets` refuses one that is not).
             probe: The bake's reflection probe (``map``, ``position``, ``box``
                 as ``{min, max}`` or the host record's ``[min, max]``,
                 ``highlights``), in the unit *unit_scale* measures.
@@ -383,121 +498,3 @@ class LightmapRecord(SchemaSpec):
             return [float(c) + 0.0 for c in value]
         except (TypeError, ValueError):
             return None
-
-
-# --------------------------------------------------------------- the GLB block
-@dataclass
-class LightmapsBlockMaterial(SchemaSpec):
-    """One lightmapped material: what its lightmap's texels are multiplied by."""
-
-    TYPED = True
-
-    intensity: float = _field(
-        help=(
-            "The scalar its lightmap's decoded linear texels are multiplied by, "
-            "restoring the bake's range."
-        ),
-        required=True,
-    )
-
-
-@dataclass
-class LightmapsBlockHighlight(SchemaSpec):
-    """A highlight copy of the embedded probe: a layer with the bake's lights
-    drawn in, for the materials it lists."""
-
-    TYPED = True
-
-    bufferView: int = _field(
-        help=(
-            "The bufferView holding the layer's Radiance (RGBE) bytes: radiance "
-            "in the probe's layout and units, added to the probe (box-filtered "
-            "down to the layer's size) and prefiltered as the probe is."
-        ),
-        required=True,
-    )
-    materials: List[str] = _field(
-        help=(
-            "The materials, by glTF name, whose surfaces reflect the probe plus "
-            "this layer in the probe's place."
-        ),
-        required=True,
-        default_factory=list,
-    )
-
-
-@dataclass
-class LightmapsBlockProbe(SchemaSpec):
-    """The reflection probe the bake captured, embedded in the file: an
-    equirectangular Radiance HDR in one of its bufferViews, placed in metres."""
-
-    TYPED = True
-
-    bufferView: int = _field(
-        help="The bufferView holding the probe image's Radiance (RGBE) bytes.",
-        required=True,
-    )
-    position: _Vec3 = _field(
-        help="Where it was captured, in metres, in the scene's world space (glTF axes, +Y up).",
-        required=True,
-    )
-    box: Optional[LightmapBox] = _field(
-        help=(
-            "{min, max}: the box its reflections are projected onto, in metres in "
-            "the same space; null for an open scene, whose probe is read as "
-            "distant."
-        ),
-        required=True,
-    )
-    highlights: List[LightmapsBlockHighlight] = _field(
-        help=(
-            "Copies of the probe with the bake's lights drawn in, one per group "
-            "of receivers; absent when the bake shipped no lights or none was "
-            "drawn."
-        ),
-        nested=[LightmapsBlockHighlight],
-    )
-
-
-@dataclass
-class LightmapsBlock(SchemaSpec):
-    """The ``extras.lightmaps`` block: the bake's lightmaps bound to the file's
-    materials, and the reflection probe embedded in its buffer."""
-
-    TYPED = True
-    #: The texture slots a lightmap rides (blendertk ``LightmapWebExport.CARRIERS``).
-    CARRIERS = ("occlusion", "emissive")
-
-    version: int = _field(
-        help=(
-            "The block's schema version (SceneRecords.LIGHTMAPS.glb.version); a "
-            "reader reads the version it knows and refuses any other."
-        ),
-        required=True,
-    )
-    carrier: str = _field(
-        help=(
-            "The texture slot each lightmapped material carries its lightmap in, "
-            "8-bit sRGB decoded to linear, read through that texture's own "
-            "texCoord: 'occlusion' (occlusionTexture) or 'emissive' "
-            "(emissiveTexture)."
-        ),
-        required=True,
-        choices=CARRIERS,
-    )
-    materials: Dict[str, LightmapsBlockMaterial] = _field(
-        help=(
-            "{glTF material name: {intensity}}: each material carrying a "
-            "lightmap -- the surface's whole diffuse light, direct and indirect, "
-            "not ambient occlusion -- and the scalar its texels are multiplied by."
-        ),
-        required=True,
-        default_factory=dict,
-    )
-    probe: LightmapsBlockProbe = _field(
-        help=(
-            "The reflection probe the bake captured, the scene's environment; "
-            "absent when it captured none or its image was not found."
-        ),
-        nested=LightmapsBlockProbe,
-    )

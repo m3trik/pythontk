@@ -49,7 +49,8 @@ class ShotStoreConformance:
         '"manifest_tags": {"": {"A01": "teal"}}, '
         '"manifest_options": {"": {"template": "default", "values": {"skip": 2}}}, '
         '"auto_publish_export": true, "clip_name_strategy": "name", '
-        '"drop_stale_shots": true, "edit_ledger": {"version": 2, '
+        '"drop_stale_shots": true, "shipped_metadata": ["step"], '
+        '"edit_ledger": {"version": 2, '
         '"steps": {"crv_tx": [[48.0, "linear", "step", 1.5]]}, '
         '"keys": {"crv_tx": [[58.0, 1, "start"]]}, '
         '"authored": {"crv_ty": [[20.0, 0, "fade_in", "pin_cube", ""]]}}, '
@@ -99,6 +100,7 @@ class ShotStoreConformance:
         store.auto_publish_export = True
         store.clip_name_strategy = "name"
         store.drop_stale_shots = True
+        store.shipped_metadata = frozenset({"step"})
         store.edit_ledger.record_step("crv_tx", 48.0, "linear", "step", value=1.5)
         store.edit_ledger.record_key("crv_tx", 58.0, owner=s2.shot_id, edge="start")
         store.edit_ledger.record_authored("crv_ty", 20.0, s1.shot_id, "fade_in", a)

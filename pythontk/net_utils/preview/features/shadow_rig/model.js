@@ -1,10 +1,11 @@
 /*
-  pythontk's `ShadowProjection.model`, `ShadowModel.placement` and
-  `ShadowProjection.far_point` (geo_utils/shadow_projection.py), ported term
-  for term for up = Y: where a shadow plane goes, from the source and the
-  target's bounding cylinder. Plain arrays in and out, no three.js -- the
-  shadow_rig feature places its planes with it every frame. Pinned against the
-  reference by `ptk.Conformance.cases("shadow_projection")` in
+  pythontk's `ShadowProjection.model`, `ShadowModel.placement`,
+  `ShadowProjection.fade` and `ShadowProjection.far_point`
+  (geo_utils/shadow_projection.py), ported term for term for up = Y: where a
+  shadow plane goes, from the source and the target's bounding cylinder, and
+  how strongly it draws. Plain arrays in and out, no three.js -- the
+  shadow_rig feature places and fades its planes with it every frame. Pinned
+  against the reference by `ptk.Conformance.cases("shadow_projection")` in
   test_shadow_web.py: change a constant or a term there, and here, together.
 */
 
@@ -12,6 +13,9 @@
 export const OVERHEAD_BEARING = [0, 1];
 export const FAR_FACTOR = 1.0e6;
 export const EPS = 1.0e-6;
+//: ShadowProjection.DEFAULT_FALLOFF_POWER, verbatim: the fade's exponent on
+//: the stretch where a plane states none.
+export const DEFAULT_FALLOFF_POWER = 1.2;
 
 // ShadowProjection.model for up = Y, term for term: the bounding cylinder's
 // base and top disks project through the light at k = (L - G) / (L - h); the
@@ -68,6 +72,23 @@ export function placement(model, fractions) {
     along: uHi - uLo,
     across: wHi - wLo,
   };
+}
+
+// ShadowProjection.fade for up = Y, term for term, off the model `shadowModel`
+// made of the same contact and light (a sun's far point): the shadow lightens
+// as it stretches past its footprint, ramps in over *sourceRamp* metres (the
+// plane's `source_ramp` times the record's unit_scale: the ramp its producer
+// previews) as the source rises over the contact, and fades out as the
+// target rises *fadeHeight* off the ground; every length in metres. The
+// record holds the ramp over 0; the 1e-4 floor guards a file that does not.
+// 0 to 1: a plane draws at its shadow times this.
+export function shadowFade(model, contact, light, ground, radius, intensity, falloffPower, fadeHeight, sourceRamp) {
+  const length = model.reach + model.base + model.top;
+  const stretch = Math.max(1, length / Math.max(1e-4, 2 * radius));
+  const dist = intensity / Math.max(0.001, stretch ** falloffPower);
+  const source = Math.min(Math.max((light[1] - contact[1]) / Math.max(1e-4, sourceRamp), 0), 1);
+  const rise = Math.min(Math.max(1 - Math.max(0, contact[1] - ground) / Math.max(0.001, fadeHeight), 0), 1);
+  return Math.min(Math.max(dist * source * rise, 0), 1);
 }
 
 // ShadowProjection.far_point: a directional source written as a point a long

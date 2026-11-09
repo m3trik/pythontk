@@ -88,7 +88,7 @@ Ownership, because it decides where a fix goes:
 | `pythontk.PreviewDeliverer` | the build's dials (container, scratch, release) and the publish |
 | `pythontk.PreviewBridge` | the glTF-appropriate export defaults and the `push()` / `publish_file()` / `url` / `share()` / `stop()` surface |
 | `pythontk.MeshConvert` | every GLB edit, the handoff block's schema, the materials record's application, the lightmap binding, **the published rendering policy** |
-| `net_utils/preview/viewer.html` + `kernel/*.js` | the page (markup) and the viewer it imports: rebinding the carrier slot to a real `lightMap`, framing, headset locomotion, and **spending** the rendering policy it reads out of the file |
+| `net_utils/preview/viewer.html` + `kernel/*.js` | the page (markup) and the viewer it imports: binding each lightmap the `lightmaps` record names on its object, framing, headset locomotion, and **spending** the rendering policy it reads out of the file |
 | `net_utils/preview/features/` | optional behaviour the page gains by activation, never by being edited |
 | `mayatk` / `blendertk` | reading the host's selection, exporting the FBX inside the export bracket, reading scene state |
 | extapps `webxr_preview` | the WebXR Preview panel and its Slots class: standalone it drives a `FilePreviewBridge`; a DCC that opens it injects its `WebXrPreview` as the engine, adding that host's scopes |
@@ -244,22 +244,28 @@ Maya
   tenths below 100 m, whole metres past that. It is the model's own, however a script has turned
   it.
 - **Lightmapped** counts objects, never materials, and never as a bare fraction. It once read
-  "51/57 lightmapped materials": a fraction of three.js material *instances* -- the lightmap pass
-  gives every baked object its own copy of its material (`<name>~lm<N>`), and the loader clones one
-  per vertex-colour or tangent variant -- over a denominator that included every material nobody
-  meant to bake. Right numbers, misleading sentence. How much of the model its bake lights is the
+  "51/57 lightmapped materials": a fraction of three.js material *instances* -- the lightmap bind
+  gives objects that light differently their own copy of a material they share, and the loader
+  clones one per vertex-colour or tangent variant -- over a denominator that included every
+  material nobody meant to bake. Right numbers, misleading sentence. How much of the model its bake lights is the
   fact the lighting policy turns on (see *Are they combined with the viewer's default lighting?*),
   counted in the unit the bake is made in and the panel's push report uses.
-- **Animated materials** are the materials a fade or highlight track drives. A track that is not
-  being driven looks like an object that simply pops, so the count is how you know they are.
+- **Animated materials** are the materials a fade, highlight or animated-emission track drives. A
+  track that is not being driven looks like an object that simply pops, so the count is how you
+  know they are. A faded material is **opaque at rest**: the file keeps its authored alpha mode,
+  and the page blends it only for the frames its alpha is below 1 (writing no depth then), back to
+  opaque -- sorted, writing depth -- at full opacity; at 0 its node is hidden by the file's own
+  stepped scale. A **highlight over an emissive map** keeps the map in the file: for the spans the
+  channel states its highlight is above 0 (`extras.render_effects.active`) the page sets the map,
+  and its strength, aside and the glow is the highlight itself; at rest the map is back
+  (`render_effects` v2's contract, for every reader).
 - **The warning line** is what the load found wrong, because the render cannot show it. A finished
-  file states its bake in its `lightmaps` block alone -- an object is baked when it wears a material
-  the block names (the applier gives each baked object its own copy) -- so the page compares what
-  the bake meant to light with what bound: a **baked object with no lightmap** renders unlit,
-  exactly like one never baked; a **lightmapped object without the UV set its bake is sampled on**
-  (the bound map's own `texCoord`) reads one texel of its map. A lightmap carrier the page does not
-  read, a material the block names that the model lacks, and a lightmapped material that arrived
-  without its map are said the same way. The first issue is on the HUD; every one, with every name,
+  file states its bake in its `lightmaps` record alone -- an object is baked when an entry resolves
+  to it and its map rides the file -- so the page compares what the bake meant to light with what
+  bound: a **baked object with no lightmap** (its map unreadable) renders unlit, exactly like one
+  never baked; a **lightmapped object without its second UV set** reads one texel of its map. A
+  baked object nothing tells apart from a namesake (left unlit, never guessed) and a lightmap the
+  file carries but the page cannot read are said the same way. The first issue is on the HUD; every one, with every name,
   goes to the console.
 
 The same measurement is `viewer.specs` for a script (and the `specs` of the `'load'` event).
@@ -407,8 +413,9 @@ start before you push, and it carries the field of view the desktop view opens w
 
 Export defaults (`PreviewBridge.params_defaults`): materials on, **textures embedded** (the browser
 can only fetch what the server hosts, so a path-referencing FBX previews with every map missing),
-animation off, and **triangulation off** — Maya's FBX exporter refuses triangulation
-combined with smoothing groups, and the converter triangulates on the way to glTF anyway.
+animation off (the scene's render effects still play, see below), and **triangulation off** —
+Maya's FBX exporter refuses triangulation combined with smoothing groups, and the converter
+triangulates on the way to glTF anyway.
 
 ## Sharing a link
 
@@ -686,6 +693,18 @@ the channels the overlay replaced under `data_export` (`[]` when none landed -- 
 source, or a bridge that predates the knob and swept it into the export bag), and the panel reads
 that before telling anyone the page shows the effect.
 
+A push with animation off (the default) states the scene's own effects the same way. Such an FBX
+has no take, so its curve proxies carry no curve; the push asks the host for the curves they would
+carry (`RenderEffects.effect_curves`, in frames) and `MeshConvert.effect_preview_curves` states
+them under the overlay's preview key, in seconds from the frame an animated write opens its clip on
+(Maya: the first key the push ships; Blender: the start of the bake range). The record is the
+file's, untouched, so the colours are the scene's; the effects play on the file's one clip. A scene
+with shots gets one clip per take an animated push would split (`PreviewBridge._declared_takes`),
+named as the take, each curve in seconds from its shot's start and pinned to both of its ends, so
+the page offers the shots, their sequence and their descriptions as it does for an animated push. A
+push with animation on carries them in its takes, and a panel's own effect overlay stands as given
+(`PreviewBridge._with_scene_effects`).
+
 The three stages have three failure policies, and they are the exporters' policies: the downsize is
 a speed win the texture ceiling re-applies anyway, so its failure is a warning; a failed conversion
 or texture pass raises and the push reports it, rather than publishing a GLB that quietly skipped
@@ -746,9 +765,10 @@ whose `value` a script can set without firing `onInput`; hidden until shown, wri
 the Environment menu's switch, and `maps`, the environment maps held in GPU memory, its
 highlight copies among them),
 `lighting` (the bake on screen, swapped without a reload: `relight({maps, images, probe, highlights})`
-puts half-float lightmaps -- `maps` names each material's image -- and a probe in place of the
-file's, with `highlights` the layers its highlight copies are built from (see *Highlights: the
-bake's lights, drawn into the probe*); `restore()` brings the file's back, and
+puts half-float lightmaps -- `maps` names each lightmap's image by the record's file name for it
+(a material's name still answers) -- and a probe in place of the file's, with `highlights` its
+copies: complete ones for the nodes each names (`objects`), or layers added to the probe for the
+materials each names (see *Highlights: the bake's lights, drawn into the probe*); `restore()` brings the file's back, and
 `renderLinear({camera, width, height})` reads a view as linear light before the tone map; the
 `look_capture` feature and `ptk.LookCapture` drive it to hold a lighting prediction to what the
 viewer actually shows),
@@ -787,8 +807,11 @@ prompt. The transport is on it too: `mixer`, `playClip(name)`, `playing` / `setP
 `poseAt(seconds)`,
 `shotAt(seconds)`, `descriptionAt()` — the shot record's own note for whatever the model is posed
 at — and `clip`, the selection as
-`{name, duration, fps, startFrame, endFrame, sequence}`, which is what lets a script address a clip
-in the AUTHORING frames the DCC and the picker quote rather than in seconds. `setRendering(on)`
+`{name, duration, fps, sequence}`: `duration` in seconds, glTF's unit, and `fps` the scene's frame
+rate as the file's `animation` record states it -- 0 for a file that states none (an older or a
+foreign GLB), where the page guesses none (a rate read off a clip's key spacing is wrong wherever key
+reduction left a gap) and a script that steps frames brings its own, as the playblast then asks for.
+No frame numbers: a shot is named, and need not start at any frame. `setRendering(on)`
 stops (`false`) or restarts the frame loop: a page driven headless sleeps between its requests,
 because an idle viewer still draws every frame -- in software GL, several cores -- and explicit
 renders (`lighting.renderLinear`, `renderer.render`) work while it sleeps. A script that throws is
@@ -801,16 +824,32 @@ survives a push; it holds still in a headset; View ▸ Turntable, `t`),
 **`inspect`** (the profiler: frame time against the display's budget, CPU and GPU time, draw calls,
 estimated GPU memory, the file's composition and the load's phases -- the numbers a GLB's size does
 not tell you; see *Inspect -- what the preview costs*) and **`shadow_rig`** (the runtime half of the DCC shadow
-rigs: reads the `extras.shadows` manifest `MeshConvert.apply_glb_shadows` writes during the
-conversion, gives every plane one `ShaderMaterial` — projected silhouettes and horizon maps in one
-program — batches the projected planes that share an atlas and carry no fade into an
-`InstancedMesh`, and re-places each plane from its source and contact nodes every frame with a port
-of `ShadowProjection.model`; the contract is `mayatk/docs/shadow_rig_morphing.md`),
-**`articulated_rig`** (the runtime half of the DCC articulated rigs: reads the `extras.articulation`
-manifest `MeshConvert.apply_glb_articulation` writes, builds each rig's `ArticulationModel` -- a
-port of pythontk's, pinned by its golden cases, `Conformance.cases("articulation")` -- registers every grabbed part with
-`viewer.grab`, and shows each rig's section of the Rig window, Rig ▸ Pose rigs; see *Grabbing* below and
-`mayatk/docs/articulated_rig.md`), and
+rigs: reads the `shadows` record the file carries as the DCC published it -- root `extras.shadows`,
+each map it names riding as the bufferView named by its file, both written by
+`MeshConvert.apply_glb_shadows` during the conversion -- resolves each plane, its source and its
+contact by name, by the rule the `lightmaps` record is resolved by (`kernel/resolve.js`), gives
+every plane one `ShaderMaterial` — the silhouette where the rig draws it, else the horizon march,
+else the silhouette as its fallback, in one program — batches the silhouette planes that share an
+atlas into an `InstancedMesh`, and every frame re-places each following plane from its source and
+contact nodes and fades every plane, with ports of `ShadowProjection.model` and
+`ShadowProjection.fade` (its source ramp the plane's own `source_ramp`; a plane whose source or
+contact is not in the file draws at its `intensity`, unplaced, and says so once in the console);
+a horizon map is data, decoded off its own bytes and sampled with no mipmaps, clamped; a
+silhouette is colour -- the atlas, else the plane's material's own map, else the plane's own
+image -- sRGB, sampled as glTF's default sampler (repeat); the contract is
+`mayatk/docs/shadow_rig_morphing.md`),
+**`articulated_rig`** (the runtime half of the DCC articulated rigs: reads the `articulation`
+record the GLB carries as it stands in `extras.articulation` (`MeshConvert.apply_glb_articulation`;
+glTF's frame: metres, so no unit is measured), resolves each rig's joints by name over every node
+as one assignment and each grabbed part by name under its joint's node (`kernel/resolve.js`, the
+rule every record's reader shares: exactly, else the name after the last `:`; a joint two nodes
+answer leaves its rig unposed, said in the console), builds each rig's `ArticulationModel` -- a
+port of pythontk's, anchors included, pinned by its golden cases, `Conformance.cases("articulation")` --
+and poses every part from its parent JOINT's pose: a node nested under its parent joint's takes
+its local as it stands, any other (a flat model, every part under the root) is placed where that
+joint's pose puts it, each root's chain in the space its root hangs in; it registers every grabbed
+part with `viewer.grab`, and shows each rig's section of the Rig window, Rig ▸ Pose rigs; see
+*Grabbing* below and `mayatk/docs/articulated_rig.md`), and
 **`snapshot`** (**Export ▸ Image…**: the current view saved as a PNG — see
 *Exporting a still* below). `turntable`, `inspect` and `snapshot` are checkboxes on the WebXR Preview option box,
 which passes an explicit list every push: the panel
@@ -840,7 +879,7 @@ code standard's holon is (`m3trik/docs/CODE_STANDARD.md` section 0):
 | Adapters | three.js-bound modules: the kernel, and each feature's entry module |
 | Parts and kernel | `kernel/` is the viewer, one part per module (the stage, the model, lightmaps and the reflection probe, specs, animation, the headset's rig, surfaces, grab, start and locomotion, the session, the menubar and the windows its items open, the Environment menu, the parts and the clip captions, the API, the load, the poll, the controls); `features/<name>` are the plug-ins -- a file, or a folder once a feature has a model of its own |
 | Seams | features activated through the manifest (`PreviewServer.SCRIPTS`, `add_script`); the kernel's events |
-| Contracts | `kernel/records.js`, generated by `m3trik/scripts/sync_scene_records.py` from `ptk.SceneRecords`: every block a GLB carries (its key, the record's, and the version the page reads), and the JSDoc typedefs of each declared block shape (`ArticulationBlock` ...) |
+| Contracts | `kernel/records.js`, generated by `m3trik/scripts/sync_scene_records.py` from `ptk.SceneRecords`: every record a GLB carries in its root `extras` -- each as it stands, a "block" in the page's word (its key, the record's, and the version the page reads) -- and the JSDoc typedefs of each declared record shape (`ArticulationRecord` ...) |
 | Proof | `m3trik/scripts/check_js_types.py` (`tsc --checkJs` over `jsconfig.json` at the repo root), `check_layers.py` (features over the kernel, peers of each other, by their imports), the Playwright suites, and the golden cases every model port is held to (`ptk.Conformance`) |
 
 **Served as laid out.** The server copies the page as `index.html`, the kernel to `kernel/`, and
@@ -902,12 +941,17 @@ Tests drive the same path on synthetic input: `grab.press(source, origin, direct
 `grab.drag(source, point, rotation)`, `grab.release(source)` and `grab.step(input)` (the headset's
 `{grips, aims, squeeze}` as `readHeadsetInput` returns it) -- `pick(origin, direction, far)` asks what
 a ray would take, and `holding` lists who holds what. `test_articulated_rig_web.py` pins the mouse
-drag (the rig moves, the camera does not), a grip carrying a part, and a grab against the Python
-solve.
+drag (the rig moves, the camera does not) and its wheel depth, a grip carrying a part, a grab
+against the Python solve -- on a nested rig, an anchored one, a flat model and a rig whose roots
+hang under different nodes -- the panel's sliders and buttons, and a posed rig held over its
+playing clip.
 
-The `articulated_rig` panel is the rig's test bench: a slider per channel (bounded by its limits),
-the joints' values, **Reset** to rest, **Return to animation**, and **Joint axes**. A grabbed or
-slid rig holds its pose while the clip plays on, until **Return to animation** or the next Play.
+The `articulated_rig` panel is the rig's test bench: a slider per channel (bounded by its limits;
+a slide in centimetres off the record's metres), the joints' values, **Reset** to rest, **Return
+to animation**, and **Joint axes**. A grabbed or slid rig holds its pose while the clip plays on,
+until **Return to animation** or the next Play. What a reader cannot pose -- an ambiguous joint, a
+rig only partly in the file, a part not grabbable -- the build says as it carries the record, and
+`MeshConvert.verify_glb` notes under `extras.articulation`.
 
 ## Does WebXR use OpenGL?
 
@@ -918,13 +962,21 @@ correct set are named accordingly (`*_Normal_OpenGL`, `*_NRML_OGL`).
 
 ## What travels, channel by channel
 
+The FBX's `materials` record is literal glTF 2.0 (record version 2): a glTF document of the
+file's materials, textures, images (by file name) and samplers. The GLB build **copies** each
+record material onto the GLB material of its name (`MeshConvert.apply_glb_materials`), every map
+bound to the GLB's image of the file the record names -- so the GLB's materials ARE the record's,
+and the GLB carries no second copy of it. A file without a record is read into the same model from
+its own materials, its metal and roughness packed by the build.
+
 | glTF slot | Source | Notes |
 |---|---|---|
-| `baseColorTexture` | the materials record's `baseColorTexture` | A packed `Albedo_Transparency` map passes through **as-is** — its RGB+A layout already *is* glTF's base-colour layout |
-| `normalTexture` | FBX, `texCoord` 0 | Wired by the converter; the map itself travels intact, and its `TANGENT` handedness is repaired (below) |
-| `metallicRoughnessTexture` | the materials record's `metallicTexture` / `roughnessTexture` / `occlusionTexture`, packed | glTF ORM: **R=occlusion, G=roughness, B=metallic** |
-| `emissiveTexture` / factor | the materials record's `emissiveTexture` / `emissiveFactor` | Emission weight folded in; magnitude above 1 preserved via `KHR_materials_emissive_strength`. A **highlighted** object's isolated copy drops the map: glTF emission is factor × map, so a mapped material (factor at white) would clamp the additive `highlight` channel to nothing and mask its colour where the map is black — the copy glows from the channel alone |
-| `occlusionTexture` | the packed ORM (`texCoord` 0), displaced by **the lightmap** (`texCoord` 1) on baked materials | glTF has no lightmap slot; see below |
+| `baseColorTexture` | the record's `baseColorTexture` | A packed `Albedo_Transparency` map passes through **as-is** — its RGB+A layout already *is* glTF's base-colour layout |
+| `normalTexture` | the record's `normalTexture`, `texCoord` 0 | The map itself travels intact, and its `TANGENT` handedness is repaired (below) |
+| `metallicRoughnessTexture` | the record's packed image, a delivery file the export writes into the pack store and embeds (`MaterialFamilies.pack_metallic_roughness`, `<base>_ORM.png`) | glTF ORM: **R=occlusion, G=roughness, B=metallic**; the occlusion map, when the material has one, packed with them |
+| any map's `KHR_texture_transform` | the record's: the DCC's UV repeat and offset (Maya's `place2dTexture`, Blender's Mapping node, a StingrayPBS's `uv_scale` / `uv_offset`) in glTF's UV space | Copied with each map; three.js reads it as the texture's `offset` / `repeat` |
+| `emissiveTexture` / factor | the record's `emissiveTexture` / `emissiveFactor` and `KHR_materials_emissive_strength` | Emission weight folded in; emission above 1 is the strength (glTF caps the factor at 1). A **highlighted** object keeps its map: glTF emission is factor × map, so a mapped material (factor at white) would clamp an added glow to nothing and mask its colour where the map is black -- the highlight's channel states the spans it is above 0, over which a reader sets the map aside and the glow is the highlight alone; at rest the map is back |
+| `occlusionTexture` | the packed ORM (`texCoord` 0); none on a material only lightmapped objects wear (their bake holds the occlusion) | a lightmap rides no slot; see below |
 
 ### Normal maps are wired
 
@@ -960,8 +1012,9 @@ the real maps it writes a **solid-white ORM**, and glTF reads metallic from blue
 scene becomes `metallic=1`. A fully metallic surface has no diffuse response, a lightmap
 contributes only to diffuse, and a lightmapped viewer turns its own lights off: three correct
 behaviours compounding into a black room, with nothing naming the lost roughness map. That is the
-failure the materials record prevents: every ORM is packed from the maps it names, an absent one
-standing in its absent value (dielectric, matte, unoccluded).
+failure the materials record prevents: every ORM is the record's own image, packed at export from
+the scene's maps (or by the build from the FBX's own maps, for a file without a record), an absent
+channel standing in its absent value (dielectric, matte, unoccluded).
 
 Repacking is still reconstruction, not authoring, so the pass logs one highlighted summary naming
 the counts (`2 MSAO maps`, …). The scene exporters also offer a **texture-template** selector that
@@ -972,37 +1025,48 @@ convert — the same registry definition drives both the conversion and the chec
 
 ### How they are carried
 
-glTF 2.0 has **no lightmap slot**, so a baked map travels disguised as a real one:
+glTF 2.0 has **no lightmap slot**, and the deliverable binds none: one layout, two containers.
 
 1. **Bake** (in the DCC) commits to the *scene*: per-object markers plus a `lightmaps`
-   record on the shared `data_export` carrier node. Platform-agnostic — the Unity/FBX path and
+   record on the shared `data_export` carrier node. Platform-agnostic -- the Unity/FBX path and
    the Maya round trip read the same commitment.
-2. **Carry.** Maya's FBX exporter writes that manifest as an FBX user property; `FBX2glTF
-   --user-properties` transcribes it into node `extras`. So the manifest arrives *inside the GLB*
-   and the deliverable feeds its own repair — callers pass nothing.
+2. **Carry.** Maya's FBX exporter writes that record as an FBX user property; `FBX2glTF
+   --user-properties` transcribes it into node `extras`. So the record arrives *inside the GLB*
+   and the deliverable feeds its own build -- callers pass nothing. The build carries it **as it
+   stands** into the root `extras` (`extras.lightmaps`, the record's own version and shape: each
+   object's `name`, `map`, `scaleOffset` and `hierarchy`; the probe and its highlight copies;
+   the lights), and every file it names rides the GLB as the **bufferView named by that file**
+   (`SceneRecords.GLB_MEDIA`: joined by file name, lower-cased; the view's `extras.mimeType`
+   states its bytes).
 3. **Encode.** A lightmap's dynamic range does not fit in a PNG (a real interior bake measured
-   0 → 129.8, mean 0.33 — emissive fixtures against a dim room). Clamping at 1.0 blows out the
-   fixtures and crushes everything else, so the encoder divides by the **99.5th percentile**,
-   records that divisor, and lets the few texels above it clip — they are the light sources.
-4. **Bind.** The PNG is embedded and set as `occlusionTexture` on **`TEXCOORD_1`**, with a
-   `lightmaps` manifest in the root `extras` naming which materials wear the disguise and each
-   one's divisor.
-5. **Rebind.** The viewer moves the texture to a real `material.lightMap`, sets
-   `lightMapIntensity` to the divisor, applies the colour space the manifest declares (`srgb` from
-   both producers — the loader treats occlusion as linear *data*, and left linear the map renders
-   far too dark), points it at UV2, and clears the slot it arrived in.
+   0 -> 129.8, mean 0.33 -- emissive fixtures against a dim room). Clamping at 1.0 blows out the
+   fixtures and crushes everything else, so the encoder divides by the map's peak, held between
+   its 99.5th percentile and four times that (`ImgUtils.encode_hdr_pixels_for_web`), and the
+   view states that divisor as `extras.scale`: decoded linear texels times it are the map. A
+   WebP delivery re-encodes it as lossless WebP (`image/webp`) where that is smaller, and a KTX2
+   delivery UASTC + sRGB (`image/ktx2`) at power-of-two edges, else lossless WebP -- as each does
+   an image lightmap, never resampled, never lossy. The probe and its copies ride as Radiance
+   (`image/vnd.radiance`).
+4. **Bind.** The viewer (`kernel/lightmaps.js`) resolves each `objects` entry to its node in the
+   file's own scene by the rule every reader follows (`kernel/resolve.js`, the twin of
+   `_Media.resolve_entries`: exact name, then namespace-tolerant, same-named
+   objects told apart by `hierarchy`; a tie is left unlit and said), decodes its map off the
+   bufferView of its name, and binds it as `material.lightMap` on **UV set 1** in sRGB, at the
+   record's `scaleOffset` (V-flipped into glTF's texture space, sampled clamped), with
+   `lightMapIntensity` the view's `scale` times pi (drawn as stored: texel x albedo). A material objects share that light alike keeps one
+   binding; objects that light differently -- another map or rect, an unbaked wearer, another
+   highlight copy -- each take a copy of the material made at load.
 
-Occlusion is the carrier rather than emissive because it leaves the emissive slot free for the
-scene's authored emissive map — which matters precisely when the light sources *are* emissive
-geometry — and because it **degrades sanely**: a third-party viewer applies it as grey AO rather
-than showing nothing.
+No material slot carries a map, so a third-party viewer shows each material as authored, and an
+authored occlusion map stays where it is (a material only baked objects wear is exported without
+one: the bake holds its occlusion).
 
 ### Where the maps are found — and what happens when they are not
 
-The manifest names each map by **basename**; the folder it records is the one the bake was
-committed from, and that is history, not a contract (a reorganised project, a scene migrated to
-another module, a teammate's machine). The applier resolves each basename against, in order: the
-manifest's recorded folder, the `search_dirs` the host hands it, and the GLB's own folder. Both
+The record names each map by **file name** alone: the folder a bake was committed from is
+history, not a contract (a reorganised project, a scene migrated to another module, a teammate's
+machine). The build resolves each name against, in order: the `search_dirs` the host hands it
+(a delivered FBX's own embedded copies first), and the GLB's own folder. Both
 DCC hosts pass `LightmapRecords.search_dirs()` — the project's texture folders plus wherever the
 bake markers' maps were actually found — so a map that moved into a subfolder still binds. A map
 found nowhere is **not guessed at**: its objects are left unbound (they render unlit, exactly like
@@ -1013,16 +1077,12 @@ dependencies beside the textures (Find & Copy relocates them and repoints the ma
 re-spells the recorded folder workspace-relative so another machine resolves it), and the Scene
 Exporter's *Check For Valid Paths* fails on a lightmap the markers name but no folder holds.
 
-Per-instance atlas rects (one object's patch of a shared atlas) cannot bind on a shared material,
-so they ride a **material clone carrying `KHR_texture_transform`** — pure JSON referencing the same
-accessors and the same embedded texture, so any compliant viewer renders the rect with no custom
-code. A map the shared material cannot carry takes the same route: when objects baked into
-DIFFERENT maps share a material (a secondary material on two machine bodies, or a Per-Object bake
-of instances), each object after the first binds its own clone. So does a material the bake does
-not light everywhere it is worn: when an object the bake never saw -- or one whose map was lost --
-shares a baked object's material, each baked object binds its own copy and the material stays as
-authored. Bound in place, it lit the unbaked object with the other's lightmap (through its own
-second UV set, or one texel of it with none), and the page counted the material as lightmapped.
+A rect needs nothing in the file but the record: the page reads each object's patch of a shared
+atlas at its own scale-offset, and gives objects that share a material but light differently --
+objects baked into DIFFERENT maps (a secondary material on two machine bodies, a Per-Object bake
+of instances), different rects, or an object the bake never saw wearing a baked one's material --
+each a copy of the material of its own at load, so none wears another's lighting and an unbaked
+wearer stays as authored.
 
 ### Why a lightmap and not a fused unlit bake?
 
@@ -1111,17 +1171,24 @@ keep direct lighting dynamic, or vertex-bake the low-frequency term.
   has no diffuse, so a baked metal shows only what it reflects -- and an object the bake left out
   is lit by nothing of the room. mayatk's lightmap bake therefore also captures the room it lit as
   an HDR from one point (`LightmapBaker.bake_probe`), and the GLB carries it
-  (`extras.lightmaps.probe`, Radiance bytes in a bufferView, its capture point and the room's
-  box in metres). The page (`kernel/probe.js`) prefilters it as the environment, reads it in the
-  model's own axes, box-projects reflections onto the room, and plays it at
-  `environment.probeIntensity` (1/pi -- the lightmaps' unit, a white card's radiance three.js reads
-  as irradiance); its reflections play whole. The studio is freed while the probe lights the model.
-  The Environment menu switches it off and on -- off is the same file shipped without one -- and
-  draws where it was captured; Unity gets it too, as a box-projected Reflection Probe (unitytk's
-  `Lightmaps.Apply`, intensity 1 there: Unity's lightmaps carry no 1/pi). Measured on a production soldering table against
+  (`extras.lightmaps.probe`: its file riding as the Radiance bufferView of its name, its capture
+  point and the room's box in the record's units, times its `unit_scale` metres). The page (`kernel/probe.js`) prefilters it as the environment, reads it in the
+  model's own axes, box-projects reflections onto the room, and plays it as captured, at
+  `environment.probeIntensity` 1; its reflections play whole. The studio is freed while the probe
+  lights the model. The Environment menu switches it off and on -- off is the same file shipped
+  without one -- and draws where it was captured; Unity gets it too, as a box-projected Reflection
+  Probe (unitytk's `Lightmaps.Apply`, at 1 as here). Measured on a production soldering table against
   Arnold's render of the same room, through the bake, its GLB and this page: a metal housing from
   0.12 of Arnold's luminance to 0.62, its trays from 0.4 to 0.89-1.07, the unbaked magnifier's
   parts from up to 2.8x too bright to 0.65-1.45x. The HUD adds "probe" when it is up.
+- **One lightmap convention, the one Unity and Arnold draw by.** A texel is a white card's
+  radiance (irradiance / pi), drawn as stored: a surface's baked diffuse is texel x albedo. three.js
+  reads a lightMap as irradiance (its Lambert term divides by pi), so the page binds every map at
+  pi times its scale (`kernel/lightmaps.js` `LIGHTMAP_AS_STORED`, a relight's too) and plays the
+  probe at 1. Until 2026-11-07 the page drew the texel as irradiance -- every baked surface pi below
+  Unity's Lit and Arnold -- and played the probe at 1/pi to stay in those units; a bake at the
+  dial's 1.0 now matches the render in every reader (measured: a white matte face over a 0.5
+  texel, 0.159 linear before, 0.500 after).
 - **A lightmap is lit with its Fresnel.** The bake enters as an image-based light's irradiance
   (`iblIrradiance`), so the diffuse it lights is weighted by one minus the specular's share, as the
   environment's own diffuse is; added at full weight beside the reflection, a surface was lit
@@ -1146,17 +1213,20 @@ and a moody rig of bench lights left them dark (measured on a production solderi
 2026-10-17: Arnold's render with every light's specular off matched the viewer's dull trays and
 puck).
 
-So the GLB build draws the bake's lights into **copies of the probe**, one per group of receivers
-(`MeshConvert.highlight_probe_layers`, embedded as the probe's `highlights` by
-`apply_glb_lightmaps` from the scene record's `lights` -- mayatk's `LightUtils.specular_lights`, at
-most 16, the strongest at the middle of what is baked). For a light and a focal point F, a copy's
+So the delivery draws the bake's lights into its probe -- each as the capture point sees it, so
+every surface reflects them -- and into **complete copies of the probe**, one per group of
+receivers, each listing the nodes that read it (`probe.highlights`; drawn by `apply_glb_lightmaps`
+on the GLB's own geometry and by `embed_fbx_highlight_probes` on the FBX, the same files, from the
+record's `lights` -- the DCC's specular lights, at most 16, the strongest at the middle of what is
+baked). For a light and a focal point F, a copy's
 texel whose ray leaves the box at B shows what F sees of the light along F -> B: a reflection from
 F that reads B sees the light true -- direction, size and radiance -- and a surface near F nearly
 so. Each light gets its own F per group, and a scale that makes the light its proxy gives the
 group's surfaces the light's own:
 
-- **the room's shell** (surfaces on the box's faces: walls, floor, ceiling) reads the probe as
-  captured -- lights placed for the bench and read from a wall glowed where no light shines;
+- **the room's shell** (surfaces on the box's faces: walls, floor, ceiling) reads the probe, the
+  lights as its capture point sees them -- lights placed for the bench and read from a wall glowed
+  where no light shines;
 - **an unbaked object** (no lightmap: everything it shows is the probe's) gets a copy of its own,
   an asset's parts one between them: F at the centroid of each light's irradiance on it, the
   irradiance matched;
@@ -1164,13 +1234,14 @@ group's surfaces the light's own:
   (the start camera `user_pos`, else the probe's capture point), the highlight matched -- a baked
   surface shows a light only through its highlight.
 
-The page builds each copy as the probe plus its layer (`kernel/probe.js`), prefilters it like the
-probe, and its materials reflect it as their own environment while the probe is up -- one lookup,
+The page prefilters each copy like the probe (`kernel/probe.js`), and the materials its nodes
+wear reflect it as their own environment while the probe is up -- one lookup,
 as every material reads the probe, so the highlights cost the frame nothing; the copies cost GPU
 memory (the interior's at the probe's size, an object's at half: about 9.5 MB beside a desktop
 probe). Measured on the production table against the same 15 lights lit live (2026-10-19): the
 magnifier, puck, trays and button box read as the live render did, where the live lights had cost
-the frame a fifth. The lights themselves never ship -- not in `extras.lightmaps`, not as
+the frame a fifth. The lights never light the model: the record keeps them (for a delivery with
+no probe), the page lights none of them while a probe is present, and none ships as
 `KHR_lights_punctual` (`strip_glb_baked_lights`): lit as well, the scene is lit twice. The copies
 cast no shadow, as the live lights did not, and they are placed for one eye: from far round the
 room a highlight sits where the start view would see it. They are copies of the probe, so a bake
@@ -1225,8 +1296,8 @@ bake's own occlusion — nothing authored is lost, and which one wins is a param
 A GLB built here says what its FBX says, once. Every material is complete glTF -- the FBX's
 `materials` record states each one (factors, maps, alpha mode, unlit), the build applies it, and a
 material the record does not name is read from the FBX's own material into the same terms. The
-rest of what the scene authored rides in the root `extras`, one block per thing it describes, each
-written only when the file has it:
+rest of what the scene authored rides in the root `extras`: each record as the FBX's carrier holds
+it, under its key, plus the GLB's own `handoff`, each written only when the file has it:
 
 ```json
 {
@@ -1242,10 +1313,11 @@ written only when the file has it:
                   "lightmappedMaterials": {…}},
     "extras": {"source": {"application": "maya", "version": "2025", "scene": "ROOM.ma"}}
   },
-  "lightmaps": {"version": 2, "carrier": "occlusion",
-                "materials": {"<material>": {"intensity": 12.16}, …},
-                "probe": {"bufferView": 164, "position": […], "box": {"min": […], "max": […]},
-                          "highlights": [{"bufferView": 165, "materials": […]}, …]}},
+  "lightmaps": {"version": 3, "unit_scale": 0.01,
+                "objects": [{"name": "<node>", "map": "<stem>_Lightmap.exr",
+                             "scaleOffset": [1, 1, 0, 0], "hierarchy": ["<root>", …, "<node>"]}, …],
+                "probe": {"map": "<stem>_Lights.hdr", "position": […],
+                          "box": {"min": […], "max": […]}, …}},
   "animation": {…}, "shadows": {…}, "articulation": {…}
 }
 ```
@@ -1254,7 +1326,7 @@ The reference -- every record and block, its versions and fields -- is
 [`DELIVERABLE_FORMAT.md`](../pythontk/core_utils/engines/scene_export/DELIVERABLE_FORMAT.md),
 generated from the declarations the readers enforce.
 
-**Every block keeps one shape:** `version`, its fundamentals at the top, and anything else under
+**Every record keeps one shape:** `version`, its fundamentals at the top, and anything else under
 `extras` -- glTF's own convention, so a reader ignores an extra it does not know and adding one
 never needs a new version.
 
@@ -1264,8 +1336,11 @@ record and the GLB's block are both `HandoffRecord.block(carrier, …)` -- the s
 parts (`geometry`, `materials`, then each record by its key -- `lightmaps`, `animation`, … --
 then the lighting), each `data` the address the carrier holds it at: `data_export.lightmaps` in
 the FBX, `extras.lightmaps` in the GLB. A record has one key in every file
-(`ptk.SceneRecords`); its GLB block, bound to the file's indices, is declared beside it
-(`RecordSpec.glb`). A part with no address is the file's own content. A new carrier
+(`ptk.SceneRecords`); a GLB carries each record as it stands (`RecordSpec.glb_verbatim`:
+`animation`, `audio`, `lightmaps`, `shadows`, `articulation`, `render_effects`), its names resolved
+by each reader in the file's own scene -- none is bound to the file's indices, so no pass that
+renumbers the nodes follows one -- and a deliverable record a GLB states in its own terms
+(`materials`) rides none. A part with no address is the file's own content. A new carrier
 (USD) is one `HandoffRecord.CARRIERS` row.
 
 **`rendering` holds values; `assembly` says what they mean.** The recipe is numbers and names a
@@ -1273,13 +1348,14 @@ runtime switches on (`toneMappingExposure`, `probeIntensity`, `reflectionNormali
 "lightmapLuma"`; every colour linear RGB), the same on every carrier; each lighting row's `spec`
 carries the formula or the rule, in the carrier's addresses (`HandoffRecord.lighting`).
 
-**One statement of each thing.** Nothing a file states elsewhere is restated: a lightmapped
-material's map is its bound `occlusionTexture` and its UV set that texture's `texCoord`, so
-`extras.lightmaps` gives each material its intensity alone; a probe image's size and format are
-its own Radiance header's. The FBX's own account of itself does not ride into the GLB: once every
+**One statement of each thing.** Nothing a file states elsewhere is restated: a lightmap binds
+no material slot -- the record names each object's map, read through its second UV set, and the
+file holds the map as the bufferView of its name, its bytes stated by that view
+(`SceneRecords.GLB_MEDIA`); a probe image's size and format are its own Radiance header's. The FBX's own account of itself does not ride into the GLB: once every
 pass has read them, the carrier's channels, each baked object's `lightmapInfo` marker and the
-converter's own `fromFBX` notes leave the nodes and materials, and each animation's `zero_frame`
-note -- the `animation` block's clips state it -- leaves the animations
+converter's own `fromFBX` notes leave the nodes and materials;
+the `animation` record itself rides on as `extras.animation`, verbatim (one layout, two containers), and so do
+`audio` and `render_effects`
 (`MeshConvert.strip_fbx_records`); an `extras` left empty goes, and a carrier left empty leaves
 the scene graph; the FBX deliverable likewise drops the markers its `lightmaps` entries repeat
 (`FbxMedia.drop_redundant_properties`). The FBX's lightmap record states one `unit_scale` for
@@ -1309,12 +1385,13 @@ for part in handoff["assembly"]:                          # the approved scene, 
 (geometry, complete materials, embedded textures, per-instance atlas transforms as standard
 `KHR_texture_transform`), the `extras` blocks it carries, and an embedded statement of how to read
 them and how the approved scene was lit. Every viewer-specific behaviour degrades rather than
-breaks: without the `extras.lightmaps` rebind the lightmap still applies as grey occlusion.
+breaks: a reader that ignores `extras.lightmaps` shows the scene as authored, without its bake
+(the maps ride as media no material samples, `SceneRecords.GLB_MEDIA`).
 `ptk.MeshConvert.verify_glb` checks a file against what it says of itself, from the file alone.
 
 **What it still is not:** the *source scene*. Shader graphs, modifiers, rigs and history do not
 travel. Colours are glTF-convention **linear**, and each block is a versioned contract
-(`handoff.version: 3`, `lightmaps.version: 2`) a reader checks rather than assumes: every reader
+(`handoff.version`, `lightmaps.version: 3`) a reader checks rather than assumes: every reader
 here -- the GLB build, the viewer, the Unity importer -- reads the current schema alone, so a file
 written before it is re-exported, never read through a branch for an older shape.
 
@@ -1384,59 +1461,72 @@ exporters kept the twins, and a production 4K assembly shipped 145.8 MB of them 
 KTX2 — 48% of the GLB. A GLB that must also open in Blender or Unreal asks for the twins
 (`ktx2_fallback=True`), which the scene exporters offer as the **KTX2 + PNG/JPEG** Texture File Type.
 
-The other axis to check on a handoff is the **take split**. A scene that declares shots must have
-them realized into FBX AnimStacks before conversion, or the deliverable carries one continuous clip
-where the preview showed twelve. `apply_glb_animations` warns with both counts when the shots
+The other axis to check on a handoff is the **take split**. A scene that declares shots ships
+one FBX take per shot, named after it -- the GLB's clips are those takes, one glTF animation each --
+or the deliverable carries one continuous clip where the preview showed twelve. `apply_glb_animations` warns with both counts when the shots
 record (`animation`) names takes the file has no clips for — that warning is the one to read.
 
 ## Watching shots
 
-A deliverable that ships clips grows a picker and a transport. Shots the DCC declared are listed
-first, each with its authoring range; a clip marked *(full range)* is the whole timeline the
-exporter kept beside them. On a deliverable that ships **only** shots the page rebuilds
-`FULL SEQUENCE` from them — every shot placed at its authored frame, not concatenated, so the gaps
-between them are real and hold the previous shot's last pose exactly as the whole-timeline clip did.
-A shot in which nothing moves is on that timeline too, under its own name, though it ships no clip
-(glTF cannot carry an empty one): the block's `shots` states it, and its frames hold the pose
-around it. It is offered first, because "watch the whole thing" is what a reviewer opens.
+A deliverable that ships clips grows a picker and a transport. A shot deliverable carries one
+clip per shot -- its take, named after it, in the takes' timeline order -- and no whole-timeline
+clip. `extras.animation` is the scene's `animation` record itself, as the FBX carries it (one
+layout, two containers): each shot by its clip name with its description and metadata, in timeline
+order, and the scene's frame rate (`fps`), which glTF cannot hold. The page joins each shot to the
+animation of its clip's NAME, and builds `FULL SEQUENCE` from them: the shots' clips played in
+turn, in the record's order. A clip's duration spans *between* its first and last frames, so each
+cut holds the clip's last frame for one frame at the record's rate before the next clip's first --
+laid end to end on durations alone, every shot after the first played one frame early and its
+predecessor's last frame never showed. A file that states no rate plays them end to end. A shot in
+which nothing moves still has its clip: the build makes every shot's take (and every clip a push's
+overlay states) a clip spanning its window, a still one held by a STEP channel on a scene
+root -- glTF cannot carry an empty clip, and FBX2glTF writes none. Only a file built elsewhere hands
+the page a shot with an empty clip or none; such a shot has no length to play and is passed over. It is offered first in the picker, the shots after it
+and any other clip after them; the page opens on the first shot whose clip plays (else the first
+clip that plays), the whole sequence one pick away. The record is version 3 (2 is skipped: it was
+the version of the block a GLB carried there before, a different shape under the same key). A
+record of another version is not read -- no shot, description or rate -- and the clips play by name,
+as in any file whose record the page does not recognise; re-export the file. A scene with no shots
+still ships the record when it animates (`shots` empty, its `fps`), so its rate is known too.
 
-The readout beside the playhead names **which shot the playhead is standing in** while the sequence
-plays -- or the whole-timeline clip, where each shot is its window -- followed by the time and the
-authoring frame, counted from the clip's own first frame (a scene authored from 1001 reads `f1001`
-on, lead-in frames before the first shot included, and a playblast stamps the same numbers):
+The readout beside the playhead names **which shot the playhead is standing in** while the
+sequence plays, followed by the time -- no frame number: a shot is named, and need not start at
+any frame:
 
 ```
-  SHOT_B · 3.40 / 5.00s  f102          inside a shot
-  SHOT_A (hold) · 2.50 / 5.00s  f75    in the gap after it
+  SHOT_B · 3.40 / 4.03s          inside the second shot's clip
 ```
 
-The picker cannot answer that question — it is sitting on `FULL SEQUENCE` the whole way through —
-and scrubbing a five-second sequence without it says only how far in you are. A gap is labelled as
-a **hold** rather than named outright: the pose on screen is the previous shot's last frame, and
-naming that shot plainly would claim it plays through frames it does not cover, which is a bug
-report waiting to be filed against a shot that is behaving correctly. A shot's own clip is not
-labelled at all, since the picker already names it.
+The picker cannot answer that question -- it is sitting on `FULL SEQUENCE` the whole way through
+-- and scrubbing a sequence without it says only how far in you are. A shot's own clip is not
+labelled at all, since the picker already names it. A shot's description is read off the record's
+shot of the clip's name: the segment's on the sequence, the clip's own when it plays alone.
 
 ## Recording a clip
 
 **Export ▸ Playblast…** writes the clip the transport is on to a movie file —
-one declared shot, the whole-timeline clip, or `FULL SEQUENCE` (every shot laid back onto the
-timeline it was cut from), which records as one continuous movie exactly as it plays. Its item
+one shot's clip, or `FULL SEQUENCE` (the shots' clips played in turn), which records as one
+continuous movie exactly as it plays. Its item
 applies whenever the model on screen has a clip, because that is when the clip picker shows: `playblast` is an
-`AUTO_SCRIPTS` entry keyed on `animation`, so there is no checkbox to have forgotten on the push
+`AUTO_SCRIPTS` entry keyed on `animation`, which a GLB with clips activates whether or not it
+carries the record (a foreign file may not), so there is no checkbox to have forgotten on the push
 a reviewer just watched.
 
 **It is a playblast, not a screen recording.** The page *steps* the clip: pose frame N, render,
 hand the pixels over, then ask for N+1. A throttled tab, a headset and a desktop therefore all
-produce the same file, at the deliverable's own authoring frame rate — which is what makes the
-result comparable with a viewport playblast of the same shot rather than merely similar to it.
+produce the same file, at the scene's own rate -- the `animation` record's `fps`, which the
+deliverable states because glTF cannot -- with no rate asked; frame *i* is posed at *i* / rate
+seconds. That is what makes the result comparable with a viewport playblast of the same shot rather
+than merely similar to it. Only a file that states no rate (an older or a foreign GLB) is asked for
+one -- **Frame rate**, 24 fps unless chosen (`DEFAULT_RATE`: film's rate, and the one a DCC scene
+starts at by default; remembered for the tab).
 Sampling the display instead would drop and duplicate frames wherever the device was busy, and the
 busiest moment is always the one worth reviewing.
 
 ```
-  page          poseAt(i / fps) -> render -> snapshot          (main thread, one per frame)
+  page          poseAt(i / rate) -> render -> snapshot         (main thread, one per frame)
   workers       snapshot -> PNG -> POST /playblast/frame       (several frames at once)
-  server        each frame straight to a scratch sequence, numbered from the clip's START frame
+  server        each frame straight to a scratch sequence, numbered from zero
   encode        pythontk.SequenceEncoder -> ffmpeg -> <deliverable>_<clip>.mp4
 ```
 
@@ -1458,11 +1548,8 @@ which is the half that matters in a headset: there is no containing folder to op
 
 Details worth knowing:
 
-- The report names the clip's **authoring frame range** — the numbers the DCC's timeline and the
-  picker's shot ranges quote. The scratch frames themselves are numbered from zero: they are deleted
-  the moment the movie exists, and numbering them the timeline's way breaks on a scene with pre-roll,
-  where a shot's start frame is negative (`shot.-010.png` matches no printf pattern, and ffmpeg will
-  not take a negative `-start_number` either).
+- The report counts the clip's frames from its first, 0: a shot is named, and need not start at any
+  frame. The scratch frames are numbered from zero too, and deleted the moment the movie exists.
 - Contiguity is checked before the encode. ffmpeg reads a printf pattern straight through and stops
   at the first gap, so a dropped frame would otherwise encode silently as a short movie.
 - **Frames compress on worker threads.** Compressing a frame to PNG is essentially the entire cost of
@@ -1498,18 +1585,17 @@ Details worth knowing:
   waits for, and what Draft is for. The saved status line states the size that was written.
 - **The item opens an export prompt** rather than recording at once. It states what is
   about to be written (clip, frame count, rate — the clip is the picker's to choose and the rate is
-  the deliverable's, so the prompt only shows them) and offers the quality preset and the two
-  burn-ins below. Cancel,
+  the deliverable's, so the prompt only shows them; a file that states no rate is asked one) and
+  offers the quality preset and the two burn-ins below. Cancel,
   Escape or a click on the backdrop writes nothing. The answers are remembered for the tab, so a
   second recording re-offers them rather than the defaults, and they are snapshotted when the
   recording starts — a file is annotated the way the prompt that started it was answered, never
   half of it. A push landing while the prompt is up **dismisses** it: what it was asking about is
   no longer on screen, and a stale summary over a different scene is worse than asking again.
-- **Burn-in: shot name and frame** draws the **shot name, the DCC frame number and the clip time**
-  into the recorded frames — the shot the playhead is inside on the whole-timeline clip,
-  `'<name> (hold)'` through a gap, and the clip's own name on a single shot, so the movie says the
-  same thing the transport readout did. The frame number is the **authoring** one — the clip's
-  start frame plus the offset — so a note about "frame 112" names the frame an animator will open.
+- **Burn-in: shot name and time** draws the **shot name and the clip time** into the recorded
+  frames — the shot whose clip plays there on `FULL SEQUENCE`, and the clip's own name on a single
+  shot, so the movie says the same thing the transport readout did. No frame number: a shot is
+  named, and need not start at any frame.
 - **Burn-in: shot description** draws the note the DCC's Shots panel carries for that shot
   (`extras.animation`'s `description`) on the line above the name — the half of a shot record a
   reviewer watching the movie cannot otherwise see. It follows the playhead across the sequence, and
@@ -1589,7 +1675,7 @@ of embedded 4096² PNG), with the shipped methods wrapped and the machine otherw
 |---|---|---|
 | FBX write (Maya) | 6.7 s | 2% |
 | **FBX2glTF conversion** | **~365 s** | **87%** |
-| Passes inside the conversion (sidecar incl. ORM repack 17 s; dedupe, clips, fades) | 22 s | 5% |
+| Passes inside the conversion (sidecar incl. ORM repack 17 s; dedupe, fades) | 22 s | 5% |
 | Lightmap wiring | 3.1 s | <1% |
 | Texture optimize (WebP) | 20.9 s | 5% |
 | Publish | 0.03 s | — |
@@ -1690,12 +1776,10 @@ are capped at 0.75). The deliverable's per-frame animation keys are the third le
   the step to take first (see *Sharing a link*).
 - **A missing `TEXCOORD_1` means no lightmap.** The FBX was exported without the lightmap UV set;
   the applier warns per primitive rather than binding something wrong.
-- **Per-object maps on a shared material each bind a copy.** A glTF material carries one lightmap,
-  so the first object binds the shared material and every later object with a different map binds
-  its own clone of it (and its own mesh entry when instanced). This used to be refused — and the
-  refused object wore the first one's lighting anyway, which reads as a bad bake. A material an
-  UNBAKED object also wears is never bound at all: every baked object binds a copy, so the
-  unbaked one keeps it as authored rather than wearing someone else's lightmap.
+- **Per-object maps on a shared material each read their own.** The file binds no lightmap to a
+  material; the viewer gives each set of objects that light alike a material of its own at load, so
+  objects sharing a material each read their own map and rect, and an UNBAKED object wearing it
+  keeps it as authored rather than wearing someone else's lightmap.
 - **Draco-compressed GLBs do not load** in the bundled viewer (no decoder wired in). Don't pass
   `--draco`. If that changes it should arrive as a *script*, not a viewer edit.
 - **A viewer script that names a hook the page does not emit is inert, silently.** Nothing throws;
