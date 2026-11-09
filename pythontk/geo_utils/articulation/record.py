@@ -224,7 +224,7 @@ class ArticulationRecord(SchemaSpec):
 
 # Held until 0.22.0 (``pythontk/__init__.py``, "Held until 0.22.0"): the block
 # names v0.20.0 noticed for removal, whose window closes 2026-11-23.
-from pythontk.geo_utils.articulation._retired import (  # noqa: E402
+from pythontk.geo_utils.articulation._retired import (  # noqa: E402, F401 (re-exported)
     ArticulationWeb,
     ArticulationWebGrab,
     ArticulationWebJoint,

@@ -2750,7 +2750,7 @@ class SceneRecords:
 
 # Held until 0.22.0 (``pythontk/__init__.py``, "Held until 0.22.0"): the GLB
 # block names v0.20.0 noticed for removal, whose window closes 2026-11-23.
-from pythontk.core_utils.engines.scene_export._retired import (  # noqa: E402
+from pythontk.core_utils.engines.scene_export._retired import (  # noqa: E402, F401 (re-exported)
     GlbBlock,
     WebProjection,
 )

@@ -505,7 +505,9 @@ class TestExport(_ModelCase):
         self.model.add_group("signal", {"hull": [0]})
         self.model.key_weight("signal", 1.0, frame=24)
         self.host.emission_scale = lambda material: 0.5
-        keys_of = lambda copy: [[f, v * 0.5, "linear"] for f, v in self.host.emission_keys(copy)]
+        def keys_of(copy):
+            return [[f, v * 0.5, "linear"] for f, v in self.host.emission_keys(copy)]
+
         (curve,) = self.model.weight_curves(keys_of)
         self.assertEqual(curve["target"], "metal_signal")
         self.assertEqual(curve["keys"], [[24.0, 1.0, "linear"]])

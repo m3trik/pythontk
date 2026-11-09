@@ -1010,14 +1010,14 @@ class ExportVerifier(_ExportVerifierInternal):
         named = set()
         said: Dict[Tuple[str, str], str] = {}
         tracked: Dict[Tuple[str, str], List[str]] = {}
-        for field, target in (("tracks", "node"), ("materials", "material")):
-            for entry in (record or {}).get(field) or ():
+        for section, target in (("tracks", "node"), ("materials", "material")):
+            for entry in (record or {}).get(section) or ():
                 if isinstance(entry, dict) and entry.get(target):
                     for channel in entry.get("channels") or ():
                         pair = (transport.target_name(entry[target]), str(channel))
                         named.add(pair)
                         said.setdefault(pair, str(entry[target]))
-                        if field == "tracks" and pair[1] in transport.node_channels:
+                        if section == "tracks" and pair[1] in transport.node_channels:
                             tracked.setdefault(pair, []).append(str(entry[target]))
         problems = [
             f"the record names {said[(target, channel)]}'s {channel} but the "

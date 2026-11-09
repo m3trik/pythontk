@@ -319,7 +319,7 @@ def build_take_fbx(path: str, takes, names=None, windows=None) -> str:
     """
     names = names or {}
     declared = {
-        take: (min(f for f, _ in curves.values()), max(l for _, l in curves.values()))
+        take: (min(f for f, _ in curves.values()), max(last for _, last in curves.values()))
         for take, curves in takes.items()
         if curves
     }
