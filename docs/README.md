@@ -42,7 +42,7 @@ pip install pythontk
 - `FFmpeg` (on PATH) — audio conversion / compositing, video compression
 - `OpenCV` — video frame extraction, image curation, exposure equalization, a few `ImgUtils` ops
 - `rembg` — background mask generation (`MaskGenerator`)
-- `PyMeshLab` — file-level mesh measure/repair/remesh/decimate/bake (`MeshOps`; declared as the `pythontk[mesh]` extra)
+- `PyMeshLab` — file-level mesh measure/repair/remesh/decimate/bake/deviation (`MeshOps`; declared as the `pythontk[mesh]` extra)
 - `xatlas` — UV island packing (`UvPack`)
 - `toktx` (KTX-Software binary) — KTX2 / Basis Universal encoding (`Ktx2Encoder`)
 - `paramiko` — SSH client · `keyring` — credential storage (falls back to Windows Credential Manager, then environment variables)

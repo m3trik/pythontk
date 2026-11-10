@@ -275,6 +275,71 @@ class _MeshOpsInternal:
         getattr(ms, spec.filter)(**merged)
 
     @staticmethod
+    def _union_diagonal(a, b) -> float:
+        """The diagonal of the box holding both meshes: no point of either lies farther from the other."""
+        import numpy as np
+
+        boxes = [m.bounding_box() for m in (a, b)]
+        low = np.minimum(boxes[0].min(), boxes[1].min())
+        high = np.maximum(boxes[0].max(), boxes[1].max())
+        return float(np.linalg.norm(high - low))
+
+    #: The seed every comparison samples with: the same meshes, the same samples.
+    _SAMPLE_SEED = 0
+
+    #: Faces per block when weighing them by area: bounds the transient on a
+    #: multi-GB scan (the whole mesh at once took ~235 bytes a face).
+    _AREA_BLOCK = 1 << 18
+
+    @classmethod
+    def _surface_samples(cls, mesh, count: int):
+        """Points on *mesh*: up to *count* of its vertices (an even stride) and
+        *count* area-weighted points on its faces, from a fixed seed."""
+        import numpy as np
+
+        v = np.asarray(mesh.vertex_matrix(), dtype=np.float64)
+        f = np.asarray(mesh.face_matrix(), dtype=np.int64)
+        verts = v[:: max(1, -(-len(v) // count))] if len(v) else v
+        if not len(f):
+            return verts
+        area = np.empty(len(f))
+        for lo in range(0, len(f), cls._AREA_BLOCK):
+            tri = v[f[lo : lo + cls._AREA_BLOCK]]
+            area[lo : lo + len(tri)] = np.linalg.norm(
+                np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0]), axis=1
+            )
+        if area.sum() <= 0:
+            return verts
+        rng = np.random.default_rng(cls._SAMPLE_SEED)
+        pick = rng.choice(len(f), size=count, p=area / area.sum())
+        r1, r2 = np.sqrt(rng.random(count)), rng.random(count)
+        a, b, c = v[f[pick, 0]], v[f[pick, 1]], v[f[pick, 2]]
+        faces = (1 - r1)[:, None] * a + (r1 * (1 - r2))[:, None] * b + (r1 * r2)[:, None] * c
+        return np.vstack([verts, faces])
+
+    @staticmethod
+    def _distances(pml, ms, points, target: int, reach) -> Dict[str, Any]:
+        """Each of *points*' distance to mesh *target* of *ms*, summarised."""
+        import numpy as np
+
+        if not len(points):
+            return {"peak": 0.0, "mean": 0.0, "rms": 0.0, "at": None, "samples": 0}
+        ms.add_mesh(pml.Mesh(vertex_matrix=np.asarray(points, dtype=np.float64)), "samples")
+        cloud = ms.current_mesh_id()
+        ms.compute_scalar_by_distance_from_another_mesh_per_vertex(
+            measuremesh=cloud, refmesh=target, signeddist=False, maxdist=reach
+        )
+        d = np.abs(ms.mesh(cloud).vertex_scalar_array())
+        i = int(d.argmax())
+        return {
+            "peak": float(d[i]),
+            "mean": float(d.mean()),
+            "rms": float(np.sqrt((d * d).mean())),
+            "at": [float(x) for x in points[i]],
+            "samples": int(len(d)),
+        }
+
+    @staticmethod
     def _measures(ms) -> Dict[str, Any]:
         """Flat, gate-safe metrics dict for the current mesh.
 
@@ -448,37 +513,103 @@ class MeshOps(HelpMixin, _MeshOpsInternal):
 
     @classmethod
     def compare(
-        cls, input_path: str, reference_path: str, sample_num: int = 10000
+        cls,
+        input_path: str,
+        reference_path: str,
+        sample_num: int = 50000,
+        heatmap_path: Optional[str] = None,
+        heatmap_range: Optional[float] = None,
     ) -> Dict[str, Any]:
-        """Hausdorff distance from ``input_path`` to ``reference_path``.
+        """How far ``input_path`` strays from ``reference_path``, measured both ways.
 
-        The deviation metric for "did that decimation/remesh/LOD keep the
-        silhouette?" — run it input=derived, reference=original. Distances
-        are in scene units; ``hausdorff_peak_pct`` normalizes the peak by
-        the reference bbox diagonal (comparable across assets). Keys say
-        ``peak`` rather than ``max`` deliberately: gate rule prefixes are
-        stripped with an unanchored replace, so metric names must never
-        contain ``min_``/``max_``.
+        The deviation metric for "did that decimation/remesh/LOD/tessellation
+        keep the shape?" — run it input=derived, reference=original. Each
+        surface is sampled (its vertices and area-weighted points on its faces,
+        up to ``sample_num`` of each) and every sample's distance to the other
+        surface measured, so a coarse face's sag, a part the input lost and a
+        part the reference lacks all count. No sample is dropped for being far:
+        the search reaches across both meshes. The sampling is seeded, so the
+        same two meshes always measure the same: a gate's verdict never flips
+        on a rerun. A peak is the largest distance among the samples, so it
+        approaches the true peak from below as ``sample_num`` grows.
+
+        Keys (distances in the files' own units; names say ``peak``, never
+        ``max``, because gate rule prefixes are stripped with an unanchored
+        replace):
+
+        - ``hausdorff_peak``: the largest distance either way.
+        - ``hausdorff_mean`` / ``hausdorff_rms``: the larger direction's.
+        - ``hausdorff_peak_pct``: the peak as a percentage of the reference's
+          bounding-box diagonal (comparable across assets).
+        - ``hausdorff_peak_at``: ``[x, y, z]`` where the peak was sampled.
+        - ``input_to_reference_peak``: the input's surface away from the
+          reference (geometry the reference lacks, a bulge).
+        - ``reference_to_input_peak``: the reference's surface away from the
+          input (geometry the input lost, a sag).
+        - ``samples``: the samples measured, both directions together.
+        - ``reference_bbox_diag``, ``heatmap``, ``heatmap_range``.
+
+        Parameters:
+            input_path: The derived mesh.
+            reference_path: The mesh it should match.
+            sample_num: Face samples per direction (vertex samples are capped
+                at the same count, an even stride through them), which bounds
+                the cost on any mesh size.
+            heatmap_path: When given, write the denser of the two meshes there
+                with each vertex coloured by its distance to the other (viridis:
+                dark at 0, yellow at ``heatmap_range``); PLY keeps the colours.
+            heatmap_range: The distance the ramp tops out at (a budget makes it
+                read as "how close to failing"); default the peak.
         """
+        if int(sample_num) < 1:
+            raise ValueError(f"sample_num is the face samples per direction: at least 1, not {sample_num}.")
         pml = cls.resolve()
         src = cls._preflight(input_path)
         ref = cls._preflight(reference_path)
+        if heatmap_path:
+            heatmap_path = cls._check_save_ext(os.path.abspath(heatmap_path))
         ms = pml.MeshSet()
         ms.load_new_mesh(src)  # id 0
         ms.load_new_mesh(ref)  # id 1
-        d = ms.get_hausdorff_distance(sampledmesh=0, targetmesh=1, samplenum=sample_num)
-        ref_diag = d.get("diag_mesh_1") or None
-        peak = d.get("max")
-        return {
-            "hausdorff_peak": peak,
-            "hausdorff_mean": d.get("mean"),
-            "hausdorff_rms": d.get("RMS"),
-            "hausdorff_peak_pct": (
-                (peak / ref_diag) * 100.0 if peak is not None and ref_diag else None
-            ),
-            "samples": d.get("n_samples"),
+        reach = pml.PureValue(2.0 * cls._union_diagonal(ms.mesh(0), ms.mesh(1)) or 1.0)
+        directions = {}
+        for key, (sampled, target) in (
+            ("input_to_reference", (0, 1)),
+            ("reference_to_input", (1, 0)),
+        ):
+            points = cls._surface_samples(ms.mesh(sampled), int(sample_num))
+            directions[key] = cls._distances(pml, ms, points, target, reach)
+        fwd, back = directions["input_to_reference"], directions["reference_to_input"]
+        worst = fwd if fwd["peak"] >= back["peak"] else back
+        ref_diag = ms.mesh(1).bounding_box().diagonal() or None
+        result = {
+            "hausdorff_peak": worst["peak"],
+            "hausdorff_mean": max(fwd["mean"], back["mean"]),
+            "hausdorff_rms": max(fwd["rms"], back["rms"]),
+            "hausdorff_peak_pct": (worst["peak"] / ref_diag) * 100.0 if ref_diag else None,
+            "hausdorff_peak_at": worst["at"],
+            "input_to_reference_peak": fwd["peak"],
+            "reference_to_input_peak": back["peak"],
+            "samples": fwd["samples"] + back["samples"],
             "reference_bbox_diag": ref_diag,
+            "heatmap": None,
+            "heatmap_range": None,
         }
+        if heatmap_path:
+            top = float(heatmap_range) if heatmap_range else (worst["peak"] or 1.0)
+            dense, other = (
+                (0, 1) if ms.mesh(0).vertex_number() >= ms.mesh(1).vertex_number() else (1, 0)
+            )
+            ms.compute_scalar_by_distance_from_another_mesh_per_vertex(
+                measuremesh=dense, refmesh=other, signeddist=False, maxdist=reach
+            )
+            ms.set_current_mesh(dense)
+            ms.compute_color_from_scalar_per_vertex(minval=0.0, maxval=top, colormap="Viridis")
+            os.makedirs(os.path.dirname(heatmap_path) or ".", exist_ok=True)
+            ms.save_current_mesh(heatmap_path, save_vertex_color=True)
+            result["heatmap"] = cls._postflight(heatmap_path)
+            result["heatmap_range"] = top
+        return result
 
     # ------------------------------------------------------------ repair
     @classmethod

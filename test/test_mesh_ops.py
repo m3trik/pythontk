@@ -281,6 +281,122 @@ class TestRefine(_TempDirTestCase):
 
 
 @unittest.skipUnless(_HAVE, "pymeshlab not installed")
+class TestCompareDeviation(_TempDirTestCase):
+    """``compare`` against deviations known in closed form.
+
+    A radius-10 UV sphere at 528 faces against the same sphere at 65,280: every
+    coarse vertex sits on the true surface, so the true deviation is the chord
+    sag inside each coarse face, computed exactly from the coarse mesh alone.
+    """
+
+    R = 10.0
+
+    @staticmethod
+    def _uv_sphere(seg, rings, r, center=(0.0, 0.0, 0.0)):
+        import math
+
+        import numpy as np
+
+        v = [(0.0, 0.0, r)]
+        for i in range(1, rings):
+            t = math.pi * i / rings
+            for j in range(seg):
+                p = 2 * math.pi * j / seg
+                v.append(
+                    (r * math.sin(t) * math.cos(p), r * math.sin(t) * math.sin(p), r * math.cos(t))
+                )
+        v.append((0.0, 0.0, -r))
+        f = [(0, 1 + j, 1 + (j + 1) % seg) for j in range(seg)]
+        for i in range(rings - 2):
+            a, b = 1 + i * seg, 1 + (i + 1) * seg
+            for j in range(seg):
+                j2 = (j + 1) % seg
+                f += [(a + j, b + j, b + j2), (a + j, b + j2, a + j2)]
+        last, a = len(v) - 1, 1 + (rings - 2) * seg
+        f += [(last, a + (j + 1) % seg, a + j) for j in range(seg)]
+        return np.array(v, float) + np.array(center, float), np.array(f, int)
+
+    def _obj(self, name, parts):
+        path, offset = os.path.join(self.out_dir, name), 1
+        with open(path, "w") as fh:
+            for v, f in parts:
+                fh.writelines("v %.9f %.9f %.9f\n" % tuple(p) for p in v)
+                fh.writelines("f %d %d %d\n" % tuple(t + offset) for t in f)
+                offset += len(v)
+        return path
+
+    def setUp(self):
+        super().setUp()
+        import numpy as np
+
+        self.coarse_mesh = self._uv_sphere(24, 12, self.R)
+        self.coarse = self._obj("coarse.obj", [self.coarse_mesh])
+        self.fine = self._obj("fine.obj", [self._uv_sphere(256, 128, self.R)])
+        v, f = self.coarse_mesh
+        tri = v[f]
+        n = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
+        n /= np.linalg.norm(n, axis=1)[:, None]
+        self.true_peak = float((self.R - np.abs((n * tri[:, 0]).sum(1))).max())
+
+    def test_the_peak_is_the_true_sag_in_either_order(self):
+        # Red before the fix: 0.0013 for a true 0.1689 (vertices of the coarse
+        # mesh sampled alone, all of them on the surface).
+        for a, b in ((self.coarse, self.fine), (self.fine, self.coarse)):
+            d = MeshOps.compare(a, b)
+            self.assertAlmostEqual(
+                d["hausdorff_peak"], self.true_peak, delta=0.02 * self.true_peak,
+                msg=f"{os.path.basename(a)} against {os.path.basename(b)}: {d}",
+            )
+
+    def test_a_part_missing_from_the_input_fails_and_is_located(self):
+        # Red before the fix: the reference's second sphere was never sampled
+        # (0.0003), and the reversed call dropped its samples as too far.
+        far = self._uv_sphere(48, 24, 2.0, center=(100.0, 0.0, 0.0))
+        both = self._obj("both.obj", [self._uv_sphere(256, 128, self.R), far])
+        d = MeshOps.compare(self.coarse, both)
+        self.assertGreater(d["hausdorff_peak"], 80.0, d)
+        self.assertGreater(d["reference_to_input_peak"], 80.0, d)
+        self.assertLess(d["input_to_reference_peak"], 0.2, d)
+        self.assertGreater(d["hausdorff_peak_at"][0], 90.0, d)
+
+    def test_a_part_the_reference_lacks_fails_too(self):
+        far = self._uv_sphere(48, 24, 2.0, center=(100.0, 0.0, 0.0))
+        extra = self._obj("extra.obj", [self.coarse_mesh, far])
+        d = MeshOps.compare(extra, self.fine)
+        self.assertGreater(d["input_to_reference_peak"], 80.0, d)
+
+    def test_identical_meshes_measure_zero(self):
+        d = MeshOps.compare(self.coarse, self.coarse)
+        self.assertLess(d["hausdorff_peak"], 1e-6, d)
+        self.assertGreater(d["samples"], 0)
+
+    def test_the_heatmap_colours_the_denser_mesh(self):
+        heat = os.path.join(self.out_dir, "heat.ply")
+        d = MeshOps.compare(self.coarse, self.fine, heatmap_path=heat, heatmap_range=0.2)
+        self.assertEqual(d["heatmap"], heat)
+        self.assertEqual(d["heatmap_range"], 0.2)
+        ms = MeshOps.resolve().MeshSet()
+        ms.load_new_mesh(heat)
+        m = ms.current_mesh()
+        self.assertEqual(m.vertex_number(), 128 * 256 - 256 + 2)  # the fine sphere's
+        self.assertTrue(m.has_vertex_color())
+
+    def test_the_same_meshes_always_measure_the_same(self):
+        # Montecarlo sampling gave four peaks in four calls at 1,000 samples.
+        runs = [MeshOps.compare(self.coarse, self.fine, sample_num=1000) for _ in range(3)]
+        self.assertEqual(len({(r["hausdorff_peak"], r["hausdorff_mean"]) for r in runs}), 1, runs)
+
+    def test_a_sample_count_below_one_is_refused(self):
+        with self.assertRaises(ValueError):
+            MeshOps.compare(self.coarse, self.fine, sample_num=0)
+
+    def test_compare_keys_are_gate_prefix_safe(self):
+        for key in MeshOps.compare(self.coarse, self.fine):
+            self.assertNotIn("max_", key)
+            self.assertNotIn("min_", key)
+
+
+@unittest.skipUnless(_HAVE, "pymeshlab not installed")
 class TestBakeAndSession(_TempDirTestCase):
     def test_bake_vertex_color_writes_mesh_and_texture(self):
         src = self._sphere(colored=True)
