@@ -380,6 +380,19 @@ class TestCompareDeviation(_TempDirTestCase):
         m = ms.current_mesh()
         self.assertEqual(m.vertex_number(), 128 * 256 - 256 + 2)  # the fine sphere's
         self.assertTrue(m.has_vertex_color())
+        # The colours follow the distance: the pole lies on both spheres
+        # (viridis' dark start); the deepest sag, 0.85 of the range, is green.
+        green = m.vertex_color_matrix()[:, 1]
+        self.assertLess(green[0], 0.05)
+        self.assertGreater(green.max(), 0.75)
+
+    def test_a_heatmap_range_at_or_below_zero_is_refused(self):
+        # Review: red before, -1 was accepted and 0 read as "unset".
+        for bad in (0.0, -1.0):
+            with self.assertRaises(ValueError, msg=bad):
+                MeshOps.compare(
+                    self.coarse, self.fine, heatmap_path=os.path.join(self.out_dir, "h.ply"), heatmap_range=bad
+                )
 
     def test_the_same_meshes_always_measure_the_same(self):
         # Montecarlo sampling gave four peaks in four calls at 1,000 samples.

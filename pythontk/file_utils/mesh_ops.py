@@ -294,11 +294,15 @@ class _MeshOpsInternal:
     @classmethod
     def _surface_samples(cls, mesh, count: int):
         """Points on *mesh*: up to *count* of its vertices (an even stride) and
-        *count* area-weighted points on its faces, from a fixed seed."""
+        *count* area-weighted points on its faces, from a fixed seed.
+
+        Beyond PyMeshLab's own copies of the vertex and face tables, one number
+        per face: the areas, weighed in blocks and turned in place into the
+        cumulative distribution the draw searches."""
         import numpy as np
 
         v = np.asarray(mesh.vertex_matrix(), dtype=np.float64)
-        f = np.asarray(mesh.face_matrix(), dtype=np.int64)
+        f = np.asarray(mesh.face_matrix())  # PyMeshLab's int32, kept as it is
         verts = v[:: max(1, -(-len(v) // count))] if len(v) else v
         if not len(f):
             return verts
@@ -308,10 +312,11 @@ class _MeshOpsInternal:
             area[lo : lo + len(tri)] = np.linalg.norm(
                 np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0]), axis=1
             )
-        if area.sum() <= 0:
+        cdf = np.cumsum(area, out=area)
+        if cdf[-1] <= 0:
             return verts
         rng = np.random.default_rng(cls._SAMPLE_SEED)
-        pick = rng.choice(len(f), size=count, p=area / area.sum())
+        pick = np.minimum(np.searchsorted(cdf, rng.random(count) * cdf[-1], side="right"), len(f) - 1)
         r1, r2 = np.sqrt(rng.random(count)), rng.random(count)
         a, b, c = v[f[pick, 0]], v[f[pick, 1]], v[f[pick, 2]]
         faces = (1 - r1)[:, None] * a + (r1 * (1 - r2))[:, None] * b + (r1 * r2)[:, None] * c
@@ -563,6 +568,8 @@ class MeshOps(HelpMixin, _MeshOpsInternal):
         """
         if int(sample_num) < 1:
             raise ValueError(f"sample_num is the face samples per direction: at least 1, not {sample_num}.")
+        if heatmap_range is not None and not float(heatmap_range) > 0.0:
+            raise ValueError(f"heatmap_range is the distance the ramp tops out at: above 0, not {heatmap_range}.")
         pml = cls.resolve()
         src = cls._preflight(input_path)
         ref = cls._preflight(reference_path)
@@ -596,7 +603,7 @@ class MeshOps(HelpMixin, _MeshOpsInternal):
             "heatmap_range": None,
         }
         if heatmap_path:
-            top = float(heatmap_range) if heatmap_range else (worst["peak"] or 1.0)
+            top = float(heatmap_range) if heatmap_range is not None else (worst["peak"] or 1.0)
             dense, other = (
                 (0, 1) if ms.mesh(0).vertex_number() >= ms.mesh(1).vertex_number() else (1, 0)
             )

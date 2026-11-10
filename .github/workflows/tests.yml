@@ -45,9 +45,9 @@ jobs:
           # so without it the real mesh-op paths would never execute anywhere.
           pip install pymeshlab
           # OpenCascade backs CadImport, for the same reason: without it every
-          # conversion test skips (test_cad_import's CI guard fails then).
-          pip install "cadquery-ocp-novtk>=8.0.1,<9"
-          pip install -e .
+          # conversion test skips (test_cad_import's CI guard fails then). The
+          # cad extra, so its bound lives in pyproject.toml alone.
+          pip install -e ".[cad]"
 
       - name: Install the Khronos glTF Validator (a tools folder of the job's own)
         # The open-format rule's proof (CODE_STANDARD section 15): the record

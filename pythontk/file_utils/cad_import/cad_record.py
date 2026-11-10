@@ -4,8 +4,8 @@
 
 :meth:`CadImport.convert <pythontk.CadImport.convert>` writes one beside the meshes
 it makes: what the source file states about the product (its assembly tree, part
-names, placements, colours) and what its geometry measures exactly (size, area,
-volume, read from the CAD surfaces, never from a mesh), plus each mesh written from
+names, placements, colours) and what its geometry measures (size, area, volume,
+integrated over the exact CAD surfaces, never read from a mesh), plus each mesh written from
 it and, when measured, how far that mesh strays from the surfaces. Later stages read
 the record instead of the CAD file, so none of them needs the CAD backend.
 
@@ -27,7 +27,7 @@ Change a field together with ``CadImport.convert`` and bump :attr:`CadRecord.VER
 """
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union
 
 from pythontk.core_utils.schema_spec import SchemaSpec
 
@@ -43,7 +43,12 @@ class CadDeviation(SchemaSpec):
     TYPED = True
 
     peak: float = _field(
-        help="The largest distance from the exact surfaces among those points, in mm.",
+        help=(
+            "The largest distance from the exact surfaces among those points, in mm, "
+            "taken on the triangles through each mesh node's surface point: the "
+            "tessellation's error. The written mesh lies within `peak` plus "
+            "`source_gap` of the surfaces."
+        ),
         required=True,
         example=0.0146,
     )
@@ -53,7 +58,10 @@ class CadDeviation(SchemaSpec):
         example=0.006,
     )
     peak_at: List[float] = _field(
-        help="Where the peak lies: the point on the mesh, in the part's frame, in mm.",
+        help=(
+            "Where the peak lies: the point on the mesh, in the part's frame, in mm; "
+            "empty when no face had a surface to measure (`tessellated_faces`)."
+        ),
         required=True,
         example=[1.95, 0.31, 6.0],
     )
@@ -77,6 +85,15 @@ class CadDeviation(SchemaSpec):
             "was asked for."
         ),
         example="parts/Screw_M4_standard.deviation.ply",
+    )
+    source_gap: float = _field(
+        help=(
+            "How far the part's own edges lie off its surfaces, in mm: the largest "
+            "distance of a mesh node (on an edge's curve) from its face's surface "
+            "point, the file's tolerance, which no tessellation can beat. Past the "
+            "budget, the source is coarser than the profile asks."
+        ),
+        example=0.0,
     )
 
 
@@ -121,8 +138,16 @@ class CadMesh(SchemaSpec):
         example=1,
     )
     unmeshed_area: float = _field(
-        help="Their exact area, in mm², when any: surface this mesh does not show.",
+        help="Their area, in mm², when any: surface this mesh does not show.",
         example=1e-08,
+    )
+    tessellated_faces: int = _field(
+        help=(
+            "How many of its faces the source states as triangles alone (AP242 "
+            "tessellated geometry), when any: written as the file states them, at "
+            "no profile's chord, with no exact surface to measure them against."
+        ),
+        example=272,
     )
     deviation: CadDeviation = _field(
         help="How far it strays from the part's surfaces, when the conversion measured it.",
@@ -132,27 +157,66 @@ class CadMesh(SchemaSpec):
 
 @dataclass
 class CadPart(SchemaSpec):
-    """One unique part: its exact figures and its meshes. Placed by `nodes`."""
+    """One unique part: its figures, its identity and its meshes. Placed by `nodes`."""
 
     TYPED = True
 
     id: str = _field(
         help=(
-            "The part's identifier, unique in the record: its name made file-safe. "
-            "It lasts for this record only; the source's revisions may renumber it."
+            "The part's identifier, unique in the record and file-safe: by default its "
+            "part number, else its name (the conversion's `part_id` picks the key). "
+            "Parts sharing one are numbered in file order."
         ),
         required=True,
         example="Screw_M4",
     )
-    name: str = _field(help="The part's name as the source states it.", required=True, example="Screw M4")
+    name: str = _field(
+        help="The part's name as the source states it.",
+        required=True,
+        example="Screw M4",
+    )
+    part_number: str = _field(
+        help=(
+            "The id its STEP product states, the usual home of the part number "
+            "(some CAD systems write the file name and keep the part number in a "
+            "property); absent when blank or for IGES."
+        ),
+        example="91274A118",
+    )
+    properties: Dict[str, Union[str, float, int]] = _field(
+        help=(
+            "The attributes its CAD system wrote for it (STEP user-defined "
+            "attributes), keyed as written: a part number, revision, material, "
+            "mass. A piece split from a product holds the product's."
+        ),
+        example={"Part Number": "HX-100", "Revision": "C"},
+    )
+    fingerprint: str = _field(
+        help=(
+            "A hash of its shape in its own frame (volume, centroid, inertia, scaled "
+            "by its size), an exact-match key: the same for its geometry read again, "
+            "renamed or in another unit, different for a mirrored copy. Geometry "
+            "re-exported through another system can hash apart; match that within a "
+            "tolerance on `size`, `area` and `volume`. Absent for a part with no surface."
+        ),
+        example="9f3c2a71d04be655",
+    )
     size: List[float] = _field(
-        help="The size of its exact bounding box along each axis, in mm.",
+        help="The size of the tight bounding box of its exact geometry along each axis, in mm.",
         required=True,
         example=[4.0, 4.0, 12.0],
     )
-    area: float = _field(help="Its exact surface area, in mm².", required=True, example=175.93)
+    area: float = _field(
+        help=(
+            "Its surface area in mm², integrated over its exact surfaces (closed form "
+            "on analytic faces; on NIST's AP242 models within 4e-5 of a 0.002 mm mesh, "
+            "and 0.9% low on a deliberately wavy freeform panel)."
+        ),
+        required=True,
+        example=175.93,
+    )
     volume: float = _field(
-        help="Its exact volume, in mm³ (0 for a part with no closed solid).",
+        help="Its volume in mm³, integrated as its area is (0 for a part with no closed solid).",
         required=True,
         example=150.8,
     )
@@ -233,7 +297,9 @@ class CadSource(SchemaSpec):
 
     TYPED = True
 
-    file: str = _field(help="Its file name, without a folder.", required=True, example="product.step")
+    file: str = _field(
+        help="Its file name, without a folder.", required=True, example="product.step"
+    )
     sha256: str = _field(
         help="The SHA-256 of its bytes: a new revision of the file has another.",
         required=True,
@@ -269,7 +335,9 @@ class CadRecord(SchemaSpec):
     VERSION = 1
 
     version: int = _field(help="The record's schema version.", required=True, example=1)
-    source: CadSource = _field(help="The file it was made from.", required=True, nested=CadSource)
+    source: CadSource = _field(
+        help="The file it was made from.", required=True, nested=CadSource
+    )
     profiles: List[CadProfile] = _field(
         help="The profiles it tessellated at.",
         required=True,
