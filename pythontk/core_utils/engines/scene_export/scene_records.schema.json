@@ -91,6 +91,15 @@
       ],
       "x-in-frame": false
     },
+    "lods": {
+      "description": "LOD groups: per group its node name, its level nodes (LOD0, the most detailed, first) and each level's switch height, a fraction of the screen's height, the last the cull",
+      "$ref": "#/$defs/LodsRecord",
+      "x-version": 1,
+      "x-readers": [
+        "unity"
+      ],
+      "x-in-frame": false
+    },
     "articulation": {
       "description": "articulated rigs: per rig its joints (node name, parent joint, rest translate and rotation, the anchor frame its channels turn and slide in, rotate order, channels with limits and grab weights) and the parts a hand grabs, each with the joint it rides -- in metres",
       "$ref": "#/$defs/ArticulationRecord",
@@ -1265,6 +1274,56 @@
         "version",
         "unit_scale",
         "planes"
+      ]
+    },
+    "LodGroupEntry": {
+      "type": "object",
+      "description": "One LOD group: its node, its levels most detailed first, and the screen height each level is drawn down to.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The group's node: the object whose children are its levels, by name, as every record binds a node (exactly, else its namespace-stripped leaf)."
+        },
+        "levels": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The level nodes under it, LOD0 (the most detailed) first: '<base>_LOD<n>' by the convention engines read; each a mesh or a subtree of them."
+        },
+        "heights": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "description": "One switch height per level: the fraction of the screen's height (0..1) below which that level is no longer drawn, falling level by level; the last is the cull height, 0 for never culled: an engine's screen-relative transition height."
+        }
+      },
+      "required": [
+        "name",
+        "levels",
+        "heights"
+      ]
+    },
+    "LodsRecord": {
+      "type": "object",
+      "description": "The ``lods`` record's payload: the scene's LOD groups.",
+      "properties": {
+        "version": {
+          "type": "integer",
+          "description": "The record's schema version (SceneRecords.LODS.version)."
+        },
+        "groups": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LodGroupEntry"
+          },
+          "description": "Every LOD group the export ships, by node name."
+        }
+      },
+      "required": [
+        "version",
+        "groups"
       ]
     },
     "ArticulationRig": {

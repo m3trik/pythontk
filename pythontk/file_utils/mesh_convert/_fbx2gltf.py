@@ -39,6 +39,7 @@ from typing import (
 from pythontk.core_utils.engines.scene_export.scene_records import SceneRecords
 from pythontk.file_utils.mesh_convert.glb.edit import GlbEdit, GlbTarget
 from pythontk.file_utils.mesh_convert.glb.fades import GlbFades
+from pythontk.file_utils.mesh_convert.glb.lods import GlbLods
 
 if TYPE_CHECKING:
     from pythontk.file_utils.mesh_convert.fbx_file import FbxFile
@@ -367,6 +368,15 @@ class _Fbx2Gltf:
                 own_materials = self._mc._fbx_materials._read_statements(fbx)
             except Exception as exc:  # noqa: BLE001 -- the pass parses it then
                 logger.debug("FBX materials not read with the curves: %s", exc)
+        # The LOD groups' switch heights, off the same parse: a few floats.
+        lod_heights = None
+        if fbx is not None and fbx.roots:
+            try:
+                from pythontk.file_utils.mesh_convert.fbx_media import FbxMedia
+
+                lod_heights = FbxMedia.lod_heights(fbx)
+            except Exception as exc:  # noqa: BLE001 -- the default ladder then
+                logger.warning("FBX LOD thresholds not read (%s): its groups switch at the default ladder.", exc)
         del fbx
 
         # FBX2glTF wants the output base WITHOUT extension; --binary forces .glb.
@@ -872,6 +882,22 @@ class _Fbx2Gltf:
                             "FBX holds them.",
                             ", ".join(carried),
                         )
+                # The LOD groups in MSFT_lod, after every pass that binds by
+                # name in the node tree (lightmaps, articulation, fades, the
+                # manifest, the record carry): it takes the lower levels out of
+                # the tree, and a reader without the extension draws LOD0.
+                try:
+                    lods = self._mc.apply_glb_lods(edit, heights=lod_heights)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("GLB LOD groups skipped: %s", exc)
+                else:
+                    if lods["groups"]:
+                        logger.info(
+                            "LODs: %d group(s), %d level(s) in MSFT_lod: %s.",
+                            lods["groups"],
+                            lods["levels"],
+                            ", ".join(lods["names"]),
+                        )
                 # LAST, once every pass has read the FBX's records and stated
                 # them in glTF's own terms: the handoff names the blocks this
                 # file carries, and what the records left on the nodes -- the
@@ -973,6 +999,8 @@ class _Fbx2Gltf:
                 skin["skeleton"] = remap.get(skin["skeleton"])
                 if skin["skeleton"] is None:
                     del skin["skeleton"]
+        # MSFT_lod names a group's lower levels by node index.
+        GlbLods.renumber(kept, remap)
 
         def animates_doomed(channel: Dict[str, Any], _animation: Dict[str, Any]) -> bool:
             return (channel.get("target") or {}).get("node") in doomed

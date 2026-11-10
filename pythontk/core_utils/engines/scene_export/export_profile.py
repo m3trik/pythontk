@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from typing import Any, ClassVar, Dict, Iterable, List, Mapping, Optional, Tuple
 
 from pythontk.core_utils.deprecation import Deprecation
+from pythontk.file_utils.lod_chain import LodChain
 from pythontk.str_utils._str_utils import StrUtils
 
 
@@ -246,6 +247,16 @@ class ExportProfile:
                     "take when the scene has no shots).",
                 )
             )
+        lod_row = cls.RETIRED_LOD_ROW
+        if lod_row in stored and not stored[lod_row] and lod_row not in check_definitions:
+            notes.append(
+                (
+                    "info",
+                    "it turns Check Geometry LOD Suffix off: the row is retired, "
+                    "every export reads the LOD groups and lists what it finds, "
+                    "and the LODs row decides what ships.",
+                )
+            )
         for check in cls.ALWAYS_CHECKS:
             if check in stored and not stored[check] and check not in check_definitions:
                 label = check[len("check_") :].replace("_", " ").title()
@@ -285,6 +296,8 @@ class ExportProfile:
             keys.append("baked_reflections")
         if "apply_declared_takes" not in task_definitions:
             keys.append(cls.RETIRED_CLIPS_ROW)
+        if cls.RETIRED_LOD_ROW not in check_definitions:
+            keys.append(cls.RETIRED_LOD_ROW)
         keys += [c for c in cls.ALWAYS_CHECKS if c not in check_definitions]
         return tuple(keys)
 
@@ -589,6 +602,15 @@ class ExportProfile:
         "exclude_hdr",
         # Phase 2.5 -- Name hygiene (before checks/sidecar record the names)
         "conform_shape_names",
+        # Reads the LOD groups of what the filters left, on every export
+        # (armed by ExportRun.from_tasks with the LODs row's mode), after the
+        # name hygiene: its plan holds paths a rename would leave stale. Most
+        # Detailed Only takes the lower levels out of the set here.
+        "prepare_lods",
+        # Generate Missing: a LOD group for each eligible mesh, after the name
+        # hygiene (its levels are named from the conformed names) and before
+        # the material and animation phases, which then see the new levels.
+        "generate_lods",
         # Phase 3 -- Material cleanup (reassign THEN resolve THEN relativize;
         # the texture-processing pair runs LAST: convert then optimize what
         # will actually ship, and their staged absolute paths must never be
@@ -615,9 +637,15 @@ class ExportProfile:
         "set_bake_animation_range",
     ]
 
-    #: Tasks that REMOVE nodes from the export set, so every check reading the
-    #: export set is downstream of them.
-    OBJECT_SET_TASKS: Tuple[str, ...] = ("ignore_groups", "exclude_hdr")
+    #: Tasks that change the export set -- the filters REMOVE nodes, the LOD
+    #: generation ADDS levels -- so every check reading the export set is
+    #: downstream of them.
+    OBJECT_SET_TASKS: Tuple[str, ...] = (
+        "ignore_groups",
+        "exclude_hdr",
+        "prepare_lods",
+        "generate_lods",
+    )
     #: Tasks that rewrite what a texture node points at -- which materials own
     #: it (reassign), where the path resolves (resolve/relativize) and what
     #: file is actually there (convert/optimize).
@@ -663,7 +691,6 @@ class ExportProfile:
         # fill (a constraint-driven node has no curves until it is baked).
         "check_framerate": OBJECT_SET_TASKS + ("smart_bake",),
         # --- Hierarchy & Naming ------------------------------------------
-        "check_geometry_lod_suffix": OBJECT_SET_TASKS + ("conform_shape_names",),
         # Its widest scope ("Connected & Animated") selects by INCOMING
         # transform connections -- which flatten cuts and smart_bake creates --
         # and a reparent silently number-suffixes a name that collides under
@@ -742,6 +769,27 @@ class ExportProfile:
     #: carrying it loads with the key ignored, said once
     #: (:meth:`retired_row_notes`, :meth:`retired_row_keys`).
     RETIRED_CLIPS_ROW = "animation_clips"
+    #: The Check Geometry LOD Suffix row, retired 2026-11-10: every export reads
+    #: the LOD groups (``prepare_lods``, armed by :meth:`ExportRun.from_tasks`)
+    #: and lists what it finds, and the LODs row decides what ships, so a
+    #: preset that turned the listing off is told so once.
+    RETIRED_LOD_ROW = "check_geometry_lod_suffix"
+    #: LODs -- what an export ships of the scene's LOD groups (``<base>`` with
+    #: children ``<base>_LOD0..n``, :class:`pythontk.LodChain`). The value is the
+    #: :attr:`ExportRun.lods` mode. APPEND-ONLY: the combo persists by index.
+    LOD_OPTIONS: Dict[str, str] = {
+        "As Authored": "authored",
+        "Most Detailed Only": "lod0",
+        "Generate Missing": "generate",
+    }
+    #: LOD Output -- whether the LOD groups Generate Missing makes stay in the
+    #: scene, or are made for the write and removed after. The value is the
+    #: :attr:`ExportRun.lod_write_back` mode; the Texture / Animation Output
+    #: pattern.
+    LOD_OUTPUT_OPTIONS: Dict[str, bool] = {
+        "Export Copies (Scene Untouched)": False,
+        "Scene (In Place)": True,
+    }
 
     @classmethod
     def scoped_tables(cls, manager: type) -> type:
@@ -1131,6 +1179,16 @@ class ExportRun:
     #: removed by ``FbxMedia.drop_apparatus``). FBX only: a USD layer is
     #: written as the scene samples.
     drop_rig_apparatus: bool = False
+    #: The LODs row (:attr:`ExportProfile.LOD_OPTIONS`): ``"authored"`` ships
+    #: each LOD group as one, ``"lod0"`` its most detailed level alone,
+    #: ``"generate"`` authored groups as authored and a generated group for
+    #: each eligible mesh. Handed to ``prepare_lods``, which :meth:`from_tasks`
+    #: arms on every export (and ``generate_lods`` for ``"generate"``).
+    lods: str = "authored"
+    #: LOD Output (:attr:`ExportProfile.LOD_OUTPUT_OPTIONS`): True leaves the
+    #: groups Generate Missing made in the scene; False removes them after the
+    #: write.
+    lod_write_back: bool = False
     #: Secondary Map Size: a lower pixel ceiling for a GLB's packed data maps
     #: (:attr:`ExportProfile.SECONDARY_MAX_SIZE_OPTIONS`); None is "the same
     #: as Optimize Textures".
@@ -1150,6 +1208,9 @@ class ExportRun:
 
     #: The ``output_format`` tokens a run accepts.
     OUTPUT_FORMATS: ClassVar[Tuple[str, ...]] = ("fbx", "glb", "fbx_glb", "usd")
+    #: The :attr:`lods` modes a run accepts: the convention's own
+    #: (:attr:`LodChain.MODES`), which :attr:`ExportProfile.LOD_OPTIONS` labels.
+    LOD_MODES: ClassVar[Tuple[str, ...]] = LodChain.MODES
     #: The retired Baked Reflections row's token -> the level it published
     #: (``lightmappedMaterials.envMapIntensity``); its labels are
     #: :attr:`ExportProfile._BAKED_REFLECTIONS_OPTIONS`. Read privately by the
@@ -1201,6 +1262,8 @@ class ExportRun:
         "animation_write_back",
         "verify_deliverables",
         "drop_rig_apparatus",
+        "lods",
+        "lod_write_back",
         "texture_max_size",
         "secondary_max_size",
         "uastc_rdo",
@@ -1572,6 +1635,24 @@ class ExportRun:
                 )
             )
             drop_rig_apparatus = False
+        # Every export reads its LOD groups -- the listing the retired Check
+        # Geometry LOD Suffix row gave, and what Most Detailed Only drops --
+        # so the task is armed with the mode, as the take split is above.
+        lods = tasks.pop("lods", None) or "authored"
+        if lods not in cls.LOD_MODES:
+            notes.append(
+                (
+                    "warning",
+                    f"LODs {lods!r} unknown (one of {', '.join(cls.LOD_MODES)}): "
+                    "shipping each LOD group as authored.",
+                )
+            )
+            lods = "authored"
+        tasks["prepare_lods"] = lods
+        if lods == "generate":
+            tasks["generate_lods"] = True
+        else:
+            tasks.pop("generate_lods", None)
         if output_format == "glb":
             skipped = [key for key in cls.FBX_KEY_HYGIENE if tasks.pop(key, None)]
             if skipped:
@@ -1603,6 +1684,8 @@ class ExportRun:
             optimize_textures=bool(optimize),
             verify_deliverables=bool(tasks.pop("verify_deliverables", False)),
             drop_rig_apparatus=drop_rig_apparatus,
+            lods=lods,
+            lod_write_back=bool(tasks.pop("lod_write_back", False)),
         )
         return run.with_tasks(tasks), tasks, notes
 

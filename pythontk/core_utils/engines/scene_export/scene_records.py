@@ -533,6 +533,26 @@ class RecordSpec:
             return payload
         return {**payload, field_name: kept}
 
+    def named_nodes(self, payload: Any) -> List[str]:
+        """The node names *payload*'s entries (:attr:`nodes`) name, in order,
+        each once -- what a task must not rename or regroup without the record
+        following (the Scene Exporter's LOD generation skips them). Empty for a
+        record that declares no node entries or a payload with no entry list."""
+        if self.nodes is None or not isinstance(payload, Mapping):
+            return []
+        field_name, name_path = self.nodes
+        path = (name_path,) if isinstance(name_path, str) else tuple(name_path)
+        entries = payload.get(field_name)
+        if not isinstance(entries, list):
+            return []
+        names = [
+            str(value)
+            for entry in entries
+            for value in IterUtils.values_at(entry, path)
+            if isinstance(value, str) and value
+        ]
+        return list(dict.fromkeys(names))
+
     def assembly_for(self, payload: Any = None) -> str:
         """The assembly a record *payload* needs (:meth:`Clause.join`): every
         clause without one."""
@@ -1425,6 +1445,33 @@ class SceneRecords:
             (_SHADOW_PLANE, _SHADOW_MODEL, _SHADOW_FADE, _SHADOW_HORIZON)
         ),
         clauses=_SHADOW_CLAUSES,
+    )
+    #: The payload's model is ``LodsRecord`` (2026-11-10): per LOD group its
+    #: node, levels and switch heights, for its engine consumer's importer,
+    #: which builds one LOD group per group (the engine's own FBX import merged
+    #: every level-named mesh of a file onto its root and ignored the FBX's
+    #: thresholds, measured). A GLB
+    #: states LODs in MSFT_lod and USD in a variant set, so neither carries it.
+    LODS = RecordSpec(
+        "lods",
+        Scope.DELIVERABLE,
+        1,
+        owner="LODs",
+        kind=Kind.DERIVED,
+        description=(
+            "LOD groups: per group its node name, its level nodes (LOD0, the "
+            "most detailed, first) and each level's switch height, a fraction "
+            "of the screen's height, the last the cull"
+        ),
+        consumers=("unity",),
+        shape=("pythontk.file_utils.lod_record", "LodsRecord"),
+        export_scoped=True,
+        nodes=("groups", "name"),
+        assembly=(
+            "Each group's node gets one LOD group over its levels, in order, "
+            "each level drawn down to its height on screen, the object culled "
+            "below the last."
+        ),
     )
     #: The payload's model is ``ArticulationRecord``. Version 2 (2026-11-08):
     #: one layout, two containers -- a GLB carries the record as it stands
@@ -2345,6 +2392,29 @@ class SceneRecords:
     def all(cls) -> List[RecordSpec]:
         """Every declared record, in declaration order."""
         return [v for v in vars(cls).values() if isinstance(v, RecordSpec)]
+
+    @classmethod
+    def named_nodes(
+        cls, dump: Mapping[str, Mapping[str, Any]], skip: Iterable[str] = ()
+    ) -> Set[str]:
+        """Every node name the records in *dump* name (``SceneStoreBase.dump``:
+        ``{carrier: {key: payload}}``), with each name's namespace-stripped
+        leaf: a reader binds a name exactly, else by that leaf. The records
+        keyed in *skip* are not read (the LOD generation skips the ``lods``
+        record an earlier export stored: it describes the groups, it does not
+        pin them)."""
+        skip = set(skip)  # once: a generator is spent after the first spec
+        specs = {spec.key: spec for spec in cls.all() if spec.key not in skip}
+        names: Set[str] = set()
+        for values in (dump or {}).values():
+            for key, payload in (values or {}).items():
+                spec = specs.get(key)
+                if spec is None:
+                    continue
+                for name in spec.named_nodes(payload):
+                    names.add(name)
+                    names.add(name.rsplit("|", 1)[-1].rsplit(":", 1)[-1])
+        return names
 
     @classmethod
     def with_paths(cls) -> List[RecordSpec]:

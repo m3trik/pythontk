@@ -575,6 +575,12 @@ class CadImport(HelpMixin, LoggingMixin, _CadImportInternal):
 
         Returns:
             The record's path: ``<output_dir>/<stem>.cad.json``.
+
+        The profiles are a LOD chain, each level a tessellation of the exact
+        surfaces: one line merges them into one GLB of ``MSFT_lod`` groups,
+        ``<part>_LOD<n>`` (the layer above this one does the GLB work)::
+
+            ptk.MeshConvert.merge_glb_lods(CadImport.convert(step, profiles=("hero", "realtime")))
         """
         if up_axis not in cls.UP_AXES:
             raise ValueError(f"up_axis is one of {cls.UP_AXES}, not {up_axis!r}.")

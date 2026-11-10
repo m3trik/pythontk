@@ -3053,6 +3053,27 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.file_utils.lod_chain",
+    "name": "LodChain",
+    "qualname": "LodChain",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.file_utils.lod_record",
+    "name": "LodGroupEntry",
+    "qualname": "LodGroupEntry",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.file_utils.lod_record",
+    "name": "LodsRecord",
+    "qualname": "LodsRecord",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.core_utils.process_stream",
     "name": "LogTailer",
     "qualname": "LogTailer",

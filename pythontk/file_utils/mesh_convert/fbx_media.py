@@ -1156,8 +1156,14 @@ class _FbxMediaInternal:
 
     @classmethod
     def _properties(cls, record: _Record, hlen: int) -> _Record:
-        """*record*'s ``Properties70`` child, added when it has none."""
+        """*record*'s ``Properties70`` child, added when it has none -- ready
+        for rows: an empty block a writer left without the NULL sentinel (a
+        DCC's FBX writer does, measured 2026-11-10) gains one, which a record
+        with children closes on; a strict reader refuses the file without it
+        ("scope length not reached"), an empty block with one is valid."""
         block = cls._find_properties(record)
+        if block is not None and not block.children and not block.tail:
+            block.tail = b"\0" * (hlen + 1)
         if block is None:
             block = _Record(b"Properties70", 0, b"", [], b"\0" * (hlen + 1))
             if not record.children and not record.tail:
@@ -2289,6 +2295,163 @@ class FbxMedia(_FbxMediaInternal):
             part = cls._write_part(target, version, roots, footer_id, magic)
         cls._promote(part, target)
         return report
+
+    @staticmethod
+    def lod_heights(fbx: Any) -> Dict[str, List[float]]:
+        """``{group node name: heights}`` for every LodGroup attribute *fbx*
+        states in percent (a distance threshold cannot become a screen height,
+        so such a group is left out); each list ends with a cull of 0.
+
+        The reader of :meth:`set_lod_thresholds`' rows (and a DCC's own).
+
+        Parameters:
+            fbx: A path, or an :class:`FbxFile` already parsed (the conversion
+                hands its one parse of the input: a production FBX takes
+                seconds to parse).
+        """
+        from pythontk.file_utils.lod_chain import LodChain
+
+        if not isinstance(fbx, FbxFile):
+            fbx = FbxFile.load(fbx)
+        attributes: Dict[int, List[float]] = {}
+        names: Dict[int, str] = {}
+        for record in fbx.iter_objects():
+            props = record.get("props") or []
+            if not props or not isinstance(props[0], int):
+                continue
+            if record["name"] == "Model":
+                names[props[0]] = fbx.object_name(record) or ""
+                continue
+            kind = props[2] if len(props) > 2 else b""
+            if record["name"] != "NodeAttribute" or kind not in (b"LodGroup", "LodGroup"):
+                continue
+            percent, thresholds = False, {}
+            for child in record.get("children") or []:
+                if child["name"] != "Properties70":
+                    continue
+                for entry in child.get("children") or []:
+                    values = entry.get("props") or []
+                    key = values[0].decode("latin-1") if isinstance(values[0], bytes) else str(values[0])
+                    if key == "ThresholdsUsedAsPercentage" and len(values) > 4:
+                        percent = bool(values[4])
+                    elif key.startswith("Thresholds|Level") and len(values) > 4:
+                        try:
+                            thresholds[int(key.rsplit("Level", 1)[-1])] = float(values[4])
+                        except ValueError:
+                            continue
+            if percent and thresholds:
+                attributes[props[0]] = LodChain.from_fbx_thresholds(
+                    [thresholds[i] for i in sorted(thresholds)]
+                )
+        heights: Dict[str, List[float]] = {}
+        for _kind, child, parent, *_rest in fbx.connections():
+            if child in attributes and parent in names:
+                heights[names[parent]] = attributes[child]
+        return heights
+
+    @staticmethod
+    def lod_group_rows(heights: Sequence[float]) -> List[Tuple[Any, ...]]:
+        """The ``Properties70`` rows of a LodGroup attribute stating *heights*
+        (one per level, the cull last), as a DCC's own LodGroup writer spells
+        them (measured 2026-11-10): ``ThresholdsUsedAsPercentage``,
+        ``WorldSpace``, one ``Thresholds|Level<i>`` in percent per switch and a
+        ``DisplayLevels|Level<i>`` row each -- ``(name, type, label, flags,
+        value[, unit])``, the one table every writer here emits."""
+        from pythontk.file_utils.lod_chain import LodChain
+
+        thresholds = LodChain.to_fbx_thresholds(heights)
+        rows: List[Tuple[Any, ...]] = [
+            ("ThresholdsUsedAsPercentage", "bool", "", "", 1),
+            ("WorldSpace", "bool", "", "", 1),
+        ]
+        rows += [(f"Thresholds|Level{i}", "Distance", "", "", float(t), "cm") for i, t in enumerate(thresholds)]
+        rows += [(f"DisplayLevels|Level{i}", "enum", "", "", 0) for i in range(len(thresholds))]
+        return rows
+
+    @classmethod
+    def set_lod_thresholds(
+        cls,
+        src: str,
+        heights: Mapping[str, Sequence[float]],
+        dst: Optional[str] = None,
+    ) -> List[str]:
+        """State each LOD group's switch heights on the LodGroup attribute a
+        writer left without them.
+
+        A DCC's own LodGroup writer states ``ThresholdsUsedAsPercentage``, one
+        ``Thresholds|Level<i>`` per switch in percent and a ``DisplayLevels``
+        row each (measured); a writer that states the node type alone (an
+        Empty typed ``LodGroup``) leaves the block empty, so every reader of
+        the attribute switches at its own defaults. This writes the rows the
+        same way; an attribute already stating thresholds keeps its own.
+
+        Parameters:
+            src: The FBX to read.
+            heights: ``{group node name: heights}`` -- one per level, the cull
+                last (``LodChain``); a group of fewer than two is left alone.
+            dst: Where to write; ``None`` rewrites *src* in place.
+
+        Returns:
+            The groups stated, in file order. When none needs it the file is
+            not written at all.
+
+        Raises:
+            ValueError: *src* is not a binary FBX this writer can re-emit, or a
+                group's heights do not fall level by level within 0..1.
+        """
+        from pythontk.file_utils.lod_chain import LodChain
+
+        for wanted in heights.values():
+            if len(wanted) >= 2:
+                LodChain.check_heights(wanted)
+        stated: List[str] = []
+        with (
+            open(src, "rb") as fh,
+            mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ) as buf,
+        ):
+            version, roots, footer_id, magic = cls._load(buf)
+            hlen = cls._header_fmt(version >= 7500)[1]
+            names: Dict[int, str] = {}
+            attributes: Dict[int, _Record] = {}
+            for root in roots:
+                if root.name != b"Objects":
+                    continue
+                for record in root.children:
+                    head = cls._scalars(record)
+                    if record.name == b"Model" and len(head) > 1:
+                        names[head[0]] = FbxFile.display_name(head[1]) or ""
+                    elif record.name == b"NodeAttribute" and len(head) > 2 and head[2] == b"LodGroup":
+                        attributes[head[0]] = record
+            s, d = cls._pack_string, (lambda value: b"D" + struct.pack("<d", float(value)))
+            for root in roots:
+                if root.name != b"Connections":
+                    continue
+                for connection in root.children:
+                    row = cls._scalars(connection)
+                    if len(row) < 3 or row[0] != b"OO" or row[1] not in attributes or row[2] not in names:
+                        continue
+                    name = names[row[2]]
+                    wanted = heights.get(name)
+                    if not wanted or len(wanted) < 2:
+                        continue
+                    block = cls._properties(attributes[row[1]], hlen)
+                    if any(
+                        bytes((cls._scalars(p) or [b""])[0] or b"").startswith(b"Thresholds|")
+                        for p in block.children
+                    ):
+                        continue
+                    rows = [
+                        [s(v.encode()) if isinstance(v, str) else d(v) if isinstance(v, float) else cls._pack_int(v) for v in row]
+                        for row in cls.lod_group_rows(wanted)
+                    ]
+                    block.children.extend(cls._new_record(b"P", props, (), hlen) for props in rows)
+                    stated.append(name)
+            if not stated:
+                return stated
+            target = dst or src
+            part = cls._write_part(target, version, roots, footer_id, magic)
+        cls._promote(part, target)
+        return stated
 
     #: The per-corner vector layers a mesh carries, by the array holding them.
     _VECTOR_LAYERS = {

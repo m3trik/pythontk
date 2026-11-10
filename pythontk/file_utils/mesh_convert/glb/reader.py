@@ -503,12 +503,12 @@ class GlbReader(_GlbReaderInternal):
         return self._names.get(name)
 
     def parent_of(self, index: int) -> Optional[int]:
-        """Parent node index, or ``None`` for a root."""
+        """Parent node index, or ``None`` for a root. A LOD group's lower level
+        (MSFT_lod keeps it out of the tree) answers its LOD0's parent."""
         if self._parents is None:
-            self._parents = {}
-            for i, node in enumerate(self.gltf.get("nodes") or []):
-                for child in node.get("children") or []:
-                    self._parents[child] = i
+            from pythontk.file_utils.mesh_convert.glb.lods import GlbLods
+
+            self._parents = GlbLods.parents(self.gltf.get("nodes") or [])
         return self._parents.get(index)
 
     def local_matrix(
@@ -546,8 +546,9 @@ class GlbReader(_GlbReaderInternal):
         if index is None:
             return None
         m = self.local_matrix(index, time, animation)
-        parent = self.parent_of(index)
-        while parent is not None:
+        parent, seen = self.parent_of(index), {index}
+        while parent is not None and parent not in seen:  # a malformed file's cycle ends
+            seen.add(parent)
             m = self._mat_mul(m, self.local_matrix(parent, time, animation))
             parent = self.parent_of(parent)
         return m

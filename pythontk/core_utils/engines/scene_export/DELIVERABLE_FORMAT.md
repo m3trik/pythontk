@@ -20,6 +20,7 @@ Every FBX and GLB a scene exports states itself in-band: the scene's records rid
 | [`audio`](#audio) | `data_export.audio` v3 | `extras.audio` v3 | unity, glb | the scene's sounds cut into cues per clip: each the sound (the delivered audio file's name), when it starts and stops in seconds from the clip's start, and where in the sound it starts; the cues are the source's, and what a Unity user adds in the model importer's Events tab is Unity's |
 | [`lightmaps`](#lightmaps) | `data_export.lightmaps` v3 | `extras.lightmaps` v3 | unity, glb | per-object baked-lightmap records: map file name, scaleOffset, and the object's scene hierarchy (which tells apart objects that share a name); the bake's reflection probe, when it captured one -- its HDR's file name, capture point and projection box -- with copies of it for groups of receivers; and the lights the maps were baked from -- every length times unit_scale is metres |
 | [`shadows`](#shadows) | `data_export.shadows` v3 | `extras.shadows` v3 | unity, glb | shadow planes: per plane its node name, the source and contact it follows, its horizon map, the projection model's constants and its fade's terms, and its projected silhouette (an extension) -- every length times unit_scale is metres |
+| [`lods`](#lods) | `data_export.lods` v1 | -- | unity | LOD groups: per group its node name, its level nodes (LOD0, the most detailed, first) and each level's switch height, a fraction of the screen's height, the last the cull |
 | [`articulation`](#articulation) | `data_export.articulation` v2 | `extras.articulation` v2 | unity, glb | articulated rigs: per rig its joints (node name, parent joint, rest translate and rotation, the anchor frame its channels turn and slide in, rotate order, channels with limits and grab weights) and the parts a hand grabs, each with the joint it rides -- in metres |
 | [`render_effects`](#render_effects) | `data_export.render_effects` v2 | `extras.render_effects` v2 | unity, glb, verifier | which nodes carry an animated render effect -- 'visibility', 'opacity', 'highlight' with its colour stops 'highlight_color' and 'highlight_color_dim' -- and which materials an animated 'emission'; each curve rides the file's animated-value transport, per clip |
 | [`handoff`](#handoff) | `data_export.handoff` v3 | `extras.handoff` v3 | glb | the standalone-reader contract: the approved scene part by part and the lighting it was approved under |
@@ -487,6 +488,33 @@ Where a plane's silhouette sits in the shared silhouette atlas.
 ### In the GLB: `extras.shadows`, version 3
 
 The record itself, as the FBX carries it: the same version and shape, its names resolved in the GLB's own scene.
+
+## lods
+
+LOD groups: per group its node name, its level nodes (LOD0, the most detailed, first) and each level's switch height, a fraction of the screen's height, the last the cull.
+
+### In the FBX: `data_export.lods`, version 1
+
+Each group's node gets one LOD group over its levels, in order, each level drawn down to its height on screen, the object culled below the last.
+
+#### LodsRecord
+
+The ``lods`` record's payload: the scene's LOD groups.
+
+| Key | Required | Description | Example |
+|---|---|---|---|
+| `version` | yes | The record's schema version (SceneRecords.LODS.version). | `1` |
+| `groups` | yes | Every LOD group the export ships, by node name. | see *LodGroupEntry* below (list) |
+
+##### LodGroupEntry
+
+One LOD group: its node, its levels most detailed first, and the screen height each level is drawn down to.
+
+| Key | Required | Description | Example |
+|---|---|---|---|
+| `name` | yes | The group's node: the object whose children are its levels, by name, as every record binds a node (exactly, else its namespace-stripped leaf). | `"chair"` |
+| `levels` | yes | The level nodes under it, LOD0 (the most detailed) first: '<base>_LOD<n>' by the convention engines read; each a mesh or a subtree of them. | `["chair_LOD0", "chair_LOD1", "chair_LOD2"]` |
+| `heights` | yes | One switch height per level: the fraction of the screen's height (0..1) below which that level is no longer drawn, falling level by level; the last is the cull height, 0 for never culled: an engine's screen-relative transition height. | `[0.5, 0.25, 0.0]` |
 
 ## articulation
 

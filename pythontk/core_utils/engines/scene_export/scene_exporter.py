@@ -920,6 +920,35 @@ class SceneExporterBase(LoggingMixin):
         )
         self.logger.debug(f"File logging setup complete. Log file: {log_file_path}")
 
+    def _state_lod_variants(
+        self, written: str, plan: List[Dict[str, Any]], author: Callable[[str, List[Dict[str, Any]]], List[str]]
+    ) -> List[str]:
+        """State a written USD layer's LOD groups (*plan*: ``LodChain.variant_plan``)
+        as variant sets ``LOD`` through the host's *author* (its
+        ``UsdUtils.author_lod_variants``), and say what came of it -- the one
+        report every host's exporter gives. A ``.usdz`` is packaged already
+        (and AR Quick Look reads no LOD): said, left as is. Returns the groups
+        stated, by prim path."""
+        if not plan:
+            return []
+        if str(written).lower().endswith(".usdz"):
+            self.logger.info(
+                f"USD: {len(plan)} LOD group(s) ship as plain prims in the .usdz "
+                "(a packaged layer; AR Quick Look reads no LOD)."
+            )
+            return []
+        stated = author(written, plan)
+        if stated:
+            self.logger.info(f"USD: {len(stated)} LOD group(s) stated as variant sets LOD (LOD0 selected).")
+        found = {path.rsplit("/", 1)[-1] for path in stated}
+        missed = [entry["group"] for entry in plan if entry["group"] not in found]
+        if missed:
+            self.logger.warning(
+                f"USD: {len(missed)} LOD group(s) not found by name in the written layer "
+                f"(a namespace the writer stripped?), so they ship as plain prims: {', '.join(missed)}."
+            )
+        return stated
+
     def _glb_created(self, path: str) -> None:
         """Say the run's GLB landed at *path*, and keep it for the run's last
         line: :meth:`_close_file_logging` links it to the WebXR preview."""

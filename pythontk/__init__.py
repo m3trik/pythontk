@@ -32,6 +32,9 @@ DEFAULT_INCLUDE = {
     # truth (OpenCascade, the optional ``pythontk[cad]`` extra).
     "file_utils.cad_import._cad_import": ["CadImport"],
     "file_utils.cad_import.cad_record": ["CadRecord"],
+    # The LOD convention every carrier writes: <base>_LOD<n> levels, switch heights.
+    "file_utils.lod_chain": ["LodChain"],
+    "file_utils.lod_record": ["LodsRecord", "LodGroupEntry"],
     "str_utils._str_utils": "*",
     "vid_utils._vid_utils": "*",
     "vid_utils.frame_extractor": ["FrameExtractor"],

@@ -1,6 +1,7 @@
 import { el } from './dom.js';
 import { plural } from './format.js';
 import { bakedMaterials, bindingOf, fileMaterialKey } from './lightmaps.js';
+import { underLowerLevel } from './lods.js';
 import { materialsOf, modelBounds } from './model.js';
 import { probeEnvironment, probeState } from './probe.js';
 
@@ -103,6 +104,8 @@ export function measureModel(gltf, load, issues) {
   let vertices = 0;
   gltf.scene.traverse((node) => {
     if (!node.isMesh || !node.geometry) return;
+    // What is drawn up close: a LOD group's lower levels are not (lods.js).
+    if (underLowerLevel(node)) return;
     meshes += 1;
     const { geometry } = node;
     const copies = node.isInstancedMesh ? node.count : 1;

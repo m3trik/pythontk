@@ -759,6 +759,74 @@ class Gltf2FbxTestCase(unittest.TestCase):
         self.assertEqual(report["skipped"]["point/line primitives"], ["Quad"])
         self.assertEqual(report["meshes"], 1)
 
+    # ------------------------------------------------------------ LODs
+    @staticmethod
+    def _lod_builder(coverage=(0.6, 0.3, 0.0)):
+        """``props`` -> ``chair`` (its LOD0 holding MSFT_lod over two levels kept
+        out of the node tree, the Scene Exporter's GLB) + ``lamp``."""
+        b = GltfBuilder()
+        meshes = []
+        for size in (1.0, 0.5, 0.25, 2.0):
+            corners = [(0, 0, 0), (size, 0, 0), (0, size, 0)]
+            meshes.append(
+                {
+                    "primitives": [
+                        {
+                            "attributes": {"POSITION": b.accessor(corners, "VEC3")},
+                            "indices": b.accessor([0, 1, 2], "SCALAR", 5123),
+                        }
+                    ]
+                }
+            )
+        lod0 = {"name": "chair_LOD0", "mesh": 0, "extensions": {"MSFT_lod": {"ids": [4, 5]}}}
+        if coverage is not None:
+            lod0["extras"] = {"MSFT_screencoverage": list(coverage)}
+        b.gltf.update(
+            scene=0,
+            scenes=[{"nodes": [0]}],
+            nodes=[
+                {"name": "props", "children": [1, 3]},
+                {"name": "chair", "translation": [0, 0, 2], "children": [2]},
+                lod0,
+                {"name": "lamp", "mesh": 3},
+                {"name": "chair_LOD1", "mesh": 1},
+                {"name": "chair_LOD2", "mesh": 2},
+            ],
+            meshes=meshes,
+            extensionsUsed=["MSFT_lod"],
+        )
+        return b
+
+    def test_a_glb_lod_group_lands_as_an_fbx_lod_group(self):
+        """Every level lands as a mesh under the group (FBX holds levels as
+        nodes: engines read the names), and the group carries the LodGroup
+        attribute at the GLB's heights, as a DCC's own writer states it."""
+        from pythontk.file_utils.mesh_convert.fbx_media import FbxMedia
+
+        dst, fbx, _, report = self._convert(self._lod_builder())
+        models = self._models(fbx)
+        for level in ("chair_LOD0", "chair_LOD1", "chair_LOD2"):
+            self.assertEqual(self._parent(fbx, level), "chair")
+            self.assertEqual(models[level]["props"][2], b"Mesh")
+        self.assertEqual(models["chair"]["props"][2], b"LodGroup")
+        self.assertEqual(self._p70(models["chair"], "Lcl Translation"), [0.0, 0.0, 200.0])
+        (attribute,) = [
+            a for a in self._objects(fbx, "NodeAttribute") if a["props"][2] == b"LodGroup"
+        ]
+        self.assertEqual(self._p70(attribute, "ThresholdsUsedAsPercentage"), [1])
+        self.assertEqual(self._p70(attribute, "Thresholds|Level0"), [60.0, b"cm"])
+        self.assertEqual(self._p70(attribute, "Thresholds|Level1"), [30.0, b"cm"])
+        self.assertEqual(FbxMedia.lod_heights(dst), {"chair": [0.6, 0.3, 0.0]}, "the round trip")
+        self.assertEqual(report["lod_groups"], 1)
+        self.assertNotIn("required extensions (ignored)", report["skipped"])
+
+    def test_a_glb_lod_group_without_heights_takes_the_default_ladder(self):
+        from pythontk.file_utils.lod_chain import LodChain
+        from pythontk.file_utils.mesh_convert.fbx_media import FbxMedia
+
+        dst, _, _, _ = self._convert(self._lod_builder(coverage=None))
+        self.assertEqual(FbxMedia.lod_heights(dst), {"chair": LodChain.default_heights(3)})
+
     # ------------------------------------------------------------ containers
     def test_a_gltf_with_an_external_buffer_converts_the_same(self):
         _, fbx, manifest, _ = self._convert(gltf=True)

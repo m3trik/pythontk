@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { LOD_LEVEL } from './lods.js';
 import { renderer } from './scene.js';
 
 // What can be stood on -- the model's visible meshes, each with its scene-space
@@ -187,10 +188,16 @@ export const surfaces = (() => {
     if (!root) return;
     root.updateWorldMatrix(true, true);
     rootMatrix.copy(root.matrixWorld);
-    root.traverseVisible((node) => {
-      if (!node.isMesh) return;
-      list.push({ mesh: node, box: new THREE.Box3().setFromObject(node), gridded: griddable(node) });
-    });
+    // The visible meshes, a LOD group's surface its most detailed level: the
+    // camera switches the levels' visibility, so LOD0 counts as shown and the
+    // lower levels (the same surface, coarser) never do.
+    const walk = (node) => {
+      const level = node.userData?.[LOD_LEVEL];
+      if (level > 0 || (!node.visible && level !== 0)) return;
+      if (node.isMesh) list.push({ mesh: node, box: new THREE.Box3().setFromObject(node), gridded: griddable(node) });
+      for (const child of node.children) walk(child);
+    };
+    walk(root);
   }
 
   // Every grid the model's surfaces need, built now rather than on the frame

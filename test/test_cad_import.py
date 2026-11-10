@@ -593,6 +593,25 @@ class TestConvert(unittest.TestCase):
             report["issues"]["numWarnings"], 0, ptk.GltfValidator.messages(report)
         )
 
+    def test_the_profiles_merge_into_one_valid_lod_glb(self):
+        """A CAD import's profiles are its LOD levels: ``MeshConvert.merge_glb_lods``
+        takes the record's assemblies finest chord first (given here coarse
+        first) into one GLB whose parts are ``MSFT_lod`` groups, levels named
+        ``<part>_LOD<n>``, and the Khronos validator passes it."""
+        glb = ptk.MeshConvert.merge_glb_lods(
+            self.record_path, os.path.join(self.out, "lods", "product_lods.glb")
+        )
+        doc = _glb_json(glb)
+        lod0s = [n for n in doc["nodes"] if "MSFT_lod" in (n.get("extensions") or {})]
+        self.assertTrue(lod0s, "the curved parts draw fewer triangles at realtime")
+        for lod0 in lod0s:
+            self.assertTrue(lod0["name"].endswith("_LOD0"), lod0["name"])
+            (lower,) = lod0["extensions"]["MSFT_lod"]["ids"]
+            self.assertEqual(doc["nodes"][lower]["name"], lod0["name"][:-1] + "1")
+        report = ptk.GltfValidator.validate(glb, executable=gltf_validator())
+        self.assertEqual(report["issues"]["numErrors"], 0, ptk.GltfValidator.messages(report))
+        self.assertEqual(report["issues"]["numWarnings"], 0, ptk.GltfValidator.messages(report))
+
     def test_the_record_names_no_folder_of_this_machine(self):
         self.assertEqual(self.record["source"]["file"], "product.step")
         text = json.dumps(self.record)
