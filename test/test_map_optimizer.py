@@ -1140,17 +1140,16 @@ class TestStageMaps(_TextureFixture):
         )
         self.assertEqual(key(max_size=4096), key(max_size=2048), "out of reach")
 
-    def test_optimize_map_check_existing_is_retired(self):
-        """Its mtime-only reuse is the stale-map defect: it still works this
-        release, and says so."""
+    def test_optimize_map_check_existing_is_removed(self):
+        """Its mtime-only reuse was the stale-map defect; its window closed,
+        so passing it is an error, not a silent stale reuse."""
         src = self._bloated("retired_BaseColor.png")
-        with self.assertWarns(DeprecationWarning):
-            written = MapOptimizer.optimize_map(
+        with self.assertRaises(TypeError):
+            MapOptimizer.optimize_map(
                 src,
                 output_dir=os.path.join(self.test_dir, "out"),
                 check_existing=True,
             )
-        self.assertTrue(os.path.isfile(written))
 
 
 class TestDeliveryBudget(_TextureFixture):

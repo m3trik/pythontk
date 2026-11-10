@@ -2276,6 +2276,20 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.file_utils.cad_import._cad_import",
+    "name": "CadImport",
+    "qualname": "CadImport",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.file_utils.cad_import.cad_record",
+    "name": "CadRecord",
+    "qualname": "CadRecord",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.core_utils.cancel_scope",
     "name": "CancelScope",
     "qualname": "CancelScope",

@@ -40,7 +40,6 @@ except ImportError:  # Pillow is optional: only the paths that read pixels need 
     Image = None  # type: ignore
 
 # From this package:
-from pythontk.core_utils.deprecation import Deprecation
 from pythontk.core_utils.help_mixin import HelpMixin
 from pythontk.core_utils.logging_mixin import LoggingMixin
 from pythontk.file_utils._file_utils import FileUtils
@@ -982,15 +981,6 @@ class MapOptimizer(LoggingMixin, HelpMixin):
             None,
         )
 
-    @Deprecation.parameter(
-        "check_existing",
-        remove_in="0.15.0",
-        since="2026-10-11",
-        reason="It reused an output on its mtime alone, so a copy written under "
-        "other settings, or from another file of the same name, shipped stale. "
-        "MapOptimizer.stage_maps reuses an encode on the source's identity and "
-        "the settings instead.",
-    )
     @classmethod
     def optimize_map(
         cls,
@@ -1003,7 +993,6 @@ class MapOptimizer(LoggingMixin, HelpMixin):
         suffix_opt: str = None,
         old_files_folder: str = None,
         optimize_bit_depth: bool = True,
-        check_existing: bool = False,
         map_type: str = None,
         allow_palette: bool = False,
         output_profile: str = None,
@@ -1030,9 +1019,6 @@ class MapOptimizer(LoggingMixin, HelpMixin):
             suffix_opt (str, optional): Suffix to append to the optimized file (None = overwrite).
             old_files_folder (str, optional): Name of the folder to store old files.
             optimize_bit_depth (bool): Adjusts bit depth to match the map type.
-            check_existing (bool): Deprecated (stop passing it): if True,
-                returns an existing output when it is newer than the source --
-                on mtime alone, whatever settings or source wrote it.
             map_type (str, optional): The type of map (e.g., "Normal", "MaskMap") to enforce specific modes.
             allow_palette (bool): If True, palette (P) inputs may be preserved
                 when the target mode is RGB/RGBA. Default False (strict) — this
@@ -1110,7 +1096,6 @@ class MapOptimizer(LoggingMixin, HelpMixin):
         pot_mode = pot_mode if pot_mode is not None else derived_pot_mode
         target_bit_depth = spec.bit_depth if spec else None
 
-        # Calculate output path early to check for existence
         temp_path = MapFactory.resolve_texture_filename(
             texture_path,
             map_type_suffix,
@@ -1123,14 +1108,6 @@ class MapOptimizer(LoggingMixin, HelpMixin):
         # and the planner's high-precision tolerance is a property of the
         # container written, not of the requested one.
         out_ext = os.path.splitext(final_output_path)[1]
-
-        if check_existing and os.path.exists(final_output_path):
-            if os.path.getmtime(final_output_path) > os.path.getmtime(texture_path):
-                cls.logger.result(
-                    f"Skipping optimization (existing/newer): "
-                    f"{os.path.basename(final_output_path)}"
-                )
-                return final_output_path
 
         # Read the source's on-disk size before any archive/overwrite step can
         # move or replace it — it's the "from" half of the size report below.
