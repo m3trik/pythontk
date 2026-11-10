@@ -43,6 +43,7 @@ pip install pythontk
 - `OpenCV` — video frame extraction, image curation, exposure equalization, a few `ImgUtils` ops
 - `rembg` — background mask generation (`MaskGenerator`)
 - `PyMeshLab` — file-level mesh measure/repair/remesh/decimate/bake/deviation (`MeshOps`; declared as the `pythontk[mesh]` extra)
+- `OpenCascade` — STEP / IGES to per-part meshes, an assembled GLB and a record of exact figures (`CadImport`; declared as the `pythontk[cad]` extra)
 - `xatlas` — UV island packing (`UvPack`)
 - `toktx` (KTX-Software binary) — KTX2 / Basis Universal encoding (`Ktx2Encoder`)
 - `paramiko` — SSH client · `keyring` — credential storage (falls back to Windows Credential Manager, then environment variables)

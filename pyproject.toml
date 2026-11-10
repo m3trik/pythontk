@@ -46,6 +46,12 @@ dependencies = ["numpy>=1.24", "Pillow>=9.1"]
 # Install with the extra when you want it:  pip install pythontk[mesh]
 [project.optional-dependencies]
 mesh = ["pymeshlab>=2023.12"]
+# OpenCascade backs only CadImport (STEP / IGES to meshes, a GLB and a record).
+# The no-VTK wheel: OpenCascade alone (~190 MB) and one shim, where the full
+# wheel adds VTK and a plotting stack the import never uses. Bounded below 9:
+# OCCT renamed calls between majors, and every call sits in cad_import/_occ.py.
+# Its wheels need Python 3.11+; on Linux it links the system's libGL and libX11.
+cad = ["cadquery-ocp-novtk>=8.0.1,<9; python_version >= '3.11'"]
 # The MCP server for the operation catalog (python -m pythontk ops mcp).
 mcp = ["mcp>=2.3,<3; python_version >= '3.10'"]
 

@@ -28,6 +28,10 @@ DEFAULT_INCLUDE = {
     "img_utils.exposure_equalizer": ["ExposureEqualizer"],
     "img_utils.image_curator": ["ImageCurator"],
     "file_utils.mesh_ops": ["MeshOps"],
+    # STEP / IGES to meshes, an assembled GLB and the record of the product's
+    # truth (OpenCascade, the optional ``pythontk[cad]`` extra).
+    "file_utils.cad_import._cad_import": ["CadImport"],
+    "file_utils.cad_import.cad_record": ["CadRecord"],
     "str_utils._str_utils": "*",
     "vid_utils._vid_utils": "*",
     "vid_utils.frame_extractor": ["FrameExtractor"],

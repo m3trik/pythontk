@@ -51,6 +51,10 @@ Pure Python, explicitly no `pxr` import. `UsdFile` sniffs format by magic bytes 
 - **The `OPS` registry** — curated single-filter operators with validated params and `PercentageValue`/`PureValue` wrapping declared per-spec; adding one is one `OpSpec` entry.
 - **`apply()` / `session()`** — the escape hatch to any PyMeshLab filter by name (unvalidated), and a context-managed `MeshSet` session so composed ops skip the load → save → reload round-trip.
 
+## CAD import (`cad_import/`)
+
+`CadImport.convert(path)`: STEP or IGES to one OBJ per unique part per tessellation profile (millimetres, exact surface normals, a material per colour; a repeated part tessellated once), an assembled GLB per profile (the tree, names, colours and placements, in metres and +Y up, through OpenCascade's own glTF writer), and a `CadRecord` (`cad_record.py`, a typed `SchemaSpec`) holding the tree as placements, each part's exact size, area and volume and the source's SHA-256. With `verify`, each mesh is measured against its part's exact surfaces (triangle centroids and edge midpoints projected onto them) and a part over its profile's budget is tessellated again, tighter, until it is within. OpenCascade comes from the optional `pythontk[cad]` extra (Python 3.11+), and every call to it sits in `_occ.py`, imported only when a conversion runs.
+
 ## UV unwrapping (`uv_unwrap.py`)
 
 `UvUnwrap`: automatic unwrapping via external CLI engines, OBJ in → OBJ out, behind product-facing names — `hard_surface` (**Ministry of Flat**; discovery-only, its license forbids redistribution so the binary is never downloaded on your behalf) and `organic` (**Boundary First Flattening**; MIT, pinned + checksum-verified, auto-installable). Both preserve input topology exactly so callers can map UVs back by component index. Success is judged by the output file, not the exit code (MoF returns 1 even on success).
@@ -81,7 +85,7 @@ The workspaces under a root folder, measured (scene count, scene-file size, rece
 
 ## Dependency gating
 
-No third-party dependencies: `usd`, `workspace`, `workspace_map`, `temp_artifacts`. Optional, feature-gated: `mesh_ops` (PyMeshLab via the `pythontk[mesh]` extra), `metadata` (pywin32, sidecar fallback), `mesh_convert` (FBX2glTF binary auto-installed; `toktx` for KTX2), `uv_unwrap` (external CLIs, one auto-installable).
+No third-party dependencies: `usd`, `workspace`, `workspace_map`, `temp_artifacts`. Optional, feature-gated: `mesh_ops` (PyMeshLab via the `pythontk[mesh]` extra), `cad_import` (OpenCascade via the `pythontk[cad]` extra), `metadata` (pywin32, sidecar fallback), `mesh_convert` (FBX2glTF binary auto-installed; `toktx` for KTX2), `uv_unwrap` (external CLIs, one auto-installable).
 
 ## Links
 

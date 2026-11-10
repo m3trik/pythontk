@@ -28,11 +28,13 @@ jobs:
       - name: Install system dependencies (Linux)
         if: runner.os == 'Linux'
         # libopengl0: pymeshlab's IO plug-ins fail to load without it (every
-        # mesh op then fails "Unknown format"). xvfb: a private X server for
-        # the Tk sidecar and the X11 client tests -- never a real desktop.
+        # mesh op then fails "Unknown format"). libgl1: OpenCascade's wheel
+        # links libGL.so.1 and libX11.so.6 (its bundled TKOpenGl), so OCP does
+        # not import without it. xvfb: a private X server for the Tk sidecar
+        # and the X11 client tests -- never a real desktop.
         run: |
           sudo apt-get update
-          sudo apt-get install -y libopengl0 xvfb
+          sudo apt-get install -y libopengl0 libgl1 xvfb
 
       - name: Install dependencies
         run: |
@@ -42,6 +44,9 @@ jobs:
           # purpose: dep-gated suites silently run their skip branches only,
           # so without it the real mesh-op paths would never execute anywhere.
           pip install pymeshlab
+          # OpenCascade backs CadImport, for the same reason: without it every
+          # conversion test skips (test_cad_import's CI guard fails then).
+          pip install "cadquery-ocp-novtk>=8.0.1,<9"
           pip install -e .
 
       - name: Install the Khronos glTF Validator (a tools folder of the job's own)
