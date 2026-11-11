@@ -341,6 +341,12 @@ DEFAULT_INCLUDE = {
         "LightRigLight",
         "LightRigFixture",
     ],
+    # The light rig engine both hosts bind (``mtk.LightRig``, ``btk.LightRig``).
+    "core_utils.engines.lighting.light_rig": [
+        "LightRig",
+        "LightRigHost",
+        "PureLightRigHost",
+    ],
     "core_utils.engines.lighting.light_predictor": ["LightPredictor", "ViewerTransform"],
     "core_utils.engines.lighting.look_match.target": ["LookTarget", "LookRegion", "RegionShape"],
     "core_utils.engines.lighting.look_match.measures": ["LookMeasures", "LookScore"],
