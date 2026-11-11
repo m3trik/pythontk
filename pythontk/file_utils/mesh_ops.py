@@ -241,18 +241,13 @@ class _MeshOpsInternal:
 
     @classmethod
     def _load_mesh(cls, ms, path: str) -> None:
-        """Load *path* into *ms*, saying when a texture it names could not be
-        read: the output would otherwise carry none, silently."""
+        """Load *path* into *ms*, saying when PyMeshLab could not read a texture it names."""
         ms.load_new_mesh(path)
-        textures = ms.current_mesh().textures() or {}
-        if cls._UNREAD_TEXTURE in textures and not os.path.isfile(
-            os.path.join(os.path.dirname(path), cls._UNREAD_TEXTURE)
-        ):
+        if cls._UNREAD_TEXTURE in (ms.current_mesh().textures() or {}):
             logger.warning(
-                "%s: PyMeshLab could not read a texture it names (the file is "
-                "missing, or an image format this PyMeshLab cannot decode: its "
-                "Linux build reads no JPEG), so the output carries no texture. "
-                "Put the image beside it, or convert it to PNG.",
+                "%s: PyMeshLab could not read a texture it names (missing, or a format it cannot "
+                "decode: its Linux build reads no JPEG); the output carries none. Put the image "
+                "beside it, or convert it to PNG.",
                 os.path.basename(path),
             )
 
@@ -268,12 +263,8 @@ class _MeshOpsInternal:
             source_path: The mesh the textures came with: an image beside the
                 output that is the one beside it is the mesh's own.
         """
-        textures = ms.current_mesh().textures() or {}
-        # A texture PyMeshLab could not read is a blank stand-in: never written out.
-        names = [n for n in textures if n != _MeshOpsInternal._UNREAD_TEXTURE]
-        if len(names) < len(textures) and not names:
-            ms.save_current_mesh(output_path, save_textures=False)
-            return
+        # A texture PyMeshLab could not read is a blank stand-in, never written out.
+        names = [n for n in ms.current_mesh().textures() or {} if n != _MeshOpsInternal._UNREAD_TEXTURE]
         beside = os.path.dirname(output_path)
         origin = os.path.dirname(os.path.abspath(source_path)) if source_path else None
 
@@ -286,7 +277,7 @@ class _MeshOpsInternal:
 
         there = [n for n in names if os.path.isfile(os.path.join(beside, n))]
         if not there:
-            ms.save_current_mesh(output_path)
+            ms.save_current_mesh(output_path, save_textures=bool(names))
             return
         foreign = sorted(n for n in there if not own(n))
         if foreign:
