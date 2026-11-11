@@ -32,9 +32,9 @@ jobs:
         # links libGL.so.1 and libX11.so.6 (its bundled TKOpenGl), so OCP does
         # not import without it. xvfb: a private X server for the Tk sidecar
         # and the X11 client tests -- never a real desktop.
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libopengl0 libgl1 xvfb
+        uses: m3trik/m3trik/.github/actions/apt-install@main
+        with:
+          packages: libopengl0 libgl1 xvfb
 
       - name: Install dependencies
         run: |
