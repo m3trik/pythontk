@@ -96,9 +96,9 @@ jobs:
           python-version: '3.11'
 
       - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libegl1 libopengl0 libxkbcommon0 libdbus-1-3 libfontconfig1 python3-tk
+        uses: m3trik/m3trik/.github/actions/apt-install@main
+        with:
+          packages: libegl1 libopengl0 libxkbcommon0 libdbus-1-3 libfontconfig1 python3-tk
 
       - name: Check pin alignment
         run: |
@@ -253,9 +253,9 @@ jobs:
           python-version: '3.11'
 
       - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libegl1 libopengl0 libxkbcommon0 libdbus-1-3 libfontconfig1 python3-tk
+        uses: m3trik/m3trik/.github/actions/apt-install@main
+        with:
+          packages: libegl1 libopengl0 libxkbcommon0 libdbus-1-3 libfontconfig1 python3-tk
 
       - name: Check pin alignment
         run: |

@@ -3011,9 +3011,23 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.core_utils.engines.lighting.light_rig",
+    "name": "LightRig",
+    "qualname": "LightRig",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.core_utils.engines.lighting.light_rig_payload",
     "name": "LightRigFixture",
     "qualname": "LightRigFixture",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.lighting.light_rig",
+    "name": "LightRigHost",
+    "qualname": "LightRigHost",
     "tier": "root"
   },
   {
@@ -3035,6 +3049,27 @@
     "module": "pythontk.core_utils.engines.scene_export.lightmap_record",
     "name": "LightmapRecord",
     "qualname": "LightmapRecord",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.file_utils.lod_chain",
+    "name": "LodChain",
+    "qualname": "LodChain",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.file_utils.lod_record",
+    "name": "LodGroupEntry",
+    "qualname": "LodGroupEntry",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.file_utils.lod_record",
+    "name": "LodsRecord",
+    "qualname": "LodsRecord",
     "tier": "root"
   },
   {
@@ -3686,6 +3721,13 @@
     "module": "pythontk.core_utils.engines.key_stash.key_stash_model",
     "name": "PureKeyStashHost",
     "qualname": "PureKeyStashHost",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.lighting.light_rig",
+    "name": "PureLightRigHost",
+    "qualname": "PureLightRigHost",
     "tier": "root"
   },
   {

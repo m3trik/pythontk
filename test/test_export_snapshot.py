@@ -93,6 +93,7 @@ class TestDeclarations(_Case):
                 SR.SHADOWS.key,
                 SR.ARTICULATION.key,
                 SR.VISIBILITY.key,
+                SR.LODS.key,
             },
         )
         for spec in (SR.SHOTS, SR.AUDIO, SR.HANDOFF):

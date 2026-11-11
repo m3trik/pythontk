@@ -742,6 +742,16 @@ class HandoffBridge(LoggingMixin):
         live outside all of them, survive: those are what the child actually
         needed from the parent.
 
+        A layered environment puts packages outside every prefix too: ``uv run
+        --with`` (the MCP servers' launch) runs an ephemeral environment whose
+        ``.pth`` files add the workspace venv and uv's cached archive. So any
+        entry inside a ``site-packages`` / ``dist-packages`` folder, or inside a
+        virtual environment (a folder holding ``pyvenv.cfg``), is dropped as
+        well: it holds packages built for the parent's Python. Measured
+        2026-11-10: kept, the workspace venv's 3.11 ``pxr`` led an owned DCC's
+        path on Python 3.13 (its own failed to load) and broke another DCC's USD
+        plug-in modules.
+
         COMPOSE it with :meth:`import_roots` when the child must import a named
         toolkit. The parent may only be able to import that toolkit through its own
         ``site-packages`` -- an editable install contributing to a namespace package,
@@ -771,9 +781,29 @@ class HandoffBridge(LoggingMixin):
             spelled = os.path.normcase(absolute) + os.sep
             if any(spelled.startswith(prefix) for prefix in prefixes):
                 continue
+            if HandoffBridge._in_an_environment(absolute):
+                continue
             if absolute not in kept:
                 kept.append(absolute)
         return kept
+
+    @staticmethod
+    def _in_an_environment(path: str) -> bool:
+        """Whether *path* lies in a Python environment's package folders: inside
+        a ``site-packages`` / ``dist-packages`` folder, or inside a virtual
+        environment (a folder holding ``pyvenv.cfg``), itself included."""
+        import os
+
+        folder = os.path.abspath(path)
+        while True:
+            if os.path.basename(folder).lower() in ("site-packages", "dist-packages"):
+                return True
+            if os.path.isfile(os.path.join(folder, "pyvenv.cfg")):
+                return True
+            parent = os.path.dirname(folder)
+            if parent == folder:
+                return False
+            folder = parent
 
     # ------------------ Subclass hooks --------------------------------------
     def _resolve_objects(self, objects):  # pragma: no cover - subclass contract

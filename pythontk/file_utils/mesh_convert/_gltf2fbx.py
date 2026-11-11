@@ -18,7 +18,10 @@ points (glTF splits a vertex wherever an attribute differs; the source mesh did
 not); the node hierarchy and mesh instancing; normals, two UV sets and vertex
 colour; core metallic-roughness materials and their textures (PNG / JPEG copied,
 KTX2 decoded through KTX-Software's ``ktx``); skins (Skin / Cluster deformers and
-a bind pose); and one animation's translation / rotation / scale. Not carried,
+a bind pose); one animation's translation / rotation / scale; and LOD groups
+(``MSFT_lod``: the levels back in the node tree as ``<base>_LOD<n>`` under a
+``<base>`` LodGroup at the file's switch heights, :meth:`GlbLods.expand`: the
+names engines read and the attribute DCCs read). Not carried,
 and reported by name: morph targets, cameras, lights, further animations, and
 point / line primitives. A file that requires a geometry-compression extension
 (Draco, meshopt) is refused: decoding those needs a DCC.
@@ -52,7 +55,9 @@ from pythontk.file_utils.mesh_convert._fbx_writer import (
     FbxNode,
     FbxWriter,
 )
+from pythontk.file_utils.lod_chain import LodChain
 from pythontk.file_utils.mesh_convert.glb.edit import GlbEdit
+from pythontk.file_utils.mesh_convert.glb.lods import GlbLods
 from pythontk.math_utils.quaternion import Quaternion
 
 logger = logging.getLogger(__name__)
@@ -75,6 +80,7 @@ _UNDERSTOOD_EXTENSIONS = frozenset(
         "KHR_texture_transform",
         "KHR_mesh_quantization",
         "KHR_materials_emissive_strength",
+        GlbLods.EXTENSION,
     }
 )
 
@@ -407,6 +413,8 @@ class _GltfToFbx(object):
     # ------------------------------------------------------------ the run
     def build(self) -> None:
         self._check_extensions()
+        # MSFT_lod's levels sit out of the node tree; FBX holds them as nodes.
+        self.lod_groups = GlbLods.expand(self.gltf)
         nodes = self.gltf.get("nodes") or []
         self.order, self.parent = self._scene_order()
         if self.include_animation:
@@ -424,6 +432,12 @@ class _GltfToFbx(object):
                 if mesh is not None
                 else None
             )
+            group = self.parent.get(i)
+            if group in self.lod_groups:
+                # A level is named after its group, whose numbered tail (a
+                # second instance's) goes before the suffix: still a level name.
+                level = (nodes[group].get("children") or []).index(i)
+                label = LodChain.level_name(self.names[group], level)
             self.names[i] = _unique(_safe_name(label, f"node{i}"), taken)
 
         self.geometries: Dict[Tuple[int, Optional[int]], Dict[str, Any]] = {}
@@ -457,6 +471,7 @@ class _GltfToFbx(object):
             meshes=len(self.geometries),
             materials=len(self.material_ids),
             skipped={k: list(v) for k, v in self.skipped.items()},
+            lod_groups=sum(1 for i in self.lod_groups if i in self.model_ids),
         )
 
     def _check_extensions(self) -> None:
@@ -1090,10 +1105,14 @@ class _GltfToFbx(object):
         )
         return [v * _UNIT for v in t], euler, s
 
-    def _model(self, name: str, kind: str, parent_id: int, t, euler, s) -> int:
-        """A *kind* (Mesh / LimbNode / Null) ``Model`` at local ``t, euler, s``,
-        linked under *parent_id* (0: the root), with the node attribute a
-        LimbNode or Null carries. Returns the model's id."""
+    def _model(
+        self, name: str, kind: str, parent_id: int, t, euler, s, heights=None
+    ) -> int:
+        """A *kind* (Mesh / LimbNode / Null / LodGroup) ``Model`` at local
+        ``t, euler, s``, linked under *parent_id* (0: the root), with the node
+        attribute a LimbNode, Null or LodGroup carries (a LodGroup's: its
+        *heights* as percent thresholds, a DCC's own writer's spelling, measured
+        2026-11-10). Returns the model's id."""
         model_id = self._id()
         model = self._object(
             FbxNode("Model", FbxWriter.i64(model_id), f"{name}\x00\x01Model", kind),
@@ -1124,6 +1143,12 @@ class _GltfToFbx(object):
         if kind == "LimbNode":
             attr.add("Properties70").p("Size", "double", "Number", "", 33.333333)
             attr.add("TypeFlags", "Skeleton")
+        elif kind == "LodGroup":
+            from pythontk.file_utils.mesh_convert.fbx_media import FbxMedia
+
+            lod = attr.add("Properties70")
+            for row in FbxMedia.lod_group_rows(heights):
+                lod.p(*row)
         else:
             attr.add("TypeFlags", "Null")
             self.empties.append({"name": name, "display_type": "PLAIN_AXES"})
@@ -1152,10 +1177,13 @@ class _GltfToFbx(object):
         by_material = {e["fbx_material"]: e for e in self.manifest_materials}
         for i in self.order:
             name = self.names[i]
+            heights = None
             if i in self.node_geometry:
                 kind = "Mesh"
             elif i in self.joints:
                 kind = "LimbNode"
+            elif i in self.lod_groups:
+                kind, heights = "LodGroup", self.lod_groups[i]
             else:
                 kind = "Null"
             parent = self.parent.get(i)
@@ -1166,7 +1194,9 @@ class _GltfToFbx(object):
                 identity = ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (1.0, 1.0, 1.0))
                 model_id = self._model(name, kind, 0, *identity)
             else:
-                model_id = self._model(name, kind, parent_id, *self._rest(i))
+                model_id = self._model(
+                    name, kind, parent_id, *self._rest(i), heights=heights
+                )
             self.model_ids[i] = model_id
             if kind == "Mesh":
                 geo = self.geometries[self.node_geometry[i]]

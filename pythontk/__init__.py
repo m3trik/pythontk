@@ -5,7 +5,7 @@ import os as _os
 from pythontk.core_utils.module_resolver import bootstrap_package
 
 __package__ = "pythontk"
-__version__ = "0.22.0"
+__version__ = "0.23.0"
 
 """Expose toolkit utilities with explicit resolver include maps for clarity."""
 
@@ -32,6 +32,9 @@ DEFAULT_INCLUDE = {
     # truth (OpenCascade, the optional ``pythontk[cad]`` extra).
     "file_utils.cad_import._cad_import": ["CadImport"],
     "file_utils.cad_import.cad_record": ["CadRecord"],
+    # The LOD convention every carrier writes: <base>_LOD<n> levels, switch heights.
+    "file_utils.lod_chain": ["LodChain"],
+    "file_utils.lod_record": ["LodsRecord", "LodGroupEntry"],
     "str_utils._str_utils": "*",
     "vid_utils._vid_utils": "*",
     "vid_utils.frame_extractor": ["FrameExtractor"],
@@ -340,6 +343,12 @@ DEFAULT_INCLUDE = {
         "LightRigPayload",
         "LightRigLight",
         "LightRigFixture",
+    ],
+    # The light rig engine both hosts bind (``mtk.LightRig``, ``btk.LightRig``).
+    "core_utils.engines.lighting.light_rig": [
+        "LightRig",
+        "LightRigHost",
+        "PureLightRigHost",
     ],
     "core_utils.engines.lighting.light_predictor": ["LightPredictor", "ViewerTransform"],
     "core_utils.engines.lighting.look_match.target": ["LookTarget", "LookRegion", "RegionShape"],

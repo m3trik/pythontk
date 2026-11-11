@@ -1785,6 +1785,79 @@ class MeshConvert(HelpMixin):
         """
         return cls._articulation.apply_glb_articulation(glb)
 
+    @classmethod
+    def apply_glb_lods(
+        cls,
+        glb: GlbTarget,
+        fbx: Any = None,
+        heights: Optional[Mapping[str, Sequence[float]]] = None,
+    ) -> Dict[str, Any]:
+        """State the GLB's LOD groups in ``MSFT_lod`` (:class:`GlbLods`).
+
+        A group is a node whose children are named ``<base>_LOD0..n``
+        (:class:`pythontk.LodChain`): its LOD0 node names the lower levels in
+        ``extensions.MSFT_lod`` and they leave the node tree, so a reader
+        without the extension draws LOD0 alone (the spec's fallback), and
+        ``extras.MSFT_screencoverage`` carries each level's switch height:
+        *fbx*'s LodGroup thresholds where it states them in percent, else the
+        default ladder. A malformed group is left as written; idempotent.
+
+        Parameters:
+            glb: ``.glb`` path (modified in place) or an open :class:`GlbEdit`.
+            fbx: The FBX the GLB was converted from, a path or a parsed
+                :class:`FbxFile` (its switch heights); ignored when *heights*
+                is given.
+            heights: ``{group node name: heights}`` already read
+                (:meth:`FbxMedia.lod_heights`) -- how the conversion passes them
+                off its one parse of the input.
+
+        Returns:
+            ``GlbLods.apply``'s report: ``{"groups", "levels", "names"}``.
+        """
+        from pythontk.file_utils.mesh_convert.glb.lods import GlbLods
+
+        if heights is None and fbx is not None:
+            from pythontk.file_utils.mesh_convert.fbx_media import FbxMedia
+
+            heights = FbxMedia.lod_heights(fbx)
+        with GlbEdit.open(glb) as edit:
+            report = GlbLods.apply(edit.gltf, heights)
+            if report["groups"]:
+                edit.dirty = True
+        return report
+
+    @classmethod
+    def merge_glb_lods(
+        cls,
+        sources: Union[str, Sequence[str]],
+        dst: Optional[str] = None,
+        heights: Optional[Mapping[str, Sequence[float]]] = None,
+    ) -> str:
+        """One GLB of LOD groups from GLBs of one node tree at falling detail
+        (:meth:`GlbLods.merge`): every mesh node becomes ``<name>`` over
+        ``<name>_LOD0..n``, stated in ``MSFT_lod``, a level left out for a
+        node it does not draw with fewer triangles.
+
+        A CAD import's profiles are such levels, each a tessellation of the
+        exact surfaces rather than a decimation, so its record is a source of
+        its own::
+
+            ptk.MeshConvert.merge_glb_lods(ptk.CadImport.convert(step, profiles=("hero", "realtime")))
+
+        Parameters:
+            sources: GLB paths, finest first; or a :class:`CadImport` record
+                (``.cad.json``), whose assemblies are taken finest chord first.
+            dst: The GLB written; default ``<stem>_lods.glb`` beside the record
+                (``<stem>`` its source's) or beside the first GLB.
+            heights: ``{node name: heights}`` (see :meth:`GlbLods.merge`).
+
+        Returns:
+            The written GLB's path.
+        """
+        from pythontk.file_utils.mesh_convert.glb.lods import GlbLods
+
+        return GlbLods.merge(sources, dst, heights)["path"]
+
     # ----------------------- _animation.py: shot clips, the animation manifest
 
     DEFAULT_CLIP_NAME = _Animation.DEFAULT_CLIP_NAME

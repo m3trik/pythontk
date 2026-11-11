@@ -345,6 +345,198 @@ class ExportVerifier(_ExportVerifierInternal):
             detail += f"; required={sorted(required)}"
         return [Finding(PASS, "glb_extensions", detail)]
 
+    def check_glb_lods(self) -> List[Finding]:
+        """Each LOD group the GLB states in ``MSFT_lod`` reads as the spec reads it.
+
+        Its ``ids`` name real nodes other than itself, kept out of the node
+        tree (a level left in the tree is drawn by every reader beside LOD0);
+        its ``extras.MSFT_screencoverage``, when present, holds one falling
+        height per level; and the extension is listed in ``extensionsUsed``.
+        A GLB with no group passes, naming none.
+        """
+        if self.reader is None:
+            return [Finding(SKIP, "glb_lods", "no readable GLB")]
+        from pythontk.file_utils.lod_chain import LodChain
+
+        gltf = self.reader.gltf
+        nodes = gltf.get("nodes") or []
+        in_tree = {c for node in nodes for c in node.get("children") or []}
+        for scene in gltf.get("scenes") or []:
+            in_tree.update(scene.get("nodes") or [])
+        groups, problems = 0, []
+        for index, node in enumerate(nodes):
+            extension = (node.get("extensions") or {}).get("MSFT_lod")
+            if extension is None:
+                continue
+            groups += 1
+            name = node.get("name") or f"node{index}"
+            ids = extension.get("ids") or []
+            stray = [i for i in ids if not isinstance(i, int) or not 0 <= i < len(nodes) or i == index]
+            if stray or not ids:
+                problems.append(f"{name}: MSFT_lod ids name no lower level: {ids}")
+                continue
+            drawn = [nodes[i].get("name") or i for i in ids if i in in_tree]
+            if drawn:
+                problems.append(f"{name}: lower levels still in the node tree, drawn by every reader: {drawn}")
+            coverage = (node.get("extras") or {}).get("MSFT_screencoverage")
+            if coverage is not None:
+                try:
+                    LodChain.check_heights(coverage)
+                    if len(coverage) != len(ids) + 1:
+                        raise ValueError(f"{len(coverage)} heights for {len(ids) + 1} levels")
+                except (TypeError, ValueError) as error:
+                    problems.append(f"{name}: MSFT_screencoverage {coverage}: {error}")
+        if groups and "MSFT_lod" not in (gltf.get("extensionsUsed") or []):
+            problems.append("MSFT_lod is not listed in extensionsUsed")
+        if problems:
+            return [Finding(FAIL, "glb_lods", "; ".join(problems))]
+        return [Finding(PASS, "glb_lods", f"{groups} LOD group(s)" if groups else "no LOD group")]
+
+    #: A level whose surface strays further than this from its LOD0's, in
+    #: percent of LOD0's size (``MeshOps.compare``'s ``hausdorff_peak_pct``),
+    #: is warned: past it a level reads as another shape, and pops at its switch.
+    LOD_DEVIATION_WARN_PCT = 10.0
+    #: What the deviation gate measures at most, so a production scene's
+    #: verification stays seconds (a 350k-triangle group took 2.5 s, measured
+    #: 2026-11-10): this many groups, each with no more LOD0 triangles; the
+    #: rest are named "not measured".
+    LOD_DEVIATION_MAX_GROUPS = 24
+    LOD_DEVIATION_MAX_TRIANGLES = 250_000
+
+    def check_glb_lod_deviation(self) -> List[Finding]:
+        """Each level of every ``MSFT_lod`` group, measured against its LOD0 in
+        world space (``MeshOps.compare``, both ways), so a level that lost its
+        shape -- a reduction gone wrong, a stale or misplaced level -- is said
+        before a viewer sees it pop. WARN past :attr:`LOD_DEVIATION_WARN_PCT`;
+        SKIP without ``pythontk[mesh]`` ("not measured"), or when no level's
+        geometry could be read (a compressed buffer); a level that could not be
+        read, and the groups past :attr:`LOD_DEVIATION_MAX_GROUPS` or
+        :attr:`LOD_DEVIATION_MAX_TRIANGLES`, are named "not measured".
+        """
+        from pythontk.file_utils.mesh_ops import MeshOps
+        from pythontk.file_utils.temp_artifacts import TempArtifacts
+
+        name = "glb_lod_deviation"
+        if self.reader is None:
+            return [Finding(SKIP, name, "no readable GLB")]
+        nodes = self.reader.gltf.get("nodes") or []
+        groups = [
+            (index, list((node.get("extensions") or {}).get("MSFT_lod", {}).get("ids") or []))
+            for index, node in enumerate(nodes)
+            if "MSFT_lod" in (node.get("extensions") or {})
+        ]
+        if not groups:
+            return [Finding(SKIP, name, "no LOD group")]
+        if not MeshOps.available():
+            return [Finding(SKIP, name, "not measured: needs pythontk[mesh]")]
+        measured, strays, unread, skipped = [], [], [], []
+        scratch = TempArtifacts("glb_lod_deviation", policy="scoped")
+        try:
+            done = 0
+            for lod0, ids in groups:
+                group_name = nodes[lod0].get("name") or str(lod0)
+                if done >= self.LOD_DEVIATION_MAX_GROUPS or self._triangle_count(lod0) > self.LOD_DEVIATION_MAX_TRIANGLES:
+                    skipped.append(group_name)
+                    continue
+                done += 1
+                reference = self._world_obj(lod0, scratch)
+                if reference is None:
+                    unread.append(nodes[lod0].get("name") or str(lod0))
+                    continue
+                for level in ids:
+                    label = nodes[level].get("name") or str(level) if 0 <= level < len(nodes) else str(level)
+                    derived = self._world_obj(level, scratch) if 0 <= level < len(nodes) else None
+                    if derived is None:
+                        unread.append(label)
+                        continue
+                    pct = MeshOps.compare(derived, reference, sample_num=20000)["hausdorff_peak_pct"]
+                    if pct is None:
+                        unread.append(label)
+                        continue
+                    measured.append(f"{label} {pct:.2f}%")
+                    if pct > self.LOD_DEVIATION_WARN_PCT:
+                        strays.append(f"{label} {pct:.1f}%")
+        finally:
+            scratch.cleanup()
+        detail = f"each level's peak from its LOD0, in percent of LOD0's size: {', '.join(measured) or 'none read'}"
+        if unread:
+            detail += f"; not measured (geometry unreadable): {', '.join(unread)}"
+        if skipped:
+            shown = ", ".join(skipped[:10]) + (f" and {len(skipped) - 10} more" if len(skipped) > 10 else "")
+            detail += (
+                f"; not measured (past {self.LOD_DEVIATION_MAX_GROUPS} groups or "
+                f"{self.LOD_DEVIATION_MAX_TRIANGLES} LOD0 triangles): {shown}"
+            )
+        if strays:
+            return [Finding(WARN, name, f"past {self.LOD_DEVIATION_WARN_PCT:g}%, a level strays from its LOD0's shape: {', '.join(strays)}; {detail}")]
+        if not measured:
+            return [Finding(SKIP, name, detail)]
+        return [Finding(PASS, name, detail)]
+
+    def _triangle_count(self, index: int) -> int:
+        """The triangles node *index* and its subtree draw, from the accessors'
+        counts alone (nothing decoded)."""
+        nodes = self.reader.gltf.get("nodes") or []
+        meshes = self.reader.gltf.get("meshes") or []
+        accessors = self.reader.gltf.get("accessors") or []
+        total, stack, seen = 0, [index], set()
+        while stack:
+            current = stack.pop()
+            if current in seen or not 0 <= current < len(nodes):
+                continue
+            seen.add(current)
+            stack.extend(nodes[current].get("children") or [])
+            mesh = nodes[current].get("mesh")
+            for primitive in (meshes[mesh].get("primitives") or []) if isinstance(mesh, int) and 0 <= mesh < len(meshes) else []:
+                key = primitive.get("indices", (primitive.get("attributes") or {}).get("POSITION"))
+                if isinstance(key, int) and 0 <= key < len(accessors):
+                    total += int(accessors[key].get("count") or 0) // 3
+        return total
+
+    def _world_obj(self, index: int, scratch) -> Optional[str]:
+        """An OBJ of node *index*'s triangles with its subtree's, in world
+        space, written to *scratch*; ``None`` when none can be read."""
+        nodes = self.reader.gltf.get("nodes") or []
+        meshes = self.reader.gltf.get("meshes") or []
+        vertices: List[Tuple[float, float, float]] = []
+        faces: List[Tuple[int, int, int]] = []
+        stack, seen = [index], set()
+        while stack:
+            current = stack.pop()
+            if current in seen or not 0 <= current < len(nodes):
+                continue
+            seen.add(current)
+            node = nodes[current]
+            stack.extend(node.get("children") or [])
+            mesh = node.get("mesh")
+            if not isinstance(mesh, int) or not 0 <= mesh < len(meshes):
+                continue
+            world = self.reader.world_matrix(current)
+            for primitive in meshes[mesh].get("primitives") or []:
+                if primitive.get("mode", 4) != 4:
+                    continue  # points and lines hold no surface
+                points = self.reader.accessor((primitive.get("attributes") or {}).get("POSITION"))
+                if not points:
+                    return None
+                indices = (
+                    self.reader.accessor(primitive["indices"]) if "indices" in primitive
+                    else [(i,) for i in range(len(points))]
+                )
+                if indices is None:
+                    return None
+                base = len(vertices) + 1
+                for x, y, z in points:  # row vectors: p @ M (translation in row 3)
+                    vertices.append(tuple(x * world[0][c] + y * world[1][c] + z * world[2][c] + world[3][c] for c in range(3)))
+                flat = [int(i[0]) for i in indices]
+                faces.extend(tuple(base + k for k in flat[t:t + 3]) for t in range(0, len(flat) - 2, 3))
+        if not faces:
+            return None
+        path = scratch.path(extension=".obj")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.writelines(f"v {x:.9g} {y:.9g} {z:.9g}\n" for x, y, z in vertices)
+            handle.writelines(f"f {a} {b} {c}\n" for a, b, c in faces)
+        return path
+
     def check_glb_images(self) -> List[Finding]:
         """Texture sources resolve; basisu usage is declared, and falls back
         unless the file declares the extension REQUIRED."""
@@ -910,6 +1102,90 @@ class ExportVerifier(_ExportVerifierInternal):
             text = bytes(raw).decode("utf-8", "replace").replace("\\", "/")
             names.append(os.path.basename(text))
         return names
+
+    def check_fbx_lods(self) -> List[Finding]:
+        """Each LOD group the FBX names (``LodChain``: a node over its
+        ``<base>_LOD<n>`` levels) reads as the exporter meant it, by every reader.
+
+        FAIL: a LodGroup attribute stating other than one threshold per switch
+        (a reader switches at the wrong level); a level written hidden (an
+        engine's import visibility disables it inside its group, so it never
+        draws); the ``lods`` record naming a group, or levels, the file lacks
+        (its engine consumer binds nothing). WARN: a group with no percent
+        LodGroup attribute (an engine reads the names; a DCC reads plain
+        meshes), or whose record heights differ from its attribute's (each
+        reader switches it at its own). A file with no group passes, naming none.
+        """
+        from pythontk.core_utils.engines.scene_export.scene_store import SceneStoreBase
+        from pythontk.file_utils.lod_chain import LodChain
+        from pythontk.file_utils.mesh_convert.fbx_media import FbxMedia
+
+        name = "fbx_lods"
+        if self.fbx is None:
+            return [Finding(SKIP, name, "no readable FBX")]
+        paths = [
+            self.fbx.object_path(record)
+            for record in self.fbx.iter_objects()
+            if record["name"] == "Model" and record["props"]
+        ]
+        nodes = [{"path": p, "parent": p.rpartition("|")[0] or None} for p in paths if p]
+        groups = [g for g in LodChain.groups(nodes) if not g["issues"]]
+        record_groups = {}
+        for owner, value in self.fbx.user_properties(SceneRecords.LODS.key, named=True, paths=True):
+            if not SceneStoreBase.is_carrier(owner) or not isinstance(value, (bytes, bytearray)):
+                continue
+            try:
+                payload = json.loads(bytes(value).decode("utf-8"))
+            except (TypeError, ValueError, UnicodeDecodeError):
+                continue
+            for entry in (payload or {}).get("groups") or []:
+                if isinstance(entry, dict) and entry.get("name"):
+                    record_groups[self._unqualified(entry["name"])] = entry
+        if not groups and not record_groups:
+            return [Finding(PASS, name, "no LOD group")]
+
+        hidden = {
+            self._unqualified(owner.rsplit("|", 1)[-1])
+            for owner, value in self.fbx.user_properties("Visibility", named=True, paths=True)
+            if isinstance(value, (int, float)) and not value
+        }
+        heights = {self._unqualified(k): v for k, v in FbxMedia.lod_heights(self.fbx).items()}
+        fails, warns = [], []
+        recorded = bool(record_groups)
+        for group in groups:
+            node = self._unqualified(group["parent"].rsplit("|", 1)[-1])
+            levels = [self._unqualified(p.rsplit("|", 1)[-1]) for p in group["levels"] if p]
+            stated = heights.get(node)
+            if stated is None:
+                warns.append(f"{node}: no LodGroup attribute in screen percent (DCCs read its levels as plain meshes)")
+            elif len(stated) != len(levels):
+                fails.append(f"{node}: {len(stated) - 1} threshold(s) for {len(levels)} levels")
+            drawn_hidden = [level for level in levels if level in hidden]
+            if drawn_hidden:
+                fails.append(f"{node}: level(s) written hidden, never drawn in an engine's group: {', '.join(drawn_hidden)}")
+            entry = record_groups.pop(node, None)
+            if entry is None:
+                if recorded:  # a record of other groups: this one gets an engine's merged default
+                    warns.append(f"{node}: not in the lods record (an engine builds no group of its own for it)")
+                continue
+            named = [self._unqualified(level) for level in entry.get("levels") or []]
+            if named != levels:
+                fails.append(f"{node}: the lods record names levels {named}, the file holds {levels}")
+            elif stated is not None and len(stated) == len(levels) and any(
+                abs(float(a) - float(b)) > 1e-4 for a, b in zip(stated, entry.get("heights") or [])
+            ):
+                warns.append(f"{node}: the lods record's heights {entry.get('heights')} differ from its LodGroup's {stated}")
+        fails += [f"{group}: in the lods record, no LOD group in the file" for group in record_groups]
+        if fails:
+            return [Finding(FAIL, name, "; ".join(fails + warns))]
+        if warns:
+            return [Finding(WARN, name, "; ".join(warns))]
+        return [Finding(PASS, name, f"{len(groups)} LOD group(s)")]
+
+    @staticmethod
+    def _unqualified(name: str) -> str:
+        """*name* without its namespace: how a record binds a node."""
+        return str(name).rsplit(":", 1)[-1]
 
     def check_fbx_records(self) -> List[Finding]:
         """Every record the FBX carries is one the standard declares, in the

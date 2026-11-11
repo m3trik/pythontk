@@ -410,6 +410,177 @@ class TestCompareDeviation(_TempDirTestCase):
 
 
 @unittest.skipUnless(_HAVE, "pymeshlab not installed")
+class TestLods(_TempDirTestCase):
+    """``MeshOps.lods``: a LOD chain of any mesh file, headless (2026-11-10).
+
+    Each level is ``<stem>_LOD<n>`` beside LOD0, measured against it
+    (``compare``). A budget in millimetres is met by measure-and-adjust: no
+    simplifier's own error bound held in the LOD bake-off (meshoptimizer's
+    under-bounded the measured peak 2.4-3.6x)."""
+
+    def test_a_ladder_halves_each_level_and_names_it(self):
+        src = self._sphere(subdiv=5)
+        chain = MeshOps.lods(src, output_dir=self.out_dir)
+        self.assertEqual([c["level"] for c in chain], [0, 1, 2])
+        self.assertEqual(
+            [os.path.basename(c["path"]) for c in chain],
+            ["sphere_LOD0.ply", "sphere_LOD1.ply", "sphere_LOD2.ply"],
+        )
+        tris = [c["triangles"] for c in chain]
+        self.assertEqual(tris[1], tris[0] // 2)
+        self.assertLess(tris[2], tris[1])
+        self.assertEqual(chain[0]["peak"], 0.0)
+        self.assertGreater(chain[2]["peak"], chain[1]["peak"])
+
+    def test_a_budget_is_met_by_measurement(self):
+        src = self._sphere(subdiv=5)
+        chain = MeshOps.lods(src, budgets=[0.002, 0.02], output_dir=self.out_dir)
+        self.assertEqual(len(chain), 3)
+        for level, budget in zip(chain[1:], (0.002, 0.02)):
+            self.assertLessEqual(level["peak"], budget, level)
+        self.assertLess(chain[2]["triangles"], chain[1]["triangles"])
+
+    def test_budgets_must_rise(self):
+        with self.assertRaises(ValueError):
+            MeshOps.lods(self._sphere(), budgets=[0.02, 0.002], output_dir=self.out_dir)
+
+    def test_a_bad_ladder_is_refused_before_anything_is_written(self):
+        src = self._sphere()
+        out = os.path.join(self.out_dir, "levels")
+        for bad in ({"levels": 0}, {"ratio": 1.5}):
+            with self.assertRaises(ValueError, msg=bad):
+                MeshOps.lods(src, output_dir=out, **bad)
+        self.assertFalse(os.path.isdir(out) and os.listdir(out), "nothing written")
+
+
+@unittest.skipUnless(_HAVE, "pymeshlab not installed")
+class TestTextured(_TempDirTestCase):
+    """A textured mesh keeps its UVs and its texture through decimation
+    (2026-11-10). Measured: PyMeshLab's plain quadric collapse leaves a seamed
+    atlas 6% of its UV area (the texture smears); the texture-aware collapse
+    keeps 94% with no flipped face, but runs only where every face names a
+    texture. And a MeshLab save writes the mesh's textures beside the output,
+    re-encoding the source's own JPEG when that is where it already is.
+
+    The fixture's texture is a PNG: PyMeshLab's Linux wheel reads no JPEG (it
+    ships no Qt image plug-ins), and a plain save rewrites a PNG too, so every
+    platform runs the same checks (2026-11-11)."""
+
+    def _textured(self, texture=True):
+        """A sphere with a seamed UV atlas, as an OBJ whose material maps
+        ``tex.png`` (``texture=False``: the UVs and no material)."""
+        import numpy as np
+
+        try:
+            from PIL import Image
+        except ImportError:
+            self.skipTest("Pillow not installed")
+        pml = MeshOps.resolve()
+        ms = pml.MeshSet()
+        ms.create_sphere(radius=1.0, subdiv=4)
+        ms.generate_voronoi_atlas_parametrization(regionnum=8)
+        ms.set_current_mesh(ms.mesh_number() - 1)
+        path = os.path.join(self.out_dir, "scan.obj")
+        ms.save_current_mesh(path, save_textures=False)
+        if texture:
+            pixels = (np.random.default_rng(0).random((64, 64, 3)) * 255).astype("uint8")
+            Image.fromarray(pixels).save(os.path.join(self.out_dir, "tex.png"))
+            with open(path, encoding="utf-8") as fh:
+                lines = [ln for ln in fh.read().splitlines() if not ln.startswith(("mtllib", "usemtl"))]
+            first = next(k for k, ln in enumerate(lines) if ln.startswith("f "))
+            lines.insert(first, "usemtl scan")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write("\n".join(["mtllib scan.mtl"] + lines) + "\n")
+            with open(os.path.join(self.out_dir, "scan.mtl"), "w", encoding="utf-8") as fh:
+                fh.write("newmtl scan\nmap_Kd tex.png\n")
+        return path
+
+    @staticmethod
+    def _uv_area(path):
+        import numpy as np
+
+        ms = MeshOps.resolve().MeshSet()
+        ms.load_new_mesh(path)
+        uv = ms.current_mesh().wedge_tex_coord_matrix().reshape(-1, 3, 2)
+        a, b = uv[:, 1] - uv[:, 0], uv[:, 2] - uv[:, 0]
+        return float(np.abs(0.5 * (a[:, 0] * b[:, 1] - a[:, 1] * b[:, 0])).sum())
+
+    @staticmethod
+    def _digest(path):
+        import hashlib
+
+        with open(path, "rb") as fh:
+            return hashlib.md5(fh.read()).hexdigest()
+
+    def test_decimating_a_textured_mesh_keeps_its_uvs(self):
+        src = self._textured()
+        out = MeshOps.decimate(src, os.path.join(self.out_dir, "low.ply"), target_faces=600)
+        self.assertGreater(self._uv_area(out), 0.85 * self._uv_area(src))
+
+    def test_a_save_beside_the_source_leaves_its_texture_as_it_is(self):
+        src = self._textured()
+        before = self._digest(os.path.join(self.out_dir, "tex.png"))
+        MeshOps.decimate(src, os.path.join(self.out_dir, "low.ply"), target_faces=600)
+        self.assertEqual(self._digest(os.path.join(self.out_dir, "tex.png")), before)
+
+    def test_a_save_elsewhere_takes_the_texture_along(self):
+        src = self._textured()
+        other = os.path.join(self.out_dir, "delivery")
+        MeshOps.decimate(src, os.path.join(other, "low.ply"), target_faces=600)
+        self.assertTrue(os.path.isfile(os.path.join(other, "tex.png")))
+
+    def test_the_session_says_what_its_collapse_applied(self):
+        """A textured mesh's UV-keeping collapse weighs no curvature: the
+        session states it, so a QC record does not claim it (2026-11-10 review)."""
+        src = self._textured()
+        with MeshOps.session(src) as s:
+            s.decimate(target_faces=600, curvature_weighted=True)
+            self.assertEqual(
+                s.last_decimation,
+                {"filter": "decimate_quadric_texture", "curvature_weighted": False, "preserve_topology": False},
+            )
+
+    def test_another_image_of_the_same_name_is_kept_and_said(self):
+        """A folder already holding an unrelated ``tex.png``: it is not taken
+        for the mesh's own, nor written over; the save says so (2026-11-10
+        review: it silently pointed the mesh at the other image)."""
+        src = self._textured()
+        other = os.path.join(self.out_dir, "shared")
+        os.makedirs(other)
+        with open(os.path.join(other, "tex.png"), "wb") as fh:
+            fh.write(b"someone else's image")
+        with self.assertLogs("pythontk.file_utils.mesh_ops", level="WARNING") as logged:
+            MeshOps.decimate(src, os.path.join(other, "low.ply"), target_faces=600)
+        self.assertIn("another image", "\n".join(logged.output))
+        with open(os.path.join(other, "tex.png"), "rb") as fh:
+            self.assertEqual(fh.read(), b"someone else's image")
+
+    def test_a_texture_it_cannot_read_is_said(self):
+        """PyMeshLab swaps a texture it cannot read (missing, or a format its
+        build lacks: the Linux wheel reads no JPEG) for a blank ``dummy.png``
+        and says nothing: the output would carry no texture, silently
+        (2026-11-11, pythontk's Linux CI)."""
+        src = self._textured()
+        os.remove(os.path.join(self.out_dir, "tex.png"))
+        with self.assertLogs("pythontk.file_utils.mesh_ops", level="WARNING") as logged:
+            MeshOps.decimate(src, os.path.join(self.out_dir, "low.ply"), target_faces=600)
+        self.assertIn("could not read a texture", "\n".join(logged.output))
+        self.assertFalse(os.path.exists(os.path.join(self.out_dir, MeshOps._UNREAD_TEXTURE)))
+
+    def test_uvs_without_a_texture_are_said(self):
+        src = self._textured(texture=False)
+        with self.assertLogs("pythontk.file_utils.mesh_ops", level="WARNING") as logged:
+            MeshOps.decimate(src, os.path.join(self.out_dir, "low.ply"), target_faces=600)
+        self.assertIn("texture", "\n".join(logged.output))
+
+    def test_a_textured_lod_chain_keeps_its_uvs(self):
+        src = self._textured()
+        chain = MeshOps.lods(src, output_dir=self.out_dir)
+        for level in chain[1:]:
+            self.assertGreater(self._uv_area(level["path"]), 0.85 * self._uv_area(src), level)
+
+
+@unittest.skipUnless(_HAVE, "pymeshlab not installed")
 class TestBakeAndSession(_TempDirTestCase):
     def test_bake_vertex_color_writes_mesh_and_texture(self):
         src = self._sphere(colored=True)

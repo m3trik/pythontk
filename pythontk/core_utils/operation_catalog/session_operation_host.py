@@ -350,8 +350,9 @@ class _SessionOperationHostInternal(_RunFolderInternal):
         """Why the instance failed, from the end of its output."""
         from pythontk.core_utils.handoff.script_run import ScriptRunner
 
-        if self._drain is not None:
-            self._drain.join(2.0)  # what it printed last is still on its way
+        drainer = self._drain  # read once: the next call's start may replace it
+        if drainer is not None:
+            drainer.join(2.0)  # what it printed last is still on its way
         try:
             text = (self.folder / self.LOG_FILE).read_text(
                 encoding="utf-8", errors="replace"
@@ -477,10 +478,9 @@ class _SessionOperationHostInternal(_RunFolderInternal):
                     log.write(chunk)
                     log.flush()
 
-        self._drain = threading.Thread(
-            target=drain, name=f"{self.name}-session-log", daemon=True
-        )
-        self._drain.start()
+        drainer = threading.Thread(target=drain, name=f"{self.name}-session-log", daemon=True)
+        drainer.start()  # then published: a failing call joins it (_log_tail) from another thread
+        self._drain = drainer
         return proc
 
     def _launch_kept(

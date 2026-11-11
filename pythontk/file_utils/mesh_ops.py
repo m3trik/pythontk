@@ -15,7 +15,8 @@ design:
 
 - **Typed methods** (:meth:`MeshOps.measure`, :meth:`~MeshOps.clean`,
   :meth:`~MeshOps.remesh`, :meth:`~MeshOps.decimate`,
-  :meth:`~MeshOps.compare`, :meth:`~MeshOps.bake_vertex_color`) — the
+  :meth:`~MeshOps.compare`, :meth:`~MeshOps.lods`,
+  :meth:`~MeshOps.bake_vertex_color`) — the
   contract-bearing API: validated, documented, stable.
 - **The** :data:`OPS` **registry** — curated single-filter operators with
   validated parameters. Adding one is one :class:`OpSpec` entry; sessions
@@ -31,9 +32,10 @@ pymeshlab 2025.7 (``PureValue`` = absolute distance; ``PercentageValue``
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import Any, Dict, FrozenSet, Optional, Tuple
+from typing import Any, Dict, FrozenSet, List, Optional, Tuple
 
 from pythontk.core_utils.help_mixin import HelpMixin
+from pythontk.file_utils.lod_chain import LodChain
 
 logger = logging.getLogger(__name__)
 
@@ -124,6 +126,24 @@ OPS: Dict[str, OpSpec] = {
         ),
         doc="Quadric edge-collapse simplification.",
     ),
+    "decimate_quadric_texture": OpSpec(
+        filter="meshing_decimation_quadric_edge_collapse_with_texture",
+        allowed_params=frozenset(
+            {
+                "targetfacenum",
+                "targetperc",
+                "qualitythr",
+                "extratcoordw",
+                "preserveboundary",
+                "boundaryweight",
+                "optimalplacement",
+                "preservenormal",
+                "planarquadric",
+            }
+        ),
+        doc="Quadric edge-collapse that keeps a textured mesh's UV seams "
+        "(every face must name a texture).",
+    ),
     "remesh_isotropic": OpSpec(
         filter="meshing_isotropic_explicit_remeshing",
         allowed_params=frozenset(
@@ -213,6 +233,69 @@ class _MeshOpsInternal:
         if os.path.getsize(src) == 0:
             raise RuntimeError(f"Mesh source is empty: {src}")
         return src
+
+    #: The name PyMeshLab gives a texture it could not read -- a missing file,
+    #: or an image format its build lacks (the Linux wheel ships no Qt image
+    #: plug-ins, so it reads no JPEG) -- standing in, silently, as a blank image.
+    _UNREAD_TEXTURE = "dummy.png"
+
+    @classmethod
+    def _load_mesh(cls, ms, path: str) -> None:
+        """Load *path* into *ms*, saying when PyMeshLab could not read a texture it names."""
+        ms.load_new_mesh(path)
+        if cls._UNREAD_TEXTURE in (ms.current_mesh().textures() or {}):
+            logger.warning(
+                "%s: PyMeshLab could not read a texture it names (missing, or a format it cannot "
+                "decode: its Linux build reads no JPEG); the output carries none. Put the image "
+                "beside it, or convert it to PNG.",
+                os.path.basename(path),
+            )
+
+    @staticmethod
+    def _save_mesh(ms, output_path: str, source_path: Optional[str] = None) -> None:
+        """Write *ms*'s current mesh, never over an image already there: a
+        MeshLab save writes the mesh's textures beside the output, so one
+        beside its source re-encoded the source's own JPEG (measured
+        2026-11-10). Written elsewhere, the textures go along; a different
+        image of the same name there is kept, and said (the mesh would show it).
+
+        Parameters:
+            source_path: The mesh the textures came with: an image beside the
+                output that is the one beside it is the mesh's own.
+        """
+        # A texture PyMeshLab could not read is a blank stand-in, never written out.
+        names = [n for n in ms.current_mesh().textures() or {} if n != _MeshOpsInternal._UNREAD_TEXTURE]
+        beside = os.path.dirname(output_path)
+        origin = os.path.dirname(os.path.abspath(source_path)) if source_path else None
+
+        def own(name: str) -> bool:
+            there, theirs = os.path.join(beside, name), os.path.join(origin, name) if origin else None
+            try:
+                return bool(theirs) and os.path.samefile(there, theirs)
+            except OSError:
+                return False
+
+        there = [n for n in names if os.path.isfile(os.path.join(beside, n))]
+        if not there:
+            ms.save_current_mesh(output_path, save_textures=bool(names))
+            return
+        foreign = sorted(n for n in there if not own(n))
+        if foreign:
+            logger.warning(
+                "%s: %s beside it is another image of the same name; it is kept, "
+                "and the mesh would show it -- write the mesh to its own folder.",
+                os.path.basename(output_path),
+                ", ".join(foreign),
+            )
+        missing = sorted(set(names) - set(there))
+        if missing:
+            logger.warning(
+                "%s: its textures %s are not beside it; copy them there (the "
+                "save does not, to leave the ones beside it as they are).",
+                os.path.basename(output_path),
+                ", ".join(missing),
+            )
+        ms.save_current_mesh(output_path, save_textures=False)
 
     @staticmethod
     def _postflight(output_path: str) -> str:
@@ -392,6 +475,10 @@ class _MeshSession:
         self._pml = pml
         self._ms = ms
         self.source_path = source_path
+        #: What the last :meth:`decimate` applied: ``{"filter",
+        #: "curvature_weighted", "preserve_topology"}`` (a textured mesh's
+        #: collapse applies neither of the two), ``None`` before one ran.
+        self.last_decimation: Optional[Dict[str, Any]] = None
 
     def __enter__(self) -> "_MeshSession":
         return self
@@ -422,11 +509,74 @@ class _MeshSession:
         getattr(self._ms, filter_name)(**params)
         return self
 
+    def decimate(
+        self,
+        target_faces: int = 0,
+        target_pct: float = 0.0,
+        curvature_weighted: bool = False,
+        preserve_boundary: bool = True,
+        preserve_normal: bool = True,
+        preserve_topology: bool = False,
+        quality_threshold: float = 0.3,
+    ) -> "_MeshSession":
+        """Quadric edge collapse of the current mesh to a face target (one of
+        *target_faces* / *target_pct*), keeping a textured mesh textured.
+
+        A mesh with UVs and a texture collapses with the texture-aware filter
+        (``decimate_quadric_texture``): measured 2026-11-10, the plain one left
+        a seamed atlas 6% of its UV area, the texture-aware one 94% with no
+        flipped face. That filter has no curvature weighting or topology
+        guard, so those two are not applied there. It runs only where every
+        face names a texture: UVs with none (an OBJ whose material maps no
+        image) collapse with the plain filter and the warning says how to
+        keep them.
+        """
+        mesh = self._ms.current_mesh()
+        target = {
+            "targetfacenum": int(target_faces),
+            "targetperc": float(target_pct) / 100.0 if target_pct else 0.0,
+            "qualitythr": quality_threshold,
+            "preserveboundary": preserve_boundary,
+            "preservenormal": preserve_normal,
+        }
+        if mesh.has_wedge_tex_coord() and mesh.texture_number() > 0:
+            dropped = [n for n, on in (("curvature weighting", curvature_weighted), ("the topology guard", preserve_topology)) if on]
+            self.last_decimation = {"filter": "decimate_quadric_texture", "curvature_weighted": False, "preserve_topology": False}
+            if dropped:
+                logger.info(
+                    "%s is textured: its UV-keeping collapse applies no %s.",
+                    os.path.basename(self.source_path),
+                    " or ".join(dropped),
+                )
+            return self.op("decimate_quadric_texture", **target)
+        if mesh.has_wedge_tex_coord():
+            logger.warning(
+                "%s has UVs but no texture: PyMeshLab keeps UV seams through a "
+                "collapse only on a textured mesh, so its UVs will not survive. "
+                "Give its material the texture (an OBJ's map_Kd) or reduce it in "
+                "a DCC.",
+                os.path.basename(self.source_path),
+            )
+        if curvature_weighted:
+            self.op("curvature_scalar")
+        self.last_decimation = {
+            "filter": "decimate_quadric",
+            "curvature_weighted": bool(curvature_weighted),
+            "preserve_topology": bool(preserve_topology),
+        }
+        return self.op(
+            "decimate_quadric",
+            **target,
+            preservetopology=preserve_topology,
+            qualityweight=curvature_weighted,
+            autoclean=True,
+        )
+
     def save(self, output_path: str) -> str:
         """Write the current mesh; returns the (postflighted) path."""
         out = os.path.abspath(_MeshOpsInternal._check_save_ext(output_path))
         os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
-        self._ms.save_current_mesh(out)
+        _MeshOpsInternal._save_mesh(self._ms, out, self.source_path)
         return _MeshOpsInternal._postflight(out)
 
 
@@ -498,7 +648,7 @@ class MeshOps(HelpMixin, _MeshOpsInternal):
         pml = cls.resolve()
         src = cls._preflight(input_path)
         ms = pml.MeshSet()
-        ms.load_new_mesh(src)
+        cls._load_mesh(ms, src)
         return _MeshSession(pml, ms, src)
 
     # ------------------------------------------------------------ measure
@@ -666,13 +816,7 @@ class MeshOps(HelpMixin, _MeshOpsInternal):
                 except Exception as e:
                     logger.warning(f"close_holes failed: {e}")
             if decimate_target_faces > 0:
-                s.op(
-                    "decimate_quadric",
-                    targetfacenum=decimate_target_faces,
-                    preserveboundary=True,
-                    preservenormal=True,
-                    preservetopology=True,
-                )
+                s.decimate(target_faces=decimate_target_faces, preserve_topology=True)
             s.save(out)
         logger.info(f"Mesh cleaned: {input_path} -> {out}")
         return out
@@ -728,27 +872,129 @@ class MeshOps(HelpMixin, _MeshOpsInternal):
         Decimation-Master-style adaptive density that spends the budget on
         high-curvature areas. ``preserve_topology`` defaults False: on scan
         meshes it routinely blocks the collapse from reaching its target.
+        A textured mesh keeps its UVs and texture (:meth:`_MeshSession.decimate`).
         """
         if bool(target_faces) == bool(target_pct):
             raise ValueError("Set exactly one of target_faces / target_pct.")
         out = cls._resolve_output(input_path, output_path, "decimated")
         with cls.session(input_path) as s:
-            if curvature_weighted:
-                s.op("curvature_scalar")
-            s.op(
-                "decimate_quadric",
-                targetfacenum=int(target_faces),
-                targetperc=float(target_pct) / 100.0 if target_pct else 0.0,
-                qualitythr=quality_threshold,
-                preserveboundary=preserve_boundary,
-                preservenormal=preserve_normal,
-                preservetopology=preserve_topology,
-                qualityweight=curvature_weighted,
-                autoclean=True,
+            s.decimate(
+                target_faces=target_faces,
+                target_pct=target_pct,
+                curvature_weighted=curvature_weighted,
+                preserve_boundary=preserve_boundary,
+                preserve_normal=preserve_normal,
+                preserve_topology=preserve_topology,
+                quality_threshold=quality_threshold,
             )
             s.save(out)
         logger.info(f"Mesh decimated: {input_path} -> {out}")
         return out
+
+    # ------------------------------------------------------------ lods
+    @classmethod
+    def lods(
+        cls,
+        input_path: str,
+        levels: int = LodChain.DEFAULT_LEVELS,
+        ratio: float = LodChain.DEFAULT_RATIO,
+        budgets: Optional[List[float]] = None,
+        output_dir: Optional[str] = None,
+        ext: str = ".ply",
+        sample_num: int = 20000,
+    ) -> List[Dict[str, Any]]:
+        """A LOD chain of the mesh at *input_path*, headless: ``<stem>_LOD0``
+        (the source as it is) and each lower level ``<stem>_LOD<n>`` beside it
+        (the names :class:`pythontk.LodChain` states), each a quadric
+        decimation of LOD0 (:meth:`decimate`) measured against it
+        (:meth:`compare`).
+
+        Two ways to say how coarse: a ladder (*levels*, *ratio*: each level a
+        share of the last's triangles, :meth:`LodChain.ladder`), or *budgets*
+        -- the largest deviation from LOD0 each lower level may have, in the
+        file's units, rising -- met by measurement: each level's triangle
+        count is found by bisection on the measured peak, since no
+        simplifier's own error bound holds (measured 2026-11-10:
+        meshoptimizer's under-bounded the peak 2.4-3.6x). A budget no fewer
+        triangles than the level above meets ends the chain there.
+
+        Parameters:
+            input_path: The source mesh (LOD0).
+            levels: Levels in all, LOD0 included (the ladder).
+            ratio: Each level's share of the last's triangles (the ladder).
+            budgets: Rising deviation budgets, one per lower level; overrides
+                the ladder.
+            output_dir: Where the levels go; default beside the source.
+            ext: The levels' format (one :data:`SAVE_EXTS` holds).
+            sample_num: :meth:`compare`'s samples per direction.
+
+        Returns:
+            One dict per level, LOD0 first: ``level``, ``path``,
+            ``triangles``, ``peak`` and ``mean`` (deviation from LOD0).
+        """
+        if budgets is not None:
+            budgets = [float(b) for b in budgets]
+            if (
+                not budgets
+                or budgets[0] <= 0
+                or any(b <= a for a, b in zip(budgets, budgets[1:]))
+            ):
+                raise ValueError(f"LOD budgets rise level by level, each above 0: {budgets}.")
+        pml = cls.resolve()
+        src = cls._preflight(input_path)
+        out_dir = output_dir or os.path.dirname(os.path.abspath(src))
+        stem = os.path.splitext(os.path.basename(src))[0]
+        lod0 = cls._check_save_ext(os.path.join(out_dir, f"{stem}_LOD0{ext}"))
+        ms = pml.MeshSet()
+        cls._load_mesh(ms, src)
+        top = ms.current_mesh().face_number()
+        # The ladder validates its levels and ratio: refused before any write.
+        targets = LodChain.ladder(top, levels, ratio) if budgets is None else None
+        os.makedirs(out_dir, exist_ok=True)
+        cls._save_mesh(ms, lod0, src)
+        ms.clear()  # LOD0 is on disk: every level reads it there (a scan can be GBs)
+        chain: List[Dict[str, Any]] = [
+            {"level": 0, "path": lod0, "triangles": top, "peak": 0.0, "mean": 0.0}
+        ]
+
+        def level(index: int, target: int) -> Dict[str, Any]:
+            path = os.path.join(out_dir, f"{stem}_LOD{index}{ext}")
+            cls.decimate(lod0, path, target_faces=max(4, int(target)))
+            measured = cls.compare(path, lod0, sample_num=sample_num)
+            check = pml.MeshSet()
+            check.load_new_mesh(path)
+            return {
+                "level": index,
+                "path": path,
+                "triangles": check.current_mesh().face_number(),
+                "peak": measured["hausdorff_peak"],
+                "mean": measured["hausdorff_mean"],
+            }
+
+        if targets is not None:
+            for index, target in enumerate(targets, 1):
+                chain.append(level(index, target))
+            return chain
+        above = top
+        for index, budget in enumerate(budgets, 1):
+            low, high = LodChain.MIN_TRIANGLES, above - 1
+            best = best_target = found = None
+            while low <= high:
+                middle = (low + high) // 2
+                found = level(index, middle)
+                if found["peak"] <= budget:
+                    best, best_target, high = found, middle, middle - 1
+                else:
+                    low = middle + 1
+            if best is None:  # no fewer triangles meets it: the chain ends, no stray file
+                if found is not None:
+                    os.remove(found["path"])
+                break
+            if found is not best:  # the file holds the last try: write the winner again
+                best = level(index, best_target)
+            chain.append(best)
+            above = best["triangles"]
+        return chain
 
     # ------------------------------------------------------------ bake
     @classmethod

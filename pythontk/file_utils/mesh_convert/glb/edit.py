@@ -629,6 +629,123 @@ class GlbEdit:
         edit.replace_rest(new_bin)
         return added
 
+    @classmethod
+    def graft_meshes(
+        cls, edit: "GlbEdit", source: "GlbEdit", meshes: Sequence[int]
+    ) -> Dict[int, int]:
+        """Copy *source*'s *meshes* into *edit* with what they read: their
+        accessors, the bufferViews those sit in (each copied once, verbatim,
+        stride and all, its accessors keeping their offsets in it) and their
+        materials (one equal to a material *edit* holds is shared). Nothing of
+        *edit*'s own is touched: what is copied lands past its end.
+
+        Refused, with a ``ValueError`` naming the mesh, rather than copied
+        half: a textured material (its images would have to come along), a
+        morph target, a primitive a compression extension decodes, a sparse
+        accessor, or bytes that are not *source*'s BIN.
+
+        Weighed (§15): glTF-Transform's ``merge`` does this whole-document in
+        Node.js, a second runtime for one copy; pygltflib reads and writes the
+        JSON but copies no buffer across documents. Built on this class's own
+        append (:meth:`append_bin_views`), so every pass shares one buffer
+        writer.
+
+        Returns:
+            ``{source mesh index: the copy's index in edit}``.
+        """
+        gltf, theirs = edit.gltf, source.gltf
+        their_meshes = theirs.get("meshes") or []
+        their_accessors = theirs.get("accessors") or []
+        accessors: Set[int] = set()
+        materials: Set[int] = set()
+
+        def textured(value: Any) -> bool:
+            if isinstance(value, Mapping):
+                return any(
+                    str(k).lower().endswith("texture") or textured(v) for k, v in value.items()
+                )
+            return isinstance(value, list) and any(textured(v) for v in value)
+
+        for index in meshes:
+            label = their_meshes[index].get("name") or f"mesh {index}"
+            for prim in their_meshes[index].get("primitives") or []:
+                if prim.get("targets") or prim.get("extensions"):
+                    raise ValueError(f"{label}: a morph target or a compressed primitive is not copied.")
+                accessors.update(v for v in (prim.get("attributes") or {}).values() if isinstance(v, int))
+                if isinstance(prim.get("indices"), int):
+                    accessors.add(prim["indices"])
+                if isinstance(prim.get("material"), int):
+                    materials.add(prim["material"])
+        views: Set[int] = set()
+        for index in accessors:
+            accessor = their_accessors[index]
+            if accessor.get("sparse") or cls.bin_view(theirs, accessor) is None:
+                raise ValueError(f"accessor {index}: sparse, or not in its GLB's BIN; not copied.")
+            views.add(accessor["bufferView"])
+        for index in materials:
+            if textured((theirs.get("materials") or [])[index]):
+                raise ValueError(f"material {index}: textured; its images are not copied.")
+
+        blob = source.bin_data
+        order = sorted(views)
+        their_views = theirs["bufferViews"]
+        payloads = []
+        for index in order:
+            start = int(their_views[index].get("byteOffset") or 0)
+            payloads.append(bytes(blob[start : start + int(their_views[index]["byteLength"])]))
+        added = cls.append_bin_views(edit, payloads)
+        if payloads and not added:
+            raise ValueError(f"{edit.path}: its buffer is an external file; nothing can be added to it.")
+        view_map: Dict[int, int] = {}
+        for old, new in zip(order, added):
+            for key in ("byteStride", "target"):
+                if key in their_views[old]:
+                    gltf["bufferViews"][new][key] = their_views[old][key]
+            view_map[old] = new
+        ours = gltf.setdefault("accessors", [])
+        accessor_map: Dict[int, int] = {}
+        for index in sorted(accessors):
+            copied = json.loads(json.dumps(their_accessors[index]))
+            copied["bufferView"] = view_map[copied["bufferView"]]
+            ours.append(copied)
+            accessor_map[index] = len(ours) - 1
+        our_materials = gltf.setdefault("materials", [])
+        material_map: Dict[int, int] = {}
+        for index in sorted(materials):
+            material = theirs["materials"][index]
+            match = next((i for i, m in enumerate(our_materials) if m == material), None)
+            if match is None:
+                our_materials.append(json.loads(json.dumps(material)))
+                match = len(our_materials) - 1
+            material_map[index] = match
+        # A copied material's extensions are declared as the source declared
+        # them: one used and not listed fails the Khronos validator.
+        stated = {name for index in materials for name in (theirs["materials"][index].get("extensions") or {})}
+        for key in ("extensionsUsed", "extensionsRequired"):
+            wanted = [name for name in theirs.get(key) or [] if name in stated]
+            if key == "extensionsUsed":
+                wanted += sorted(stated - set(wanted))
+            listed = gltf.get(key) or []
+            missing = [name for name in wanted if name not in listed]
+            if missing:
+                gltf[key] = listed + missing
+        our_meshes = gltf.setdefault("meshes", [])
+        remap: Dict[int, int] = {}
+        for index in meshes:
+            if index in remap:
+                continue
+            mesh = json.loads(json.dumps(their_meshes[index]))
+            for prim in mesh.get("primitives") or []:
+                prim["attributes"] = {k: accessor_map[v] for k, v in (prim.get("attributes") or {}).items()}
+                if "indices" in prim:
+                    prim["indices"] = accessor_map[prim["indices"]]
+                if "material" in prim:
+                    prim["material"] = material_map[prim["material"]]
+            our_meshes.append(mesh)
+            remap[index] = len(our_meshes) - 1
+        edit.dirty = True
+        return remap
+
     @staticmethod
     def compact_bin(edit: "GlbEdit") -> int:
         """Reclaim every bufferView nothing references, and repack the BIN.

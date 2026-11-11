@@ -410,9 +410,11 @@ class TestExportRun(unittest.TestCase):
         tasks = {key: True for key in ExportRun.MODE_KEYS}
         tasks.update({"smart_bake": True, "check_framerate": "ntsc"})
         run, remaining, _notes = ExportRun.from_tasks(tasks)  # "version": refused
-        # The one task a run adds: the take split every FBX write arms.
+        # The two tasks a run adds: the take split every FBX write arms, and
+        # the LOD read every export makes.
         self.assertEqual(
-            set(remaining), {"smart_bake", "check_framerate", "apply_declared_takes"}
+            set(remaining),
+            {"smart_bake", "check_framerate", "apply_declared_takes", "prepare_lods"},
         )
         self.assertEqual(remaining["check_framerate"], "ntsc")
         self.assertTrue(run.texture_write_back)
@@ -430,13 +432,76 @@ class TestExportRun(unittest.TestCase):
             {"drop_rig_apparatus": True, "output_format": "fbx_glb"}
         )
         self.assertTrue(run.drop_rig_apparatus)
-        self.assertEqual((remaining, notes), ({"apply_declared_takes": True}, []))
+        self.assertEqual(
+            (remaining, notes),
+            ({"apply_declared_takes": True, "prepare_lods": "authored"}, []),
+        )
         run, _t, notes = ExportRun.from_tasks(
             {"drop_rig_apparatus": True, "output_format": "usd"}
         )
         self.assertFalse(run.drop_rig_apparatus)
         self.assertEqual([level for level, _ in notes], ["info"])
         self.assertIn("Exclude Rig Helpers", notes[0][1])
+
+    def test_the_lods_row_is_a_mode_that_arms_prepare_lods(self):
+        """The LODs row (As Authored / Most Detailed Only) is a mode: popped,
+        As Authored for a caller that never names it, and handed to the one
+        task that reads the scene's LOD groups on every export, as the take
+        split is armed on every FBX write. Added: 2026-11-10"""
+        run, remaining, notes = ExportRun.from_tasks({})
+        self.assertEqual(run.lods, "authored")
+        self.assertEqual(remaining.get("prepare_lods"), "authored")
+        self.assertEqual(notes, [])
+        run, remaining, notes = ExportRun.from_tasks({"lods": "lod0"})
+        self.assertEqual(run.lods, "lod0")
+        self.assertEqual(remaining.get("prepare_lods"), "lod0")
+        self.assertNotIn("lods", remaining)
+        self.assertEqual(notes, [])
+        run, remaining, notes = ExportRun.from_tasks({"lods": "bogus"})
+        self.assertEqual((run.lods, remaining.get("prepare_lods")), ("authored", "authored"))
+        self.assertEqual([level for level, _ in notes], ["warning"])
+        self.assertIn("LODs", notes[0][1])
+
+    def test_the_lods_table_names_each_mode(self):
+        """Append-only, persisted by index: As Authored first (the default)."""
+        self.assertEqual(
+            ExportProfile.LOD_OPTIONS,
+            {"As Authored": "authored", "Most Detailed Only": "lod0", "Generate Missing": "generate"},
+        )
+        self.assertEqual(ExportRun.LOD_MODES, ("authored", "lod0", "generate"))
+        self.assertEqual(tuple(ExportProfile.LOD_OPTIONS.values()), ExportRun.LOD_MODES, "the row labels every mode, in order")
+        self.assertEqual(
+            ExportProfile.LOD_OUTPUT_OPTIONS,
+            {"Export Copies (Scene Untouched)": False, "Scene (In Place)": True},
+        )
+
+    def test_generate_missing_arms_the_generation_and_its_output_mode(self):
+        """Generate Missing (2026-11-10): the LOD read and the generation, which
+        runs after the name hygiene; LOD Output says whether the generated
+        levels stay in the scene. Scene Untouched for a caller that never says."""
+        run, remaining, notes = ExportRun.from_tasks({"lods": "generate"})
+        self.assertEqual((run.lods, run.lod_write_back), ("generate", False))
+        self.assertEqual(remaining.get("prepare_lods"), "generate")
+        self.assertIs(remaining.get("generate_lods"), True)
+        run, remaining, _ = ExportRun.from_tasks({"lods": "generate", "lod_write_back": True})
+        self.assertTrue(run.lod_write_back)
+        self.assertNotIn("lod_write_back", remaining)
+        _run, remaining, _ = ExportRun.from_tasks({"lods": "lod0", "generate_lods": True})
+        self.assertNotIn("generate_lods", remaining, "only Generate Missing generates")
+        order = ExportProfile.TASK_ORDER
+        self.assertGreater(order.index("generate_lods"), order.index("conform_shape_names"))
+        self.assertIn("generate_lods", ExportProfile.CHECK_DEPENDENCIES["check_duplicate_names"])
+
+    def test_prepare_lods_filters_the_export_set_before_any_check_reads_it(self):
+        order = ExportProfile.TASK_ORDER
+        # After the name hygiene (its plan holds paths a rename would leave
+        # stale), before the generation that reads it.
+        self.assertEqual(order.index("prepare_lods"), order.index("conform_shape_names") + 1)
+        self.assertLess(order.index("prepare_lods"), order.index("generate_lods"))
+        self.assertIn("prepare_lods", ExportProfile.OBJECT_SET_TASKS)
+        self.assertNotIn("check_geometry_lod_suffix", ExportProfile.CHECK_DEPENDENCIES)
+        for check in ("check_duplicate_names", "check_hidden_geometry"):
+            self.assertIn("prepare_lods", ExportProfile.CHECK_DEPENDENCIES[check])
 
     def test_the_output_format_and_its_legacy_flag(self):
         self.assertEqual(ExportRun.from_tasks({})[0].output_format, "fbx")
@@ -469,7 +534,8 @@ class TestExportRun(unittest.TestCase):
             (2048, 1.0, 1e-4),
         )
         self.assertEqual(
-            set(remaining), {"smart_bake", "optimize_keys", "apply_declared_takes"}
+            set(remaining),
+            {"smart_bake", "optimize_keys", "apply_declared_takes", "prepare_lods"},
         )
         off = ExportRun.from_tasks(
             {"secondary_max_size": 0, "uastc_rdo": None, "glb_key_tolerance": "x"}
@@ -531,7 +597,9 @@ class TestExportRun(unittest.TestCase):
                 **hygiene,
             }
         )
-        self.assertEqual(set(remaining), {"smart_bake", "apply_declared_takes"})
+        self.assertEqual(
+            set(remaining), {"smart_bake", "apply_declared_takes", "prepare_lods"}
+        )
         self.assertEqual(run.glb_key_tolerance, 1e-4, "read before the pop")
         self.assertFalse(run.optimize_keys_level, "SmartBake's own pass rides it")
         self.assertEqual([lvl for lvl, _ in notes], ["info"])
@@ -543,7 +611,7 @@ class TestExportRun(unittest.TestCase):
         )
         self.assertEqual(
             set(remaining),
-            set(hygiene) | {"apply_declared_takes"},
+            set(hygiene) | {"apply_declared_takes", "prepare_lods"},
             "the FBX ships: all kept",
         )
         self.assertEqual(run.optimize_keys_level, "extremes")
@@ -553,7 +621,7 @@ class TestExportRun(unittest.TestCase):
         )
         self.assertEqual(
             (set(remaining), notes),
-            ({"smart_bake", "apply_declared_takes"}, []),
+            ({"smart_bake", "apply_declared_takes", "prepare_lods"}, []),
             "nothing to skip, nothing said",
         )
 
@@ -1153,16 +1221,46 @@ class TestRetiredPresetRows(unittest.TestCase):
                 "check_untied_keyframes",
                 "baked_reflections",
                 "animation_clips",
+                "check_geometry_lod_suffix",
                 "check_output_writable",
             ),
         )
-        offered = {"check_untied_keyframes": {}, "check_output_writable": {}}
+        offered = {
+            "check_untied_keyframes": {},
+            "check_output_writable": {},
+            "check_geometry_lod_suffix": {},
+        }
         self.assertEqual(
             ExportProfile.retired_row_keys(
                 {**self.FIXES, "baked_reflections": {}, "apply_declared_takes": {}},
                 offered,
             ),
             ("check_mangled_names", "check_floating_point_keys"),
+        )
+
+    def test_a_saved_lod_suffix_check_turned_off_is_said_once(self):
+        """The Check Geometry LOD Suffix row retired 2026-11-10: every export
+        reads the LOD groups now (``prepare_lods``), so a preset turning the
+        row off is told it no longer can; one leaving it on asks for what
+        every export does, and nothing is said."""
+        ((level, message),) = ExportProfile.retired_row_notes(
+            {"check_geometry_lod_suffix": False}, self.FIXES, {}
+        )
+        self.assertEqual(level, "info")
+        self.assertIn("Check Geometry LOD Suffix", message)
+        self.assertIn("LODs row", message)
+        self.assertEqual(
+            ExportProfile.retired_row_notes({"check_geometry_lod_suffix": True}, self.FIXES, {}),
+            [],
+        )
+        self.assertEqual(
+            ExportProfile.retired_row_notes(
+                {"check_geometry_lod_suffix": False},
+                self.FIXES,
+                {"check_geometry_lod_suffix": {}},
+            ),
+            [],
+            "a panel still building the row says nothing",
         )
 
     def test_a_saved_animation_clips_mode_is_said_once_and_ignored(self):
@@ -1239,7 +1337,8 @@ class TestRunTables(unittest.TestCase):
     def test_unimplemented_names_the_gap_in_table_order(self):
         gaps = ExportProfile.unimplemented(self._Partial)
         self.assertEqual(
-            gaps["tasks"][:3], ["set_workspace", "exclude_hdr", "conform_shape_names"]
+            gaps["tasks"][:4],
+            ["set_workspace", "exclude_hdr", "conform_shape_names", "prepare_lods"],
         )
         self.assertNotIn("smart_bake", gaps["tasks"])
         self.assertIn("check_output_writable", gaps["checks"])

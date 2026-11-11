@@ -99,6 +99,9 @@ class ExportFingerprint:
                 entry["camera"] = True
             if node.get("extras"):
                 entry["extras"] = cls._shape(node["extras"])
+            lod = ((node.get("extensions") or {}).get("MSFT_lod") or {}).get("ids")
+            if lod:
+                entry["lod"] = [node_keys[j] for j in lod if isinstance(j, int) and j < len(nodes)]
             fingerprint["nodes"][node_keys[i]] = entry
         for key, mesh in zip(mesh_keys, gltf.get("meshes") or []):
             fingerprint["meshes"][key] = [
@@ -392,10 +395,11 @@ class ExportFingerprint:
     @classmethod
     def _node_keys(cls, nodes: List[Dict[str, Any]]) -> List[str]:
         """Each glTF node's key: its name path from the root (``root/arm``),
-        made unique."""
-        parent = {
-            child: i for i, node in enumerate(nodes) for child in node.get("children") or []
-        }
+        made unique; a LOD group's lower level keyed where it stands (under its
+        LOD0's parent)."""
+        from pythontk.file_utils.mesh_convert.glb.lods import GlbLods
+
+        parent = GlbLods.parents(nodes)
         names = [node.get("name") or f"node#{i}" for i, node in enumerate(nodes)]
 
         def path(i: int) -> str:

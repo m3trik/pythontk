@@ -899,6 +899,34 @@ class ChildSysPathTest(unittest.TestCase):
 
         self.assertEqual(kept, [repo])
 
+    def test_a_layered_environments_packages_are_dropped_too(self):
+        """``uv run --with`` (the MCP servers' launch) layers an ephemeral
+        environment over the workspace venv: the venv's root and site-packages
+        and uv's cached archive ride ``sys.path`` through ``.pth`` files, outside
+        every prefix of the running Python. Measured 2026-11-10: they led every
+        owned DCC's path, so one on Python 3.13 could not import its own
+        ``pxr`` (DLL load failed) and another's USD plug-in died on the venv's
+        USD build."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as scratch:
+            venv = os.path.join(scratch, ".venv")
+            venv_sp = os.path.join(venv, "Lib", "site-packages")
+            archive_sp = os.path.join(scratch, "uv", "archive-v0", "abc", "Lib", "site-packages")
+            debian = os.path.join(scratch, "usr", "lib", "python3", "dist-packages")
+            for folder in (venv_sp, os.path.join(venv_sp, "win32"), archive_sp, debian):
+                os.makedirs(folder)
+            with open(os.path.join(venv, "pyvenv.cfg"), "w") as cfg:
+                cfg.write("home = C:\\Python311\n")
+            repo = os.path.join(scratch, "repo")
+            os.makedirs(repo)
+
+            kept = HandoffBridge.child_sys_path(
+                [venv, venv_sp, os.path.join(venv_sp, "win32"), archive_sp, debian, repo]
+            )
+
+        self.assertEqual(kept, [os.path.abspath(repo)])
+
     def test_it_defaults_to_the_live_sys_path(self):
         kept = HandoffBridge.child_sys_path()
         self.assertTrue(all(entry for entry in kept), "no empty entries")

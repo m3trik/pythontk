@@ -17,6 +17,7 @@ import { formatBytes } from './format.js';
 import {
   applyLighting, applyLightmaps, bindLightmaps, copyReaders, resetLightmaps,
 } from './lightmaps.js';
+import { bindLods } from './lods.js';
 import { syncLookdev } from './lookdev.js';
 import { refreshMenus } from './menus.js';
 import { current, disposeModel, layout, loader, measureBounds, setModel } from './model.js';
@@ -91,6 +92,10 @@ export async function load(sources, version) {
     return false;
   }
   const settingUp = performance.now();
+  // The LOD groups the file states in MSFT_lod (lods.js), built before every
+  // pass that binds by node: the lower levels join the scene inside each
+  // group's THREE.LOD, so the lightmaps, the tracks and the parts see them.
+  for (const part of loaded) await bindLods(part.gltf);
   // The bake's reflection probe (probe.js) -- the first part's that carries
   // one -- decoded off that file's own buffer BEFORE the check below: it
   // awaits, and a load superseded meanwhile must put neither its model nor

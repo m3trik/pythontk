@@ -2802,6 +2802,120 @@ class TestPreviewViewerLive(unittest.TestCase):
         self.assertEqual(found["errors"], [])
         self.assertEqual(found["meshes"], 1, "the reloaded page loads the model again")
 
+    def _lod_glb(self, offset=0.0):
+        """A LOD group as the pipeline ships it: ``chair`` holds
+        ``chair_LOD0..2`` (fewer triangles each), stated in MSFT_lod by the real
+        pass with switch heights 0.5 / 0.2 and a 0.01 cull; each level stands
+        *offset* metres along x, the group at identity (a DCC's group keeps
+        the transform on the mesh)."""
+        from test_gltf2fbx import GltfBuilder
+
+        b = GltfBuilder()
+        nodes = []
+        for level, count in enumerate((64, 16, 4)):
+            positions, indices = [], []
+            for k in range(count):  # a strip of thin triangles, one metre tall
+                x = k / count
+                base = len(positions)
+                positions += [(x, 0.0, 0.0), (x + 0.5 / count, 0.0, 0.0), (x, 1.0, 0.0)]
+                indices += [base, base + 1, base + 2]
+            prim = {
+                "attributes": {"POSITION": b.accessor(positions, "VEC3")},
+                "indices": b.accessor(indices, "SCALAR", ctype=5125),
+            }
+            b.gltf.setdefault("meshes", []).append({"primitives": [prim]})
+            nodes.append({"name": f"chair_LOD{level}", "mesh": level, "translation": [offset, 0.0, 0.0]})
+        b.gltf["nodes"] = [{"name": "chair", "children": [1, 2, 3]}] + nodes
+        b.gltf["scenes"] = [{"nodes": [0]}]
+        b.gltf["scene"] = 0
+        path = os.path.join(self.temp.dir_path(), "lods.glb")
+        b.write_glb(path)
+        ptk.MeshConvert.apply_glb_lods(path, heights={"chair": [0.5, 0.2, 0.01]})
+        return path
+
+    def test_a_lod_group_switches_levels_with_the_camera(self):
+        """MSFT_lod (2026-11-10): three's loader draws LOD0 alone; the page
+        builds a THREE.LOD from the extension, its switch distances from the
+        screen heights at the field of view of the camera rendering the frame
+        (a start camera or a headset sets its own), and counts the triangles
+        LOD0 draws."""
+
+        def probe_lod(server, page):
+            return page.evaluate(
+                """() => {
+                  const api = window.__api;
+                  let lod = null;
+                  api.model.traverse((n) => { if (n.isLOD) lod = n; });
+                  if (!lod) return { lod: null };
+                  const eye = (fov, distance) => {
+                    const view = new api.THREE.PerspectiveCamera(fov, 1, 0.01, 1e5);
+                    view.position.set(0, 0, distance);
+                    view.updateMatrixWorld();
+                    return view;
+                  };
+                  const at = (distance) => {
+                    lod.update(eye(50, distance));
+                    return lod.getCurrentLevel();
+                  };
+                  lod.update(eye(20, 1));  // a long lens sees the object bigger
+                  const narrow = lod.levels[1].distance;
+                  lod.update(eye(50, 1));  // tuned to the lens the probe renders with
+                  const wide = lod.levels[1].distance;
+                  return {
+                    lod: lod.levels.map((l) => [l.object.name || '(cull)', l.distance]),
+                    near: at(0.5), mid: at(wide * 1.5), far: at(1e4),
+                    narrow, wide,
+                    triangles: api.specs.triangles,
+                  };
+                }"""
+            )
+
+        found = self._load(self._lod_glb(), then=probe_lod)
+        self.assertIsNotNone(found["lod"], "no THREE.LOD built")
+        names = [name for name, _ in found["lod"]]
+        self.assertEqual(names, ["chair_LOD0", "chair_LOD1", "chair_LOD2", "(cull)"])
+        distances = [d for _, d in found["lod"]]
+        self.assertEqual(distances[0], 0)
+        self.assertEqual(distances, sorted(distances))
+        self.assertEqual((found["near"], found["mid"], found["far"]), (0, 1, 3))
+        self.assertGreater(found["narrow"], found["wide"], "the switches follow the rendering lens")
+        self.assertEqual(found["triangles"], 64, "LOD0's triangles alone")
+        self.assertEqual(found["console_errors"], [])
+
+    def test_a_lod_group_switches_by_its_distance_from_the_object(self):
+        """The group node sits at identity and the levels carry the transform
+        (both DCCs' groups): the switch is measured from the object, not the
+        group's origin 20 m away (2026-11-10 review)."""
+
+        def probe_offset(server, page):
+            return page.evaluate(
+                """() => {
+                  const api = window.__api;
+                  let lod = null;
+                  api.model.traverse((n) => { if (n.isLOD) lod = n; });
+                  if (!lod) return { lod: null };
+                  // In front of the object, wherever the page placed the model
+                  // (it centres it): the group's origin stays 20 m to one side.
+                  api.model.updateMatrixWorld(true);
+                  const centre = new api.THREE.Box3().setFromObject(lod.levels[0].object).getCenter(new api.THREE.Vector3());
+                  const origin = lod.getWorldPosition(new api.THREE.Vector3());
+                  const at = (distance) => {
+                    const view = new api.THREE.PerspectiveCamera(50, 1, 0.01, 1e5);
+                    view.position.set(centre.x, centre.y, centre.z + distance);
+                    view.updateMatrixWorld();
+                    lod.update(view);
+                    return lod.getCurrentLevel();
+                  };
+                  return { lod: true, near: at(1.5), far: at(1e4), apart: origin.distanceTo(centre) };
+                }"""
+            )
+
+        found = self._load(self._lod_glb(offset=20.0), then=probe_offset)
+        self.assertIsNotNone(found["lod"], "no THREE.LOD built")
+        self.assertGreater(found["apart"], 19.0, "the group's origin is not where the object stands")
+        self.assertEqual((found["near"], found["far"]), (0, 3), "LOD0 up close, culled far away")
+        self.assertEqual(found["console_errors"], [])
+
     def test_the_page_loads_a_model_and_mounts_its_clips(self):
         """The whole load path, executed: container, loader, scene, mixer."""
         found = self._load(self._animated_glb())

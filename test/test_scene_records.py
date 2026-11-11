@@ -2745,8 +2745,12 @@ class TestProjectRelativePaths(SceneRecordsCase):
         )
         landed = SR.LIGHTMAP_DIRS.load(DictStore)["m.exr"]
         self.assertEqual(landed, "../modules/office/sourceimages/lm")
+        # normcase: OLD is taken at import and *module* here, and a test between
+        # them can leave the working directory's drive spelled the other case
+        # (o: / O:), the same folder to Windows.
         self.assertEqual(
-            self._abs(self.OLD, landed), self._abs(module, "sourceimages/lm")
+            os.path.normcase(self._abs(self.OLD, landed)),
+            os.path.normcase(self._abs(module, "sourceimages/lm")),
         )
 
 
@@ -3681,6 +3685,42 @@ class TestRetiredUntil022(unittest.TestCase):
         with self.assertWarns(DeprecationWarning):
             self.assertEqual(ptk.RegionMaskManifest.SCHEMA_VERSION, ptk.RegionMaskManifest.VERSION)
         self.assertEqual(manifest.to_dict()["groups"], [{"name": "sign", "slot": 0, "default": 1.0}])
+
+
+
+
+class TestNamedNodes(unittest.TestCase):
+    """``named_nodes``: the scene names a record holds -- a task regrouping or
+    renaming one would leave the record naming nothing (2026-11-10: the Scene
+    Exporter's LOD generation skips them)."""
+
+    def test_each_record_names_its_entries_nodes(self):
+        lightmaps = {"version": 1, "objects": [{"name": "ns:floor"}, {"name": "wall"}, {"name": "wall"}]}
+        self.assertEqual(SR.LIGHTMAPS.named_nodes(lightmaps), ["ns:floor", "wall"])
+        rigs = {"rigs": [{"joints": [{"name": "hinge"}, {"name": "lid"}]}]}
+        self.assertEqual(SR.ARTICULATION.named_nodes(rigs), ["hinge", "lid"])
+        self.assertEqual(SR.LIGHTMAPS.named_nodes({"objects": "bogus"}), [])
+        self.assertEqual(SR.SHOTS.named_nodes({"shots": []}), [], "a record naming no node")
+
+    def test_a_store_dump_answers_every_name_and_its_leaf(self):
+        dump = {
+            "data_export": {
+                "lightmaps": {"objects": [{"name": "ns:floor"}]},
+                "shadows": {"planes": [{"name": "|grp|plane"}]},
+                "unknown_key": {"objects": [{"name": "x"}]},
+            },
+            "data_internal": {},
+        }
+        self.assertEqual(
+            SR.named_nodes(dump),
+            {"ns:floor", "floor", "|grp|plane", "plane"},
+        )
+        dump["data_export"]["lods"] = {"groups": [{"name": "rock"}]}
+        self.assertIn("rock", SR.named_nodes(dump))
+        self.assertNotIn("rock", SR.named_nodes(dump, skip=(SR.LODS.key,)))
+        skipped = SR.named_nodes(dump, skip=(k for k in (SR.LODS.key, SR.SHADOWS.key)))
+        self.assertNotIn("rock", skipped, "a generator is read once, not spent on the first record")
+        self.assertNotIn("plane", skipped)
 
 
 if __name__ == "__main__":

@@ -5,16 +5,18 @@
 The host-neutral spelling: a light's type and its common settings by name
 (``spot``, ``cone``, ``radius``), a host's own attributes riding in ``attrs`` by
 the host's names. :meth:`LookMatch.to_rig` writes it and validates what it wrote;
-mayatk's ``LightRig`` builds it, mapping every type and setting declared here
-onto Maya's (its tables are checked against these, so a name added here fails
-its build until it is mapped). A host's own library form (Maya node types and
-attribute names) is that host's, not this contract.
+each host's ``LightRig`` (a binding of ``ptk.LightRig``) builds it, mapping
+every type and setting declared here onto its own (its tables are checked
+against these, so a name added here fails its binding until it is mapped). A
+host's own library form (its light types and attribute names) is that host's,
+not this contract.
 
-Lengths are centimetres and angles degrees, whatever units the scene a rig is
-saved from or applied to works in -- positions, aim points, radii and any
-length an ``attrs`` or override value holds, rotations and cone angles alike --
-so a rig saved in one scene lights another, in any host. A host converts at
-its own boundary (mayatk's ``LightRig`` runs under ``Units.working_as()``).
+Lengths are centimetres, angles degrees and the world Y-up (right-handed),
+whatever units and up axis the scene a rig is saved from or applied to works
+in -- positions, aim points, radii and any length an ``attrs`` or override
+value holds, rotations and cone angles alike -- so a rig saved in one scene
+lights another, in any host. A host converts at its own boundary (mayatk's
+``LightRig`` runs under ``Units.working_as()``; a Z-up host converts its axes).
 
 Typed :class:`~pythontk.SchemaSpec` declarations: ``LightRigPayload.validate(rig)``
 reports what does not fit. The library rigs are saved in is declared here too
