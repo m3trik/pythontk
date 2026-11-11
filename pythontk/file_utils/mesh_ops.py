@@ -234,6 +234,28 @@ class _MeshOpsInternal:
             raise RuntimeError(f"Mesh source is empty: {src}")
         return src
 
+    #: The name PyMeshLab gives a texture it could not read -- a missing file,
+    #: or an image format its build lacks (the Linux wheel ships no Qt image
+    #: plug-ins, so it reads no JPEG) -- standing in, silently, as a blank image.
+    _UNREAD_TEXTURE = "dummy.png"
+
+    @classmethod
+    def _load_mesh(cls, ms, path: str) -> None:
+        """Load *path* into *ms*, saying when a texture it names could not be
+        read: the output would otherwise carry none, silently."""
+        ms.load_new_mesh(path)
+        textures = ms.current_mesh().textures() or {}
+        if cls._UNREAD_TEXTURE in textures and not os.path.isfile(
+            os.path.join(os.path.dirname(path), cls._UNREAD_TEXTURE)
+        ):
+            logger.warning(
+                "%s: PyMeshLab could not read a texture it names (the file is "
+                "missing, or an image format this PyMeshLab cannot decode: its "
+                "Linux build reads no JPEG), so the output carries no texture. "
+                "Put the image beside it, or convert it to PNG.",
+                os.path.basename(path),
+            )
+
     @staticmethod
     def _save_mesh(ms, output_path: str, source_path: Optional[str] = None) -> None:
         """Write *ms*'s current mesh, never over an image already there: a
@@ -246,7 +268,12 @@ class _MeshOpsInternal:
             source_path: The mesh the textures came with: an image beside the
                 output that is the one beside it is the mesh's own.
         """
-        names = list(ms.current_mesh().textures() or {})
+        textures = ms.current_mesh().textures() or {}
+        # A texture PyMeshLab could not read is a blank stand-in: never written out.
+        names = [n for n in textures if n != _MeshOpsInternal._UNREAD_TEXTURE]
+        if len(names) < len(textures) and not names:
+            ms.save_current_mesh(output_path, save_textures=False)
+            return
         beside = os.path.dirname(output_path)
         origin = os.path.dirname(os.path.abspath(source_path)) if source_path else None
 
@@ -630,7 +657,7 @@ class MeshOps(HelpMixin, _MeshOpsInternal):
         pml = cls.resolve()
         src = cls._preflight(input_path)
         ms = pml.MeshSet()
-        ms.load_new_mesh(src)
+        cls._load_mesh(ms, src)
         return _MeshSession(pml, ms, src)
 
     # ------------------------------------------------------------ measure
@@ -928,7 +955,7 @@ class MeshOps(HelpMixin, _MeshOpsInternal):
         stem = os.path.splitext(os.path.basename(src))[0]
         lod0 = cls._check_save_ext(os.path.join(out_dir, f"{stem}_LOD0{ext}"))
         ms = pml.MeshSet()
-        ms.load_new_mesh(src)
+        cls._load_mesh(ms, src)
         top = ms.current_mesh().face_number()
         # The ladder validates its levels and ratio: refused before any write.
         targets = LodChain.ladder(top, levels, ratio) if budgets is None else None

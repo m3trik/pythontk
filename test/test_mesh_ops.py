@@ -460,11 +460,15 @@ class TestTextured(_TempDirTestCase):
     atlas 6% of its UV area (the texture smears); the texture-aware collapse
     keeps 94% with no flipped face, but runs only where every face names a
     texture. And a MeshLab save writes the mesh's textures beside the output,
-    re-encoding the source's own JPEG when that is where it already is."""
+    re-encoding the source's own JPEG when that is where it already is.
+
+    The fixture's texture is a PNG: PyMeshLab's Linux wheel reads no JPEG (it
+    ships no Qt image plug-ins), and a plain save rewrites a PNG too, so every
+    platform runs the same checks (2026-11-11)."""
 
     def _textured(self, texture=True):
         """A sphere with a seamed UV atlas, as an OBJ whose material maps
-        ``tex.jpg`` (``texture=False``: the UVs and no material)."""
+        ``tex.png`` (``texture=False``: the UVs and no material)."""
         import numpy as np
 
         try:
@@ -480,7 +484,7 @@ class TestTextured(_TempDirTestCase):
         ms.save_current_mesh(path, save_textures=False)
         if texture:
             pixels = (np.random.default_rng(0).random((64, 64, 3)) * 255).astype("uint8")
-            Image.fromarray(pixels).save(os.path.join(self.out_dir, "tex.jpg"), quality=90)
+            Image.fromarray(pixels).save(os.path.join(self.out_dir, "tex.png"))
             with open(path, encoding="utf-8") as fh:
                 lines = [ln for ln in fh.read().splitlines() if not ln.startswith(("mtllib", "usemtl"))]
             first = next(k for k, ln in enumerate(lines) if ln.startswith("f "))
@@ -488,7 +492,7 @@ class TestTextured(_TempDirTestCase):
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write("\n".join(["mtllib scan.mtl"] + lines) + "\n")
             with open(os.path.join(self.out_dir, "scan.mtl"), "w", encoding="utf-8") as fh:
-                fh.write("newmtl scan\nmap_Kd tex.jpg\n")
+                fh.write("newmtl scan\nmap_Kd tex.png\n")
         return path
 
     @staticmethod
@@ -515,15 +519,15 @@ class TestTextured(_TempDirTestCase):
 
     def test_a_save_beside_the_source_leaves_its_texture_as_it_is(self):
         src = self._textured()
-        before = self._digest(os.path.join(self.out_dir, "tex.jpg"))
+        before = self._digest(os.path.join(self.out_dir, "tex.png"))
         MeshOps.decimate(src, os.path.join(self.out_dir, "low.ply"), target_faces=600)
-        self.assertEqual(self._digest(os.path.join(self.out_dir, "tex.jpg")), before)
+        self.assertEqual(self._digest(os.path.join(self.out_dir, "tex.png")), before)
 
     def test_a_save_elsewhere_takes_the_texture_along(self):
         src = self._textured()
         other = os.path.join(self.out_dir, "delivery")
         MeshOps.decimate(src, os.path.join(other, "low.ply"), target_faces=600)
-        self.assertTrue(os.path.isfile(os.path.join(other, "tex.jpg")))
+        self.assertTrue(os.path.isfile(os.path.join(other, "tex.png")))
 
     def test_the_session_says_what_its_collapse_applied(self):
         """A textured mesh's UV-keeping collapse weighs no curvature: the
@@ -537,19 +541,31 @@ class TestTextured(_TempDirTestCase):
             )
 
     def test_another_image_of_the_same_name_is_kept_and_said(self):
-        """A folder already holding an unrelated ``tex.jpg``: it is not taken
+        """A folder already holding an unrelated ``tex.png``: it is not taken
         for the mesh's own, nor written over; the save says so (2026-11-10
         review: it silently pointed the mesh at the other image)."""
         src = self._textured()
         other = os.path.join(self.out_dir, "shared")
         os.makedirs(other)
-        with open(os.path.join(other, "tex.jpg"), "wb") as fh:
+        with open(os.path.join(other, "tex.png"), "wb") as fh:
             fh.write(b"someone else's image")
         with self.assertLogs("pythontk.file_utils.mesh_ops", level="WARNING") as logged:
             MeshOps.decimate(src, os.path.join(other, "low.ply"), target_faces=600)
         self.assertIn("another image", "\n".join(logged.output))
-        with open(os.path.join(other, "tex.jpg"), "rb") as fh:
+        with open(os.path.join(other, "tex.png"), "rb") as fh:
             self.assertEqual(fh.read(), b"someone else's image")
+
+    def test_a_texture_it_cannot_read_is_said(self):
+        """PyMeshLab swaps a texture it cannot read (missing, or a format its
+        build lacks: the Linux wheel reads no JPEG) for a blank ``dummy.png``
+        and says nothing: the output would carry no texture, silently
+        (2026-11-11, pythontk's Linux CI)."""
+        src = self._textured()
+        os.remove(os.path.join(self.out_dir, "tex.png"))
+        with self.assertLogs("pythontk.file_utils.mesh_ops", level="WARNING") as logged:
+            MeshOps.decimate(src, os.path.join(self.out_dir, "low.ply"), target_faces=600)
+        self.assertIn("could not read a texture", "\n".join(logged.output))
+        self.assertFalse(os.path.exists(os.path.join(self.out_dir, MeshOps._UNREAD_TEXTURE)))
 
     def test_uvs_without_a_texture_are_said(self):
         src = self._textured(texture=False)

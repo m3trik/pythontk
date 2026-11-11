@@ -1,6 +1,8 @@
 # pythontk — Changelog
 
 ## 2026
+- **2026-11-11 -- Fixed: a texture PyMeshLab cannot read is said, not silently dropped (`file_utils/mesh_ops.py` `MeshOps` new `_load_mesh`, used by `session` and `lods`; `_save_mesh`).** PyMeshLab swaps a texture it cannot read -- a missing file, or a JPEG on Linux, whose wheel ships no Qt image plug-ins -- for a blank `dummy.png` and says nothing, so a mesh op's output carried no texture with no word of it, and a save wrote that blank image beside the output. The load now warns (put the image beside it, or convert it to PNG), and the stand-in is never written. `TestTextured`'s fixture texture is a PNG, so every platform runs the same checks (they failed on Linux CI: the JPEG never loaded).
+  - Test(s): red first, then green: `test_mesh_ops.py` new `test_a_texture_it_cannot_read_is_said`; the module 49 passed on Windows and on Linux (WSL Ubuntu, the Linux wheel), where `test_a_save_elsewhere_takes_the_texture_along` and `test_another_image_of_the_same_name_is_kept_and_said` failed before; affected tests 226 passed, extapps 67.
 - **2026-11-10 -- LOD pipeline end to end, and its full review (`file_utils/lod_chain.py`, `file_utils/mesh_convert/{export_verify.py, fbx_media.py, _fbx2gltf.py, _gltf2fbx.py, _mesh_convert.py, glb/lods.py, glb/edit.py, glb/reader.py}`, `mesh_ops.py`, `core_utils/engines/scene_export/{scene_exporter.py, scene_records.py}`, `net_utils/preview/kernel/{lods.js, surfaces.js}`).**
   - **New verification gates** (`ExportVerifier`, run with the others):
     - `check_fbx_lods`: each group an FBX names states a LodGroup with one threshold per switch, writes no level hidden, and agrees with the `lods` record (groups, levels, heights).
