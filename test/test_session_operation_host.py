@@ -351,6 +351,24 @@ class TestSessionRecovery(_SessionFixture):
         self.assertNotEqual(second.result, pid)
         self.assertIn("session.restarted", [i.code for i in second.issues])
 
+    def test_the_log_drain_is_published_only_once_it_runs(self):
+        """A call failing while the next call starts the replacement instance
+        reads the log tail, joining ``_drain``: a drain published before it
+        started raised "cannot join thread before it is started" in that call
+        (the test above, Windows CI, 2026-11-11). Pinned without the race."""
+        host = self.host()
+        drains = []
+        start = threading.Thread.start
+
+        def recorded(thread):
+            if thread.name.endswith("-session-log"):
+                drains.append(host._drain is thread)  # visible before it runs?
+            start(thread)
+
+        with patch.object(threading.Thread, "start", recorded):
+            self.assertEqual(self.catalog(host).run("py.whoami").status, "done")
+        self.assertEqual(drains, [False])
+
     def test_an_instance_gone_between_calls_is_replaced_and_the_next_outcome_says_so(
         self,
     ):
