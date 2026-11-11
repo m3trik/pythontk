@@ -2745,8 +2745,12 @@ class TestProjectRelativePaths(SceneRecordsCase):
         )
         landed = SR.LIGHTMAP_DIRS.load(DictStore)["m.exr"]
         self.assertEqual(landed, "../modules/office/sourceimages/lm")
+        # normcase: OLD is taken at import and *module* here, and a test between
+        # them can leave the working directory's drive spelled the other case
+        # (o: / O:), the same folder to Windows.
         self.assertEqual(
-            self._abs(self.OLD, landed), self._abs(module, "sourceimages/lm")
+            os.path.normcase(self._abs(self.OLD, landed)),
+            os.path.normcase(self._abs(module, "sourceimages/lm")),
         )
 
 
