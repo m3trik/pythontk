@@ -6,7 +6,6 @@ The engine runs over :class:`PureLightRigHost` (a scene in memory); each host
 library's adapter is tested in that library.
 """
 
-import os
 import shutil
 import tempfile
 import unittest
