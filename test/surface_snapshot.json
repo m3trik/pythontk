@@ -3011,9 +3011,23 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.core_utils.engines.lighting.light_rig",
+    "name": "LightRig",
+    "qualname": "LightRig",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.core_utils.engines.lighting.light_rig_payload",
     "name": "LightRigFixture",
     "qualname": "LightRigFixture",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.lighting.light_rig",
+    "name": "LightRigHost",
+    "qualname": "LightRigHost",
     "tier": "root"
   },
   {
@@ -3686,6 +3700,13 @@
     "module": "pythontk.core_utils.engines.key_stash.key_stash_model",
     "name": "PureKeyStashHost",
     "qualname": "PureKeyStashHost",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.lighting.light_rig",
+    "name": "PureLightRigHost",
+    "qualname": "PureLightRigHost",
     "tier": "root"
   },
   {
