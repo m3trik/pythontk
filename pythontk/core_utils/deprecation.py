@@ -165,7 +165,7 @@ def _window_expired(
         return False
     if not since:
         return True
-    today = today or datetime.date.today()
+    today = today or Deprecation.today()
     return (today - _date_of(since)).days >= MIN_WINDOW_DAYS
 
 
@@ -535,6 +535,14 @@ class Deprecation(_DeprecationInternal):
     MIN_WINDOW_DAYS: int = MIN_WINDOW_DAYS
 
     # ------------------------------------------------------------------- emit
+
+    @staticmethod
+    def today() -> datetime.date:
+        """The day every window is judged on: the UTC date, as CI's is. On a
+        machine's local date the local gate held a removal CI already called
+        overdue, between local and UTC midnight, and neither tree released
+        (2026-11-11). ``check_api_surface.py`` loads this too."""
+        return datetime.datetime.now(datetime.timezone.utc).date()
 
     @staticmethod
     def window_expired(

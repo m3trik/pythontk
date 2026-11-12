@@ -17,6 +17,7 @@ import sys
 import tempfile
 import types
 import unittest
+from unittest import mock
 import warnings
 
 import pythontk as ptk
@@ -182,6 +183,18 @@ class DeprecationCalendarWindowTest(BaseTestCase):
         )
         self.assertTrue(Deprecation.window_expired("0.11.0", "0.11.0", "", early))
         self.assertFalse(Deprecation.window_expired("0.11.0", "0.10.9", "", late))
+
+    def test_the_window_is_judged_on_the_utc_date(self):
+        """CI judges in UTC: a gate on a machine's local date called a
+        retirement held while CI's called it overdue, for the hours between
+        local and UTC midnight (2026-11-11 evening, US Eastern), so no tree
+        could release. ``today`` is the UTC date, and every default uses it."""
+        utc = datetime.datetime.now(datetime.timezone.utc).date()
+        self.assertEqual(Deprecation.today(), utc)
+        with mock.patch.object(Deprecation, "today", return_value=datetime.date(2026, 10, 4)):
+            self.assertTrue(Deprecation.window_expired("0.11.0", "0.11.0", "2026-09-04"))
+        with mock.patch.object(Deprecation, "today", return_value=datetime.date(2026, 10, 3)):
+            self.assertFalse(Deprecation.window_expired("0.11.0", "0.11.0", "2026-09-04"))
 
     def test_every_entry_point_records_the_date(self):
         with warnings.catch_warnings():

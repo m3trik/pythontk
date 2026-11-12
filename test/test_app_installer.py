@@ -86,15 +86,6 @@ class TestAppInstaller(unittest.TestCase):
                 os.path.join(self.tmp, "tools"),
             )
 
-    def test_resolve_location_temp_is_a_retired_spelling_of_cache(self):
-        from pythontk.core_utils.user_config import UserConfig
-
-        with patch.dict(os.environ, {UserConfig.CACHE_ROOT_ENV_VAR: self.tmp}):
-            os.environ.pop("PYTHONTK_TOOLS_DIR", None)
-            with self.assertWarns(DeprecationWarning):
-                path = AppInstaller._resolve_location("temp")
-        self.assertEqual(path, os.path.join(self.tmp, "tools"))
-
     def test_resolve_location_env_override(self):
         custom = os.path.join(self.tmp, "custom_tools")
         with patch.dict(os.environ, {"PYTHONTK_TOOLS_DIR": custom}):

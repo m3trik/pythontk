@@ -1036,7 +1036,7 @@ class TestStoreFolders(_RootedBase):
     def test_allocation_never_rescans_the_system_temp_dir(self):
         """Store construction is per call all over the ecosystem; each first
         allocation scanned the whole system temp dir (24,500 entries on one
-        workstation). The one-release legacy sweep reads it once a process."""
+        workstation); nothing reads it now."""
         scanned = []
         real = os.scandir
 
@@ -1050,56 +1050,17 @@ class TestStoreFolders(_RootedBase):
         self.assertLessEqual(scanned.count(_norm(self.legacy)), 1, scanned)
 
 
-class TestLegacyFlatSweep(_RootedBase):
-    """For one release a store's first sweep also reclaims what the pre-root
-    layout left in the system temp dir (``<temp>/<prefix>_*``), by its own age."""
-
-    def test_stale_legacy_entries_go_and_fresh_ones_stay(self):
-        old = self.touch(os.path.join(self.legacy, "legacy_pfx_deadbeef.fbx"))
-        self.age(old, 30)
-        fresh = self.touch(os.path.join(self.legacy, "legacy_pfx_cafe.fbx"))
-        other = self.touch(os.path.join(self.legacy, "other_deadbeef.fbx"))
-        self.age(other, 30)
-        TempArtifacts("legacy_pfx", max_age_days=7).path()
-        self.assertFalse(os.path.exists(old))
-        self.assertTrue(os.path.exists(fresh), "a fresh payload may still be read")
-        self.assertTrue(os.path.exists(other), "another prefix's")
-
-    def test_a_store_folder_sitting_in_the_temp_dir_is_never_a_legacy_entry(self):
-        # A root that IS the system temp dir (PYTHONTK_TEMP_ROOT pointed at it)
-        # holds every store folder beside the flat leftovers.
-        folder = os.path.join(self.legacy, "legacy_pfx_media")
-        os.makedirs(folder)
-        self.touch(os.path.join(folder, TempArtifacts.STORE_MARKER), b"{}")
-        _age_tree(folder, 30)
-        TempArtifacts("legacy_pfx", max_age_days=7).path()
-        self.assertTrue(os.path.isdir(folder))
-
-    def test_the_legacy_flat_sweep_is_retired_on_schedule(self):
-        from pythontk import __version__
-        from pythontk.core_utils.deprecation import Deprecation
-
-        self.assertFalse(
-            Deprecation.window_expired(
-                TempArtifacts._LEGACY_SWEEP_REMOVE_IN,
-                __version__,
-                TempArtifacts._LEGACY_SWEEP_SINCE,
-            ),
-            "the one-release migration window is over: delete "
-            "TempArtifacts._sweep_legacy, the legacy sweep in TestSandbox.temp, "
-            "the system temp dir in TempArtifacts.contains and this test",
-        )
-
-    def test_contains_reads_the_root_and_the_legacy_temp_dir(self):
-        """One spelling of "a path TempArtifacts holds" for a host: the root,
-        and for the legacy window the system temp dir its flat layout used (a
-        scratch twin minted before the root). Was ``_in_temp`` in both DCCs."""
+class TestContains(_RootedBase):
+    def test_contains_reads_the_root_alone(self):
+        """One spelling of "a path TempArtifacts holds" for a host: the root.
+        The system temp dir the pre-root flat layout used counted for its
+        one-release window, closed 2026-11-12. Was ``_in_temp`` in both DCCs."""
         inside = os.path.join(TempArtifacts.root(), "pfx", "twin.ma")
         flat = self.touch(os.path.join(self.legacy, "pfx_deadbeef.ma"))
         outside = os.path.join(self.dir, "proj", "scenes", "hero.ma")
         self.assertTrue(TempArtifacts.contains(inside))
         self.assertTrue(TempArtifacts.contains(TempArtifacts.root()))
-        self.assertTrue(TempArtifacts.contains(flat))
+        self.assertFalse(TempArtifacts.contains(flat), "the system temp dir is no longer the store's")
         self.assertFalse(TempArtifacts.contains(outside))
         self.assertFalse(TempArtifacts.contains(self.root + "_sibling"))
         self.assertFalse(TempArtifacts.contains(""))

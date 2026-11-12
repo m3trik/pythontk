@@ -13,7 +13,6 @@ import zipfile
 from typing import Callable, Dict, Optional, Union
 from urllib.parse import urlparse
 
-from pythontk.core_utils.deprecation import Deprecation
 from pythontk.net_utils.remote_file import RemoteFile
 
 logger = logging.getLogger(__name__)
@@ -123,9 +122,7 @@ class AppInstaller:
                           Override with ``PYTHONTK_TOOLS_DIR`` env-var.
                         * ``"local"`` — ``./bin/`` relative to cwd.
                         * ``"cache"`` — the per-user cache
-                          (``UserConfig.cache_dir("tools")``). ``"temp"`` is
-                          its retired spelling (once the OS temp dir, which
-                          is cleaned under a durable tool).
+                          (``UserConfig.cache_dir("tools")``).
             update:     If *True*, re-download even when already installed
                         (e.g. when *version* is newer).
             add_to_path:
@@ -702,21 +699,8 @@ class AppInstaller:
             f"(tool={name!r}, available={list(platforms)})"
         )
 
-    #: Retired ``location`` spellings: ``"temp"`` named the system temp dir,
-    #: which the OS and every temp sweep clean -- a downloaded tool is durable.
-    _retired_location = staticmethod(
-        Deprecation.values(
-            {"temp": "cache"},
-            what="AppInstaller location",
-            remove_in="0.16.0",
-            since="2026-10-13",
-            reason="A downloaded tool is durable: it lives in the per-user cache.",
-        )
-    )
-
     @staticmethod
     def _resolve_location(location: str) -> str:
-        location = AppInstaller._retired_location(location)
         env_override = os.environ.get("PYTHONTK_TOOLS_DIR")
         if env_override:
             return env_override
