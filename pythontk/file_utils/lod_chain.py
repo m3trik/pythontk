@@ -26,10 +26,14 @@ Plain values in and out, so the hosts, the converters and the importers share
 one reading; nothing here touches a scene or a file.
 """
 
+import logging
 import re
+from collections import Counter
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
 from pythontk.core_utils.help_mixin import HelpMixin
+
+logger = logging.getLogger(__name__)
 
 
 class LodChain(HelpMixin):
@@ -359,6 +363,7 @@ class LodChain(HelpMixin):
         groups: Iterable[Mapping[str, Any]],
         ships: Callable[[str], bool],
         heights_of: Callable[[str, int], Sequence[float]],
+        note: Optional[Callable[[str], Any]] = None,
     ) -> List[Dict[str, Any]]:
         """The ``lods`` record's entries for the valid *groups* a write ships
         -- the one reading both hosts' producers apply.
@@ -368,11 +373,15 @@ class LodChain(HelpMixin):
             ships: Whether the write ships a level, by its name.
             heights_of: The group's switch heights, by its node's path and
                 level count (the host's own store).
+            note: Where a sentence for the export's report goes (a
+                producer's ``ctx.note``); this module's log otherwise.
 
         Returns:
             ``{"name", "levels", "heights"}`` per group with at least two levels
             shipped: its node's name, those levels' names, and their switches
             (:meth:`kept_heights`: a dropped level's range goes to the next).
+            Groups sharing a name are listed and said: a reader binds an entry
+            by name, so it binds none of them.
         """
         entries = []
         for group in groups:
@@ -389,6 +398,12 @@ class LodChain(HelpMixin):
                     "levels": [levels[k] for k in kept],
                     "heights": cls.kept_heights(heights, kept),
                 }
+            )
+        shared = sorted(name for name, count in Counter(e["name"] for e in entries).items() if count > 1)
+        if shared:
+            (note or logger.warning)(
+                f"LOD groups sharing a name ({', '.join(shared)}): a reader binds the record by "
+                "name, so it leaves them as its own import made them; give each group its own name."
             )
         return entries
 

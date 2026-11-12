@@ -330,6 +330,22 @@ class RecordGroupsTest(unittest.TestCase):
         )
         self.assertEqual(entries, [{"name": "seat", "levels": ["seat_LOD0", "seat_LOD2"], "heights": [0.6, 0.01]}])
 
+    def test_groups_sharing_a_name_are_said(self):
+        """A reader binds an entry by its group's name, so two groups of one
+        name bind neither: the export says so, naming them (a production scene
+        held two ``SWITCH_GEO`` meshes under different parents, 2026-11-11)."""
+        nodes = [_node(p, t) for p, t in (("|a", None), ("|a|knob", None), ("|a|knob|knob_LOD0", 90), ("|a|knob|knob_LOD1", 40),
+                                          ("|b", None), ("|b|knob", None), ("|b|knob|knob_LOD0", 90), ("|b|knob|knob_LOD1", 40))]
+        said = []
+        entries = LodChain.record_groups(
+            LodChain.groups(nodes), ships=lambda name: True, heights_of=lambda path, count: [0.5, 0.0], note=said.append
+        )
+        self.assertEqual([e["name"] for e in entries], ["knob", "knob"])
+        self.assertEqual(len(said), 1)
+        self.assertIn("knob", said[0])
+        with self.assertLogs("pythontk.file_utils.lod_chain", "WARNING"):  # no note: logged
+            LodChain.record_groups(LodChain.groups(nodes), ships=lambda name: True, heights_of=lambda path, count: [0.5, 0.0])
+
 
 class CostTest(unittest.TestCase):
     """The reading runs on every export: thousands of groups stay linear

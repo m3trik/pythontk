@@ -1614,6 +1614,20 @@ class TestSnapshot(SceneRecordsCase):
         self.assertEqual(snap.failed, {SR.LIGHTMAPS.key})
         self.assertIn(SR.SHOTS.key, snap.records)
 
+    def test_a_failed_record_says_why_in_the_report(self):
+        """The export's log showed only "materials (FAILED, left as stored)":
+        the reason went to this module's log alone, which a panel never shows
+        (production scene, 2026-11-11: one material's missing map)."""
+
+        def failing(ctx):
+            raise FileNotFoundError("The map ao.png is not at X:/maps/ao.png")
+
+        with self.assertLogs("pythontk.core_utils.engines.scene_export", level="WARNING"):
+            snap = ExportSnapshot.assemble({SR.LIGHTMAPS: failing, SR.SHOTS: _shots})
+        self.assertEqual(snap.failed, {SR.LIGHTMAPS.key})
+        (said,) = snap.noted[SR.LIGHTMAPS.key]
+        self.assertIn("FileNotFoundError: The map ao.png is not at X:/maps/ao.png", said)
+
     def test_a_private_record_is_refused_rather_than_clearing_its_deliverable_twin(
         self,
     ):
