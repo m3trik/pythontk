@@ -314,13 +314,6 @@ class TestSandbox(_TestSandboxInternal):
         parent = os.environ.get(cls._ROOT_ENV) or None
         if parent is None:
             parent = TempArtifacts.root()
-            legacy = tempfile.gettempdir()
-            if os.path.normcase(os.path.abspath(legacy)) != os.path.normcase(parent):
-                # For one release (TempArtifacts._LEGACY_SWEEP_REMOVE_IN): the
-                # roots the pre-root layout left flat in the system temp dir.
-                TempArtifacts(
-                    cls._ROOT_PREFIX, policy="session", dir=legacy
-                ).sweep_stale()
         store = TempArtifacts(cls._ROOT_PREFIX, policy="session", dir=parent)
         root = store.dir_path()
         tempfile.tempdir = root

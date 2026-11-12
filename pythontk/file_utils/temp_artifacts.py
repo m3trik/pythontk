@@ -144,11 +144,6 @@ class TempArtifacts(LoggingMixin):
     #: Seconds between the automatic :meth:`sweep_all` runs (a stamp in the root).
     SWEEP_ALL_INTERVAL = 86400.0
     _SWEEP_STAMP = ".ptk_swept"
-    #: The pre-root layout kept every entry flat in the system temp dir; a store's
-    #: first sweep also reclaims its prefix's stale flat leftovers there, for one
-    #: release. ``test_temp_artifacts`` fails once this window closes.
-    _LEGACY_SWEEP_REMOVE_IN = "0.16.0"
-    _LEGACY_SWEEP_SINCE = "2026-10-13"
     #: Fresh tags tried before :meth:`dir_path` gives up on an exclusive folder.
     _MINT_ATTEMPTS = 64
 
@@ -168,10 +163,6 @@ class TempArtifacts(LoggingMixin):
     _state_lock = threading.Lock()
     #: ``(env value, system temp dir)`` -> the resolved root.
     _roots: Dict[Tuple[str, str], str] = {}
-    #: Normalized system temp dir -> its entry names, listed once a process.
-    _legacy_listings: Dict[str, List[str]] = {}
-    #: ``(normalized system temp dir, prefix)`` already given its legacy sweep.
-    _legacy_swept: Set[Tuple[str, str]] = set()
     #: Normalized roots whose automatic :meth:`sweep_all` was considered.
     _sweep_all_checked: Set[str] = set()
     #: ``(normalized folder, prefix)`` -> monotonic time of its last sweep.
@@ -262,11 +253,7 @@ class TempArtifacts(LoggingMixin):
 
     @classmethod
     def contains(cls, path: str) -> bool:
-        """Whether *path* is scratch this primitive holds: under :meth:`root`
-        -- or, for the one-release legacy window
-        (``_LEGACY_SWEEP_REMOVE_IN``), the system temp dir the pre-root flat
-        layout used, where an entry minted before the root (a scene's scratch
-        twin) still lives.
+        """Whether *path* is scratch this primitive holds: under :meth:`root`.
 
         Both sides resolved (``os.path.realpath``: a junction or an 8.3
         spelling of the root reads the same), compared on separator
@@ -286,8 +273,7 @@ class TempArtifacts(LoggingMixin):
             return False
         if not real or "\0" in real:
             return False
-        bases = (cls.root(), tempfile.gettempdir())  # legacy: drop at 0.16.0
-        return any(FileUtils.is_under(real, os.path.realpath(b)) for b in bases)
+        return FileUtils.is_under(real, os.path.realpath(cls.root()))
 
     # ------------------------------------------------------------------ allocation
     def path(self, extension: str = ".tmp", name: Optional[str] = None) -> str:
@@ -531,13 +517,8 @@ class TempArtifacts(LoggingMixin):
         live owner, or an id another process has taken since, leaves it to the
         age gate (the sweep assumes :attr:`dir` is on this machine, as the
         system temp dir is).
-
-        A store under the root also reclaims, for one release, its prefix's
-        stale entries the pre-root layout left flat in the system temp dir.
         """
         removed = self._sweep_folder(self.dir, self.prefix, self.max_age_days)
-        if self.managed:
-            removed += self._sweep_legacy()
         TempArtifacts._swept_at[self._sweep_key()] = time.monotonic()
         return removed
 
@@ -674,48 +655,6 @@ class TempArtifacts(LoggingMixin):
         except Exception as e:  # noqa: BLE001 - housekeeping never fails an allocation
             cls.logger.debug(f"sweep_all failed: {e}")
 
-    def _sweep_legacy(self) -> List[str]:
-        """The one-release sweep of this prefix's flat pre-root leftovers.
-
-        Lists the system temp dir once a process (it can hold tens of thousands
-        of entries) and sweeps each prefix from that list once. A folder that is
-        a store (a root placed IN the system temp dir) is never a leftover.
-        """
-        legacy = tempfile.gettempdir()
-        legacy_key = self._norm(legacy)
-        with TempArtifacts._state_lock:
-            if (legacy_key, self.prefix) in TempArtifacts._legacy_swept:
-                return []
-            TempArtifacts._legacy_swept.add((legacy_key, self.prefix))
-            names = TempArtifacts._legacy_listings.get(legacy_key)
-        if names is None:
-            try:
-                with os.scandir(legacy) as entries:
-                    names = [e.name for e in entries]
-            except OSError:
-                names = []
-            TempArtifacts._legacy_listings[legacy_key] = names
-        root = self._norm(os.path.dirname(self.dir))
-        cutoff = self._cutoff(self.max_age_days)
-        removed = []
-        for name in names:
-            if not name.startswith(f"{self.prefix}_"):
-                continue
-            path = os.path.join(legacy, name)
-            try:
-                if self._norm(path) == root or os.path.isfile(
-                    os.path.join(path, self.STORE_MARKER)
-                ):
-                    continue
-                if not self._owner_exited(name, self.prefix) and (
-                    cutoff is None or self._newest_mtime(path) >= cutoff
-                ):
-                    continue
-            except OSError:
-                continue
-            if not self._remove(path):
-                removed.append(path)
-        return removed
 
     @classmethod
     def _sweep_folder(

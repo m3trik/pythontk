@@ -81,8 +81,9 @@ class ExportContext:
             authoring publish, a raw export).  The producer of an
             :attr:`RecordSpec.export_scoped` record keeps only the entries
             whose node is one of these or sits under one.
-        nodes: The names of every node the write ships -- *scope*'s roots
-            and all under them, each as the file names it (a DAG node's leaf,
+        nodes: The names of every node the write ships -- *scope*'s roots,
+            all under them and, for a writer that keeps a node's parent chain
+            (FBX), their ancestors, each as the file names it (a DAG node's leaf,
             namespace kept) -- filled once by the host that knows its scene
             (``FbxUtils.export_context``); ``None`` names none (no scope, or
             a context built without a host).  What the snapshot narrows an
@@ -337,7 +338,8 @@ class ExportSnapshot:
                 authored record, even when named).
 
         Each producer is isolated: one that raises, or returns something other
-        than records, is logged and recorded in :attr:`failed`, and every other
+        than records, is noted (:attr:`ExportContext.notes`, why it failed)
+        and recorded in :attr:`failed`, and every other
         still runs.  A producer may return records for keys other than its
         own; those ride the snapshot like any other.  *ctx* holds ONE assembly's records and
         notes: a reused context starts empty, so no producer reads what an
@@ -380,10 +382,11 @@ class ExportSnapshot:
             before = len(ctx.notes)
             try:
                 records = cls._narrowed(ctx, cls._records_of(spec, table[spec](ctx)))
-            except Exception:  # one subsystem's failure must not block the others
-                logger.warning(
-                    "Scene record %r was not produced.", spec.key, exc_info=True
-                )
+            except Exception as error:  # one subsystem's failure must not block the others
+                # Noted, so the export's own report says why (a panel shows
+                # that, never this module's log); the traceback stays here.
+                logger.debug("Scene record %r was not produced.", spec.key, exc_info=True)
+                ctx.note(f"Scene record {spec.key!r} was not produced: {type(error).__name__}: {error}")
                 snapshot.failed.add(spec.key)
                 continue
             finally:
