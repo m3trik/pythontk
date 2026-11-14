@@ -889,17 +889,6 @@ class SceneExporterBase(LoggingMixin):
         folder = ptk.UserConfig.cache_dir(*self.LOG_FOLDER)
         return os.path.join(str(folder), RunLog.file_name(self._saved_scene_path()))
 
-    @ptk.Deprecation.symbol(
-        "SceneExporterBase.log_file_path",
-        remove_in="0.17.0",
-        since="2026-10-14",
-        reason="The run log is keyed by the scene, not the export file.",
-    )
-    def generate_log_file_path(self, export_path: Optional[str] = None) -> str:
-        """Retired: the run log is the scene's (:meth:`log_file_path`), so
-        *export_path* no longer names it."""
-        return self.log_file_path()
-
     def setup_file_logging(self, log_file_path: str, header: Optional[str] = None):
         """Tee :attr:`logger` into *log_file_path* for the run in flight.
 

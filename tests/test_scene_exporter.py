@@ -452,11 +452,6 @@ class TestRunLog(unittest.TestCase):
                 self.assertIsNone(getattr(self.exporter, "file_handler", None))
                 self.exporter._close_file_logging(True)  # nothing open: a no-op
 
-    def test_generate_log_file_path_is_retired(self):
-        with self.assertWarns(DeprecationWarning):
-            got = self.exporter.generate_log_file_path("ignored.fbx")
-        self.assertEqual(got, self.exporter.log_file_path())
-
 
 class TestProgress(unittest.TestCase):
     def test_one_stream_counts_pipeline_entries_then_phases(self):
