@@ -779,10 +779,9 @@ class LookCapture:
         browser -- never a process kill). It renders and writes frames; it never
         runs code it is sent. Bound to *host* (loopback by default): requests
         name files on this machine. On this thread because the browser answers
-        only the thread that started it (``RpcPlugin.serve``) -- so it runs as
-        its own process (``look_capture serve``), never on a worker thread of a Qt
-        application, whose marshaller would move the ops to the main thread. The
-        page's frame loop sleeps between requests (:meth:`idle`).
+        only the thread that started it (``RpcPlugin.serve``: every op on the
+        serving thread, whatever Qt the process holds). The page's frame loop
+        sleeps between requests (:meth:`idle`).
         """
         from pythontk.net_utils.rpc.plugin_core import RpcPlugin
 

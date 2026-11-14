@@ -41,10 +41,13 @@ The staged copies are byte-identical artifacts, not forks. Regenerate with
 
 from __future__ import annotations
 
+import contextlib
 import inspect
 import json
 import os
 import queue
+import selectors
+import socket
 import sys
 import threading
 import time
@@ -390,6 +393,10 @@ class _ReusableServer(HTTPServer):
         super().handle_error(request, client_address)
 
 
+class _Abandoned(Exception):
+    """An op's caller hung up before the op's turn came: it is not run."""
+
+
 class _ThreadedServer(ThreadingMixIn, _ReusableServer):
     """A request per thread, for a server whose ops run on ANOTHER thread.
 
@@ -397,7 +404,7 @@ class _ThreadedServer(ThreadingMixIn, _ReusableServer):
     thread, for as long as a bake or an export holds it, and a serial server
     answered nothing meanwhile -- not ``/health``, not a job's status -- so a
     client took a busy host for a dead one. The ops themselves still run one at
-    a time (:attr:`RpcPlugin._op_lock`). Daemon threads: a request waiting on
+    a time (:meth:`RpcPlugin._turn`). Daemon threads: a request waiting on
     the host never keeps its process alive.
     """
 
@@ -493,12 +500,29 @@ def _make_handler(plugin):
                 )
                 return
             kwargs = req.get("kwargs") or {}
+
+            def at_its_turn():
+                # Asked where the op runs, when it runs: a caller that stopped
+                # waiting was told the host is not reachable and the person ran
+                # it again, so its first request must not run too, minutes
+                # later, when the host frees up.
+                if self._abandoned():
+                    raise _Abandoned()
+                return handler(**kwargs)
+
             try:
                 if plugin.registry.needs_main_thread(op_name):
-                    with plugin._op_lock:  # one host op at a time, however many ask
-                        value = plugin.marshaller.run(handler, **kwargs)
+                    with plugin._turn(self.server, self._abandoned):  # one host op at a time
+                        # A served plugin runs every op on the thread that
+                        # serves (``serve``'s contract), whatever Qt the
+                        # process holds; every other op goes through the
+                        # marshaller, which calls in place where there is no
+                        # other thread to reach.
+                        value = at_its_turn() if plugin._served else plugin.marshaller.run(at_its_turn)
                 else:
                     value = handler(**kwargs)  # the plugin's own bookkeeping: answered at once
+            except _Abandoned:
+                return  # no one is there to answer
             except Exception as exc:  # noqa: BLE001 - reported over the wire
                 self._respond(
                     500,
@@ -510,6 +534,30 @@ def _make_handler(plugin):
                 )
                 return
             self._respond(200, {"ok": True, "value": value})
+
+        def _abandoned(self):
+            """True once this request's caller hung up (it stopped waiting for
+            the answer). A caller still waiting has sent its whole request and
+            nothing more, so its socket is not readable; one that closed reads
+            as an empty peek or a reset. (A caller that half-closes after
+            sending reads the same: :class:`RpcClient` and the HTTP libraries
+            do not.) A probe that cannot tell answers False: dropping a live
+            caller's op is the worse mistake (``select()`` refuses a descriptor
+            past 1023 on Linux, so a host holding many files read every caller
+            as gone)."""
+            sock = self.connection
+            if sock.fileno() < 0:
+                return True  # closed under the request
+            try:
+                with selectors.DefaultSelector() as probe:  # epoll / kqueue: no fd ceiling
+                    probe.register(sock, selectors.EVENT_READ)
+                    if not probe.select(0):
+                        return False
+                return sock.recv(1, socket.MSG_PEEK) == b""
+            except (ConnectionResetError, ConnectionAbortedError):
+                return True
+            except (OSError, ValueError):
+                return False
 
         def log_message(self, *_a, **_kw):
             """Silence access logs so they don't drown the host's own log."""
@@ -723,11 +771,12 @@ class RpcPlugin(object):
         )
         self._server = None
         self._thread = None
-        #: Held by the host op under way: requests are answered on threads of
-        #: their own (:class:`_ThreadedServer`), the ops still one at a time.
+        #: Held by the host op under way (:meth:`_turn`).
         self._op_lock = threading.Lock()
         self.pump = pump
         self._pumped = False
+        #: True while :meth:`serve` serves: its ops are never marshalled.
+        self._served = False
         self.announce = announce
         #: This serving's record id and token (``None`` until it serves announced).
         self.instance_id = None
@@ -769,6 +818,31 @@ class RpcPlugin(object):
         ]:
             del sys.modules[name]
         return importlib.import_module(package)
+
+    #: Seconds between a waiting host op's looks at its caller (:meth:`_turn`).
+    TURN_POLL = 0.5
+
+    @contextlib.contextmanager
+    def _turn(self, server, gone=lambda: False):
+        """A host op's turn: one op at a time where requests are answered on
+        threads of their own (*server*, the request's own, a
+        :class:`_ThreadedServer`; read from the request, since :meth:`stop`
+        clears this plugin's before that server stops). A pumped or served
+        plugin answers on one thread, a request at a time, and an op there may
+        pump the host's loop itself (a nested tick, whose op a lock held by the
+        outer one would stop for good): no lock. A waiter asks *gone* every
+        :attr:`TURN_POLL` seconds and leaves the queue (:class:`_Abandoned`)
+        once its caller hung up."""
+        if not isinstance(server, _ThreadedServer):
+            yield
+            return
+        while not self._op_lock.acquire(timeout=self.TURN_POLL):
+            if gone():
+                raise _Abandoned()
+        try:
+            yield
+        finally:
+            self._op_lock.release()
 
     def _register_builtins(self):
         """Register the ``system.*`` ops the client contract assumes exist.
@@ -898,8 +972,6 @@ class RpcPlugin(object):
 
     def _tick(self):
         """One turn of a pumped server: the requests waiting now, on this thread."""
-        import selectors  # noqa: PLC0415
-
         server = self._server
         if server is None or not self._pumped:
             return
@@ -934,10 +1006,12 @@ class RpcPlugin(object):
             self._server = self._thread = None
             server.server_close()
             raise
+        self._served = True
         print(f"[{self.label}] serving on http://{address[0]}:{address[1]}", flush=True)
         try:
             server.serve_forever()
         finally:
+            self._served = False
             server.server_close()
             if self._server is server:
                 self._server = self._thread = None

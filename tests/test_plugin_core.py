@@ -204,6 +204,28 @@ class TestMainThreadMarshallerWithQt(_EnvGuard):
         self.assertTrue(outcome, "worker never finished")
         return outcome[0]
 
+    def test_a_served_plugin_runs_its_ops_on_the_serving_thread_whatever_qt_there_is(self):
+        """``serve``'s contract is every op on the thread that serves. With a
+        ``QCoreApplication`` in the process (a Qt application hosting the
+        service on a worker thread; here, the tests before this one) the op was
+        handed to the main thread instead, which nobody pumped, and timed out:
+        the suite hung when this module ran before ``test_look_capture``."""
+        plugin = _make_plugin(label="served_rpc", env_prefix="TEST_RPC_SERVED", main_thread_timeout=3.0)
+        plugin.registry.register("where")(lambda: threading.current_thread().name)
+        plugin.registry.register("halt")(plugin.stop)
+        thread = threading.Thread(target=plugin.serve, kwargs={"port": 0}, name="the server", daemon=True)
+        thread.start()
+        deadline = time.time() + 5
+        while plugin.address is None and time.time() < deadline:
+            time.sleep(0.01)
+        host, port = plugin.address
+        client = RpcClient(port=port, host=host)
+        try:
+            self.assertEqual(client.invoke("where", timeout=10), "the server")
+        finally:
+            client.invoke("halt", timeout=10)
+            thread.join(5)
+
     def test_is_active_off_the_main_thread(self):
         marshaller = MainThreadMarshaller("TEST_RPC_DISABLE_MAIN_THREAD", timeout=5.0)
         seen = []
@@ -484,6 +506,7 @@ class TestWireContract(_EnvGuard):
         for a disconnect nothing could act on.
         """
         captured = io.StringIO()
+        quiet = threading.active_count()  # the serve loop's thread among them
         with contextlib.redirect_stderr(captured):
             sock = socket.create_connection(self.plugin.address, timeout=2.0)
             # Linger 0 makes close() send RST instead of FIN: a hard reset.
@@ -496,9 +519,7 @@ class TestWireContract(_EnvGuard):
             # Each request has a thread of its own: wait for the reset one's to
             # end, so what it printed (if anything) is in the capture.
             deadline = time.time() + 2.0
-            while time.time() < deadline and any(
-                "process_request_thread" in t.name for t in threading.enumerate()
-            ):
+            while time.time() < deadline and threading.active_count() > quiet:
                 time.sleep(0.01)
         self.assertNotIn("Traceback", captured.getvalue())
 
@@ -692,17 +713,143 @@ class TestABusyHostStillAnswers(_EnvGuard):
         thread.join(5)
         self.assertEqual(answers, ["done"])
 
+    def _requests_in(self, count, baseline):
+        """Wait until *count* more threads than *baseline* run: the requests'."""
+        deadline = time.time() + 5
+        while time.time() < deadline and threading.active_count() < baseline + count:
+            time.sleep(0.01)
+        return threading.active_count() >= baseline + count
+
     def test_host_ops_still_run_one_at_a_time(self):
+        quiet = threading.active_count()
         first, _ = self._host_op()
         self.assertTrue(self.entered.wait(5))
         second, answers = self._host_op()
-        time.sleep(0.3)  # the second request is in by now, waiting its turn
+        # Two askers and two request threads: the second request is in, waiting its turn.
+        self.assertTrue(self._requests_in(4, quiet), "the second request never arrived")
         self.assertEqual(self.most, 1)
         self.release.set()
         first.join(5)
         second.join(5)
         self.assertEqual(answers, ["done"])
         self.assertEqual(self.most, 1)
+
+    def test_an_op_whose_caller_gave_up_never_runs(self):
+        """A caller that timed out is told the host is not reachable, and the
+        person runs it again: the first request, still waiting its turn, then
+        ran too when the host freed up (measured: 22 of 30 abandoned ops ran).
+        A request whose caller hung up leaves the queue while the host is still
+        busy (a caller that retried parked a thread per attempt, each until the
+        host freed up), and one that reached its turn first is dropped there."""
+        ran = []
+        self.plugin.registry.register("host.mark")(lambda: ran.append(1) or len(ran))
+        first, _ = self._host_op()
+        self.assertTrue(self.entered.wait(5))
+        busy = threading.active_count()  # the host op's own request thread among them
+        gave_up = 0
+        for _ in range(5):
+            try:
+                self.client.invoke("host.mark", timeout=0.3)
+            except ConnectionError:
+                gave_up += 1
+        self.assertEqual(gave_up, 5)
+        deadline = time.time() + 5
+        while time.time() < deadline and threading.active_count() > busy:
+            time.sleep(0.01)
+        self.assertEqual(threading.active_count(), busy, "a request nobody waits for still waits its turn")
+        self.release.set()
+        first.join(5)
+        self.assertEqual(ran, [], "an op nobody was waiting for ran")
+        self.assertEqual(self.client.invoke("host.mark", timeout=5), 1, "a caller still there is served")
+
+    def test_a_request_while_the_plugin_stops_still_waits_its_turn(self):
+        """``stop`` clears the plugin's server before that server stops, and a
+        host op's turn was chosen from the plugin's server: a request arriving
+        in between took no lock and ran beside the op under way. The request's
+        own server decides."""
+        first, _ = self._host_op()
+        self.assertTrue(self.entered.wait(5))
+        server, self.plugin._server = self.plugin._server, None  # stop()'s first step
+        try:
+            second = threading.Thread(
+                target=lambda: self.client.invoke("host.slow", timeout=10), daemon=True
+            )
+            second.start()
+            time.sleep(0.5)  # the second request is in; with no turn it runs at once
+            self.assertEqual(self.most, 1, "two host ops ran at once")
+        finally:
+            self.plugin._server = server  # tearDown's stop() stops it
+        self.release.set()
+        first.join(5)
+        second.join(5)
+        self.assertEqual(self.most, 1, "two host ops ran at once")
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "select()'s fd ceiling is Linux's")
+    def test_a_caller_on_a_high_file_descriptor_is_served(self):
+        """Linux's ``select()`` refuses a descriptor at or past FD_SETSIZE (1024)
+        with a ValueError, which the caller-gone check read as a caller gone: a
+        host holding a thousand files dropped every host op unanswered
+        (review of 2026-11-14: RemoteDisconnected, the op never ran). A probe
+        that cannot tell runs the op."""
+        import resource  # noqa: PLC0415 - POSIX only
+
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        want = 1200
+        if hard != resource.RLIM_INFINITY and hard < want:
+            self.skipTest(f"the descriptor limit is {hard}")
+        if soft != resource.RLIM_INFINITY and soft < want:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (want, hard))
+            self.addCleanup(resource.setrlimit, resource.RLIMIT_NOFILE, (soft, hard))
+        held = []
+        self.addCleanup(lambda: [os.close(fd) for fd in held])
+        while not held or held[-1] < 1030:  # the next accepted socket lands past 1023
+            held.append(os.open(os.devnull, os.O_RDONLY))
+        ran = []
+        self.plugin.registry.register("host.mark")(lambda: ran.append(1) or len(ran))
+        self.assertEqual(self.client.invoke("host.mark", timeout=5), 1)
+        self.assertEqual(ran, [1])
+
+    def test_a_pumped_op_may_pump_the_hosts_loop_itself(self):
+        """An op that spins the host's loop (a nested tick) while a second
+        request waits: both are answered. A pumped plugin answers on one
+        thread, so its ops take no lock (a lock held by the outer op stopped
+        the nested one for good, on the host's own thread)."""
+        ticks, answers = [], {}
+        pumped = _make_plugin(label="other_rpc", env_prefix="TEST_RPC_OTHER", pump=ticks.append)
+        os.environ["TEST_RPC_OTHER_DISABLE_MAIN_THREAD"] = "1"
+
+        def ask(name):
+            answers[name] = RpcClient(port=port, host=host).invoke(name, timeout=10)
+
+        def outer():
+            threading.Thread(target=ask, args=("inner",), daemon=True).start()
+            deadline = time.time() + 5
+            while "inner" not in answers and time.time() < deadline:
+                ticks[0]()  # the host's loop, from inside an op
+                time.sleep(0.01)
+            return "outer-done"
+
+        pumped.registry.register("outer")(outer)
+        pumped.registry.register("inner")(lambda: "inner-done")
+        host, port = pumped.start()
+        stop = threading.Event()
+
+        def host_loop():  # the host's thread: its update callback, again and again
+            while not stop.is_set():
+                ticks[0]()
+                time.sleep(0.01)
+
+        loop = threading.Thread(target=host_loop, daemon=True)
+        loop.start()
+        try:
+            asker = threading.Thread(target=ask, args=("outer",), daemon=True)
+            asker.start()
+            asker.join(8)
+            self.assertEqual(answers, {"inner": "inner-done", "outer": "outer-done"})
+        finally:
+            stop.set()
+            loop.join(2)
+            pumped.stop()
 
     def test_a_pumped_server_stays_on_the_hosts_thread(self):
         """Toolbag's Python cannot keep a thread: its server answers from the
