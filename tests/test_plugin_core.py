@@ -492,8 +492,14 @@ class TestWireContract(_EnvGuard):
             )
             sock.sendall(b"GET /hea")  # an unfinished request line
             sock.close()
-            # The server is serial, so this answer means the reset was handled.
             self.assertTrue(self.client.ping(timeout=2.0))
+            # Each request has a thread of its own: wait for the reset one's to
+            # end, so what it printed (if anything) is in the capture.
+            deadline = time.time() + 2.0
+            while time.time() < deadline and any(
+                "process_request_thread" in t.name for t in threading.enumerate()
+            ):
+                time.sleep(0.01)
         self.assertNotIn("Traceback", captured.getvalue())
 
     def _raw_post(self, headers, body=b'{"op": "mark"}'):
@@ -623,6 +629,101 @@ class TestWireContract(_EnvGuard):
             thread.join(5)
         self.assertNotEqual(port, 0)
         self.assertIn(f"serving on http://{host}:{port}", out.getvalue())
+
+
+class TestABusyHostStillAnswers(_EnvGuard):
+    """A host op under way (a bake, an export: minutes on the host's main
+    thread) must not make the server look dead.
+
+    The server answered one request at a time, so with an op waiting on the
+    host nothing else was answered: not ``/health``, not a job's status. A
+    client following a job timed out, found no health either, and reported a
+    job that was running fine as failed (and dropped the instance's record).
+    The op here blocks on the request's thread, as a marshalled op blocks
+    waiting for the host's main thread.
+    """
+
+    def setUp(self):
+        super().setUp()
+        os.environ["TEST_RPC_DISABLE_MAIN_THREAD"] = "1"
+        self.plugin = _make_plugin()
+        self.entered, self.release = threading.Event(), threading.Event()
+        self.running, self.most = 0, 0
+        count = threading.Lock()
+
+        @self.plugin.registry.register("host.slow")
+        def _slow():
+            with count:
+                self.running += 1
+                self.most = max(self.most, self.running)
+            self.entered.set()
+            self.release.wait(10)
+            with count:
+                self.running -= 1
+            return "done"
+
+        @self.plugin.registry.register("job.status", main_thread=False)
+        def _status():
+            return "running"
+
+        host, port = self.plugin.start()
+        self.client = RpcClient(port=port, host=host)
+
+    def tearDown(self):
+        self.release.set()
+        self.plugin.stop()
+        super().tearDown()
+
+    def _host_op(self):
+        answers = []
+        thread = threading.Thread(
+            target=lambda: answers.append(self.client.invoke("host.slow", timeout=10)), daemon=True
+        )
+        thread.start()
+        return thread, answers
+
+    def test_health_and_bookkeeping_ops_answer_while_a_host_op_is_under_way(self):
+        thread, answers = self._host_op()
+        self.assertTrue(self.entered.wait(5))
+        self.assertTrue(self.client.ping(timeout=2.0), "a busy host is not a dead one")
+        self.assertEqual(self.client.invoke("job.status", timeout=2.0), "running")
+        self.assertEqual(self.client.invoke("system.ping", timeout=2.0), "pong")
+        self.release.set()
+        thread.join(5)
+        self.assertEqual(answers, ["done"])
+
+    def test_host_ops_still_run_one_at_a_time(self):
+        first, _ = self._host_op()
+        self.assertTrue(self.entered.wait(5))
+        second, answers = self._host_op()
+        time.sleep(0.3)  # the second request is in by now, waiting its turn
+        self.assertEqual(self.most, 1)
+        self.release.set()
+        first.join(5)
+        second.join(5)
+        self.assertEqual(answers, ["done"])
+        self.assertEqual(self.most, 1)
+
+    def test_a_pumped_server_stays_on_the_hosts_thread(self):
+        """Toolbag's Python cannot keep a thread: its server answers from the
+        host's loop, every op on the thread that pumps it."""
+        ticks = []
+        pumped = _make_plugin(label="other_rpc", env_prefix="TEST_RPC_OTHER", pump=ticks.append)
+        pumped.registry.register("where")(lambda: threading.current_thread().name)
+        host, port = pumped.start()
+        try:
+            answers = []
+            asker = threading.Thread(
+                target=lambda: answers.append(RpcClient(port=port, host=host).invoke("where", timeout=5)), daemon=True
+            )
+            asker.start()
+            deadline = time.time() + 5
+            while asker.is_alive() and time.time() < deadline:
+                ticks[0]()  # the host's update callback, on this thread
+                time.sleep(0.01)
+            self.assertEqual(answers, [threading.current_thread().name])
+        finally:
+            pumped.stop()
 
 
 class TestInstanceRecords(_EnvGuard):

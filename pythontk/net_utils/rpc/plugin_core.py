@@ -50,6 +50,7 @@ import threading
 import time
 import traceback
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from socketserver import ThreadingMixIn
 
 __all__ = ["OpRegistry", "MainThreadMarshaller", "RpcInstances", "RpcPlugin"]
 
@@ -94,23 +95,41 @@ class OpRegistry(_OpRegistryInternal):
 
     def __init__(self):
         self._ops = {}
+        #: Ops answered on the request's own thread (``main_thread=False``).
+        self._off_thread = set()
 
-    def register(self, name):
+    def register(self, name, main_thread=True):
         """Decorator registering the wrapped function under *name*.
 
         Names are dot-namespaced (``"system.ping"``, ``"scene.list_materials"``)
         so the client can group related calls. A duplicate name raises rather
         than overwriting -- a typo that silently shadows a real op would surface
         much later as the feature quietly not happening.
+
+        Parameters:
+            name: The op's name on the wire.
+            main_thread: False for an op that touches nothing of the host's
+                (it reads the plugin's own bookkeeping: a job's status, a
+                cancel flag): it is answered on the request's thread, at once,
+                even while the host's main thread is busy. Every other op waits
+                for that thread, so a client polling one through a long
+                synchronous step there would time out and take the host for
+                gone.
         """
 
         def decorator(fn):
             if name in self._ops:
                 raise ValueError(f"Op {name!r} is already registered.")
             self._ops[name] = fn
+            if not main_thread:
+                self._off_thread.add(name)
             return fn
 
         return decorator
+
+    def needs_main_thread(self, name):
+        """False for an op registered ``main_thread=False``."""
+        return name not in self._off_thread
 
     def get(self, name):
         """Return the op callable registered under *name*, or ``None``."""
@@ -201,7 +220,7 @@ class _MainThreadMarshallerInternal(object):
 class MainThreadMarshaller(_MainThreadMarshallerInternal):
     """Run a callable on the host's Qt main thread and block for its result.
 
-    The HTTP server answers on a daemon thread, but a host's scene API
+    The HTTP server answers on daemon threads, but a host's scene API
     (``mset.*``, ``substance_painter.*``) is main-thread-only -- calling it
     off-thread is undefined and tends to take the host down. Every dispatched op
     goes through here, so a pure-Python op pays a negligible cost for the
@@ -371,6 +390,20 @@ class _ReusableServer(HTTPServer):
         super().handle_error(request, client_address)
 
 
+class _ThreadedServer(ThreadingMixIn, _ReusableServer):
+    """A request per thread, for a server whose ops run on ANOTHER thread.
+
+    :meth:`RpcPlugin.start`'s server: an op there waits for the host's main
+    thread, for as long as a bake or an export holds it, and a serial server
+    answered nothing meanwhile -- not ``/health``, not a job's status -- so a
+    client took a busy host for a dead one. The ops themselves still run one at
+    a time (:attr:`RpcPlugin._op_lock`). Daemon threads: a request waiting on
+    the host never keeps its process alive.
+    """
+
+    daemon_threads = True
+
+
 #: ``Host`` names a local client reaches this server by (beside its bound address).
 _LOOPBACK_NAMES = ("127.0.0.1", "localhost", "::1")
 
@@ -459,8 +492,13 @@ def _make_handler(plugin):
                     },
                 )
                 return
+            kwargs = req.get("kwargs") or {}
             try:
-                value = plugin.marshaller.run(handler, **(req.get("kwargs") or {}))
+                if plugin.registry.needs_main_thread(op_name):
+                    with plugin._op_lock:  # one host op at a time, however many ask
+                        value = plugin.marshaller.run(handler, **kwargs)
+                else:
+                    value = handler(**kwargs)  # the plugin's own bookkeeping: answered at once
             except Exception as exc:  # noqa: BLE001 - reported over the wire
                 self._respond(
                     500,
@@ -685,6 +723,9 @@ class RpcPlugin(object):
         )
         self._server = None
         self._thread = None
+        #: Held by the host op under way: requests are answered on threads of
+        #: their own (:class:`_ThreadedServer`), the ops still one at a time.
+        self._op_lock = threading.Lock()
         self.pump = pump
         self._pumped = False
         self.announce = announce
@@ -739,25 +780,26 @@ class RpcPlugin(object):
         copy can drift (they already had, before this moved).
 
         Host-specific introspection (``system.version``, script evaluation) stays with
-        the plugin -- only what the client itself calls belongs here.
+        the plugin -- only what the client itself calls belongs here. They read
+        the plugin's own tables, so they answer off the host's main thread.
         """
 
-        @self.registry.register("system.ping")
+        @self.registry.register("system.ping", main_thread=False)
         def _ping():
             """Liveness probe. Returns ``"pong"``."""
             return "pong"
 
-        @self.registry.register("system.list_ops")
+        @self.registry.register("system.list_ops", main_thread=False)
         def _list_ops():
             """Sorted list of every registered op name."""
             return self.registry.all_ops()
 
-        @self.registry.register("system.describe")
+        @self.registry.register("system.describe", main_thread=False)
         def _describe(op=""):
             """Describe *op* (or every op when empty) as ``{name, doc, params}``."""
             return self.registry.describe(op or None)
 
-        @self.registry.register("system.identity")
+        @self.registry.register("system.identity", main_thread=False)
         def _identity():
             """This instance: ``{id, label, pid, state}`` (its record, without the token)."""
             return {
@@ -827,7 +869,10 @@ class RpcPlugin(object):
         bind_host = self.host if host is None else host
         bind_port = self.port if port is None else port
 
-        server = _ReusableServer((bind_host, bind_port), _make_handler(self))
+        # A pumped server answers on the host's own thread, a request at a time;
+        # a served one on threads of its own, so a busy host still answers.
+        kind = _ReusableServer if self.pump is not None else _ThreadedServer
+        server = kind((bind_host, bind_port), _make_handler(self))
         address = server.server_address  # port 0: the one the OS picked
         try:
             # Before the first request is served: its token is in force from it.
@@ -942,9 +987,9 @@ class RpcPlugin(object):
     def stop(self):
         """Shut the server down (host teardown hook, tests, hot-reload, an op).
 
-        From an op -- the serving thread itself -- the shutdown is handed to
-        another thread: ``shutdown`` waits for the serve loop, which is waiting
-        for this op to return.
+        From an op on the serving thread itself (:meth:`serve`) the shutdown
+        is handed to another thread: ``shutdown`` waits for the serve loop,
+        which is waiting for this op to return.
         """
         if self._server is None:
             return
