@@ -576,7 +576,7 @@ class PytestLeakGateTest(unittest.TestCase):
     """The browser-leak check has to gate the run CI actually performs.
 
     ``run_tests.py`` reads ``TestSandbox.launches`` and exits 1 on a leak, but
-    ``.github/workflows/tests.yml`` runs bare ``pytest ... test/`` -- which
+    ``.github/workflows/tests.yml`` runs bare ``pytest ... tests/`` -- which
     loads ``conftest.py``, not the runner. The sandbox was armed there and
     nothing read the record, so a swallowed launch left CI green: five
     downstream suites arm the guard and no reader existed on that path.
@@ -592,7 +592,7 @@ class PytestLeakGateTest(unittest.TestCase):
 
         from pythontk.file_utils.temp_artifacts import TempArtifacts
 
-        # In test/ so the repo conftest -- the thing under test -- is in scope.
+        # In tests/ so the repo conftest -- the thing under test -- is in scope.
         # Named outside test_*.py: pytest still collects a path it is handed,
         # while neither collector's own discovery ever sees it -- a run killed
         # before cleanup would otherwise leave a test that fails every later run
@@ -646,7 +646,7 @@ class CollectorDriftTest(unittest.TestCase):
     """The two collectors must see the same tests.
 
     This suite is run two ways -- ``run_tests.py`` discovers with ``unittest``,
-    CI runs ``pytest test/`` -- and each is blind to things the other collects.
+    CI runs ``pytest tests/`` -- and each is blind to things the other collects.
     A module-level ``def test_x()`` is invisible to unittest discovery; a
     ``TestCase`` in a file whose name does not match the pattern is invisible
     to both. Either way the tests silently never run, and nothing reports it,

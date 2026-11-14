@@ -28,7 +28,7 @@ from conftest import BaseTestCase
 
 
 class _TempDirTestCase(BaseTestCase):
-    """Per-test scratch dir under ``test/temp_tests/`` (repo convention)."""
+    """Per-test scratch dir under ``tests/temp_tests/`` (repo convention)."""
 
     def setUp(self):
         super().setUp()

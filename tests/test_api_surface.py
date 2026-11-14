@@ -110,7 +110,7 @@ class _PackageCase(unittest.TestCase):
         self.write("tools.py", TOOLS)
         self.write("_mixins.py", MIXINS)
         self.write("__main__.py", "def main():\n    pass\n")
-        self.write("test/test_tools.py", "def test_x():\n    pass\n")
+        self.write("tests/test_tools.py", "def test_x():\n    pass\n")
         self.write("plugin_src/hooks/__init__.py", "")
         self.write(
             "plugin_src/hooks/hook.py",

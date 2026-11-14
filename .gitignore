@@ -198,13 +198,13 @@ cython_debug/
 #.idea/
 *.bak
 
-test/temp_tests/
+tests/temp_tests/
 
 # test_test_sandbox's synthetic pytest file, left behind when its run is killed
-test/_leakgate_*.py
+tests/_leakgate_*.py
 
 # Test runner output (regenerated each run)
-test/logs/
+tests/logs/
 
 # One-off test-run redirects (never commit)
 /out.txt

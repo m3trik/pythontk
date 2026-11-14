@@ -1265,7 +1265,7 @@ class TestTextureProcessorLogic(unittest.TestCase):
             "im_Normal_OpenGL.png",
         )
         # NOT guarded by os.path.exists: this is the only reference to
-        # test/test_assets/ anywhere in the suite, and behind that guard the
+        # tests/test_assets/ anywhere in the suite, and behind that guard the
         # test reported green with the fixture deleted -- a zero-sample pass
         # on the one assertion that reads a real bake rather than a generated
         # hemisphere. A missing fixture must fail loudly.

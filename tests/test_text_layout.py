@@ -10,7 +10,7 @@ itself: width resolution, injection, and that the logger and the tables share
 one instance.
 
 Run with:
-    python -m pytest test/test_text_layout.py -v
+    python -m pytest tests/test_text_layout.py -v
 """
 
 import io

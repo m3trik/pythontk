@@ -7,7 +7,7 @@ including the marked-ancestor suppression rule).
 
 All zero-dep and venv-runnable; the Maya-side contract (a real Maya opening a
 workspace this module wrote, and preserving foreign rules on its own rewrite)
-is covered downstream in ``mayatk/test/test_workspace_mel.py``.
+is covered downstream in ``mayatk/tests/test_workspace_mel.py``.
 """
 
 import os

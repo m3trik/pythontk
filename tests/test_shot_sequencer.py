@@ -1149,7 +1149,7 @@ class TestAClosingSeamStaysOneFrameApartWhereItsPosesDiffer(_SequencerTest):
     def test_a_shift_edge_stops_a_frame_short_where_the_poses_differ(self):
         """A Shift edge (the retime) closing a gap onto another pose lands
         flush: Maya then holds the retimed opening key 1.7e-7 of a frame after
-        the closing one (``mayatk/test/temp_tests/shift_edge_stacks_key.py``,
+        the closing one (``mayatk/tests/temp_tests/shift_edge_stacks_key.py``,
         measured 2026-11-01)."""
         self.seq.clashing = {("A", "B"), ("B", "C")}
         self.seq.set_shot_edge(self.sid("A"), new_end=15, scale=True)

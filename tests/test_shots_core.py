@@ -79,7 +79,7 @@ def _store(shots):
 
 
 # ===========================================================================
-# Planner  (adapted from mayatk/test/test_shot_plan.py)
+# Planner  (adapted from mayatk/tests/test_shot_plan.py)
 # ===========================================================================
 
 

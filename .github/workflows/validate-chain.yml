@@ -138,8 +138,8 @@ jobs:
           # arbitrary earlier test and named the wrong crash site
           # (observed: a run that reported '28%' died far later). With
           # -v the last streamed line is the real one.
-          pytest --tb=short -v --timeout=300 --timeout-method=thread test/ \
-            --ignore=test/test_marking_menu_integration.py 2>&1 | tee pytest_out.txt
+          pytest --tb=short -v --timeout=300 --timeout-method=thread tests/ \
+            --ignore=tests/test_marking_menu_integration.py 2>&1 | tee pytest_out.txt
           RC=${PIPESTATUS[0]}
           # Counts come off pytest's FINAL summary line only; errors count too
           # (a collection or fixture error leaves "failed" at 0). Mirrors the
@@ -222,7 +222,7 @@ jobs:
       - name: pyflakes static analysis (mayatk)
         run: |
           cd mayatk
-          python test/test_static_analysis.py
+          python tests/test_static_analysis.py
 
   validate-tentacle:
     needs: [validate-pythontk, validate-uitk, validate-mayatk]
@@ -299,7 +299,7 @@ jobs:
           set +e
           # tee, not $(...): see the uitk job -- a signal-killed pytest
           # loses its buffered tail and mis-names the crash site.
-          pytest --tb=short -v --timeout=300 --timeout-method=thread test/ \
+          pytest --tb=short -v --timeout=300 --timeout-method=thread tests/ \
             2>&1 | tee pytest_out.txt
           RC=${PIPESTATUS[0]}
           # Counts come off pytest's FINAL summary line only; errors count too

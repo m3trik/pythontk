@@ -20,7 +20,7 @@ that it has to be deliberate.
 
 Regenerate after an intended change::
 
-    python test/test_surface_snapshot.py --update
+    python tests/test_surface_snapshot.py --update
 """
 
 import json
@@ -76,7 +76,7 @@ class TestPublishedSurface(unittest.TestCase):
             "the published surface changed.\n"
             f"  REMOVED (breaking for consumers): {removed}\n"
             f"  ADDED (new contract to keep): {added}\n"
-            "If intended: python test/test_surface_snapshot.py --update, and "
+            "If intended: python tests/test_surface_snapshot.py --update, and "
             "note it in CHANGELOG.md (a removal needs an alias for one release).",
         )
 

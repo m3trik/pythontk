@@ -10,7 +10,7 @@ These target confirmed defects in the MRO-walking base-type resolver:
 - filter_by_base_type walks reaching ``object`` (whose ``__base__`` is None)
   crashed with AttributeError instead of returning the documented None.
 
-Written as unittest.TestCase so BOTH the project runner (test/run_tests.py,
+Written as unittest.TestCase so BOTH the project runner (tests/run_tests.py,
 unittest discovery) and pytest collect it — module-level pytest functions are
 invisible to unittest discovery and silently never ran.
 

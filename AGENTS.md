@@ -38,8 +38,8 @@ Two homes, two contracts (both bound by the Hard rules above — no DCC imports,
 ## Run tests
 
 ```powershell
-& python pythontk\test\run_tests.py test_str -k split  # pointed: modules, -k
-& python pythontk\test\run_tests.py                   # full suite: review / release
+& python pythontk\tests\run_tests.py test_str -k split  # pointed: modules, -k
+& python pythontk\tests\run_tests.py                   # full suite: review / release
 ```
 
 What a change reaches: `python m3trik/scripts/affected_tests.py <files> --run` (root Testing).

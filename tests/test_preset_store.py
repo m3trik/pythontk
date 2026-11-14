@@ -371,7 +371,7 @@ class PresetStoreCodecTest(unittest.TestCase):
 
 
 class _TempRootCase(unittest.TestCase):
-    """Per-test scratch dir under ``test/temp_tests/``, set as the presets root."""
+    """Per-test scratch dir under ``tests/temp_tests/``, set as the presets root."""
 
     def setUp(self):
         self.root = os.path.join(

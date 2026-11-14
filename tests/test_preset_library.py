@@ -27,7 +27,7 @@ from pythontk.core_utils.user_config import CONFIG_ROOT_ENV_VAR
 
 
 class _LibraryCase(unittest.TestCase):
-    """A scratch presets root under ``test/temp_tests/``, set as the live root."""
+    """A scratch presets root under ``tests/temp_tests/``, set as the live root."""
 
     def setUp(self):
         base = os.path.join(os.path.dirname(__file__), "temp_tests")

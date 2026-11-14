@@ -7,7 +7,7 @@ the install/uninstall strategy (symlink-first, copytree fallback,
 ``__pycache__`` filter), and the batch pipeline (Call/Result/run_batch).
 
 DCC-specific bindings (Toolbag's port, version-aware path resolver) are
-tested in :mod:`mayatk.test.mock_tests.test_marmoset_rpc`.
+tested in mayatk's ``tests/mock_tests/test_marmoset_rpc.py``.
 """
 
 import json

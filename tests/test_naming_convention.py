@@ -8,7 +8,7 @@ properties the whole design rests on: that a rule is an *affix* (a prefix reads
 as a prefix), and that persisting an override never freezes today's shipped
 defaults into a user's config.
 
-Run standalone: python -m test.test_naming_convention
+Run standalone: python -m tests.test_naming_convention
 """
 
 import json
