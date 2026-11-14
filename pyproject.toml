@@ -82,9 +82,9 @@ include = ["pythontk*"]
 "*" = ["*.gif", "*.glsl", "*.html", "*.js", "*.json", "*.md", "*.png", "*.txt", "*.ui"]
 
 [tool.pytest.ini_options]
-testpaths = ["test"]
-pythonpath = [".", "test"]
-addopts = "--ignore=test/temp_tests"
+testpaths = ["tests"]
+pythonpath = [".", "tests"]
+addopts = "--ignore=tests/temp_tests"
 
 [tool.ruff]
 # House formatter/linter - rule set, exemptions and gate status: m3trik/docs/CODE_STANDARD.md section 1.

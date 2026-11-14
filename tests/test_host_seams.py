@@ -8,8 +8,8 @@ beside it, ``runtime_checkable`` so a host's suite can check its adapter with
 host behind it -- the base each host's adapter is built on. The roster is read
 off the package root (every ``*Host`` Protocol it exports), never hand-listed:
 a new seam is checked the day it is exported. Each host library's suite checks
-its own adapters against these Protocols (mayatk ``test/mock_tests/
-test_host_adapters.py``, blendertk ``test/test_host_adapters.py``).
+its own adapters against these Protocols (mayatk ``tests/mock_tests/
+test_host_adapters.py``, blendertk ``tests/test_host_adapters.py``).
 Added: 2026-11-01
 """
 

@@ -9,8 +9,8 @@ skipped when pymeshlab is absent; the missing-engine error path is
 covered by the inverse skip.
 
 Run with:
-    python -m pytest test/test_mesh_ops.py -v
-    python test/run_tests.py
+    python -m pytest tests/test_mesh_ops.py -v
+    python tests/run_tests.py
 """
 
 import os
@@ -24,7 +24,7 @@ _HAVE = MeshOps.available()
 
 
 class _TempDirTestCase(unittest.TestCase):
-    """Per-test scratch dir under ``test/temp_tests/`` (repo convention)."""
+    """Per-test scratch dir under ``tests/temp_tests/`` (repo convention)."""
 
     def setUp(self):
         super().setUp()

@@ -45,7 +45,7 @@ COLLECTED_COUNT_ENV = "PYTHONTK_PYTEST_COLLECTED"
 def pytest_collection_modifyitems(session, config, items):
     """Record the collected count, but only for a whole-directory run.
 
-    A subset run (``pytest test/test_x.py``) collects a handful of tests while
+    A subset run (``pytest tests/test_x.py``) collects a handful of tests while
     unittest discovery still walks everything, so recording it would make the
     drift guard fail on every targeted run. Absent means "no comparable
     number", which the guard skips on.
@@ -64,7 +64,7 @@ def pytest_sessionfinish(session, exitstatus):
     """Fail the run when the sandbox refused a browser launch and the code
     under test swallowed it.
 
-    ``run_tests.py`` has always done this, but CI runs bare ``pytest test/``
+    ``run_tests.py`` has always done this, but CI runs bare ``pytest tests/``
     (``.github/workflows/tests.yml``) and never loads that runner -- so on the
     path that actually gates a PR, five downstream suites armed the guard and
     nothing read the record. A refused launch that a broad ``except`` ate

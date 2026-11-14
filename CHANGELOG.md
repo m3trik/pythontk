@@ -1,6 +1,7 @@
 # pythontk — Changelog
 
 ## 2026
+- **2026-11-12 -- Tests: the test folder is `tests/`, the pytest convention (was `test/`).** `test` is the standard library's own package name, so `from test.x import ...` could resolve to it. `pyproject.toml` `testpaths`, `pythonpath` and the CI workflows follow. With it: the coverage upload names `./coverage.xml`, the file pytest-cov writes (it named a path inside the test folder, before and after the rename, so no report was ever found); `tests/test_naming_convention.py` runs standalone as `python -m tests.test_naming_convention`.
 - **2026-11-12 -- Removed: `AppInstaller`'s retired `location="temp"` (`core_utils/app_installer.py`) and `TempArtifacts`' legacy flat-temp window (`file_utils/temp_artifacts.py`, `core_utils/test_sandbox.py`); fixed: every deprecation window is judged on the UTC date (`core_utils/deprecation.py` new `Deprecation.today`).**
   - **The legacy flat-temp window is closed** (opened 2026-10-13 for one release, its schedule test now due). A store no longer sweeps its prefix's leftovers flat in the system temp dir, `TestSandbox` no longer sweeps old roots there, and `TempArtifacts.contains` reads the root alone: a path in the system temp dir outside the root is not the store's.
   - **`location="temp"` is gone** (noticed 2026-10-13, due in 0.16.0; its 30-day window closed 2026-11-12). Pass `"cache"`; `"temp"` now raises `ValueError` like any unknown location. Nothing in the ecosystem passed it.

@@ -25,7 +25,7 @@ TEMP = os.path.join(os.path.dirname(__file__), "temp_tests")
 
 
 def _scratch(case) -> str:
-    """A folder of this test's own under ``test/temp_tests/``, removed after it."""
+    """A folder of this test's own under ``tests/temp_tests/``, removed after it."""
     root = os.path.join(TEMP, f"rig_payload_{case._testMethodName}_{uuid.uuid4().hex[:6]}")
     os.makedirs(root)
     case.addCleanup(shutil.rmtree, root, ignore_errors=True)

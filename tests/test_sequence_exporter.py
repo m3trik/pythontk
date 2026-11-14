@@ -9,8 +9,8 @@ host's pixels and its own output kinds come through. Everything here runs over
 a fake host adapter -- a plain-Python stand-in for a DCC viewport -- so the
 plan, the file layout and the ffmpeg arguments are pinned in CI; Maya's and
 Blender's adapters are tested against their hosts in
-``mayatk/test/test_playblast_exporter.py`` and
-``blendertk/test/test_playblast_exporter.py``.
+``mayatk/tests/test_playblast_exporter.py`` and
+``blendertk/tests/test_playblast_exporter.py``.
 """
 
 import os

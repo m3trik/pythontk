@@ -64,12 +64,12 @@ jobs:
       - name: Run tests with coverage (Windows)
         if: runner.os == 'Windows'
         run: |
-          pytest --tb=short -v --cov=pythontk --cov-report=xml --cov-report=term test/
+          pytest --tb=short -v --cov=pythontk --cov-report=xml --cov-report=term tests/
 
       - name: Run tests with coverage (Linux, under Xvfb)
         if: runner.os == 'Linux'
         run: |
-          xvfb-run -a pytest --tb=short -v --cov=pythontk --cov-report=xml --cov-report=term test/
+          xvfb-run -a pytest --tb=short -v --cov=pythontk --cov-report=xml --cov-report=term tests/
 
       - name: Upload coverage to Codecov
         # A report, never a gate. `fail_ci_if_error` judges only the uploader's
@@ -80,7 +80,7 @@ jobs:
         continue-on-error: true
         uses: codecov/codecov-action@v4
         with:
-          file: ./test/coverage.xml
+          file: ./coverage.xml
           fail_ci_if_error: false
 
   test:

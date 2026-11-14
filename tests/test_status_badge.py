@@ -74,9 +74,9 @@ class StatusBadgeTest(BaseTestCase):
     def test_render_links_when_given_a_target(self):
         """Alt text is the label; the image is wrapped only when linked."""
         self.assertEqual(
-            StatusBadge.render("5 passed", "brightgreen", link="../test/"),
+            StatusBadge.render("5 passed", "brightgreen", link="../tests/"),
             "[![Tests](https://img.shields.io/badge/Tests-5%20passed-brightgreen.svg)]"
-            "(../test/)",
+            "(../tests/)",
         )
         self.assertTrue(
             StatusBadge.render("5 passed", "brightgreen").startswith("![Tests](")
@@ -89,10 +89,10 @@ class StatusBadgeTest(BaseTestCase):
         self._write(
             "[![License](https://img.shields.io/badge/License-MIT-blue.svg)](x)\n"
             "[![Tests](https://img.shields.io/badge/Tests-1%20passed-brightgreen.svg)]"
-            "(../test/)\n"
+            "(../tests/)\n"
             "\n# pkg\n"
         )
-        StatusBadge.update_test_badge(self.readme, passed=99, failed=0, link="../test/")
+        StatusBadge.update_test_badge(self.readme, passed=99, failed=0, link="../tests/")
 
         content = self.readme.read_text(encoding="utf-8")
         self.assertIn("Tests-99%20passed-brightgreen", content)
@@ -108,13 +108,13 @@ class StatusBadgeTest(BaseTestCase):
         ):
             with self.subTest(legacy=legacy):
                 self._write(f"{legacy}\n\n# pkg\n")
-                StatusBadge.update_test_badge(self.readme, 42, 0, link="../test/")
+                StatusBadge.update_test_badge(self.readme, 42, 0, link="../tests/")
 
                 content = self.readme.read_text(encoding="utf-8")
                 self.assertEqual(content.count("img.shields.io/badge/"), 1)
                 self.assertIn(
                     "[![Tests](https://img.shields.io/badge/Tests-42%20passed"
-                    "-brightgreen.svg)](../test/)",
+                    "-brightgreen.svg)](../tests/)",
                     content,
                 )
 
@@ -137,7 +137,7 @@ class StatusBadgeTest(BaseTestCase):
             "[![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)](y)\n"
             "\n# pkg\n"
         )
-        StatusBadge.update_test_badge(self.readme, 7, 0, link="../test/")
+        StatusBadge.update_test_badge(self.readme, 7, 0, link="../tests/")
 
         lines = self.readme.read_text(encoding="utf-8").splitlines()
         self.assertEqual(len(lines[2]), len(lines[2].strip()))
@@ -147,21 +147,21 @@ class StatusBadgeTest(BaseTestCase):
     def test_inserts_at_the_top_when_there_is_no_badge_block(self):
         """A README with no badges gets one above the title."""
         self._write("# blendertk\n\nBlender utilities.\n")
-        StatusBadge.update_test_badge(self.readme, 50, 0, link="../test/")
+        StatusBadge.update_test_badge(self.readme, 50, 0, link="../tests/")
 
         content = self.readme.read_text(encoding="utf-8")
         self.assertTrue(content.startswith("[![Tests]("))
         self.assertIn("\n# blendertk\n", content)
 
     def test_link_is_relative_to_the_readme_not_the_cwd(self):
-        """docs/README.md -> ../test/, computed from the README's own location."""
+        """docs/README.md -> ../tests/, computed from the README's own location."""
         docs = TEMP_DIR / "docs"
         docs.mkdir(exist_ok=True)
         readme = docs / "README.md"
         readme.write_text("# pkg\n", encoding="utf-8")
         try:
-            StatusBadge.update_test_badge(readme, 5, 0, test_dir=TEMP_DIR / "test")
-            self.assertIn("](../test/)", readme.read_text(encoding="utf-8"))
+            StatusBadge.update_test_badge(readme, 5, 0, test_dir=TEMP_DIR / "tests")
+            self.assertIn("](../tests/)", readme.read_text(encoding="utf-8"))
         finally:
             readme.unlink()
             docs.rmdir()

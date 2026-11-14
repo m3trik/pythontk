@@ -23,7 +23,7 @@ names the block itself defines or assigns, unknown roots (placeholder
 helpers like ``expensive_operation``), call results of unknown type, and
 callables whose signature is not introspectable. The audit is a tripwire
 for API drift, not an executor; literal *outputs* a document claims should
-be pinned by an ordinary test beside it (see ``test/test_doc_audit.py``).
+be pinned by an ordinary test beside it (see ``tests/test_doc_audit.py``).
 """
 
 import ast
