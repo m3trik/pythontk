@@ -25,11 +25,25 @@ Two packing modes, chosen by ``resolution``:
 Verified engine facts this wrapper relies on (xatlas 0.0.11):
 
 - ``add_uv_mesh`` + ``generate`` packs the *given* parametrization — islands are
-  never re-cut, and the islands' relative input scale is preserved exactly
-  (pack-only mode applies one global scale). Charts are found by UV *position*,
-  though: coincident vertices weld, so islands touching along a seam would
-  merge into one gutterless chart — :meth:`UvPack._separate_islands` moves each
-  topological island clear of the others in the engine input first.
+  never re-cut, and each moves as one rigid, uniformly scaled piece. Their
+  relative scale is kept only approximately: on production meshes (hundreds
+  to thousands of islands) islands of 16 px and more land within a few
+  percent of the median scale (median 1-4%, at most ~9%), and islands of a
+  few texels are scaled up toward the engine's least chart size (2026-11-24).
+  Charts are found by UV *position*, though: coincident vertices weld, so
+  islands touching along a seam would merge into one gutterless chart —
+  :meth:`UvPack._separate_islands` moves each topological island clear of the
+  others in the engine input first.
+- A zero-area triangle is DROPPED by the engine, and charts are
+  EDGE-connected while a DCC's islands are vertex-connected: an island held
+  together only through a collapsed face, or pinched at a lone shared UV,
+  came back as separate charts -- the face stretched across the page, corners
+  only it used left at their input coordinates on top of packed islands
+  (a production door: 53,237 texels inside two islands after a pack). Such an
+  island is packed by its bounding box (:meth:`UvPack._degenerate_islands`,
+  :meth:`UvPack._engine_input`) and moved by the similarity the box's corners
+  took; every other island is checked for one rigid move after the pack and
+  boxed for another round when it was not (``PackIslandsResult.boxed``).
 - In content-driven mode, returned UVs are normalized 0-1 **per axis** of a
   generally non-square atlas, so equal UV distances are unequal in texture
   space; the wrapper de-normalizes by the atlas dimensions.
@@ -55,7 +69,7 @@ Verified engine facts this wrapper relies on (xatlas 0.0.11):
 """
 
 from dataclasses import dataclass, field
-from typing import Any, List, Optional, Sequence, Tuple
+from typing import Any, Callable, List, NamedTuple, Optional, Sequence, Tuple
 
 from pythontk.core_utils.help_mixin import HelpMixin
 
@@ -74,6 +88,9 @@ XATLAS_REPO_URL = "https://github.com/jpcy/xatlas"
 # 4 organic meshes 0.615 -> 0.623 half tile.
 _SEARCH_TARGET_FILL = 0.85
 _SEARCH_CONVERGENCE = 0.005
+# The coarsest page the fixed-page search runs in full; a larger page starts
+# from the scale found on one of half its size (coarse to fine).
+_COARSE_LEAST = 512
 
 # Hull-axis pre-rotation has no good fixed value -- which setting packs
 # tightest flips with the island set (measured at 1024/padding 4: 24 mixed
@@ -122,6 +139,10 @@ class PackIslandsResult:
     extent: Tuple[float, float]  # (u, v) span in unit space; max(extent) == 1.0
     pages: List[Any] = field(default_factory=list)  # per-uv page index, per mesh
     page_count: int = 1  # pages actually produced (1 in content-driven mode)
+    #: Per mesh, the islands packed by their bounds: those with a zero-area
+    #: face (the engine drops it and could split the island through it), a
+    #: collapsed one, and any the engine did not move as one piece.
+    boxed: List[int] = field(default_factory=list)
 
 
 class UvPack(HelpMixin):
@@ -245,18 +266,23 @@ class UvPack(HelpMixin):
         return uvs + (corner - lo)[island]
 
     @staticmethod
-    def _uv_area(uvs, triangles) -> float:
-        """Total area of *triangles* indexed into the (N, 2) *uvs*."""
+    def _triangle_uv_areas(uvs, triangles):
+        """Each of *triangles*' area, indexed into the (N, 2) *uvs*: ``(M,)``."""
         import numpy as np
 
         p = np.asarray(uvs, dtype=np.float64)[np.asarray(triangles, dtype=np.int64)]
-        return float(
+        return (
             np.abs(
                 (p[:, 1, 0] - p[:, 0, 0]) * (p[:, 2, 1] - p[:, 0, 1])
                 - (p[:, 1, 1] - p[:, 0, 1]) * (p[:, 2, 0] - p[:, 0, 0])
-            ).sum()
+            )
             / 2.0
         )
+
+    @classmethod
+    def _uv_area(cls, uvs, triangles) -> float:
+        """Total area of *triangles* indexed into the (N, 2) *uvs*."""
+        return float(cls._triangle_uv_areas(uvs, triangles).sum())
 
     @staticmethod
     def _atlas_score(atlas) -> float:
@@ -325,22 +351,34 @@ class UvPack(HelpMixin):
         resolution: int,
         pages: int,
         candidates: Sequence[tuple],
+        start: Optional[tuple] = None,
     ):
         """Largest-scale pack into <= *pages* square pages of *resolution*.
 
         xatlas's fixed-resolution mode spills into as many pages as the scale
         (``texels_per_unit``) demands, so the largest scale that still fits the
         page budget is found by bisection: ~8-12 engine runs from an area-based
-        initial guess. Every entry of *candidates* is searched independently and
+        initial guess, on a page of :data:`_COARSE_LEAST` texels; a larger page
+        starts from the scale the page of half its size found (coarse to fine:
+        a production door at 2048, 14.4 s -> 5.6 s, the same fill within 1%).
+        Every entry of *candidates* is searched independently and
         the one reaching the largest scale wins — the caller places islands into
         cells sized from the *page budget*, so delivered fill rises with scale
         alone and the largest scale is simply the tightest pack.
+
+        *start*, ``(scale, candidate)`` from a round over nearly the same
+        islands (a rigidity round boxes a few), searches that candidate alone
+        from that scale in steps of a few percent; the full search runs only
+        if it finds nothing.
+
+        Returns:
+            ``(atlas, scale, candidate)``.
         """
         area = sum(cls._uv_area(uv_arr, tri_arr) for uv_arr, tri_arr in arrays)
         if area <= 0.0:
             raise ValueError("Meshes have no UV area to pack.")
 
-        def bisect(tpu, brute, variant, iterations=16):
+        def bisect(tpu, brute, variant, grow=1.25, shrink=0.5, iterations=16):
             """Grow/shrink until bracketed, then bisect.
 
             Returns ``(largest fitting scale, its atlas)``, or ``(None, None)``
@@ -353,10 +391,10 @@ class UvPack(HelpMixin):
                 )
                 if atlas.atlas_count <= pages:
                     lo, best = tpu, atlas
-                    tpu = tpu * 1.25 if hi is None else (lo + hi) / 2.0
+                    tpu = tpu * grow if hi is None else (lo + hi) / 2.0
                 else:
                     hi = tpu
-                    tpu = tpu * 0.5 if lo is None else (lo + hi) / 2.0
+                    tpu = tpu * shrink if lo is None else (lo + hi) / 2.0
                 if (
                     lo is not None
                     and hi is not None
@@ -365,8 +403,31 @@ class UvPack(HelpMixin):
                     break
             return lo, best
 
+        if start is None and resolution >= 2 * _COARSE_LEAST:
+            # Coarse to fine: the whole search on a page of half the size (a
+            # run costs about a quarter), its scale doubled as this one's
+            # start. Recursive, so only the coarsest page is searched in full.
+            coarse = resolution // 2
+            try:
+                _atlas, found, winner = cls._fixed_page_generate(
+                    xatlas,
+                    arrays,
+                    max(1, int(round(padding * coarse / resolution))),
+                    rotate,
+                    coarse,
+                    pages,
+                    candidates,
+                )
+                start = (found * resolution / coarse, winner)
+            except RuntimeError:  # nothing fit the coarse page: search here
+                pass
+        if start is not None:
+            scale, (variant, brute) = start
+            found, found_atlas = bisect(scale, brute, variant, grow=1.03, shrink=0.96)
+            if found is not None:
+                return found_atlas, found, start[1]
         guess = (pages * resolution * resolution * _SEARCH_TARGET_FILL / area) ** 0.5
-        lo = atlas = None
+        lo = atlas = winner = None
         for variant, brute in candidates:
             # Every candidate searches from the SAME guess. Seeding later ones
             # from the running best looks like a free speed-up and is not:
@@ -378,13 +439,13 @@ class UvPack(HelpMixin):
             # 4-mesh Maya scene, a candidate reaching 377 was reported as 365.6.
             found, found_atlas = bisect(guess, brute, variant)
             if found is not None and (lo is None or found > lo):
-                lo, atlas = found, found_atlas
+                lo, atlas, winner = found, found_atlas, (variant, brute)
         if lo is None:
             raise RuntimeError(
                 f"Could not fit the islands into {pages} page(s) of "
                 f"{resolution} texels at any scale."
             )
-        return atlas
+        return atlas, lo, winner
 
     @classmethod
     def pack_islands(
@@ -396,6 +457,7 @@ class UvPack(HelpMixin):
         resolution: int = 0,
         pages: int = 1,
         align_to_axis: Optional[bool] = None,
+        surface_areas: Optional[Sequence[Any]] = None,
     ) -> PackIslandsResult:
         """Pack every mesh's UV islands together.
 
@@ -403,7 +465,8 @@ class UvPack(HelpMixin):
             meshes: One ``(uvs, triangles)`` pair per mesh — ``uvs`` an (N, 2)
                 float array-like, ``triangles`` an (M, 3) integer array-like
                 indexing into it. Islands are detected from the UV topology;
-                their relative input scale is preserved.
+                their relative input scale is kept, approximately (see the
+                module notes), unless *surface_areas* evens it.
             padding: Gutter between islands, in atlas texels. Exact pixels in
                 fixed-page mode (the page size is known); approximate in
                 content-driven mode (the atlas is content-sized).
@@ -429,15 +492,27 @@ class UvPack(HelpMixin):
                 packs tighter — no fixed value wins on all content, so this is
                 normally best left alone. Ignored when *rotate* is False, which
                 forces it off.
+            surface_areas: One ``(M,)`` array per mesh, each triangle's area on
+                the surface (any one unit for all): every island is first
+                scaled about its own centre so its UV area over its surface
+                area matches every other's -- one texel density for the whole
+                pack (Maya's ``u3dLayout -preScaleMode 1``), done here in one
+                pass instead of a per-shell host edit before the pack. None
+                keeps the islands' relative input scale, approximately.
 
         Returns:
             PackIslandsResult: packed UVs per mesh (input-index aligned) plus
-            atlas stats; fixed-page mode also carries per-UV ``pages``.
+            atlas stats; fixed-page mode also carries per-UV ``pages``. Every
+            island moved as one piece: one with a collapsed face, a pinched or
+            collapsed island, and any the engine split, is packed by its bounds
+            (``boxed`` counts them per mesh), so no island lands on another.
 
         Raises:
             RuntimeError: xatlas missing (install note), the engine re-indexed
-                a parametrized mesh in a way that can't be mapped back, or the
-                fixed-page search could not fit the page budget.
+                a parametrized mesh in a way that can't be mapped back, the
+                fixed-page search could not fit the page budget, or an island
+                still did not move as one piece after
+                :attr:`_RIGID_ROUNDS` rounds.
             ValueError: no meshes, a mesh with no UVs/triangles, a triangle
                 indexing past its mesh's UVs, or zero UV area in fixed-page
                 mode.
@@ -449,7 +524,9 @@ class UvPack(HelpMixin):
         if not meshes:
             raise ValueError("No meshes to pack.")
 
-        arrays, originals = [], []
+        from pythontk.math_utils._math_utils import MathUtils
+
+        plans = []
         for i, (uvs, tris) in enumerate(meshes):
             uv_arr = np.asarray(uvs, dtype=np.float64).reshape(-1, 2)
             tri_arr = np.asarray(tris, dtype=np.uint32).reshape(-1, 3)
@@ -459,71 +536,482 @@ class UvPack(HelpMixin):
                 raise ValueError(
                     f"Mesh {i}: a triangle indexes past its {len(uv_arr)} UVs."
                 )
-            originals.append(uv_arr)
-            separated = cls._separate_islands(uv_arr, tri_arr)
-            arrays.append((separated.astype(np.float32), tri_arr))
+            island = np.asarray(
+                MathUtils.connected_components(len(uv_arr), tri_arr.astype(np.int64))
+            )
+            plans.append(
+                {
+                    "uvs": uv_arr,
+                    "tris": tri_arr,
+                    "island": island,
+                    "boxed": cls._degenerate_islands(uv_arr, tri_arr, island),
+                }
+            )
+        if surface_areas is not None:
+            if len(surface_areas) != len(plans):
+                raise ValueError(
+                    f"{len(surface_areas)} surface-area arrays for {len(plans)} meshes."
+                )
+            cls._even_density(plans, surface_areas)
+        for plan in plans:
+            plan["separated"] = cls._separate_islands(
+                plan.get("evened", plan["uvs"]), plan["tris"]
+            )
 
         candidates = cls._candidates(cls._variants(rotate, align_to_axis), brute_force)
         fixed = resolution > 0
-        if fixed:
-            atlas = cls._fixed_page_generate(
-                xatlas, arrays, padding, rotate, resolution, pages, candidates
-            )
-            width = height = int(resolution)
-            to_unit = np.ones(2, dtype=np.float64)
-            extent = (1.0, 1.0)
-        else:
-            atlas = max(
-                (
-                    cls._generate(xatlas, arrays, padding, rotate, brute, **variant)
-                    for variant, brute in candidates
-                ),
-                key=cls._atlas_score,
-            )
-            width, height = int(atlas.width), int(atlas.height)
-            longest = float(max(width, height)) or 1.0
-            # De-normalize the per-axis 0-1 coordinates to texels, then scale
-            # uniformly so aspect survives and the atlas fits the unit square.
-            to_unit = np.array([width / longest, height / longest], dtype=np.float64)
-            extent = (width / longest, height / longest)
-
-        packed, written, page_arrays = [], [], []
-        for i, uv_arr in enumerate(originals):
-            vmapping, out_tris, new_uvs = atlas.get_mesh(i)
-            vmapping = np.asarray(vmapping)
-            if len(vmapping) != len(np.unique(vmapping)):
-                raise RuntimeError(
-                    f"Mesh {i}: engine split a source vertex across charts; "
-                    "the result can't be mapped back onto the input indices."
+        # An island the engine did not move as one piece packs again by its
+        # bounds: each round boxes the ones the last could not keep rigid. Not
+        # every such island can be told up front (an island the engine keeps
+        # as one chart can still come back non-rigid), so a later round starts
+        # from the last one's scale and candidate instead of searching anew.
+        start = None
+        for _round in range(cls._RIGID_ROUNDS):
+            arrays = [cls._engine_input(plan) for plan in plans]
+            if fixed:
+                atlas, scale, winner = cls._fixed_page_generate(
+                    xatlas,
+                    [(a[0], a[1]) for a in arrays],
+                    padding,
+                    rotate,
+                    resolution,
+                    pages,
+                    candidates,
+                    start=start,
                 )
-            out = np.array(uv_arr, dtype=np.float64)
-            out[vmapping] = np.asarray(new_uvs, dtype=np.float64) * to_unit
-            packed.append(out)
-            written.append(vmapping)
+                start = (scale, winner)
+                width = height = int(resolution)
+                to_unit = np.ones(2, dtype=np.float64)
+                extent = (1.0, 1.0)
+            else:
+                atlas = max(
+                    (
+                        cls._generate(
+                            xatlas,
+                            [(a[0], a[1]) for a in arrays],
+                            padding,
+                            rotate,
+                            brute,
+                            **variant,
+                        )
+                        for variant, brute in candidates
+                    ),
+                    key=cls._atlas_score,
+                )
+                width, height = int(atlas.width), int(atlas.height)
+                longest = float(max(width, height)) or 1.0
+                # De-normalize the per-axis 0-1 coordinates to texels, then
+                # scale uniformly so aspect survives and the atlas fits the
+                # unit square.
+                to_unit = np.array([width / longest, height / longest], dtype=np.float64)
+                extent = (width / longest, height / longest)
 
-            # Per-input-UV page index, recovered from the engine's charts.
-            page_of_vert = np.zeros(len(new_uvs), dtype=np.int64)
-            if fixed and atlas.atlas_count > 1:
-                tris_out = np.asarray(out_tris).reshape(-1, 3)
-                for j in range(atlas.get_mesh_chart_count(i)):
-                    chart = atlas.get_mesh_chart(i, j)
-                    rows = np.asarray(chart.faces, dtype=np.int64)
-                    verts = np.unique(tris_out[rows].reshape(-1))
-                    page_of_vert[verts] = int(chart.atlas_index)
-            page_arr = np.zeros(len(uv_arr), dtype=np.int64)
-            page_arr[vmapping] = page_of_vert
-            page_arrays.append(page_arr)
+            read = [
+                cls._read_back(atlas, i, plan, arrays[i], to_unit, fixed)
+                for i, plan in enumerate(plans)
+            ]
+            failed = [r[3] for r in read]
+            if not any(failed):
+                break
+            for plan, bad in zip(plans, failed):
+                plan["boxed"] = plan["boxed"] | bad
+        else:
+            raise RuntimeError(
+                "Some islands could not be packed as one piece even by their "
+                f"bounds after {cls._RIGID_ROUNDS} rounds: "
+                + ", ".join(f"mesh {i}: {len(r[3])}" for i, r in enumerate(read) if r[3])
+            )
 
         return PackIslandsResult(
-            uvs=packed,
-            written=written,
+            uvs=[r[0] for r in read],
+            written=[r[1] for r in read],
             width=width,
             height=height,
             utilization=float(np.mean(np.atleast_1d(atlas.utilization))),
             extent=extent,
-            pages=page_arrays,
+            pages=[r[2] for r in read],
             page_count=int(atlas.atlas_count),
+            boxed=[len(plan["boxed"]) for plan in plans],
         )
+
+    @staticmethod
+    def box_pages(
+        map_size: int, coverage: Tuple[float, float] = (1.0, 1.0), margin: float = 0.0
+    ) -> Tuple[int, int, Callable[[Any, Any], Any]]:
+        """How a box of a 0-1 tile is packed as square pages.
+
+        The box -- *coverage* ``(u, v)`` of the tile from its lower-left
+        corner, inset by *margin* -- is split along its long axis into the
+        whole number of near-square cells nearest its shape (a Full or Quarter
+        box one, a half two), each holding one square page of the cell's short
+        side in texels at *map_size* (at least 64). :meth:`pack_islands` fills
+        exactly those pages (``resolution``, ``pages``), so padding is exact
+        texture pixels; in content-driven mode the engine picks the atlas
+        shape itself, and fitting that into the box wasted the mismatch (a
+        6-shell cube filled 0.50 of a Full tile, 0.25 of a half).
+
+        Returns:
+            ``(pages, resolution, place)``: *place(uvs, page)* puts one mesh's
+            page coordinates (:class:`PackIslandsResult` ``uvs`` and ``pages``)
+            into the box, in tile units.
+
+        Raises:
+            ValueError: A coverage side is not positive.
+        """
+        import numpy as np
+
+        cov_u, cov_v = float(coverage[0]), float(coverage[1])
+        short_side, long_side = min(cov_u, cov_v), max(cov_u, cov_v)
+        if short_side <= 0:
+            raise ValueError(f"coverage must be positive, got {coverage}")
+        pages = max(1, int(round(long_side / short_side)))
+        resolution = max(64, int(round(map_size * short_side)))
+        origin = np.array([margin, margin], dtype=np.float64)
+        inner = np.array(
+            [max(cov_u - 2 * margin, 1e-6), max(cov_v - 2 * margin, 1e-6)]
+        )
+        axis = 0 if cov_u >= cov_v else 1  # the long axis the cells stack along
+        step = np.zeros(2)
+        step[axis] = inner[axis] / pages
+        cell = inner.copy()
+        cell[axis] = step[axis]
+        fit = float(cell.min())  # a square page, fitted uniformly into its cell
+
+        def place(uvs, page):
+            return (
+                np.asarray(uvs, dtype=np.float64) * fit
+                + origin
+                + np.asarray(page).reshape(-1, 1) * step
+            )
+
+        return pages, resolution, place
+
+    class CellBox(NamedTuple):
+        """:meth:`UvPack.cell_box`'s answer: how one layout fills one cell."""
+
+        #: The ``(u, v)`` fraction of the 0-1 tile to pack into
+        #: (:meth:`UvPack.box_pages` ``coverage``): a Full tile, or a 1/n strip.
+        coverage: Tuple[float, float]
+        #: The factor the layout's u is scaled by before the pack (rotation
+        #: then off, which would turn it); 1.0 for none.
+        stretch: float
+        #: The map size to pack at: the cell's long side, so a page texel is
+        #: an atlas texel.
+        map_size: int
+        #: The gutter between the layout's own islands, in atlas texels.
+        padding: int
+
+    #: A layout re-packed to fill its cell (:meth:`cell_box`) is worth keeping
+    #: only when it needs a cell below this share of the one it had: denser by
+    #: 2%. Islands too many for their gutters (a box projection's thousands of
+    #: shells) can come back covering less than the layout they replace.
+    CELL_GAIN: float = 0.98
+
+    @classmethod
+    def cell_box(cls, width: int, height: int, atlas: int) -> "UvPack.CellBox":
+        """How one layout is packed to fill a *width* x *height* px cell of an
+        *atlas* px atlas (a lightmap's), through :meth:`box_pages`.
+
+        The cell's shape is taken by the whole number of square pages nearest
+        it, side by side along its long axis (``coverage``); the rest of the
+        shape is the layout's ``stretch``, its u scaled before the pack, so a
+        cell that takes its box's shape on the surface shows every texel
+        square (none within 1%). ``map_size`` is the cell's long side, so the
+        pages are exactly the cell's texels. ``padding`` keeps the islands
+        three texels apart at 2048, scaled with the atlas, at least two:
+        clear of bleed through the first mip (1.5 texels). A cell is atlas
+        texels, so its gutter is the atlas's rule, never one scaled to the
+        cell; it is narrower than the gutter between cells, since a
+        neighbour's light is the worse leak (game engines' own lightmap
+        packing margins default to about 4). Measured on a production cabinet at 2048: two
+        texels gave +44% density, four +24%, the whole atlas gutter (8) +14%
+        -- a box projection's 2,115 shells each spent it on every side.
+
+        Parameters:
+            width, height: The cell, in atlas texels (at least 1 each).
+            atlas: The atlas's texels per side.
+
+        Returns:
+            :class:`UvPack.CellBox` ``(coverage, stretch, map_size, padding)``.
+        """
+        width, height = max(1, int(width)), max(1, int(height))
+        aspect = width / float(height)
+        pages = max(1, int(round(max(aspect, 1.0 / aspect))))
+        wide = aspect >= 1.0
+        box = float(pages) if wide else 1.0 / pages  # the coverage's own shape
+        stretch = box / aspect
+        return cls.CellBox(
+            coverage=(1.0, 1.0 / pages) if wide else (1.0 / pages, 1.0),
+            stretch=1.0 if abs(stretch - 1.0) <= 0.01 else stretch,
+            map_size=max(width, height),
+            padding=max(2, round(3 * int(atlas) / 2048)),
+        )
+
+    #: :meth:`island_overlaps`' probe size bounds, texels per side: 0.1-0.4 s
+    #: on a 17,724-triangle production layout at 1024-2048.
+    OVERLAP_PROBE = (256, 2048)
+
+    @classmethod
+    def island_overlaps(cls, meshes: Sequence[Tuple[Any, Any]], size: int = 1024) -> int:
+        """Texels where triangles of two DIFFERENT islands meet -- what a pack
+        must never leave, across every mesh given (they share one page).
+
+        A fold inside one island is the layout's own and does not count: the
+        pack moves each island as one piece, so it neither makes nor mends one.
+        Every island is rasterized with a key of its own
+        (``UvTransfer.build``, which counts a texel two triangles claim with
+        different keys); triangles of one island share theirs, so a shared
+        edge or a fold never counts.
+
+        Parameters:
+            meshes: ``(uvs, triangles)`` per mesh, as :meth:`pack_islands`
+                takes them; UVs in the page's 0-1 (V up).
+            size: The map's texels per side, probed at that size within
+                :attr:`OVERLAP_PROBE`. Each texel is judged at its centre, so
+                islands apart never count; an overlap under a probe texel can
+                go unseen.
+
+        Returns:
+            int: Texel samples two islands claim; 0 for a correct pack.
+        """
+        import math
+
+        import numpy as np
+
+        from pythontk.geo_utils.uv.transfer import UvTransfer
+        from pythontk.math_utils._math_utils import MathUtils
+
+        layout, keys, base = [], [], 0
+        for uvs, tris in meshes:
+            uv_arr = np.asarray(uvs, dtype=np.float64).reshape(-1, 2)
+            tri_arr = np.asarray(tris, dtype=np.int64).reshape(-1, 3)
+            if not len(tri_arr):
+                continue
+            island = np.asarray(MathUtils.connected_components(len(uv_arr), tri_arr))
+            layout.append(uv_arr[tri_arr])
+            keys.append(island[tri_arr] + base)
+            base += int(island.max()) + 1
+        if not layout:
+            return 0
+        # A 2D key grid: neighbouring keys sit 1/side apart, past the 1e-3 the
+        # table tells two keys apart by while side <= 500. Past 250,000
+        # islands the keys repeat (id modulo the grid): two islands sharing one
+        # are told apart by nothing, so an overlap between exactly those two
+        # goes unseen.
+        side = min(max(2, math.ceil(math.sqrt(base))), 500)
+        ids = np.concatenate(keys) % (side * side)
+        key = np.stack([(ids % side + 0.5) / side, (ids // side + 0.5) / side], axis=-1)
+        low, high = cls.OVERLAP_PROBE
+        probe = int(min(max(int(size), low), high))
+        table = UvTransfer.build(key, np.concatenate(layout), probe, supersample=1)
+        return int(table.overlaps)
+
+    #: Rounds of re-packing an island the engine did not keep rigid by its
+    #: bounds. One is the rule (a degenerate face is boxed before the first);
+    #: the rest catch what the engine split on its own. On a small page,
+    #: islands of a few texels each round can surface new ones (a production
+    #: locker door's 88 px lightmap cell: 3 left after 3 rounds); a later
+    #: round starts warm, so it costs a few engine runs.
+    _RIGID_ROUNDS: int = 6
+    #: A triangle under this share of its island's bounds' area is degenerate
+    #: to the engine, which drops it (float32: a collapsed face's corners).
+    _DEGENERATE_AREA: float = 1e-9
+    #: Max abs error (packed unit space) of an island's one similarity: a rigid
+    #: move fits to ~2e-4 at most (float32 inside the engine; mayatk's measured
+    #: write-back calibration, ``RESIDUAL_TOLERANCE`` there and in
+    #: :mod:`~pythontk.geo_utils.uv.combine`), an island the engine split
+    #: through a dropped face or a pinch misses by 1e-1 or more.
+    _RIGID_TOLERANCE: float = 1e-3
+
+    @staticmethod
+    def _even_density(plans, surface_areas) -> None:
+        """Scale every island of every plan about its own centre so its UV area
+        over its surface area is the pack's median: one texel density across
+        all of them. Sets each plan's ``evened`` UVs; an island with no UV or
+        no surface area keeps its scale."""
+        import numpy as np
+
+        ratios = []
+        for plan, areas in zip(plans, surface_areas):
+            areas = np.asarray(areas, dtype=np.float64).reshape(-1)
+            if len(areas) != len(plan["tris"]):
+                raise ValueError(
+                    f"{len(areas)} surface areas for {len(plan['tris'])} triangles."
+                )
+            uvs, tris, island = plan["uvs"], plan["tris"].astype(np.int64), plan["island"]
+            uv_area = UvPack._triangle_uv_areas(uvs, tris)
+            count = int(island.max()) + 1
+            tri_island = island[tris[:, 0]]
+            per_uv = np.bincount(tri_island, uv_area, count)
+            per_surface = np.bincount(tri_island, np.abs(areas), count)
+            ratio = np.zeros(count)
+            ok = (per_uv > 1e-20) & (per_surface > 0)
+            ratio[ok] = np.sqrt(per_surface[ok] / per_uv[ok])
+            plan["_ratio"] = ratio
+            ratios.append(ratio[ok])
+        known = np.concatenate(ratios) if ratios else np.zeros(0)
+        median = float(np.median(known)) if len(known) else 1.0
+        for plan in plans:
+            ratio, island, uvs = plan.pop("_ratio"), plan["island"], plan["uvs"]
+            scale = np.where(ratio > 0, ratio / median, 1.0)
+            count = len(scale)
+            members = np.bincount(island, minlength=count).astype(np.float64)
+            centre = np.column_stack(
+                [np.bincount(island, uvs[:, k], count) for k in (0, 1)]
+            ) / np.maximum(members, 1.0)[:, None]
+            plan["evened"] = (uvs - centre[island]) * scale[island][:, None] + centre[island]
+
+    @classmethod
+    def _degenerate_islands(cls, uvs, tris, island) -> "set":
+        """The islands the engine would not keep in one piece, packed by their
+        bounds instead (:meth:`_engine_input`) so each moves as one:
+
+        - one with a zero-area triangle: the engine drops the face, and an
+          island held together through it came back as separate charts with
+          the face stretched between them (or corners only it used left where
+          they were);
+        - one PINCHED, its triangles meeting at a lone shared UV: the engine's
+          charts are edge-connected, so it packs the two sides apart without
+          duplicating the shared UV (what mayatk's write-back used to refuse).
+        """
+        import numpy as np
+
+        from pythontk.math_utils._math_utils import MathUtils
+
+        area = cls._triangle_uv_areas(uvs, tris)
+        count = int(island.max()) + 1
+        lo = np.full((count, 2), np.inf)
+        hi = np.full((count, 2), -np.inf)
+        np.minimum.at(lo, island, uvs)
+        np.maximum.at(hi, island, uvs)
+        box = np.prod(np.maximum(hi - lo, 0.0), axis=1)
+        tri_island = island[tris[:, 0].astype(np.int64)]
+        repeated = (
+            (tris[:, 0] == tris[:, 1])
+            | (tris[:, 1] == tris[:, 2])
+            | (tris[:, 0] == tris[:, 2])
+        )
+        degenerate = repeated | (area <= cls._DEGENERATE_AREA * box[tri_island]) | (
+            area <= 1e-20
+        )
+        found = set(np.unique(tri_island[degenerate]).tolist())
+        # Pinched: an island whose triangles are one piece through shared UVs
+        # but several through shared EDGES. Triangles are joined through each
+        # edge they share (its two UVs, either order).
+        t = tris.astype(np.int64)
+        edges = np.concatenate([t[:, [0, 1]], t[:, [1, 2]], t[:, [2, 0]]])
+        edges.sort(axis=1)
+        owner = np.tile(np.arange(len(t)), 3)
+        order = np.lexsort((edges[:, 1], edges[:, 0]))
+        edges, owner = edges[order], owner[order]
+        same = (edges[1:] == edges[:-1]).all(axis=1)
+        links = np.column_stack([owner[:-1][same], owner[1:][same]])
+        by_edge = np.asarray(
+            MathUtils.connected_components(
+                len(t), np.column_stack([links, links[:, :1]]) if len(links) else np.zeros((0, 3), np.int64)
+            )
+        )
+        pieces = {}
+        for isl, piece in zip(tri_island.tolist(), by_edge.tolist()):
+            pieces.setdefault(isl, set()).add(piece)
+        found |= {isl for isl, ps in pieces.items() if len(ps) > 1}
+        return found
+
+    @classmethod
+    def _engine_input(cls, plan):
+        """``(uvs, triangles, boxes)`` the engine packs for one mesh: every clean
+        island's own triangles at its separated position, and each boxed
+        island as a quad over its bounds (grown to a sliver's least size, so a
+        collapsed island still has an area to place). *boxes* is
+        ``{island: first corner row}``."""
+        import numpy as np
+
+        sep = plan["separated"]
+        tris = plan["tris"]
+        island = plan["island"]
+        boxed = sorted(plan["boxed"])
+        if not boxed:
+            return sep.astype(np.float32), tris, {}
+        tri_island = island[tris[:, 0].astype(np.int64)]
+        keep = tris[~np.isin(tri_island, boxed)]
+        largest = float(np.ptp(sep, axis=0).max()) or 1.0
+        least = largest * 1e-3
+        corners, quads, boxes = [], [], {}
+        base = len(sep)
+        for k, isl in enumerate(boxed):
+            rows = sep[island == isl]
+            lo, hi = rows.min(axis=0), rows.max(axis=0)
+            mid, half = (lo + hi) / 2.0, np.maximum((hi - lo) / 2.0, least / 2.0)
+            lo, hi = mid - half, mid + half
+            first = base + 4 * k
+            corners.append([[lo[0], lo[1]], [hi[0], lo[1]], [hi[0], hi[1]], [lo[0], hi[1]]])
+            quads += [[first, first + 1, first + 2], [first, first + 2, first + 3]]
+            boxes[isl] = first
+        uvs = np.vstack([sep, np.asarray(corners, dtype=np.float64).reshape(-1, 2)])
+        tris = np.vstack([keep, np.asarray(quads, dtype=np.uint32)]).astype(np.uint32)
+        return uvs.astype(np.float32), tris, boxes
+
+    @classmethod
+    def _read_back(cls, atlas, mesh, plan, engine, to_unit, fixed):
+        """``(uvs, written, pages, not_rigid)`` for one mesh out of *atlas*.
+
+        Clean islands take the engine's coordinates; a boxed island moves by
+        the similarity its box's corners did. *not_rigid* names the clean
+        islands the engine did not move as one piece -- the next round boxes
+        them -- and the rows of a boxed island are written with it.
+        """
+        import numpy as np
+
+        eng_uvs, _eng_tris, boxes = engine
+        vmapping, out_tris, new_uvs = atlas.get_mesh(mesh)
+        vmapping = np.asarray(vmapping)
+        if len(vmapping) != len(np.unique(vmapping)):
+            raise RuntimeError(
+                f"Mesh {mesh}: engine split a source vertex across charts; "
+                "the result can't be mapped back onto the input indices."
+            )
+        count = len(plan["uvs"])
+        out_all = np.array(eng_uvs, dtype=np.float64)
+        out_all[vmapping] = np.asarray(new_uvs, dtype=np.float64) * to_unit
+        page_all = np.zeros(len(eng_uvs), dtype=np.int64)
+        if fixed and atlas.atlas_count > 1:
+            tris_out = np.asarray(out_tris).reshape(-1, 3)
+            page_of_vert = np.zeros(len(new_uvs), dtype=np.int64)
+            for j in range(atlas.get_mesh_chart_count(mesh)):
+                chart = atlas.get_mesh_chart(mesh, j)
+                rows = np.asarray(chart.faces, dtype=np.int64)
+                page_of_vert[np.unique(tris_out[rows].reshape(-1))] = int(
+                    chart.atlas_index
+                )
+            page_all[vmapping] = page_of_vert
+
+        sep, island = plan["separated"], plan["island"]
+        out = np.array(plan["uvs"], dtype=np.float64)
+        written_mask = np.zeros(count, dtype=bool)
+        written_mask[vmapping[vmapping < count]] = True
+        pages = np.zeros(count, dtype=np.int64)
+        not_rigid = set()
+        referenced = np.zeros(count, dtype=bool)
+        referenced[plan["tris"].reshape(-1).astype(np.int64)] = True
+        for isl in np.unique(island[referenced]):
+            rows = np.flatnonzero(island == isl)
+            if isl in boxes:
+                first = boxes[isl]
+                corner_rows = np.arange(first, first + 4)
+                move = cls.solve_similarity(eng_uvs[corner_rows], out_all[corner_rows])
+                out[rows] = cls.apply_similarity(sep[rows], move)
+                pages[rows] = page_all[first]
+                written_mask[rows] = True
+                continue
+            out[rows] = out_all[rows]
+            pages[rows] = page_all[rows]
+            *_, residual = cls.solve_similarity(sep[rows], out_all[rows])
+            if not written_mask[rows].all() or residual > cls._RIGID_TOLERANCE:
+                not_rigid.add(int(isl))
+        # Unreferenced rows keep what the engine handed back for them.
+        loose = ~referenced
+        out[loose] = out_all[:count][loose]
+        return out, np.flatnonzero(written_mask), pages, not_rigid
 
     # ------------------------------------------------------------ transforms
     @staticmethod

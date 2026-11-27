@@ -42,6 +42,7 @@ chain).
 
 import hashlib
 import json
+from collections import Counter
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 # Eager on purpose: ``HierarchyBaselineStore.ATTR_NAME`` is a class attribute,
@@ -178,6 +179,87 @@ class HierarchyBaseline:
         missing = sorted(prior - current)
         extra = sorted(current - prior)
         return (not missing and not extra), missing, extra, False
+
+    #: How much of a diff the check lets through (the Scene Exporter's row,
+    #: ``ExportProfile.HIERARCHY_CHECK_OPTIONS``). ``"strict"``: nothing -- a
+    #: node missing or new fails. ``"additions"``: new nodes pass, but a node
+    #: missing (gone, renamed or moved) still fails, and so does a new node with
+    #: the name of one that shipped. An engine that imported the previous export
+    #: holds each node by its path (a model importer's ids, a built scene's
+    #: references and overrides), so a node that moved or went away breaks what
+    #: was built on it; one more node breaks nothing, unless it takes a name a
+    #: reader finds a shipped node by: the leaf of exactly one shipped node,
+    #: still shipping (a name two shipped nodes share found neither: a tie is
+    #: never guessed).
+    LEVELS = ("strict", "additions")
+
+    @classmethod
+    def blocking(
+        cls,
+        level: str,
+        missing: Iterable[str],
+        extra: Iterable[str],
+        current: Iterable[str],
+    ) -> Tuple[List[str], List[str]]:
+        """The part of a diff the check fails at *level* (:attr:`LEVELS`).
+
+        Parameters:
+            level: ``"strict"`` or ``"additions"``.
+            missing: The diff's missing paths (:meth:`compare`).
+            extra: Its new paths.
+            current: Every path this export ships (the diff's *current*).
+
+        Returns:
+            (tuple) ``(missing, extra)`` that fail, in the order given; a new
+            path not returned passed. At ``"additions"`` a new path fails when
+            its leaf is the leaf of exactly one shipped node and that node
+            still ships (:attr:`LEVELS`).
+
+        Raises:
+            ValueError: An unknown *level*.
+        """
+        if level not in cls.LEVELS:
+            raise ValueError(
+                f"Unknown hierarchy check level {level!r}; expected one of "
+                f"{', '.join(cls.LEVELS)}."
+            )
+        missing, extra = list(missing), list(extra)
+        if level == "strict":
+            return missing, extra
+        leaf = cls._leaf
+        kept = set(current) - set(extra)
+        still = {leaf(p) for p in kept}
+        shipped = Counter(leaf(p) for p in kept | set(missing))
+        return missing, [p for p in extra if leaf(p) in still and shipped[leaf(p)] == 1]
+
+    @classmethod
+    def moved(
+        cls, missing: Iterable[str], extra: Iterable[str]
+    ) -> List[Tuple[str, str]]:
+        """``(old, new)`` for each node a diff shows moved: a missing path and
+        a new path sharing a leaf no other missing or new path carries (where
+        two do, which went where is a guess, and none is paired).
+
+        Parameters:
+            missing: The diff's missing paths (:meth:`compare`).
+            extra: Its new paths.
+
+        Returns:
+            (list) The pairs, in *extra*'s order.
+        """
+        missing, extra = list(missing), list(extra)
+        leaf = cls._leaf
+        gone = Counter(leaf(p) for p in missing)
+        new = Counter(leaf(p) for p in extra)
+        old = {leaf(p): p for p in missing}
+        return [
+            (old[leaf(p)], p) for p in extra if gone[leaf(p)] == 1 == new[leaf(p)]
+        ]
+
+    @classmethod
+    def _leaf(cls, path: str) -> str:
+        """*path*'s last component: the name a reader finds a node by."""
+        return path.rsplit(cls.SEPARATOR, 1)[-1]
 
     @classmethod
     def merge(

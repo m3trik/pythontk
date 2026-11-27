@@ -53,6 +53,7 @@ import html
 import logging
 import os
 import re
+from collections.abc import Hashable
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 import pythontk as ptk
@@ -577,7 +578,7 @@ class SceneExporterBase(LoggingMixin):
             values: ``{objectName: value}`` -- every task, check and
                 :attr:`SETTINGS_DEFINITIONS` row the panel read.
             override_checks: Override Checks is armed: the checks are dropped.
-            ignore_groups_case_sensitive: The Ignore row's case toggle.
+            ignore_groups_case_sensitive: The Exclude ▸ Groups row's case toggle.
 
         Returns:
             ``{"tasks", "export_mode", "export_visible"}``.
@@ -733,11 +734,21 @@ class SceneExporterBase(LoggingMixin):
         definition's default). The retired rows' keys are then removed
         through the same store, so the notes are said once.
 
+        A row whose widget changed type (:attr:`pythontk.ExportProfile.
+        RETYPED_ROWS`) saved its value under its old widget's signal, where
+        the new widget never looks: the value moves first, as the new widget
+        reads it, before the restore that follows (:meth:`_move_retyped_rows`).
+
         Parameters:
             store: The panel's settings store -- ``keys()``, ``value(key)``,
-                ``remove(key)`` and optionally ``sync()``, as uitk's
-                ``SettingsManager`` (the window's ``ui.settings``) has.
+                ``setValue(key, value)``, ``remove(key)`` and optionally
+                ``sync()``, as uitk's ``SettingsManager`` (the window's
+                ``ui.settings``) has.
         """
+        try:
+            self._move_retyped_rows(store)
+        except Exception as e:  # noqa: BLE001 -- a migration never blocks the panel
+            self.logger.debug(f"Retyped-row state not moved: {e}")
         try:
             profile = ptk.ExportProfile
             tasks_def, checks_def = self.definition_tables()
@@ -769,6 +780,28 @@ class SceneExporterBase(LoggingMixin):
                 sync()
         except Exception as e:  # noqa: BLE001 -- a notice never blocks the panel
             self.logger.debug(f"Retired-row state not read: {e}")
+
+    @staticmethod
+    def _move_retyped_rows(store: Any) -> None:
+        """Move each retyped row's saved value to the key its widget restores
+        from, mapped as :attr:`pythontk.ExportProfile.RETYPED_ROWS` says,
+        and remove the old key -- once. A value the new widget already saved
+        stands; one the table cannot map just goes, the row at its default."""
+        keys = {str(key) for key in store.keys()}
+        moved = False
+        for row, (old, new, values) in ptk.ExportProfile.RETYPED_ROWS.items():
+            old_key, new_key = f"{row}/{old}", f"{row}/{new}"
+            if old_key not in keys:
+                continue
+            value = store.value(old_key)
+            mapped = isinstance(value, Hashable) and value in values
+            if mapped and new_key not in keys:
+                store.setValue(new_key, values[value])
+            store.remove(old_key)
+            moved = True
+        sync = getattr(store, "sync", None)
+        if moved and callable(sync):
+            sync()
 
     #: The objectName the retired RegEx field saved its value under.
     _RETIRED_REGEX_ROW = "txt002"

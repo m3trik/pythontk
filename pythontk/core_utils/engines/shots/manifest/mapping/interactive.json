@@ -1,0 +1,600 @@
+{
+    "columns": {
+        "step_id": [
+            "Step",
+            "ID",
+            "Number"
+        ],
+        "description": [
+            "Step Contents",
+            "Description",
+            "Contents",
+            "Details",
+            "Notes"
+        ],
+        "assets": [
+            "Asset Names",
+            "Assets",
+            "Asset",
+            "Objects",
+            "Target",
+            "Targets"
+        ],
+        "audio": [
+            "Voice Support",
+            "Voice",
+            "VO",
+            "Narration"
+        ],
+        "behaviors": [
+            "Behaviors",
+            "Behavior"
+        ],
+        "object_source": "column",
+        "step_looks": "leave",
+        "exclude_steps": [
+            "SETUP"
+        ],
+        "exclude_values": {
+            "assets": [
+                "N/A",
+                ""
+            ],
+            "clip": [
+                "N/A",
+                "-"
+            ]
+        },
+        "metadata_pass": {
+            "step_name": [
+                "Step Name"
+            ],
+            "audio_file": [
+                "Audio Files",
+                "Audio File",
+                "Audio"
+            ],
+            "hint": [
+                "Hint",
+                "Guidance"
+            ],
+            "placard_text": [
+                "Text On Placard",
+                "On-Screen Text",
+                "Placard"
+            ],
+            "export_name": [
+                "FBX/GLB Names"
+            ]
+        },
+        "step_pattern": [
+            "^([A-Z]+_?\\d+[A-Z]?(?:\\.\\d+)?)(?:\\.\\))?$"
+        ],
+        "section_pattern": [
+            "(?i)^SECTION\\s+([A-Z0-9]+)\\s*:\\s*(.*)",
+            "^(INTRO|OUTRO|QUIZ)$"
+        ],
+        "row_pass": {
+            "action": [
+                "Action"
+            ],
+            "clip": [
+                "Animation Clip Names",
+                "Clip",
+                "Take"
+            ],
+            "settings": [
+                "Settings"
+            ],
+            "with": [
+                "With"
+            ],
+            "members": [
+                "Members"
+            ],
+            "label": [
+                "Label"
+            ],
+            "to": [
+                "To"
+            ]
+        },
+        "actions": {
+            "highlight": {
+                "family": "attention",
+                "cells": [
+                    "target",
+                    "clip"
+                ],
+                "needs": [
+                    "target"
+                ],
+                "when": "start",
+                "settings": {
+                    "style": {
+                        "choices": [
+                            "auto",
+                            "pulse",
+                            "steady"
+                        ],
+                        "default": "auto"
+                    },
+                    "color": {
+                        "type": "color"
+                    }
+                },
+                "says": "{target} is highlighted"
+            },
+            "indicate": {
+                "family": "attention",
+                "cells": [
+                    "target"
+                ],
+                "needs": [
+                    "target"
+                ],
+                "when": "start",
+                "settings": {
+                    "size": {
+                        "type": "number",
+                        "min": 0
+                    },
+                    "color": {
+                        "type": "color"
+                    },
+                    "where": {
+                        "type": "object"
+                    }
+                },
+                "says": "An arrow points at {target}",
+                "places": "point"
+            },
+            "fade_in": {
+                "family": "visibility",
+                "cells": [
+                    "target",
+                    "clip"
+                ],
+                "needs": [
+                    "target"
+                ],
+                "when": "start",
+                "settings": {
+                    "fade": {
+                        "type": "number",
+                        "min": 0
+                    }
+                },
+                "says": "{target} fades in"
+            },
+            "fade_out": {
+                "family": "visibility",
+                "cells": [
+                    "target",
+                    "clip"
+                ],
+                "needs": [
+                    "target"
+                ],
+                "when": "end",
+                "settings": {
+                    "fade": {
+                        "type": "number",
+                        "min": 0
+                    }
+                },
+                "says": "{target} fades out"
+            },
+            "set": {
+                "family": "state",
+                "cells": [
+                    "target"
+                ],
+                "needs": [
+                    "target"
+                ],
+                "when": "start",
+                "settings": {
+                    "state": {
+                        "type": "state",
+                        "required": true
+                    }
+                },
+                "says": "{target} turns {state}"
+            },
+            "take": {
+                "family": "hand",
+                "cells": [
+                    "target"
+                ],
+                "needs": [
+                    "target"
+                ],
+                "when": "user",
+                "says": "Selecting {target} takes it in hand"
+            },
+            "return": {
+                "family": "hand",
+                "cells": [
+                    "target"
+                ],
+                "needs": [
+                    "target"
+                ],
+                "when": "end",
+                "says": "{target} goes back where it rests"
+            },
+            "use": {
+                "family": "animation",
+                "cells": [
+                    "target",
+                    "with",
+                    "clip",
+                    "members"
+                ],
+                "needs": [
+                    "target",
+                    "clip"
+                ],
+                "take": true,
+                "when": "user",
+                "settings": {
+                    "trigger": {
+                        "choices": [
+                            "select",
+                            "hold",
+                            "near"
+                        ],
+                        "default": "select"
+                    },
+                    "hold": {
+                        "type": "number",
+                        "min": 0
+                    }
+                },
+                "says": {
+                    "": "Selecting {target}[ with {with} in hand] plays {clip}",
+                    "trigger=hold": "Holding {target}[ with {with} in hand] plays {clip}",
+                    "trigger=near": "Bringing {with} to {target} plays {clip}"
+                }
+            },
+            "play": {
+                "family": "animation",
+                "cells": [
+                    "clip",
+                    "members"
+                ],
+                "needs": [
+                    "clip",
+                    "members"
+                ],
+                "take": true,
+                "when": "start",
+                "settings": {
+                    "after": {
+                        "type": "clip"
+                    },
+                    "speed": {
+                        "type": "number",
+                        "min": 0
+                    }
+                },
+                "says": "{clip} plays by itself[ after {after}]"
+            },
+            "button": {
+                "family": "flow",
+                "cells": [
+                    "label",
+                    "to"
+                ],
+                "needs": [
+                    "label",
+                    "to"
+                ],
+                "distinct": [
+                    "label"
+                ],
+                "when": "user",
+                "settings": {
+                    "when": {
+                        "choices": [
+                            "end",
+                            "start"
+                        ],
+                        "default": "end"
+                    },
+                    "reply": {
+                        "type": "text"
+                    }
+                },
+                "says": {
+                    "": "Selecting '{label}' goes to step {to}",
+                    "to=next": "Selecting '{label}' goes on",
+                    "to=exit": "Selecting '{label}' ends the task",
+                    "to=restart": "Selecting '{label}' starts over",
+                    "to=retry": "Selecting '{label}' is wrong: the step stays"
+                }
+            },
+            "select": {
+                "family": "flow",
+                "cells": [
+                    "target",
+                    "to"
+                ],
+                "needs": [
+                    "target"
+                ],
+                "when": "user",
+                "says": "Selecting {target} goes on[ to step {to}]"
+            },
+            "answer": {
+                "family": "flow",
+                "cells": [
+                    "label",
+                    "to"
+                ],
+                "needs": [
+                    "label",
+                    "to"
+                ],
+                "distinct": [
+                    "label"
+                ],
+                "when": "user",
+                "says": {
+                    "": "Entering '{label}' goes to step {to}",
+                    "label=*": "Entering anything else goes to step {to}"
+                }
+            },
+            "teleport": {
+                "family": "movement",
+                "cells": [
+                    "target"
+                ],
+                "needs_any": [
+                    [
+                        "target",
+                        "where"
+                    ]
+                ],
+                "when": "start",
+                "settings": {
+                    "when": {
+                        "choices": [
+                            "start",
+                            "end"
+                        ],
+                        "default": "start"
+                    },
+                    "ring": {
+                        "type": "span"
+                    },
+                    "where": {
+                        "type": "object"
+                    }
+                },
+                "says": {
+                    "": "The user is brought to {where}[, its ring shown until {ring}]",
+                    "where=": "The user is brought to face {target}[, the ring there shown until {ring}]"
+                },
+                "places": "stand"
+            },
+            "pip": {
+                "family": "screen",
+                "cells": [
+                    "target",
+                    "label"
+                ],
+                "needs": [
+                    "target"
+                ],
+                "when": "start",
+                "settings": {
+                    "until": {
+                        "type": "span"
+                    },
+                    "where": {
+                        "type": "object"
+                    }
+                },
+                "says": "A picture shows {target}[, captioned '{label}'][, until {until}]",
+                "places": "view"
+            },
+            "checklist": {
+                "family": "screen",
+                "cells": [
+                    "label"
+                ],
+                "when": "start",
+                "settings": {
+                    "until": {
+                        "type": "span"
+                    }
+                },
+                "says": "A checklist is shown[: {label}][, until {until}]"
+            },
+            "check": {
+                "family": "screen",
+                "cells": [
+                    "label"
+                ],
+                "needs": [
+                    "label"
+                ],
+                "when": "end",
+                "says": "'{label}' is ticked on the checklist"
+            },
+            "note": {
+                "family": "note",
+                "cells": [],
+                "when": "none",
+                "says": ""
+            }
+        },
+        "cell_marks": [
+            "Target",
+            "Targets",
+            "With",
+            "Members",
+            "Label",
+            "To",
+            "Settings"
+        ]
+    },
+    "match": "name",
+    "options": {
+        "behaviors": {
+            "kind": "choice",
+            "section": "Sheet",
+            "label": "Behaviors",
+            "tooltip": "Where each row's behaviors come from.",
+            "default": "description",
+            "choices": {
+                "description": {
+                    "label": "From the description",
+                    "tooltip": "Phrases in the row's text that a behavior template detects (\"fades in\").",
+                    "set": {}
+                },
+                "column": {
+                    "label": "From the Behaviors column",
+                    "tooltip": "Names or phrases listed in the Behaviors column, one row at a time.",
+                    "set": {
+                        "columns": {
+                            "behavior_source": "column"
+                        }
+                    }
+                },
+                "column_else_description": {
+                    "label": "Column, else description",
+                    "tooltip": "The Behaviors column where a row fills it, else the row's text.",
+                    "set": {
+                        "columns": {
+                            "behavior_source": "column_else_description"
+                        }
+                    }
+                }
+            }
+        },
+        "match": {
+            "kind": "choice",
+            "section": "Shots",
+            "label": "Match Shots",
+            "tooltip": "How a step finds its shot in the scene. A build records the pairing on the shot, so later doc edits never shift it.",
+            "default": "name",
+            "choices": {
+                "name": {
+                    "label": "By name",
+                    "tooltip": "The shot named after the step (or already bound to it).",
+                    "set": {}
+                },
+                "name_then_order": {
+                    "label": "By name, then order",
+                    "tooltip": "Then the remaining steps and shots in timeline order -- for a scene whose shots were named before the doc.",
+                    "set": {
+                        "match": "name_then_order"
+                    }
+                }
+            }
+        },
+        "shots": {
+            "kind": "choice",
+            "section": "Shots",
+            "label": "Shots",
+            "tooltip": "Which steps get a shot. A shot is its step's, named by the step's ID, and holds its narration and the takes its rows play.",
+            "default": "every",
+            "choices": {
+                "every": {
+                    "label": "Every step",
+                    "tooltip": "Each step gets a shot, in sheet order: the timeline is the whole task, and a step that only speaks holds its narration.",
+                    "set": {
+                        "columns": {
+                            "shots": "every"
+                        }
+                    }
+                },
+                "clip": {
+                    "label": "Steps that play a take",
+                    "tooltip": "Only a step one of whose rows names a take in its Clip cell gets a shot; a step that moves nothing gets none, and its narration plays where the task runs. Right-click a step to mark it either way.",
+                    "set": {
+                        "columns": {
+                            "shots": "clip"
+                        }
+                    }
+                }
+            }
+        },
+        "audio": {
+            "kind": "choice",
+            "section": "Sheet",
+            "label": "Audio",
+            "tooltip": "Whether each step's voice text names an audio clip to key.",
+            "default": "text",
+            "choices": {
+                "text": {
+                    "label": "Voice text only",
+                    "tooltip": "The voice column is narration text; no clip is keyed.",
+                    "set": {}
+                },
+                "derive": {
+                    "label": "Derive clip names",
+                    "tooltip": "Each step keys a clip named from its step ID and the first 3 words of its voice text.",
+                    "set": {
+                        "audio_resolve": {
+                            "method": "derive",
+                            "words": 3
+                        },
+                        "default_behaviors": {
+                            "audio": [
+                                "set_clip"
+                            ]
+                        }
+                    }
+                },
+                "narrate": {
+                    "label": "Recordings, else narration",
+                    "tooltip": "Each step keys the recording its Audio Files cell names (or one named by its step ID) in recordings/, else the narration narration.render made for its voice text in narration/ (both beside the project's settings).",
+                    "set": {
+                        "audio_resolve": [
+                            {
+                                "method": "cell",
+                                "directory": "recordings"
+                            },
+                            {
+                                "method": "prefix",
+                                "directory": "recordings"
+                            },
+                            {
+                                "method": "narrate",
+                                "directory": "narration",
+                                "pronounce": "pronounce.json"
+                            }
+                        ],
+                        "default_behaviors": {
+                            "audio": [
+                                "set_clip"
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "color_by": {
+            "kind": "choice",
+            "section": "Sheet",
+            "label": "Row Colors",
+            "tooltip": "Color the step rows automatically. A color you pick for a row (right-click a step) shows over it.",
+            "field": "color_by",
+            "default": "none",
+            "choices": {
+                "none": {
+                    "label": "Off",
+                    "tooltip": "Only the colors you pick."
+                },
+                "section": {
+                    "label": "By section",
+                    "tooltip": "Each section its own color, in sheet order."
+                }
+            }
+        }
+    }
+}

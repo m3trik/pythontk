@@ -49,6 +49,24 @@ jobs:
           # cad extra, so its bound lives in pyproject.toml alone.
           pip install -e ".[cad]"
 
+      - name: Read the pins of the tools the job installs
+        # The cache below holds the whole tools folder (the glTF Validator, the
+        # narration engine and its voice), so its key is read from their pins,
+        # never typed: a bumped pin is a new key, and a fresh install.
+        id: tool-pins
+        shell: bash
+        run: |
+          python -c "from pythontk import GltfValidator, SherpaKokoro; print('pins=' + '-'.join([GltfValidator.TOOL_NAME, GltfValidator.VERSION, SherpaKokoro.TOOL_NAME, SherpaKokoro.model]))" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the tools folder (the narration engine and voice, ~170 MB, once per pin)
+        # Restored before anything installs into the folder, so a restore never
+        # overwrites a fresh install's catalog. The narrator's real-engine test
+        # runs under CI, and fails there without the engine (never a skip).
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/pythontk-tools
+          key: pythontk-tools-${{ runner.os }}-${{ steps.tool-pins.outputs.pins }}
+
       - name: Install the Khronos glTF Validator (a tools folder of the job's own)
         # The open-format rule's proof (CODE_STANDARD section 15): the record
         # and GLB tests run the reference validator. Installed into the
@@ -60,6 +78,11 @@ jobs:
         run: |
           echo "PYTHONTK_TOOLS_DIR=${RUNNER_TEMP}/pythontk-tools" >> "$GITHUB_ENV"
           PYTHONTK_TOOLS_DIR="${RUNNER_TEMP}/pythontk-tools" python -c "import sys; from pythontk import GltfValidator; exe = GltfValidator.resolve(auto_install=True, prompt=False); print(exe); sys.exit(0 if exe else 'the glTF Validator could not be installed')"
+
+      - name: Install the narration engine and voice (the job's tools folder)
+        shell: bash
+        run: |
+          python -c "from pythontk import SherpaKokoro; SherpaKokoro(prompt=False).prepare()"
 
       - name: Run tests with coverage (Windows)
         if: runner.os == 'Windows'

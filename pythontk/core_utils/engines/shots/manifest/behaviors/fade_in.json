@@ -3,6 +3,8 @@
   "kind": [
     "scene"
   ],
+  "family": "fade",
+  "variant": "in",
   "effect": "fade_in",
   "place": "start",
   "verify": {

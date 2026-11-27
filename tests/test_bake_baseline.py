@@ -270,6 +270,54 @@ class TestNeighbours(unittest.TestCase):
         self.assertEqual(BB.neighbours({"A": [self.OLD]}, {"A": self.OLD}), {})
 
 
+class TestCarriers(unittest.TestCase):
+    """The Isolate set's carrier rule: a part carries another when every
+    transform moving it moves the other too -- wherever the other goes, the
+    carrier is around it, so it renders in the other's pass."""
+
+    def test_a_door_carries_the_small_door_it_moves(self):
+        movers = {
+            "gray": {"|GRAY_DOOR"},
+            "locker": {"|GRAY_DOOR", "|GRAY_DOOR|LCKR_DOOR_LOC"},
+            "red": {"|RED_DOOR"},
+            "static": set(),
+        }
+        self.assertEqual(BB.carriers(movers), {"locker": ["gray"]})
+
+    def test_parts_moved_by_the_same_transforms_carry_each_other(self):
+        """A door and a panel under one hinge move as one: each is in the other's pass."""
+        movers = {"door": {"|HINGE"}, "panel": {"|HINGE"}}
+        self.assertEqual(BB.carriers(movers), {"door": ["panel"], "panel": ["door"]})
+
+    def test_a_part_nothing_moves_carries_nothing(self):
+        self.assertEqual(BB.carriers({"lid": set(), "box": {"|BOX"}}), {})
+
+    def test_groups_carry_by_what_moves_all_their_parts(self):
+        """An Isolate member is a group of meshes: it moves by what moves every
+        one of them, and each group gets its carriers' meshes, aligned."""
+        moved = {
+            "gray_a": {"|GRAY_DOOR"},
+            "gray_b": {"|GRAY_DOOR", "|GRAY_DOOR|HANDLE"},  # the group moves with the door
+            "locker": {"|GRAY_DOOR", "|GRAY_DOOR|LCKR_DOOR_LOC"},
+            "red": {"|RED_DOOR"},
+        }
+        groups = [["gray_a", "gray_b"], ["locker"], ["red"]]
+        self.assertEqual(
+            BB.group_carriers(groups, moved.__getitem__),
+            [[], ["gray_a", "gray_b"], []],
+        )
+
+    def test_a_groups_carriers_come_in_group_order(self):
+        """Group 11 rides groups 2 and 10: their parts come in group order, 2
+        before 10 (not as their indices spell)."""
+        groups = [[f"g{i}"] for i in range(12)]
+        moved = {f"g{i}": set() for i in range(12)}
+        moved.update(g2={"|D"}, g10={"|D"}, g11={"|D", "|D|E"})
+        carried = BB.group_carriers(groups, moved.__getitem__)
+        self.assertEqual(carried[11], ["g2", "g10"])
+        self.assertEqual((carried[2], carried[10]), (["g10"], ["g2"]))
+
+
 class TestAssess(unittest.TestCase):
     def test_an_unchanged_scene_is_not_stale(self):
         report = BB.assess(first_bake(), room(), lighting=lights())
@@ -311,6 +359,56 @@ class TestAssess(unittest.TestCase):
         )
         self.assertEqual(report.stale, {"|grp|A": (R.MOVED,)})
         self.assertEqual(report.neighbours, {})
+
+    def test_an_isolated_cause_reaches_the_isolated_parts_it_carries(self):
+        """A locker door rides its gray door (production, 2026-11-24): the
+        gray door is in the locker door's pass, so moving the gray door
+        stales the locker door's map; the locker door is not in the gray
+        door's, so moving it stales nothing else. Its reach is the carriers',
+        whatever the distance."""
+        def scene(gray=(0.0, 0.0, 0.0), locker=(12.0, 0.0, 0.0)):
+            carried = part(state(locker), role="isolated", so=(0.5, 0.5, 0.0, 0.5))
+            return room(
+                A=part(state(gray), role="isolated"),
+                C=dict(carried, carriers=["|grp|A"]),
+            )
+
+        record = first_bake(scene())
+        moved = BB.assess(record, scene(gray=(0.0, 0.3, 0.0)))
+        self.assertEqual(moved.stale, {"|grp|A": (R.MOVED,)})
+        self.assertEqual(moved.neighbours, {"|grp|C": ("|grp|A",)})
+        opened = BB.assess(record, scene(locker=(12.0, 0.3, 0.0)))
+        self.assertEqual(opened.stale, {"|grp|C": (R.MOVED,)})
+        self.assertEqual(opened.neighbours, {})
+
+    @staticmethod
+    def _locker(carriers):
+        carried = part(state((12.0, 0.0, 0.0)), role="isolated", so=(0.5, 0.5, 0.0, 0.5))
+        return dict(carried, carriers=carriers)
+
+    def test_a_deleted_carrier_stales_what_it_carried(self):
+        """Deleting the gray door a locker door was baked inside: the scene
+        no longer lists it as a carrier, but the locker door's map still
+        holds it -- its bake recorded the carriers it rendered with. After
+        a commit that forgets the gray door, the reason is kept."""
+        record = first_bake(room(A=part(state(), role="isolated"), C=self._locker(["|grp|A"])))
+        gone = room(A=None, C=self._locker([]))
+        report = BB.assess(record, gone)
+        self.assertEqual(report.neighbours, {"|grp|C": ("|grp|A",)})
+        self.assertIn("|grp|C", report.targets)
+        later = BB.advance(record, gone, baked={"|grp|B": dict(INFO)})
+        self.assertIn("|grp|C", BB.assess(later, gone).targets)
+
+    def test_a_part_that_carries_anew_stales_what_it_carries(self):
+        """A part hung on the locker door's hinge after its bake, itself
+        unchanged: the locker door's map never saw it around it."""
+        record = first_bake(room(A=part(state(), role="isolated"), C=self._locker([])))
+        report = BB.assess(record, room(A=part(state(), role="isolated"), C=self._locker(["|grp|A"])))
+        self.assertEqual(report.neighbours, {"|grp|C": ("|grp|A",)})
+
+    def test_a_carrier_unchanged_since_the_bake_stales_nothing(self):
+        scene = room(A=part(state(), role="isolated"), C=self._locker(["|grp|A"]))
+        self.assertEqual(BB.assess(first_bake(scene), scene).targets, ())
 
     def test_an_object_placed_after_a_neighbours_bake_stales_it_until_it_rebakes(self):
         """N joins the Exclude set beside B while a later bake re-bakes only
@@ -542,7 +640,7 @@ class TestKeepBaked(unittest.TestCase):
         kept = BB.decode(BB.keep_baked(self.after, self.before, ["|grp|A", "|grp|C", "|grp|D", "|grp|Z"]))
         after, before = BB.decode(self.after), self.before
         for obj in ("|grp|A", "|grp|C"):
-            for key in ("baked_at", "lighting", "stale", "untracked"):
+            for key in BB.KEPT_ON_REPACK:
                 self.assertEqual(kept["objects"][obj][key], before["objects"][obj][key], (obj, key))
         self.assertEqual(kept["objects"]["|grp|A"]["cell"], [0.25, 0.25, 0.5, 0.5])
         self.assertEqual(kept["objects"]["|grp|C"]["stale"], [R.NEIGHBOUR.value])

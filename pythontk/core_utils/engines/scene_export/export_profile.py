@@ -25,9 +25,18 @@ import dataclasses
 import os
 import re
 from dataclasses import dataclass
-from typing import Any, ClassVar, Dict, Iterable, List, Mapping, Optional, Tuple
+from typing import (
+    Any,
+    ClassVar,
+    Dict,
+    FrozenSet,
+    Iterable,
+    List,
+    Mapping,
+    Optional,
+    Tuple,
+)
 
-from pythontk.core_utils.deprecation import Deprecation
 from pythontk.file_utils.lod_chain import LodChain
 from pythontk.str_utils._str_utils import StrUtils
 
@@ -219,15 +228,8 @@ class ExportProfile:
             )
 
             policy = HandoffRecord.RENDERING_POLICY["lightmappedMaterials"]
-            # The row persisted its label (restore_by text); a hand-edited
-            # template may carry the token.
-            token = str(
-                cls._BAKED_REFLECTIONS_OPTIONS.get(str(reflections), reflections)
-            )
-            if (
-                ExportRun._BAKED_REFLECTION_LEVELS.get(token.strip().lower())
-                != policy["envMapIntensity"]
-            ):
+            level = cls._RETIRED_REFLECTION_LEVELS.get(str(reflections).strip().lower())
+            if level != policy["envMapIntensity"]:
                 notes.append(
                     (
                         "info",
@@ -602,6 +604,8 @@ class ExportProfile:
         "exclude_hdr",
         # Phase 2.5 -- Name hygiene (before checks/sidecar record the names)
         "conform_shape_names",
+        # Orig shapes behind their meshes, before anything reads the meshes.
+        "repair_orig_shapes",
         # Reads the LOD groups of what the filters left, on every export
         # (armed by ExportRun.from_tasks with the LODs row's mode), after the
         # name hygiene: its plan holds paths a rename would leave stale. Most
@@ -728,7 +732,9 @@ class ExportProfile:
         + OBJECT_SET_TASKS
         + ("smart_bake",),
         # --- Materials & Paths -------------------------------------------
-        "check_default_materials": OBJECT_SET_TASKS + ("reassign_duplicate_materials",),
+        # repair_orig_shapes clears the orig-shape half of what it reads.
+        "check_default_materials": OBJECT_SET_TASKS
+        + ("repair_orig_shapes", "reassign_duplicate_materials"),
         "check_duplicate_materials": OBJECT_SET_TASKS
         + ("reassign_duplicate_materials",),
         "check_material_compatibility": OBJECT_SET_TASKS + TEXTURE_PATH_TASKS,
@@ -880,6 +886,32 @@ class ExportProfile:
         "Keyframe Extent": "keys",
         "Scene Animation Range": "scene",
     }
+    #: Check Hierarchy vs Existing FBX -- how much of a change since the last
+    #: export the check lets through (``HierarchyBaseline.LEVELS``). Strict is
+    #: position 1, where a preset keeps the old checkbox's ``true``.
+    HIERARCHY_CHECK_OPTIONS: Dict[str, Optional[str]] = {
+        "OFF": None,
+        "Strict": "strict",
+        "New Nodes Pass": "additions",
+    }
+    #: Rows whose widget changed type, by objectName: ``(old signal, new
+    #: signal, {old value: new value})``. A panel's saved state keys each value
+    #: ``<objectName>/<signal>`` (uitk's ``StateManager``), so the new widget
+    #: would find nothing under its own signal and open at its default;
+    #: ``SceneExporterBase.note_retired_panel_state`` moves the value once. A
+    #: preset, keyed by objectName alone, loads as it stands. Check Hierarchy vs
+    #: Existing FBX was a checkbox until 2026-11-25: its ``True`` is Strict's
+    #: position, its ``False`` OFF's.
+    RETYPED_ROWS: Dict[str, Tuple[str, str, Dict[Any, Any]]] = {
+        "check_hierarchy_vs_existing_fbx": (
+            "toggled",
+            "currentIndexChanged",
+            {
+                False: list(HIERARCHY_CHECK_OPTIONS.values()).index(None),
+                True: list(HIERARCHY_CHECK_OPTIONS.values()).index("strict"),
+            },
+        ),
+    }
     #: Optimize Keys -- the pass switch and its aggressiveness in ONE combo.
     #: The SEMANTICS live in each DCC's ``AnimUtils.OPTIMIZE_LEVELS`` (one
     #: table, shared with SmartBake); these are the labels for them.
@@ -927,27 +959,19 @@ class ExportProfile:
         "Within 1e-4 (0.1 mm)": 1e-4,
         "Within 1e-3 (1 mm)": 1e-3,
     }
-    #: The retired Baked Reflections row's table: label -> TOKEN (the levels
-    #: are :attr:`ExportRun._BAKED_REFLECTION_LEVELS`). Read privately by the
-    #: rule that still names an older preset's choice (:meth:`retired_row_notes`).
-    _BAKED_REFLECTIONS_OPTIONS: Dict[str, str] = {
-        "Off (Pure Bake)": "off",
-        "Quarter": "quarter",
-        "Half": "half",
-        "Full": "full",
+    #: The Baked Reflections row, retired 2026-10-19: each value a saved preset
+    #: may still hold for it -- the label the row persisted (``restore_by``
+    #: text) or the token a hand-edited template carries, lower-cased -- and the
+    #: level it published. Read by :meth:`retired_row_notes` alone, to say what
+    #: an older preset's choice becomes: the deliverable reflects at the
+    #: lighting recipe's own level (its own reflection probe whole).
+    _RETIRED_REFLECTION_LEVELS: Dict[str, float] = {
+        "off (pure bake)": 0.0,
+        "off": 0.0,
+        "quarter": 0.25,
+        "half": 0.5,
+        "full": 1.0,
     }
-    #: Retired 2026-10-19 (removed in 0.17.0; reading it warns): kept for a DCC
-    #: package that still builds the row (an older mayatk / blendertk reads it
-    #: at import). No panel offers the row any more: a deliverable reflects at
-    #: the lighting recipe's own level, and one that carries its own reflection
-    #: probe reflects that whole.
-    BAKED_REFLECTIONS_OPTIONS = Deprecation.class_attribute(
-        _BAKED_REFLECTIONS_OPTIONS,
-        "nothing -- no panel offers the row; the deliverable publishes the "
-        "lighting recipe's own level",
-        remove_in="0.17.0",
-        since="2026-10-19",
-    )
 
     @classmethod
     def optimize_textures_options(cls) -> Dict[str, Any]:
@@ -1010,30 +1034,6 @@ class ExportProfile:
     #: so a setting there is the same setting here and the two build the same
     #: texture pass from it.
     GLB_ROWS: Dict[str, str] = {**GLB_TEXTURE_ROWS, **GLB_LIGHTING_ROWS}
-
-    @classmethod
-    @Deprecation.symbol(
-        "nothing -- no panel offers the row; the deliverable publishes the "
-        "lighting recipe's own level",
-        remove_in="0.17.0",
-        since="2026-10-19",
-    )
-    def baked_reflections_default(cls) -> str:
-        """The Baked Reflections token a row starts at: the one whose level the
-        lighting recipe itself declares (``HandoffRecord.RENDERING_POLICY``).
-        Retired with the row (:attr:`BAKED_REFLECTIONS_OPTIONS`)."""
-        from pythontk.core_utils.engines.scene_export.handoff_record import (
-            HandoffRecord,
-        )
-
-        level = HandoffRecord.RENDERING_POLICY["lightmappedMaterials"][
-            "envMapIntensity"
-        ]
-        return next(
-            token
-            for token, value in ExportRun._BAKED_REFLECTION_LEVELS.items()
-            if value == level
-        )
 
     @classmethod
     def glb_options(cls) -> Dict[str, Dict[str, Any]]:
@@ -1179,6 +1179,12 @@ class ExportRun:
     #: removed by ``FbxMedia.drop_apparatus``). FBX only: a USD layer is
     #: written as the scene samples.
     drop_rig_apparatus: bool = False
+    #: The Exclude Audio row: no deliverable carries the scene's audio -- its
+    #: ``audio`` record (:attr:`excluded_records`), so none of the sounds the
+    #: FBX's dependency pass embeds from the record's cues, nor any audio a
+    #: host's writer adds of its own (each host turns that off). The scene
+    #: keeps its tracks and its record.
+    exclude_audio: bool = False
     #: The LODs row (:attr:`ExportProfile.LOD_OPTIONS`): ``"authored"`` ships
     #: each LOD group as one, ``"lod0"`` its most detailed level alone,
     #: ``"generate"`` authored groups as authored and a generated group for
@@ -1199,37 +1205,12 @@ class ExportRun:
     #: GLB Key Tolerance: the deviation bound for the deliverable's key reduction
     #: (:attr:`ExportProfile.GLB_KEY_REDUCTION_OPTIONS`); None is off.
     glb_key_tolerance: Optional[float] = None
-    #: Retired 2026-10-19 (removed in 0.17.0; setting it warns): the retired
-    #: Baked Reflections row's level (:attr:`BAKED_REFLECTION_LEVELS`) -- the
-    #: environment's specular on a lightmapped material, published through
-    #: :attr:`rendering` while it is still given. None, what every panel run
-    #: now carries, is the lighting recipe's own level.
-    baked_reflections: Optional[float] = None
 
     #: The ``output_format`` tokens a run accepts.
     OUTPUT_FORMATS: ClassVar[Tuple[str, ...]] = ("fbx", "glb", "fbx_glb", "usd")
     #: The :attr:`lods` modes a run accepts: the convention's own
     #: (:attr:`LodChain.MODES`), which :attr:`ExportProfile.LOD_OPTIONS` labels.
     LOD_MODES: ClassVar[Tuple[str, ...]] = LodChain.MODES
-    #: The retired Baked Reflections row's token -> the level it published
-    #: (``lightmappedMaterials.envMapIntensity``); its labels are
-    #: :attr:`ExportProfile._BAKED_REFLECTIONS_OPTIONS`. Read privately by the
-    #: rules that still serve the retired field (:meth:`baked_reflection_level`).
-    _BAKED_REFLECTION_LEVELS: ClassVar[Dict[str, float]] = {
-        "off": 0.0,
-        "quarter": 0.25,
-        "half": 0.5,
-        "full": 1.0,
-    }
-    #: Retired 2026-10-19 (removed in 0.17.0; reading it warns), with the row.
-    #: Unannotated on purpose: ``@dataclass`` reads every annotated class
-    #: attribute while it builds the class, which would warn at import.
-    BAKED_REFLECTION_LEVELS = Deprecation.class_attribute(
-        _BAKED_REFLECTION_LEVELS,
-        "nothing -- the deliverable publishes the lighting recipe's own level",
-        remove_in="0.17.0",
-        since="2026-10-19",
-    )
     #: Texture File Type token for KTX2 PLUS a core-readable PNG/JPEG twin of
     #: every map. :meth:`from_tasks` parses it into the ``ktx2`` container and
     #: the :attr:`ktx2_fallback` flag, so no other consumer ever compares it.
@@ -1262,6 +1243,7 @@ class ExportRun:
         "animation_write_back",
         "verify_deliverables",
         "drop_rig_apparatus",
+        "exclude_audio",
         "lods",
         "lod_write_back",
         "texture_max_size",
@@ -1270,18 +1252,6 @@ class ExportRun:
         "glb_key_tolerance",
         "baked_reflections",
     )
-
-    def __post_init__(self) -> None:
-        if self.baked_reflections is not None:
-            Deprecation.warn(
-                "ExportRun(baked_reflections=...)",
-                "nothing: the deliverable publishes the lighting recipe's own level",
-                remove_in="0.17.0",
-                kind="parameter",
-                since="2026-10-19",
-                reason="Until then the level is still published.",
-                stacklevel=3,
-            )
 
     @staticmethod
     def _dial(value: Any, cast: type) -> Any:
@@ -1308,48 +1278,29 @@ class ExportRun:
         return self.output_format == "usd"
 
     @property
+    def excluded_records(self) -> FrozenSet[str]:
+        """The scene records this run's deliverables carry none of, by key:
+        what each host's publish hands ``ExportContext.excluded`` -- the
+        ``audio`` record under :attr:`exclude_audio`."""
+        if not self.exclude_audio:
+            return frozenset()
+        from pythontk.core_utils.engines.scene_export.scene_records import (
+            SceneRecords,
+        )
+
+        return frozenset({SceneRecords.AUDIO.key})
+
+    @property
     def rendering(self) -> Dict[str, Dict[str, Any]]:
         """This run's choices over the lighting recipe its deliverables publish.
 
         ``{section: {field: value}}`` for ``HandoffRecord.rendering_policy`` --
         what every deliverable's handoff publishes: an ``ExportContext``
-        stamps it on the FBX's, and the GLB's is read off that FBX. Empty -- the policy's own values
-        -- for every panel run since the one lighting row retired; only the
-        deprecated :attr:`baked_reflections` still fills it.
+        stamps it on the FBX's, and the GLB's is read off that FBX. Empty --
+        the policy's own values -- since the one lighting row (Baked
+        Reflections) retired.
         """
-        if self.baked_reflections is None:
-            return {}
-        return {"lightmappedMaterials": {"envMapIntensity": self.baked_reflections}}
-
-    @classmethod
-    @Deprecation.symbol(
-        "nothing -- the deliverable publishes the lighting recipe's own level",
-        remove_in="0.17.0",
-        since="2026-10-19",
-    )
-    def baked_reflection_level(cls, value: Any) -> Optional[float]:
-        """A Baked Reflections row value as its level; ``None`` when unset.
-        Retired with the row (:attr:`baked_reflections`).
-
-        Takes the row's token (:attr:`_BAKED_REFLECTION_LEVELS`) or a level
-        itself, the number a headless caller may pass, clamped at 0.
-
-        Raises:
-            ValueError: neither a known token nor a number.
-        """
-        if value is None or value == "":
-            return None
-        levels = cls._BAKED_REFLECTION_LEVELS
-        token = str(value).strip().lower()
-        if token in levels:
-            return levels[token]
-        try:
-            return max(0.0, float(value))
-        except (TypeError, ValueError):
-            raise ValueError(
-                f"Unknown baked_reflections {value!r}; expected one of "
-                f"{', '.join(levels)} or a level."
-            ) from None
+        return {}
 
     def replace(self, **changes: Any) -> "ExportRun":
         """A copy with *changes* applied (``dataclasses.replace``)."""
@@ -1472,12 +1423,12 @@ class ExportRun:
         without a GLB to carry it is inert), the two write-back flags (a
         preset saved before the rename carries
         ``optimize_textures_write_back``), the verification row, the rig-helper
-        row (inert on a USD run, with a note), the size
+        row (inert on a USD run, with a note), the audio row, the size
         dial and the three GLB optimisation dials (secondary map size, UASTC
         RDO, key reduction -- each None when off; the key reduction rides
-        Optimize Keys and is inert without it). A retired Baked Reflections
-        row, which an older panel still sends, is dropped with a note: the
-        deliverable publishes the recipe's own level. A ``version`` key (the
+        Optimize Keys and is inert without it). The retired Baked Reflections
+        row, which a saved preset or template may still carry, is dropped with
+        a note: the deliverable publishes the recipe's own level. A ``version`` key (the
         Version pattern, removed in 0.19.0) is an ``"error"`` note naming the
         counter that replaces it. A GLB-only format drops
         :attr:`FBX_KEY_HYGIENE` with a note: the FBX is then a temp
@@ -1684,6 +1635,7 @@ class ExportRun:
             optimize_textures=bool(optimize),
             verify_deliverables=bool(tasks.pop("verify_deliverables", False)),
             drop_rig_apparatus=drop_rig_apparatus,
+            exclude_audio=bool(tasks.pop("exclude_audio", False)),
             lods=lods,
             lod_write_back=bool(tasks.pop("lod_write_back", False)),
         )

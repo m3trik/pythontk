@@ -3,6 +3,8 @@
   "kind": [
     "scene"
   ],
+  "family": "fade",
+  "variant": "out",
   "effect": "fade_out",
   "place": "end",
   "verify": {

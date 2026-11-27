@@ -609,7 +609,7 @@ class MathTest(BaseTestCase):
         self.assertAlmostEqual(result[2], 0.0, places=5)
 
     def test_best_rotate_order_keeps_the_turn_on_one_channel(self):
-        """SOCKET_WRENCH (SOL_REPLACE_ASSEMBLY): lifted 98 on X, then turned
+        """SOCKET_WRENCH (a production scene): lifted 98 on X, then turned
         60 about its own Y. Re-solved per order (the DCC's job), the turn is
         one channel in yzx and three in xyz."""
         solutions = {

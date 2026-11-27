@@ -1291,6 +1291,20 @@ def _write_glb_file(path, gltf, bin_chunk=b""):
     return path
 
 
+def _envelope(sections, source, asset):
+    """An older host's scene-sidecar envelope, as it shipped one: its
+    sections and the GLB handoff its source makes. No producer builds one
+    any more; a file handed one still embeds its handoff (``fbx_to_glb``'s
+    *sidecar*)."""
+    return {
+        "version": 2,
+        "source": source,
+        "asset": asset,
+        "sections": dict(sections or {}),
+        "handoff": HandoffRecord.block("glb", None, source),
+    }
+
+
 def _shot_record(takes, fps=30.0):
     """The ``animation`` record (version 3) declaring one shot per entry of
     *takes* -- a clip name, or a ``{"name", ...}`` take, whose range is the
@@ -3803,12 +3817,9 @@ class TestSceneSidecar(unittest.TestCase):
         return path
 
     def _envelope(self, sections):
-        with self.assertWarns(DeprecationWarning):
-            return MeshConvert.build_scene_sidecar(
-                sections,
-                source={"application": "test", "version": "0"},
-                asset="scene.fbx",
-            )
+        return _envelope(
+            sections, source={"application": "test", "version": "0"}, asset="scene.fbx"
+        )
 
     def _assert_embeds(self, glb, envelope):
         """The GLB carries the envelope's handoff and nothing else of it --
@@ -3833,45 +3844,14 @@ class TestSceneSidecar(unittest.TestCase):
         )
         return extras[HandoffRecord.KEY]
 
-    def test_build_scene_sidecar_wraps_the_glb_handoff(self):
-        """What a host that predates the materials record builds: its
-        sections, and the GLB handoff its source and lighting make."""
-        envelope = self._envelope({"emissive": {"m": {"color": [1, 0, 0]}}})
-        self.assertEqual(
-            set(envelope), {"version", "source", "asset", "sections", "handoff"}
-        )
-        self.assertEqual(envelope["version"], 2)
-        with self.assertWarns(DeprecationWarning):
-            self.assertEqual(envelope["version"], MeshConvert.SIDECAR_VERSION)
-        self.assertEqual(envelope["asset"], "scene.fbx")
-        # The file's blocks are not known when it is built: the block states
-        # them whole, for the file it is embedded in to name.
-        self.assertEqual(
-            envelope["handoff"], HandoffRecord.block("glb", None, envelope["source"])
-        )
-
-    def test_the_retired_reader_reads_the_handoff_alone(self):
-        """``read_scene_sidecar`` (retired 2026-10-20) answers with
-        ``extras.handoff``; the envelope a file built before it carries is
-        read by no reader -- such a file is re-exported."""
+    def test_an_embedded_envelope_is_read_by_no_reader(self):
+        """The envelope a file built before ``extras.handoff`` carries is read
+        by no reader -- such a file is re-exported."""
         glb = self._write_glb(materials=[{"name": "m"}])
         with MeshConvert.open_glb(glb) as edit:
             edit.gltf["extras"] = {"scene_sidecar": {"version": 2, "sections": {}}}
             edit.dirty = True
-        with self.assertWarns(DeprecationWarning):
-            self.assertIsNone(MeshConvert.read_scene_sidecar(glb))
         self.assertIsNone(MeshConvert.read_glb_handoff(glb))
-
-        current = self._write_glb("current.glb", materials=[{"name": "m"}])
-        with MeshConvert.open_glb(current) as edit:
-            MeshConvert.embed_glb_handoff(
-                edit, HandoffRecord.block("glb", None, self._envelope({})["source"])
-            )
-        with self.assertWarns(DeprecationWarning):
-            self.assertEqual(
-                MeshConvert.read_scene_sidecar(current),
-                MeshConvert.read_glb_handoff(current),
-            )
 
     def test_an_envelopes_sections_are_read_no_more(self):
         """An older host's envelope, on a file carrying no materials record:
@@ -3946,114 +3926,8 @@ class TestSceneSidecar(unittest.TestCase):
 
 
 class TestFbxHandoff(unittest.TestCase):
-    """The FBX's records in a converted GLB, and the names its handoff went
-    by before ``HandoffRecord`` declared the block for every carrier (what the
-    block says is ``test_handoff_record``'s)."""
-
-    def test_the_retired_handoff_names_still_answer(self):
-        """``RENDERING_POLICY``, ``rendering_policy``, ``HANDOFF_INSTRUCTIONS``,
-        ``HANDOFF_ASSEMBLY``, ``FBX_HANDOFF_VERSION``, ``FBX_HANDOFF_CHANNEL``,
-        ``FBX_HANDOFF_CHANNELS``, ``FBX_HANDOFF_INSTRUCTIONS``,
-        ``build_fbx_handoff``, ``LIGHTING_ASSEMBLY`` and ``RENDERING_CARRIERS``
-        (retired 2026-10-20 for ``HandoffRecord``, removed in 0.18.0) warn, and
-        answer with what ``HandoffRecord`` states now -- the policy carrying
-        no prose for a carrier to lay over it."""
-        from pythontk import SceneRecords
-
-        retired = {
-            "RENDERING_POLICY": HandoffRecord.RENDERING_POLICY,
-            "HANDOFF_INSTRUCTIONS": HandoffRecord.instructions("glb"),
-            "HANDOFF_ASSEMBLY": HandoffRecord.CARRIERS["glb"].own,
-            "FBX_HANDOFF_VERSION": HandoffRecord.VERSION,
-            "FBX_HANDOFF_CHANNEL": HandoffRecord.KEY,
-            "FBX_HANDOFF_INSTRUCTIONS": HandoffRecord.instructions("fbx"),
-            "FBX_HANDOFF_CHANNELS": {
-                spec.key: spec.description
-                for spec in SceneRecords.deliverable()
-                if spec is not SceneRecords.HANDOFF
-            },
-            "RENDERING_CARRIERS": {"glb": {}, "fbx": {}},
-        }
-        for name, now in retired.items():
-            with self.subTest(name=name):
-                with self.assertWarns(DeprecationWarning):
-                    value = getattr(MeshConvert, name)
-                self.assertEqual(value, now)
-        with self.assertWarns(DeprecationWarning):
-            rows = MeshConvert.LIGHTING_ASSEMBLY
-        self.assertEqual(list(rows), HandoffRecord.lighting("glb"))
-
-        chosen = {"lightmappedMaterials": {"envMapIntensity": 0.5}}
-        with self.assertWarns(DeprecationWarning):
-            self.assertEqual(
-                MeshConvert.rendering_policy(chosen, carrier="fbx"),
-                HandoffRecord.rendering_policy(chosen),
-            )
-        with self.assertWarns(DeprecationWarning), self.assertRaises(ValueError):
-            MeshConvert.rendering_policy(carrier="usdz")
-
-        channels = {
-            "lightmaps": "{}",
-            "emissiveGroup_Neon": 0.5,
-            HandoffRecord.KEY: "{}",
-        }
-        with self.assertWarns(DeprecationWarning):
-            block = MeshConvert.build_fbx_handoff(channels, {"application": "maya"})
-        self.assertEqual(
-            block, HandoffRecord.block("fbx", channels, {"application": "maya"})
-        )
-        for empty in ([], [HandoffRecord.KEY], {"emissiveGroup_Neon": 1.0}):
-            with self.subTest(channels=empty), self.assertWarns(DeprecationWarning):
-                self.assertEqual(
-                    MeshConvert.build_fbx_handoff(empty),
-                    {},
-                    "a carrier holding no record has nothing to describe",
-                )
-
-    def test_the_retired_record_names_still_answer(self):
-        """Every constant that restated a record's declaration (retired
-        2026-10-20, removed in 0.18.0) warns, and serves what ``SceneRecords``
-        declares -- the block a record rides a GLB as taking the record's own
-        key; the take list and the folder hints, which no record carries any
-        more, their old values."""
-        records = SceneRecords
-        retired = {
-            "LIGHTMAP_METADATA_KEY": records.LIGHTMAPS.key,
-            "LIGHTMAP_METADATA_VERSION": records.LIGHTMAPS.version,
-            "LIGHTMAP_WEB_KEY": records.LIGHTMAPS.key,
-            "SHOT_METADATA_KEY": records.SHOTS.key,
-            "ANIMATION_WEB_KEY": records.SHOTS.key,
-            "SHADOW_METADATA_KEY": records.SHADOWS.key,
-            "SHADOW_METADATA_VERSION": records.SHADOWS.version,
-            "SHADOW_WEB_KEY": records.SHADOWS.key,
-            "ARTICULATION_KEY": records.ARTICULATION.key,
-            "ARTICULATION_VERSION": records.ARTICULATION.version,
-            "ARTICULATION_WEB_KEY": records.ARTICULATION.key,
-            "VISIBILITY_TRACKS_KEY": records.VISIBILITY.key,
-            "VISIBILITY_TRACKS_VERSION": records.VISIBILITY.version,
-            "FBX_TAKES_KEY": "fbx_takes",
-            "LOCATE_HINT_KEY": "dir",
-            "LOCATE_HINT_KEYS": ("dir", "dirs"),
-        }
-        for name, now in retired.items():
-            with self.subTest(name=name):
-                with self.assertWarns(DeprecationWarning):
-                    value = getattr(MeshConvert, name)
-                self.assertEqual(value, now)
-        # The ones that read a record's GLB block outlived the block machinery
-        # (2026-11-08), held until 0.22.0 (their window closes 2026-11-23): a
-        # GLB carries each record as it stands, its version the record's and no
-        # field bound by node index (``TestRetiredUntil022``).
-        import pythontk
-
-        for name in (
-            "ANIMATION_WEB_VERSION",
-            "SHADOW_WEB_NODE_FIELDS",
-            "ARTICULATION_WEB_NODE_FIELDS",
-        ):
-            with self.subTest(name=name):
-                self.assertIn(f"MeshConvert.{name}", pythontk.HELD_UNTIL_0_22)
-                self.assertNotIn(f"MeshConvert.{name}", pythontk.MOVED_NAMES)
+    """The FBX's records in a converted GLB (what the handoff block says is
+    ``test_handoff_record``'s)."""
 
     def test_every_record_the_fbx_carried_leaves_a_converted_glb(self):
         """A GLB must not carry the FBX's account of itself.
@@ -4194,51 +4068,6 @@ class TestFbxHandoff(unittest.TestCase):
         self.assertEqual(gltf["materials"][1]["extras"], {"kept": 1})
         self.assertEqual(gltf["animations"][0]["extras"], {"theirs": True})
         self.assertEqual(MeshConvert.strip_fbx_records(gltf), 0, "idempotent")
-
-    def test_the_retired_strip_drops_the_handoff_alone(self):
-        """``strip_fbx_handoff`` (retired 2026-10-20): the one record
-        ``strip_fbx_records`` now drops with every other the FBX carried."""
-        gltf = {
-            "nodes": [
-                {
-                    "name": "box",
-                    "extras": {
-                        "fromFBX": {
-                            "userProperties": {
-                                "lightmapInfo": {"type": "eFbxString", "value": "{}"},
-                            }
-                        }
-                    },
-                },
-                {
-                    "name": "data_export",
-                    "extras": {
-                        "fromFBX": {
-                            "userProperties": {
-                                "lightmaps": {
-                                    "type": "eFbxString",
-                                    "value": "{}",
-                                },
-                                HandoffRecord.KEY: {
-                                    "type": "eFbxString",
-                                    "value": "{}",
-                                },
-                            }
-                        }
-                    },
-                },
-            ]
-        }
-        with self.assertWarns(DeprecationWarning):
-            self.assertEqual(MeshConvert.strip_fbx_handoff(gltf), 1)
-        carrier = gltf["nodes"][1]["extras"]["fromFBX"]["userProperties"]
-        self.assertNotIn(HandoffRecord.KEY, carrier)
-        self.assertIn("lightmaps", carrier)
-        self.assertIn(
-            "lightmapInfo", gltf["nodes"][0]["extras"]["fromFBX"]["userProperties"]
-        )
-        with self.assertWarns(DeprecationWarning):
-            self.assertEqual(MeshConvert.strip_fbx_handoff(gltf), 0, "idempotent")
 
 
 class TestCurrentRecord(unittest.TestCase):
@@ -5477,14 +5306,12 @@ class TestGlbLightmaps(unittest.TestCase):
         with MeshConvert.open_glb(glb) as edit:
             return SceneRecords.glb_block(edit.gltf, SceneRecords.LIGHTMAPS)
 
-    def _native_export(self, web_holder="scene"):
+    def _native_export(self):
         """A GLB shaped like blendertk's native glTF export of one baked floor.
 
         Every copy is the scene's: the ``floor`` marker names the EXR with the
-        authoring folder as ``dir``, the carrier holds the record. *web_holder*
-        is where the record rides as well: ``"scene"`` (a native export's
-        first scene extras, as a JSON string), ``"root"`` (as ``finish_glb``
-        leaves it) or ``None``.
+        authoring folder as ``dir``, the carrier holds the record, and the
+        record rides the first scene's extras as well, as a JSON string.
         """
         key = SceneRecords.LIGHTMAPS.key
         marker = {
@@ -5515,10 +5342,7 @@ class TestGlbLightmaps(unittest.TestCase):
             ],
             "materials": [{"name": "floor_mat"}],
         }
-        if web_holder == "scene":
-            gltf["scenes"][0]["extras"] = {key: json.dumps(manifest)}
-        elif web_holder == "root":
-            gltf["extras"] = {key: manifest}
+        gltf["scenes"][0]["extras"] = {key: json.dumps(manifest)}
         return self._glb(gltf, name="native.glb")
 
     # ------------------------------------------------------------------ encode
@@ -6019,26 +5843,6 @@ class TestGlbLightmaps(unittest.TestCase):
         self.assertFalse(MeshConvert.finish_glb(glb), "idempotent")
         self.assertTrue(MeshConvert.verify_glb(glb)["lightmap"])
 
-    def test_the_retired_fix_drops_the_copies_beside_a_block(self):
-        """``fix_glb_lightmap_metadata`` (retired 2026-10-20 for ``finish_glb``,
-        removed in 0.18.0) warns, and serves: a file whose root extras carry
-        the record loses the copies on its nodes; one carrying none there is
-        left as found -- the copies may be all it says of them."""
-        glb = self._native_export(web_holder="root")
-        with self.assertWarns(DeprecationWarning):
-            self.assertEqual(MeshConvert.fix_glb_lightmap_metadata(glb), 2)
-        with MeshConvert.open_glb(glb) as edit:
-            self.assertNotIn("lightmapInfo", edit.gltf["nodes"][0].get("extras") or {})
-        self.assertIsNone(_carried_lightmaps(glb))
-
-        bare = self._native_export(web_holder=None)
-        with MeshConvert.open_glb(bare) as edit:
-            before = json.dumps(edit.gltf, sort_keys=True)
-        with self.assertWarns(DeprecationWarning):
-            self.assertEqual(MeshConvert.fix_glb_lightmap_metadata(bare), 0)
-        with MeshConvert.open_glb(bare) as edit:
-            self.assertEqual(json.dumps(edit.gltf, sort_keys=True), before)
-
     def test_a_top_level_manifest_carrier_is_read(self):
         """Both on-disk carrier shapes are read: FBX2glTF nests a user
         property under ``extras.fromFBX.userProperties``, a native glTF export
@@ -6086,34 +5890,6 @@ class TestGlbLightmaps(unittest.TestCase):
             self.assertEqual(
                 json.loads(edit.gltf["nodes"][0]["extras"]["lightmapInfo"]), stale
             )
-
-    def test_the_retired_manifest_reader_reads_the_carriers_record(self):
-        """``read_glb_lightmap_manifest`` (retired 2026-10-20, removed in
-        0.18.0: a finished GLB carries no record -- its lightmaps are its
-        ``extras.lightmaps`` block) warns, and serves the carrier's record
-        while a build still holds one."""
-        glb = self._glb(
-            self._scene(self._manifest([{"name": "room", "map": "room_Lightmap.exr"}]))
-        )
-        with self.assertWarns(DeprecationWarning):
-            served = MeshConvert.read_glb_lightmap_manifest(glb)
-        self.assertEqual(served, _carried_lightmaps(glb))
-        self.assertEqual(served["objects"][0]["name"], "room")
-
-    def test_the_retired_hint_scrub_hands_a_snapshot_back_as_given(self):
-        """``without_locate_hints`` (retired 2026-10-20, removed in 0.18.0)
-        warns, and serves: no record has carried a folder hint since 0.11.0
-        (the maps' folders ride the private ``lightmap_dirs``), so a snapshot
-        comes back as it was given."""
-        snapshot = {
-            SceneRecords.LIGHTMAPS.key: {
-                "version": SceneRecords.LIGHTMAPS.version,
-                "objects": [{"name": "room", "map": "room_Lightmap.exr"}],
-            },
-            SceneRecords.SHOTS.key: {"shots": [1]},
-        }
-        with self.assertWarns(DeprecationWarning):
-            self.assertIs(MeshConvert.without_locate_hints(snapshot), snapshot)
 
     def test_no_manifest_is_a_clean_noop(self):
         glb = self._glb(
@@ -8807,6 +8583,110 @@ class TestGlbRenderEffects(unittest.TestCase):
         self.assertEqual(extras["render_effects"], {"channel": "emission", "material": "screen"})
         self.assertIn("KHR_materials_emissive_strength", gltf["extensionsUsed"])
 
+    def test_a_tinted_emission_plays_its_weight_times_its_tint_on_the_factor(self):
+        """An indicator's states: the weight's and the tint channels' curves
+        on one time line, their product per channel the factor's VEC3 at each
+        key, a cut kept a cut. Added: 2026-11-24"""
+        entry = {
+            "material": "screen",
+            "channels": ["emission", "tint_r", "tint_g", "tint_b"],
+            "emission_color": [1.0, 1.0, 1.0],
+            "emission_strength": 2.0,
+        }
+        path = self._glb(self._record(materials=[entry]))
+        s = "step"
+        curves = {
+            "ShotA": {  # off, then green at 0.5 s, then amber at 1 s
+                ("screen", "emission"): [[0.0, 0.0, s], [0.5, 1.0, s], [1.0, 1.0, s]],
+                ("screen", "tint_r"): [[0.0, 1.0, s], [0.5, 0.0, s], [1.0, 1.0, s]],
+                ("screen", "tint_g"): [[0.0, 1.0, s], [0.5, 1.0, s], [1.0, 0.5, s]],
+                ("screen", "tint_b"): [[0.0, 1.0, s], [0.5, 0.0, s], [1.0, 0.0, s]],
+            }
+        }
+        summary = MeshConvert.apply_glb_fades(path, curves=curves)
+        self.assertEqual(summary["by_channel"], {"emission": 2}, "one factor channel per material, never four")
+        (pointer, _k, times, values, _i, extras) = self._decoded(path, "ShotA")[0]
+        self.assertEqual(pointer, "/materials/2/emissiveFactor")
+        rounded = [[round(c, 4) for c in v] for v in values]
+        self.assertEqual(rounded[0], [0.0, 0.0, 0.0], "off")
+        self.assertEqual(rounded[times.index(min(times, key=lambda t: abs(t - 0.5)))], [0.0, 1.0, 0.0], "green")
+        self.assertEqual(rounded[-1], [1.0, 0.5, 0.0], "amber")
+        self.assertEqual(rounded[times.index(min(times, key=lambda t: abs(t - 0.999)))], [0.0, 1.0, 0.0], "held to the cut")
+        gltf = self._gltf(path)
+        self.assertEqual(gltf["materials"][2]["extensions"]["KHR_materials_emissive_strength"]["emissiveStrength"], 2.0)
+        self.assertEqual(extras["render_effects"], {"channel": "emission", "material": "screen"})
+
+    def test_a_resting_tint_colours_a_weight_keyed_alone(self):
+        """Bug (review, 2026-11-24): a group resting green with only its weight
+        keyed played white in the GLB -- the factor was the colour x the
+        weight, the entry's stated tint left out -- while Unity rested its
+        track green. The tint multiplies every key."""
+        entry = {
+            "material": "screen",
+            "channels": ["emission"],
+            "emission_color": [1.0, 1.0, 1.0],
+            "emission_strength": 1.0,
+            "tint": [0.0, 1.0, 0.0],
+        }
+        path = self._glb(self._record(materials=[entry]))
+        curves = {"ShotA": {("screen", "emission"): [[0.0, 0.0, "linear"], [1.0, 1.0, "linear"]]}}
+        MeshConvert.apply_glb_fades(path, curves=curves)
+        (_p, _k, _t, values, _i, _e) = self._decoded(path, "ShotA")[0]
+        self.assertEqual([[round(c, 4) for c in v] for v in values], [[0.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+
+    def test_a_weight_ramp_under_a_tint_crossfade_is_sampled_between_its_keys(self):
+        """Review (2026-11-24): weight x tint over two linear ramps is no
+        line, so keys at the ends alone played red 0 at 0.5 s where it is
+        0.25; the product is sampled between keys where both move."""
+        entry = {
+            "material": "screen",
+            "channels": ["emission", "tint_r", "tint_g", "tint_b"],
+            "emission_color": [1.0, 1.0, 1.0],
+            "emission_strength": 1.0,
+        }
+        path = self._glb(self._record(materials=[entry]))
+        lin = "linear"
+        curves = {
+            "ShotA": {
+                ("screen", "emission"): [[0.0, 0.0, lin], [1.0, 1.0, lin]],
+                ("screen", "tint_r"): [[0.0, 1.0, lin], [1.0, 0.0, lin]],
+                ("screen", "tint_g"): [[0.0, 0.0, lin], [1.0, 0.0, lin]],
+                ("screen", "tint_b"): [[0.0, 0.0, lin], [1.0, 1.0, lin]],
+            }
+        }
+        MeshConvert.apply_glb_fades(path, curves=curves)
+        (_p, _k, times, values, _i, _e) = self._decoded(path, "ShotA")[0]
+        mid = min(range(len(times)), key=lambda i: abs(times[i] - 0.5))
+        self.assertAlmostEqual(times[mid], 0.5, delta=0.02)
+        self.assertAlmostEqual(values[mid][0], 0.25, delta=0.02, msg="0.5 x 0.5")
+        self.assertAlmostEqual(values[mid][2], 0.25, delta=0.02)
+
+    def test_a_tint_keyed_alone_plays_over_the_materials_own_weight(self):
+        """No weight curve: the weight is the one at which colour x strength x
+        the stated tint is the material's own emission (0.1 here). Added:
+        2026-11-24"""
+        entry = {
+            "material": "screen",
+            "channels": ["tint_r", "tint_g", "tint_b"],
+            "emission_color": [1.0, 1.0, 1.0],
+            "emission_strength": 1.0,
+            "tint": [0.0, 1.0, 0.0],
+        }
+        path = self._glb(self._record(materials=[entry]))
+        s = "step"
+        curves = {
+            "ShotA": {
+                ("screen", "tint_r"): [[0.0, 0.0, s], [0.5, 1.0, s]],
+                ("screen", "tint_g"): [[0.0, 1.0, s], [0.5, 0.0, s]],
+                ("screen", "tint_b"): [[0.0, 0.0, s], [0.5, 0.0, s]],
+            }
+        }
+        MeshConvert.apply_glb_fades(path, curves=curves)
+        (_p, _k, _t, values, _i, _e) = self._decoded(path, "ShotA")[0]
+        rounded = [[round(c, 4) for c in v] for v in values]
+        self.assertEqual(rounded[0], [0.0, 0.1, 0.0], "green at the material's own glow")
+        self.assertEqual(rounded[-1], [0.1, 0.0, 0.0], "red")
+
     def test_a_namespaced_target_joins_the_curve_its_proxy_carries(self):
         """The record names a material as the delivery does, namespace
         included (measured 2026-11-07, Maya 2025: a copy imported under ``ns``
@@ -9544,12 +9424,11 @@ class TestFbxToGlbReport(unittest.TestCase):
         """An older host's envelope on a file with no materials record: the
         file carries the handoff alone, named against the blocks the build
         added, and no section is applied or reported (removed 2026-10-31)."""
-        with self.assertWarns(DeprecationWarning):
-            envelope = MeshConvert.build_scene_sidecar(
-                {"emissive": {"roomMat": {"color": [1, 0, 0]}}},
-                source={"application": "test", "version": "0"},
-                asset="in.fbx",
-            )
+        envelope = _envelope(
+            {"emissive": {"roomMat": {"color": [1, 0, 0]}}},
+            source={"application": "test", "version": "0"},
+            asset="in.fbx",
+        )
         report = {}
         out = self._convert(self._lit_glb({}), sidecar=envelope, report=report)
         self.assertNotIn("sidecar", report)
@@ -13998,7 +13877,7 @@ class TestFacadeComposition(unittest.TestCase):
                     problems.append(f"{fn.name}: {name} <- {expr}")
             if sorted(e for _, e in passed) != sorted(names):
                 problems.append(f"{fn.name}: forwards {passed}, declares {names}")
-        self.assertGreater(checked, 80)
+        self.assertGreater(checked, 70)
         self.assertEqual(problems, [])
 
 

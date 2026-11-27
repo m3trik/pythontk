@@ -344,11 +344,12 @@ class TooltipFormat(_TooltipFormatInternal):
         rows: list = None,
         sections: list = None,
         notes: list = None,
+        hint: str = None,
     ) -> str:
         """Build a rich-text HTML tooltip string.
 
         Any combination of parameters may be supplied; sections are stacked in
-        order: title → body → bullets → steps → rows → sections → notes.
+        order: title → body → bullets → steps → rows → sections → notes → hint.
 
         Parameters:
             title:    Header line shown above everything else, rendered in the
@@ -364,6 +365,8 @@ class TooltipFormat(_TooltipFormatInternal):
                       Each section renders a colored sub-heading followed by a ``<ul>``.
             notes:    Strings rendered as italic muted "note:"-style callouts after
                       the main content. Use for caveats, tips, or "see also" hints.
+            hint:     The last line, muted and set apart: what a click or a key
+                      does here (``"Click: its menu."``).
 
         Returns:
             An HTML string that Qt's tooltip engine renders as rich text.
@@ -434,6 +437,8 @@ class TooltipFormat(_TooltipFormatInternal):
                     f"<p style='margin:3px 0 0 0; color:{_C_NOTE}; font-style:italic'>"
                     f"<span style='color:{_C_MUTED}'>note:</span> {note}</p>"
                 )
+        if hint:
+            parts.append(f"<p style='margin:6px 0 0 0; color:{_C_MUTED}'>{hint}</p>")
         return "".join(parts)
 
     @staticmethod

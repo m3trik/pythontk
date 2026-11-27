@@ -864,8 +864,9 @@ class TestShotBlock(_ShotTest):
 
 class TestMemberIdentity(_ShotTest):
     """One identity rule for "is doc name X this shot member?":
-    ``ShotStore.member_key`` -- the leaf, namespace dropped -- used by the
-    planner, Assess and the sequencer's classification alike.
+    ``ShotStore.names_member`` -- the member's path ends with the name's,
+    namespace-blind -- used by the planner, Assess and the sequencer's
+    classification alike.
 
     Bug: shot members are stored as long DAG paths while the manifest's
     ``csv_objects`` hold the doc's short names, and each consumer compared
@@ -896,13 +897,83 @@ class TestMemberIdentity(_ShotTest):
         self.assertEqual(result["|set|AC:door_geo"], "missing_behavior")
         self.assertEqual(result["|set|cam"], "scene_discovered")
 
+    def test_a_doc_name_that_is_a_path_tail_names_only_the_members_it_ends(self):
+        """Bug: a doc name was compared with a member by the leaf alone, so
+        ``DOOR|LATCH`` named the member ``|rig|PANEL|LATCH`` and a sheet adding
+        the second latch read as nothing new (``ShotStore.names_member``).
+        Fixed: 2026-11-26"""
+        names = ShotStore.names_member
+        self.assertTrue(names("PANEL|LATCH", "|rig|PANEL|LATCH"))
+        self.assertTrue(names("LATCH", "|rig|PANEL|AC:LATCH"), "a plain name is its leaf, namespace dropped")
+        self.assertTrue(names("PANEL|LATCH", "PANEL|LATCH"), "a doc name a build recorded")
+        self.assertFalse(names("DOOR|LATCH", "|rig|PANEL|LATCH"))
+        self.assertFalse(names("PANEL|LATCH", "LATCH"), "a tail longer than the name")
+        shot = ShotBlock(
+            0,
+            "S",
+            0,
+            10,
+            objects=["|rig|PANEL|LATCH", "|rig|DOOR|LATCH"],
+            metadata={
+                "csv_objects": [{"name": "PANEL|LATCH", "kind": "scene"}],
+                "object_status": {"PANEL|LATCH": "valid"},
+            },
+        )
+        self.assertEqual(
+            shot.classify_objects(),
+            {"|rig|PANEL|LATCH": "valid", "|rig|DOOR|LATCH": "scene_discovered"},
+        )
+
+    class _BareNames(shot_model.PureShotsHost):
+        """A host keeping members as bare object names (Blender's): the path
+        is in each object's parents, ``.001`` read without its suffix."""
+
+        PARENTS = {"LATCH": "PANEL", "LATCH.001": "DOOR", "PANEL": "RIG", "DOOR": "RIG", "LIGHTS.001": "SOLENOID_LOC"}
+
+        def member_lineage(self, member):
+            if member not in self.PARENTS:
+                return str(member).split("|")
+            line, node = [], member
+            while node is not None:
+                line.append(node.split(".")[0])
+                node = self.PARENTS.get(node)
+            return line[::-1]
+
+    def test_a_path_tail_names_a_bare_named_member_by_its_hosts_lineage(self):
+        """Bug: a doc name's path tail was compared with a member's own name as
+        its path, and Blender keeps a bare name: a step listing
+        ``SOLENOID_LOC|LIGHTS`` showed its own ``LIGHTS`` as unlisted (panel
+        and Assess).
+        Fixed: 2026-11-26 -- ``ShotsHost.member_lineage``."""
+        host = self._BareNames()
+        names = ShotStore.names_member
+        self.assertTrue(names("PANEL|LATCH", "LATCH", host))
+        self.assertFalse(names("DOOR|LATCH", "LATCH", host))
+        self.assertTrue(names("DOOR|LATCH", "LATCH.001", host), "the lineage reads a node's name without .001")
+        self.assertTrue(names("LATCH", "LATCH", host))
+        self.assertFalse(names("LATCH", "LATCH.001", host), "a bare name keeps the bare-name rule: the name as stored")
+        self.assertEqual(
+            ShotStore.name_pairs(["SOLENOID_LOC|LIGHTS", "PANEL|LATCH", "LATCH"], ["LIGHTS.001", "LATCH", "LATCH.001"], host),
+            [("SOLENOID_LOC|LIGHTS", "LIGHTS.001"), ("PANEL|LATCH", "LATCH"), ("LATCH", "LATCH")],
+        )
+        self.assertFalse(names("PANEL|LATCH", "LATCH"), "the pure default: the member as stored is its path")
+        ShotStore.set_host(host)
+        self.addCleanup(ShotStore.set_host, None)
+        self.assertTrue(names("PANEL|LATCH", "LATCH"), "the running host by default")
+        shot = ShotBlock(0, "S", 0, 10, objects=["LATCH", "LATCH.001"],
+                         metadata={"csv_objects": [{"name": "PANEL|LATCH", "kind": "scene"}]})
+        self.assertEqual(shot.classify_objects(), {"LATCH": "valid", "LATCH.001": "scene_discovered"})
+
     def test_pure_resolver_finds_every_name(self):
         self.assertEqual(ShotStore().member_nodes("door"), ["door"])
         self.assertEqual(ShotStore().resolve_member("door"), ("door", "found"))
 
     def test_resolve_member_reads_the_nodes_a_name_answers_to(self):
         class _Scene(shot_model.PureShotsHost):
-            NODES = {"lid": ["|a|lid", "|b|lid"], "door": ["|AC:door"]}
+            NODES = {"lid": ["|a|lid", "|b|lid"], "door": ["|AC:door"],
+                     # A group whose mesh inside it carries its name: one object, the group (2026-11-25, a
+                     # production button; Unity's delivery reader already reads such a chain as one).
+                     "button": ["|panel|button", "|panel|button|geo|button"]}
 
             def member_nodes(self, name):
                 return list(self.NODES.get(name, []))
@@ -911,11 +982,12 @@ class TestMemberIdentity(_ShotTest):
         self.assertEqual(store.resolve_member("door"), ("|AC:door", "found"))
         self.assertEqual(store.resolve_member("lid"), ("lid", "ambiguous"))
         self.assertEqual(store.resolve_member("hinge"), ("hinge", "missing"))
+        self.assertEqual(store.resolve_member("button"), ("|panel|button", "found"))
 
     def test_rename_members_merges_two_names_for_one_node(self):
         """A build stores a doc name it cannot resolve as written, and the
         scene scan later adds the node's long path beside it: one node, two
-        members (SOL_REPLACE_ASSEMBLY's A01_1 held ``KEYS`` and
+        members (a production scene's A01_1 held ``KEYS`` and
         ``|INTERACTIVE|KEYS_GRP|KEYS`` and shipped ``KEYS`` twice).  Re-pointing
         the doc name leaves one member, and the sets follow it."""
         store = _store([])
@@ -1361,6 +1433,29 @@ class TestShotStoreSerialisation(_ShotTest):
             {"a.csv": {"template": None, "values": {}}},
         )
 
+    def test_the_behavior_modes_survive_a_save(self):
+        """The scene's behavior modes (``ManifestEdits.set_behavior_modes``)
+        are saved with the options, a record of modes alone stays one, and a
+        malformed modes entry is dropped."""
+        store = _store([])
+        store.manifest_options = {
+            "x.csv": {
+                "template": "default",
+                "values": {},
+                "behaviors": {"key": ["highlight"], "marker": ["fade_in"]},
+            },
+            "y.csv": {"behaviors": {"key": [], "marker": ["fade_out"]}},
+        }
+        data = json.loads(json.dumps(store.to_dict()))
+        self.assertEqual(
+            ShotStore.from_dict(data).manifest_options, store.manifest_options
+        )
+        data["manifest_options"]["x.csv"]["behaviors"] = {"key": "highlight"}
+        self.assertEqual(
+            ShotStore.from_dict(data).manifest_options["x.csv"],
+            {"template": "default", "values": {}},
+        )
+
     def test_to_export_view_shape(self):
         """One record, one join key: a shot ships what a clip cannot hold --
         its description and its shipped metadata (``shipped_metadata``) --
@@ -1497,6 +1592,141 @@ class TestShotStoreSerialisation(_ShotTest):
         (record,) = s.export_records()
         clips = [e["clip"] for e in record.payload["shots"]]
         self.assertEqual(clips, [t["name"] for t in ShotStore.declared_takes()])
+
+
+class TestTakesInsideAShot(_ShotTest):
+    """A shot is a step, and holds the takes its step plays: each a named span
+    inside it, an export's clip (the maintainer, 2026-11-25: a step's shot is
+    never split into parts; its two either-order actions still ship a clip each)."""
+
+    def store(self):
+        s = _store([])
+        s.set_shipped_metadata(["section"])
+        s.define_shot("IN_01", 0, 50)  # a step that only speaks
+        s.define_shot("A01", 60, 300, description="Unlock both locks", metadata={"section": "A"})
+        s.define_shot("A02", 310, 400)
+        s.define_shot("Old", 410, 450)  # a scene of takes cut as shots: it declares none
+        ShotStore.set_active(s)
+        self.addCleanup(ShotStore.clear_active)
+        return s
+
+    def test_an_export_declares_a_shots_takes_and_a_shot_that_plays_none_declares_none(self):
+        s = self.store()
+        self.assertIsNone(s.takes_of(s.shot_by_name("A01")), "none declared: the shot is its own take")
+        s.set_takes(s.shot_by_name("IN_01").shot_id, [])
+        s.set_takes(s.shot_by_name("A01").shot_id, [("A01_1", 60, 171), ("A01_2", 181, 291)])
+        s.set_takes(s.shot_by_name("A02").shot_id, [("A02", None, None)])  # no span: the whole shot
+        self.assertEqual(
+            ShotStore.declared_takes(),
+            [
+                {"name": "A01_1", "start": 60, "end": 171},
+                {"name": "A01_2", "start": 181, "end": 291},
+                {"name": "A02", "start": 310, "end": 400},
+                {"name": "Old", "start": 410, "end": 450},
+            ],
+        )
+        self.assertEqual(ShotStore.declared_range(), (60, 450), "what the export ships")
+        (record,) = s.export_records()
+        self.assertEqual(
+            record.payload["shots"][:2],
+            [
+                {"clip": "A01_1", "description": "Unlock both locks", "metadata": {"section": "A"}},
+                {"clip": "A01_2", "description": "Unlock both locks", "metadata": {"section": "A"}},
+            ],
+            "each take ships its step's words, joined by its clip",
+        )
+        self.assertEqual([e["clip"] for e in record.payload["shots"]], [t["name"] for t in ShotStore.declared_takes()])
+
+    def test_takes_ride_their_shot_and_are_kept_with_the_scene(self):
+        s = self.store()
+        a01 = s.shot_by_name("A01")
+        s.set_takes(a01.shot_id, [("A01_1", 60, 171), ("A01_2", 181, 291)])
+        from pythontk.core_utils.engines.shots.shot_sequencer import ShotSequencer
+
+        seq = ShotSequencer(store=s)
+        seq.move_shot(a01.shot_id, 100)  # moved whole, its content with it
+        self.assertEqual(s.takes_of(a01), [("A01_1", 100, 211), ("A01_2", 221, 331)])
+        again = ShotStore.from_dict(json.loads(json.dumps(s.to_dict())))
+        self.assertEqual(again.takes_of(again.shot_by_name("A01")), [("A01_1", 100, 211), ("A01_2", 221, 331)])
+        # Bounds written with no key moved: each take keeps its frames.
+        s.update_shot(a01.shot_id, start=90, end=360)
+        self.assertEqual(s.takes_of(a01), [("A01_1", 100, 211), ("A01_2", 221, 331)])
+        seq.resize_shot_bounds(a01.shot_id, 95, 360, clamp=False)  # an edge drag
+        self.assertEqual(s.takes_of(a01), [("A01_1", 100, 211), ("A01_2", 221, 331)])
+        # A retime scales them with the keys.
+        s.update_shot(a01.shot_id, start=100, end=340)
+        seq.resize_shot(a01.shot_id, 100, 580)  # twice as long
+        self.assertEqual(s.takes_of(a01), [("A01_1", 100, 322), ("A01_2", 342, 562)])
+        s.set_takes(a01.shot_id, None)
+        self.assertIsNone(s.takes_of(a01), "none declared again")
+
+    def test_a_take_is_inside_its_shot_and_named_as_no_other_clip(self):
+        s = self.store()
+        a01 = s.shot_by_name("A01").shot_id
+        for takes, why in (
+            ([("A01_1", 50, 100)], "outside"),
+            ([("A01_1", 200, 200)], "no length"),
+            ([("A01_1", 60, 100), ("a01_1", 110, 150)], "twice in one shot"),
+            ([("A02", 60, 100)], "another shot's name"),
+            ([("bad name", 60, 100)], "no clip name"),
+        ):
+            with self.assertRaises(ValueError, msg=why):
+                s.set_takes(a01, takes)
+        s.set_takes(a01, [("A01_1", 60, 100)])
+        with self.assertRaises(ValueError, msg="another shot's take"):
+            s.set_takes(s.shot_by_name("A02").shot_id, [("A01_1", 310, 350)])
+        self.assertIsNotNone(s.name_error("A01_1"), "a shot cannot take a take's name")
+        s.set_takes(s.shot_by_name("A02").shot_id, [("A02", 310, 350)])  # its own shot's name is its to use
+
+    def test_a_frame_rate_change_scales_each_take_with_its_shot(self):
+        """Bug: ``rescale_to_fps`` scaled a shot's bounds and left its takes'
+        offsets (frames from the shot's start) as they were: at 24 to 30 fps
+        a shot [240, 480] read [300, 600] with takes [300-420], [420-540],
+        its last fifth in no clip and never exported.
+        Fixed: 2026-11-26"""
+        s = _store([])
+        s.scene_fps = 24.0
+        shot = s.define_shot("A01", 240, 480)
+        s.set_takes(shot.shot_id, [("A01_1", 240, 360), ("A01_2", 360, 480)])
+        s.rescale_to_fps(30.0)
+        self.assertEqual((shot.start, shot.end), (300, 600))
+        self.assertEqual(s.takes_of(shot), [("A01_1", 300, 450), ("A01_2", 450, 600)])
+
+    def test_a_name_the_store_derives_is_no_take_of_any_shot(self):
+        """Bug: ``unique_name`` derived from the shots' names alone while a
+        take's name is a clip too, so a split's default tail (``A01_2``) was
+        the head's own take and the store refused it.
+        Fixed: 2026-11-26"""
+        s = _store([])
+        a01 = s.define_shot("A01", 0, 100)
+        s.set_takes(a01.shot_id, [("A01_1", 0, 40), ("A01_2", 60, 100)])
+        for base in ("A01_2", "a01_1"):
+            name = s.unique_name(base)
+            self.assertNotIn(name.casefold(), {"a01_1", "a01_2"}, base)
+            self.assertIsNone(s.name_error(name), base)
+
+    def test_a_take_its_shot_leaves_no_room_for_is_dropped_and_said(self):
+        """Bug: rebasing and reading a take clamped both its ends into the
+        shot, so one a trim left no room for was kept as 50..50 and an export
+        declared a clip of no length.  It is dropped and said; one the bounds
+        cut is cut.
+        Fixed: 2026-11-26"""
+        s = _store([])
+        ShotStore.set_active(s)
+        self.addCleanup(ShotStore.clear_active)
+        a01 = s.define_shot("A01", 0, 100)
+        s.set_takes(a01.shot_id, [("A01_1", 0, 40), ("A01_2", 60, 100)])
+        with self.assertLogs(shot_model._log, "WARNING") as said:
+            s.update_shot(a01.shot_id, end=50)
+        self.assertIn("A01_2", "\n".join(said.output))
+        self.assertEqual(s.takes_of(a01), [("A01_1", 0, 40)])
+        self.assertEqual(ShotStore.declared_takes(), [{"name": "A01_1", "start": 0, "end": 40}])
+        # A record past its shot that no rebase saw (written as saved) is
+        # read as none, never as a clip of no length.
+        meta = dict(a01.metadata)
+        meta[ShotStore.TAKES] = [{"name": "A01_1", "start": 0, "end": 40}, {"name": "A01_3", "start": 60, "end": 90}]
+        a01.metadata = meta
+        self.assertEqual(s.takes_of(a01), [("A01_1", 0, 40)])
 
 
 class TestPersistedPayloadPinned(_ShotTest):
@@ -2928,7 +3158,7 @@ class TestExportViewRefresh(_ShotTest):
 class TestASplitOffShotIsLinkedToItsStep(_ShotTest):
     """Bug: a shot split off a step's shot carried nothing relating it to its
     step -- the split gave it a name and a description -- for 8 of
-    SOL_REPLACE_ASSEMBLY's 28 clips (A01_2, A03_2, B06_2 ...).
+    a production scene's 28 clips (A01_2, A03_2, B06_2 ...).
     Fixed: 2026-10-11 -- a non-binding step link (``ShotStore.step_links``):
     the split writes it; a tail split before that is linked by its
     ``<step>_<n>`` name, at read time. The export ships no section
@@ -5095,7 +5325,7 @@ class TestBoundarySplits(unittest.TestCase):
         """A move of R rippling downstream moves S FIRST, in a plan of its
         own, and only then R: the seam Q|R the edit opens is touched by
         neither shot in that first plan, yet a segment crossing it to a key
-        in S is re-timed by it.  Found 2026-10-11 by the SOL_REPLACE_ASSEMBLY
+        in S is re-timed by it.  Found 2026-10-11 by a production scene's
         acceptance (a door ramp through 30 flush shots, 0.003 off in each):
         the pin came at the second plan, onto the already re-timed ramp."""
         st = self._store((0, 50), (50, 100), (100, 150), (150, 200))
@@ -5172,7 +5402,7 @@ class TestKeylessSeam(unittest.TestCase):
 
     def test_a_curve_the_preceding_shot_only_interpolates_is_a_seam_too(self):
         """Keyed only shots before it, the preceding shot still PLAYS that
-        segment.  Found 2026-10-11 by the SOL_REPLACE_ASSEMBLY acceptance: a
+        segment.  Found 2026-10-11 by a production scene's acceptance: a
         door ramp keyed at 1061 and 3230 runs through 30 flush shots, and a
         band move at 2116 re-timed it in every one of them (up to 0.003)."""
         self.assertTrue(ShotPlanner.keyless_seam([-30, 100], 50))

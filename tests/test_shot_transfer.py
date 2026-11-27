@@ -630,6 +630,42 @@ class TestMerge(unittest.TestCase):
         late = next(s for s in store.sorted_shots() if s.name == "Late")
         self.assertEqual((late.start, late.end), (241.0, 264.0))
 
+    def test_a_clock_change_scales_the_takes_with_their_shot(self):
+        """Bug: a frame-rate change across a transfer scaled a shot's bounds
+        but not its takes' spans (counted from its start), so a take's tail
+        lay in no clip (a 30 fps take of frames 20-30 in a 30-frame shot
+        landed at 20-30 of a 24-frame shot).
+        Fixed: 2026-11-26 -- each edge scaled and snapped as the bounds are
+        (``ShotStore.rescale_to_fps``'s rule)."""
+        existing = ShotStore()
+        existing.scene_fps = 24.0
+        existing.define_shot("Host", 0.0, 30.0)
+        incoming = ShotStore()
+        incoming.scene_fps = 30.0
+        late = incoming.define_shot("A01", 301.0, 331.0)
+        incoming.set_takes(late.shot_id, [("A01_open", 301.0, 321.0), ("A01_close", 321.0, 331.0), ("A01_all", None, None)])
+        store = ShotStore.from_dict(ShotTransfer.merge(existing.to_dict(), incoming.to_dict()))
+        shot = store.shot_by_name("A01")
+        self.assertEqual((shot.start, shot.end), (241.0, 265.0))
+        self.assertEqual(
+            ShotStore.takes_of(shot),
+            [("A01_open", 241.0, 257.0), ("A01_all", 241.0, 265.0), ("A01_close", 257.0, 265.0)],
+            "on whole frames, ending with the shot",
+        )
+
+    def test_a_merged_shot_named_as_another_shots_take_is_numbered(self):
+        """Bug: the merge numbered an incoming shot only against the scene's
+        shot names, so one named as a scene shot's take arrived as a second
+        clip of that name.
+        Fixed: 2026-11-26 -- take names are clips too (as ``ShotStore.unique_name``)."""
+        existing = ShotStore()
+        host = existing.define_shot("A01", 0.0, 30.0)
+        existing.set_takes(host.shot_id, [("A01_open", 0.0, 10.0)])
+        incoming = ShotStore()
+        incoming.define_shot("a01_open", 40.0, 50.0)
+        store = ShotStore.from_dict(ShotTransfer.merge(existing.to_dict(), incoming.to_dict()))
+        self.assertEqual([s.name for s in store.sorted_shots()], ["A01", "a01_open_2"])
+
     def test_merge_record_notes_a_rescale_and_only_a_real_rename(self):
         """The report says what the merge changed and why: a clash's
         numbering and a clock change -- never a rename that did not happen."""

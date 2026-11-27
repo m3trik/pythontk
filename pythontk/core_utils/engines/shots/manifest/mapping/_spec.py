@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from pythontk import SchemaSpec
 
@@ -72,6 +72,20 @@ AUDIO_METHODS: Dict[str, AudioMethod] = {
         example={"method": "derive", "words": 3},
         help="Build the clip name from `step_id` + first N words of the audio text.",
     ),
+    "cell": AudioMethod(
+        required=(),
+        optional=("field", "directory"),
+        example={"method": "cell", "field": "audio_file", "directory": "recordings"},
+        help="The file the step's own cell names (`field`, default `audio_file`: the Audio Files column), in `directory`.",
+    ),
+    "narrate": AudioMethod(
+        required=("directory",),
+        optional=("voice", "lang", "speed", "pronounce", "words", "separator"),
+        example={"method": "narrate", "directory": "narration", "pronounce": {"PCB": "P C B"}},
+        help="The narration `narration.render` made for the step's audio text in `directory`, found by its words "
+             "(never spoken while a sheet is read); the clip named as `derive` names it. In a list after the "
+             "recordings' methods, so a recording replaces it.",
+    ),
 }
 
 
@@ -80,9 +94,18 @@ class _MappingSpecInternal(object):
 
     @staticmethod
     def validate_audio_resolve(value: Any) -> List[str]:
-        """Validate the polymorphic ``audio_resolve`` block. Returns error strings."""
+        """Validate the polymorphic ``audio_resolve`` block -- one method, or a list tried in
+        order. Returns error strings."""
+        if isinstance(value, (list, tuple)):
+            if not value:
+                return ["expected at least one method"]
+            return [
+                f"[{i}]: {error}"
+                for i, each in enumerate(value)
+                for error in _MappingSpecInternal.validate_audio_resolve(each)
+            ]
         if not isinstance(value, dict):
-            return ["expected a mapping"]
+            return ["expected a mapping, or a list of them"]
         method = value.get("method")
         if method is None:
             return ["missing 'method'"]
@@ -240,8 +263,8 @@ class MappingSpec(SchemaSpec, _MappingSpecInternal):
         nested=ColumnMap,
         default_factory=ColumnMap,
     )
-    audio_resolve: Optional[Dict[str, Any]] = SchemaSpec.spec_field(
-        help="How to find or derive an audio clip for each step (optional).",
+    audio_resolve: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = SchemaSpec.spec_field(
+        help="How to find or derive an audio clip for each step (optional): one method, or a list tried in order, the first to find a file winning.",
         validate=_MappingSpecInternal.validate_audio_resolve,
         example=AUDIO_METHODS["prefix"].example,
         default=None,

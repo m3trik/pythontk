@@ -58,7 +58,6 @@ from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Tuple
 
 import numpy as np
 
-from pythontk.core_utils.deprecation import Deprecation
 from pythontk.geo_utils.shadow_projection import ShadowProjection
 
 __all__ = ["HeightFieldMap", "HorizonMap", "ShadowHorizon", "ShadowHorizonConformance"]
@@ -582,17 +581,6 @@ class ShadowHorizon:
     #: falls from: padded by its width alone, a 5 cm pole's penumbra was cut
     #: at 5 mm and drew a quarter of its shadow too light.
     DEFAULT_PADDING = 0.1
-    #: Retired 2026-10-20 (removed in 0.18.0): the ``shadows`` record's
-    #: version states the map's one representation and encoding.
-    ENCODING = Deprecation.class_attribute(
-        2, "SceneRecords.SHADOWS.version", remove_in="0.18.0", since="2026-10-24"
-    )
-    MAPPING = Deprecation.class_attribute(
-        "heightfield",
-        "SceneRecords.SHADOWS.version",
-        remove_in="0.18.0",
-        since="2026-10-24",
-    )
     #: Footprint sizes :meth:`bake_adaptive` walks through.
     ADAPTIVE_SIZES = (128, 256)
 
@@ -645,13 +633,6 @@ class ShadowHorizon:
 
     # -- the record ------------------------------------------------------------
     @classmethod
-    @Deprecation.parameter(
-        "levels",
-        remove_in="0.18.0",
-        drop=True,
-        reason="A map's pyramid levels are log2(size).",
-        since="2026-10-24",
-    )
     def record(
         cls,
         *,

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "SceneRecords",
-  "description": "What a deliverable's data_export node holds: each record's JSON under its key. A record whose x-in-frame is true states its values in metres, right-handed with +Y up and +Z forward, rotations as a unit quaternion (x, y, z, w) and times in seconds (glTF 2.0's frame); any other states its units in its assembly. An animated value rides, in an FBX, on a curve proxy per take: a transform named `<target>__<channel>`, the target by its leaf name (no path, no namespace: a reader joins a record's node or material to its curve by that leaf), carrying the `curveProxy` user property, whose `scale.x` holds the curve -- a child of the node for a node channel (visibility, opacity, highlight), of the export's carrier node for a material channel (emission). A node channel plays on its proxy's parent wherever the file carries the proxy; only a track with no proxy joins a node by name, the exact name first, then the one node of its leaf, a tie never guessed; visibility steps. In a GLB it rides on the property itself, per clip, through `KHR_animation_pointer` channels, presence as a stepped scale of the node. A record animating anything else states its own carrier in its assembly. The files the lightmaps record names -- its maps, its probe and the probe's highlight copies -- and the shadows record names -- each plane's horizon map, silhouette and atlas -- ride a GLB that carries the record, each as the bufferView whose glTF `name` is the file's name (the audio record's sounds ride none yet). A reader joins the record's name to that view by file name, both lower-cased (str.lower, toLowerCase); two views that join one name hold neither. The bufferView's `extras.mimeType` states its bytes -- the file itself where a glTF reader reads its format, else a web encoding of it: an HDR lightmap as 8-bit sRGB (`image/png`, `image/webp`, `image/ktx2`) whose decoded linear texels times `extras.scale` (a finite positive number) are the map, an HDR probe or highlight copy as Radiance RGBE (`image/vnd.radiance`). An FBX embeds each file itself, under the same name. A field naming its readers (x-readers) is an optional extension the others ignore.",
+  "description": "What a deliverable's data_export node holds: each record's JSON under its key. A record whose x-in-frame is true states its values in metres, right-handed with +Y up and +Z forward, rotations as a unit quaternion (x, y, z, w) and times in seconds (glTF 2.0's frame); any other states its units in its assembly. An animated value rides, in an FBX, on a curve proxy per take: a transform named `<target>__<channel>`, the target by its leaf name (no path, no namespace: a reader joins a record's node or material to its curve by that leaf), carrying the `curveProxy` user property, whose `scale.x` holds the curve -- a child of the node for a node channel (visibility, opacity, highlight), of the export's carrier node for a material channel (emission, tint_r, tint_g, tint_b). A node channel plays on its proxy's parent wherever the file carries the proxy; only a track with no proxy joins a node by name, the exact name first, then the one node of its leaf, a tie never guessed; visibility steps. In a GLB it rides on the property itself, per clip, through `KHR_animation_pointer` channels, presence as a stepped scale of the node. A record animating anything else states its own carrier in its assembly. The files the lightmaps record names -- its maps, its probe and the probe's highlight copies -- and the shadows record names -- each plane's horizon map, silhouette and atlas -- ride a GLB that carries the record, each as the bufferView whose glTF `name` is the file's name (the audio record's sounds ride none yet). A reader joins the record's name to that view by file name, both lower-cased (str.lower, toLowerCase); two views that join one name hold neither. The bufferView's `extras.mimeType` states its bytes -- the file itself where a glTF reader reads its format, else a web encoding of it: an HDR lightmap as 8-bit sRGB (`image/png`, `image/webp`, `image/ktx2`) whose decoded linear texels times `extras.scale` (a finite positive number) are the map, an HDR probe or highlight copy as Radiance RGBE (`image/vnd.radiance`). An FBX embeds each file itself, under the same name. A field naming its readers (x-readers) is an optional extension the others ignore.",
   "x-frame": {
     "length": "metre",
     "up": "+Y",
@@ -21,7 +21,10 @@
       "highlight"
     ],
     "material_channels": [
-      "emission"
+      "emission",
+      "tint_r",
+      "tint_g",
+      "tint_b"
     ],
     "stepped": [
       "visibility"
@@ -126,7 +129,8 @@
       "$ref": "#/$defs/HandoffBlock",
       "x-version": 3,
       "x-readers": [
-        "glb"
+        "glb",
+        "unity"
       ],
       "x-in-frame": false
     }
@@ -1638,7 +1642,7 @@
     },
     "RenderEffectsMaterial": {
       "type": "object",
-      "description": "One material whose emission is animated: the channel names it, the curve (a weight 0..1) rides the transport.",
+      "description": "One material whose emission is animated: the channels name it, each curve rides the transport (a weight 0..1; a tint channel 0 or more).",
       "properties": {
         "material": {
           "type": "string",
@@ -1649,7 +1653,14 @@
           "items": {
             "type": "string"
           },
-          "description": "The material's animated channels: 'emission', its emission's weight 0..1."
+          "description": "The material's animated channels: 'emission', its emission's weight 0..1; 'tint_r', 'tint_g', 'tint_b', the tint its emission colour is multiplied by (the three together, linear RGB)."
+        },
+        "states": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RenderEffectsState"
+          },
+          "description": "The emission's named states (a tint and a weight each), for a runtime that switches them by name; absent when it has none."
         },
         "emission_color": {
           "type": "array",
@@ -1671,11 +1682,64 @@
         "emission_strength": {
           "type": "number",
           "description": "The emission's strength at weight 1 (a multiplier of the colour, above 1 for a glow brighter than white); absent: the material's own."
+        },
+        "tint": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "The tint the delivered material shows, linear RGB: its emission is colour x strength x tint x weight, so a runtime reads its resting weight off the material over that; absent: white (no tint)."
         }
       },
       "required": [
         "material",
         "channels"
+      ]
+    },
+    "RenderEffectsState": {
+      "type": "object",
+      "description": "One named state of a material's emission: the tint and the weight a runtime sets when it switches to it.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The state's name, as a runtime switches to it."
+        },
+        "tint": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "The colour the material's emission colour (or map) is multiplied by in this state, linear RGB; white keeps the material's own."
+        },
+        "weight": {
+          "type": "number",
+          "description": "The emission's weight in this state, 0..1 (0: off)."
+        }
+      },
+      "required": [
+        "name",
+        "tint",
+        "weight"
       ]
     },
     "RenderEffectsRecord": {
@@ -1748,7 +1812,7 @@
       "properties": {
         "application": {
           "type": "string",
-          "description": "The application that wrote it ('maya', 'blender')."
+          "description": "The application that wrote it, by its lowercase name."
         },
         "version": {
           "type": "string",
@@ -1866,7 +1930,8 @@
           "$ref": "#/$defs/HandoffBlock",
           "x-version": 3,
           "x-readers": [
-            "glb"
+            "glb",
+            "unity"
           ]
         }
       }

@@ -5,7 +5,7 @@ import os as _os
 from pythontk.core_utils.module_resolver import bootstrap_package
 
 __package__ = "pythontk"
-__version__ = "0.25.1"
+__version__ = "0.26.0"
 
 """Expose toolkit utilities with explicit resolver include maps for clarity."""
 
@@ -22,6 +22,7 @@ DEFAULT_INCLUDE = {
     "audio_utils._audio_utils": "AudioUtils",
     # The ``audio`` record's declared shape.
     "audio_utils.audio_record": ["AudioRecord"],
+    "audio_utils.narrator": ["Narrator", "NarrationEngine", "SherpaKokoro"],
     "img_utils._img_utils": "*",
     "img_utils.mask_generator": ["MaskGenerator"],
     "img_utils.ktx2_encoder": ["Ktx2Encoder"],
@@ -60,6 +61,8 @@ DEFAULT_INCLUDE = {
     # reader, and the gate runner the export pipelines point at files.
     "file_utils.mesh_convert.glb.reader": ["GlbReader"],
     "file_utils.mesh_convert.fbx_file": ["FbxFile"],
+    # Its writer: a binary FBX from records (FbxNode), what a test or a sample builds a delivery with.
+    "file_utils.mesh_convert._fbx_writer": ["FbxWriter", "FbxNode"],
     "file_utils.mesh_convert.fbx_media": ["FbxMedia"],
     "file_utils.mesh_convert.export_verify": ["ExportVerifier"],
     "file_utils.mesh_convert.export_fingerprint": ["ExportFingerprint"],
@@ -153,6 +156,14 @@ DEFAULT_INCLUDE = {
         "HorizonMap",
         "ShadowHorizonConformance",
     ],
+    # Where a thing placed for a purpose first stands (a viewpoint, a camera, an arrow), by bounds and the rays a
+    # host gives it: the one placement every tool uses for a first pose.
+    "geo_utils.spot_placement": [
+        "SpotPlacement",
+        "SpotRays",
+        "SpotPlacementConformance",
+        "BoxRays",
+    ],
     # Where a lightmap bake's reflection probe stands, by ray casts a DCC
     # hands it through its host adapter (mayatk's and blendertk's
     # ProbePlacement bind theirs).
@@ -172,14 +183,7 @@ DEFAULT_INCLUDE = {
     "geo_utils.articulation.plan": "ArticulationPlan",
     # The ``articulation`` record's payload, declared once
     # (SceneRecords.ARTICULATION names it; a GLB carries it as it stands).
-    "geo_utils.articulation.record": [
-        "ArticulationRecord",
-        # Held until 0.22.0 (see HELD_UNTIL_0_22 below).
-        "ArticulationWeb",
-        "ArticulationWebRig",
-        "ArticulationWebJoint",
-        "ArticulationWebGrab",
-    ],
+    "geo_utils.articulation.record": ["ArticulationRecord"],
     "img_utils.shadow_atlas": "ShadowAtlas",
     "img_utils.rect_packer": ["RectPacker", "RectPackResult"],
     "geo_utils.uv.pack": ["UvPack", "PackIslandsResult"],
@@ -232,12 +236,8 @@ DEFAULT_INCLUDE = {
         "RecordSpec",
         "Record",
         "SceneRecords",
-        # Held until 0.22.0 (see HELD_UNTIL_0_22 below).
-        "GlbBlock",
-        "WebProjection",
+        "NodeNames",
     ],
-    # Held until 0.22.0 (see HELD_UNTIL_0_22 below).
-    "core_utils.engines.textures.region_masks": ["RegionMaskManifest"],
     "core_utils.engines.scene_export.scene_store": ["SceneStoreBase"],
     # How a deliverable states itself, for every carrier: the handoff block's
     # instructions, the approved scene's parts, the lighting it was approved
@@ -421,6 +421,12 @@ DEFAULT_INCLUDE = {
     ],
     "core_utils.engines.shots.manifest.manifest_engine": [
         "ShotManifest",
+    ],
+    "core_utils.engines.shots.manifest.manifest_actions": [
+        "ManifestActions",
+    ],
+    "core_utils.engines.shots.manifest.manifest_placement": [
+        "ManifestPlacement",
     ],
     "core_utils.engines.shots.manifest.manifest_edits": [
         "ManifestEdits",
@@ -901,30 +907,24 @@ MOVED_NAMES = {
     "SceneRecords.glb_shape": ("pythontk.SceneRecords.shape", "0.21.0"),
     "SceneRecords.glb_version": ("pythontk.SceneRecords.resolve", "0.21.0"),
     "SceneRecords.block_problems": ("pythontk.SceneRecords.problems", "0.21.0"),
-}
-
-#: Held until 0.22.0: names v0.20.0 noticed for removal in 0.18.0 on
-#: 2026-10-24, whose window closes 2026-11-23, after 0.21.0 ships -- restored
-#: as working deprecated aliases (``scene_export/_retired.py``,
-#: ``geo_utils/articulation/_retired.py``, ``textures/region_masks.py``,
-#: ``RecordSpec.web``, ``SceneRecords.web_shape``, the three
-#: ``MeshConvert.*_WEB_*`` class attributes; the test class
-#: ``TestRetiredUntil022``). At 0.22.0 delete them and their DEFAULT_INCLUDE
-#: entries, and move these rows into MOVED_NAMES.
-HELD_UNTIL_0_22 = {
-    "GlbBlock": ("pythontk.RecordSpec.glb_verbatim", "0.22.0"),
-    "WebProjection": ("pythontk.RecordSpec.glb_verbatim", "0.22.0"),
-    "RecordSpec.web": ("pythontk.RecordSpec.glb_verbatim", "0.22.0"),
-    "SceneRecords.web_shape": ("pythontk.SceneRecords.shape", "0.22.0"),
-    "ArticulationWeb": ("pythontk.ArticulationRecord", "0.22.0"),
-    "ArticulationWebRig": ("pythontk.ArticulationRecord", "0.22.0"),
-    "ArticulationWebJoint": ("pythontk.ArticulationRecord", "0.22.0"),
-    "ArticulationWebGrab": ("pythontk.ArticulationRecord", "0.22.0"),
-    "RegionMaskManifest": ("pythontk.EmissiveGroupsModel.render_effect_materials", "0.22.0"),
-    "RegionMaskManifest.SCHEMA_VERSION": ("pythontk.EmissiveGroupsModel.render_effect_materials", "0.22.0"),
-    "MeshConvert.ANIMATION_WEB_VERSION": ("pythontk.SceneRecords.SHOTS.version", "0.22.0"),
-    "MeshConvert.SHADOW_WEB_NODE_FIELDS": ("pythontk.SceneRecords.SHADOWS.nodes", "0.22.0"),
-    "MeshConvert.ARTICULATION_WEB_NODE_FIELDS": ("pythontk.SceneRecords.ARTICULATION.nodes", "0.22.0"),
+    # Held as working aliases until 0.22.0 (the HELD_UNTIL_0_22 table, noticed
+    # 2026-10-24, its window closed 2026-11-23), deleted 2026-11-26 with their
+    # modules (scene_export/_retired.py, geo_utils/articulation/_retired.py,
+    # textures/region_masks.py). The table's own row says where its rows went.
+    "GlbBlock": ("pythontk.RecordSpec.glb_verbatim", "0.26.0"),
+    "WebProjection": ("pythontk.RecordSpec.glb_verbatim", "0.26.0"),
+    "record_block": ("pythontk.RecordSpec.glb_verbatim", "0.26.0"),
+    "RecordSpec.web": ("pythontk.RecordSpec.glb_verbatim", "0.26.0"),
+    "SceneRecords.web_shape": ("pythontk.SceneRecords.shape", "0.26.0"),
+    "ArticulationWeb": ("pythontk.ArticulationRecord", "0.26.0"),
+    "ArticulationWebRig": ("pythontk.ArticulationRecord", "0.26.0"),
+    "ArticulationWebJoint": ("pythontk.ArticulationRecord", "0.26.0"),
+    "ArticulationWebGrab": ("pythontk.ArticulationRecord", "0.26.0"),
+    "RegionMaskManifest": ("pythontk.EmissiveGroupsModel.render_effect_materials", "0.26.0"),
+    "MeshConvert.ANIMATION_WEB_VERSION": ("pythontk.SceneRecords.SHOTS.version", "0.26.0"),
+    "MeshConvert.SHADOW_WEB_NODE_FIELDS": ("pythontk.SceneRecords.SHADOWS.nodes", "0.26.0"),
+    "MeshConvert.ARTICULATION_WEB_NODE_FIELDS": ("pythontk.SceneRecords.ARTICULATION.nodes", "0.26.0"),
+    "HELD_UNTIL_0_22": ("pythontk.MOVED_NAMES (its rows moved there)", "0.26.0"),
 }
 
 bootstrap_package(globals(), include=DEFAULT_INCLUDE, moved=MOVED_NAMES)

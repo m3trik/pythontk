@@ -27,7 +27,7 @@ import inspect
 import json
 import logging
 from pathlib import Path
-from typing import Any, Callable, Collection, Dict, List, Optional, Tuple
+from typing import Any, Callable, Collection, Dict, Iterable, List, Optional, Tuple
 
 from pythontk import Codec, TemplateSet
 
@@ -394,8 +394,44 @@ class Behaviors(_BehaviorsInternal):
 
     @staticmethod
     def label(name: str) -> str:
-        """A behavior's name as people read it: ``"fade_in"`` -> ``"Fade In"``."""
-        return name.replace("_", " ").title() if name else ""
+        """A behavior's name as people read it: ``"highlight"`` ->
+        ``"Highlight"``; a template of a family (:meth:`family_of`) its
+        family's, then how it sets it -- ``"fade_in"`` -> ``"Fade · in"``."""
+        if not name:
+            return ""
+        family, variant = Behaviors._family_variant(name)
+        if variant:
+            return f"{Behaviors.label(family)} · {variant}"
+        return name.replace("_", " ").title()
+
+    @staticmethod
+    def family_of(name: str) -> str:
+        """The behavior *name* is a way of setting (its template's ``family``:
+        ``"fade_in"`` -> ``"fade"``), else *name* itself -- what a panel offers
+        one Key / Marker / Off choice for."""
+        return Behaviors._family_variant(name)[0]
+
+    @staticmethod
+    def families(names: Iterable[str]) -> Dict[str, List[str]]:
+        """*names* grouped by :meth:`family_of`, ``{family: [names]}``, each
+        family where its first name falls and its names in their order."""
+        out: Dict[str, List[str]] = {}
+        for name in names:
+            out.setdefault(Behaviors.family_of(name), []).append(name)
+        return out
+
+    @staticmethod
+    def _family_variant(name: str) -> Tuple[str, str]:
+        """``(family, variant)`` of the template *name*; ``(name, "")`` for one
+        of no family, or no loadable template."""
+        try:
+            tmpl = Behaviors.load_behavior(name)
+        except (FileNotFoundError, ValueError):
+            return name, ""
+        family, variant = tmpl.get("family"), tmpl.get("variant")
+        if not family or not variant:
+            return name, ""
+        return family, variant
 
     @staticmethod
     def anchored(

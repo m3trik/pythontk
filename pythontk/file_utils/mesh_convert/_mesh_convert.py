@@ -8,8 +8,8 @@ is read through and hands that job's calls to:
 
 - ``_fbx2gltf``    -- the FBX2glTF CLI driver (:meth:`~MeshConvert.fbx_to_glb`)
   and the repairs of what the converter writes
-- ``_sidecar``     -- the scene-sidecar envelope, the FBX handoff, the
-  ``data_export`` channels, the rendering policy, ``verify_glb``
+- ``_sidecar``     -- the GLB's handoff block, the ``data_export`` channels,
+  ``verify_glb``
 - ``_media``       -- what every record whose files ride a GLB shares: its
   entries resolved to the file's nodes, its files carried as bufferViews
 - ``_lightmaps``   -- a host DCC's committed bake, bound for the web viewer
@@ -28,8 +28,8 @@ is read through and hands that job's calls to:
   manifest (:meth:`~MeshConvert.gltf_to_fbx`), on its builder ``_GltfToFbx``
 
 The facade holds the whole public surface -- each method's signature and
-docstring, each part's constants under the names callers use, the retired
-names -- and what spans the parts: :meth:`~MeshConvert.finish_fbx_deliverable`,
+docstring, each part's constants under the names callers use -- and what
+spans the parts: :meth:`~MeshConvert.finish_fbx_deliverable`,
 the passes a written FBX deliverable takes. A part holds the facade
 (``self._mc``) and reaches every name it exposes through it, which is what
 keeps a subclass, a class-level override and ``mock.patch.object(MeshConvert,
@@ -58,15 +58,8 @@ from typing import (
 
 import numpy as np  # loaded with _highlights; its helpers' signatures name it
 
-# Eager: the retired names' tables below are the registry's and the handoff's
-# own, read at class definition.
 from pythontk.core_utils.class_property import ClassProperty
-from pythontk.core_utils.deprecation import Deprecation
-from pythontk.core_utils.engines.scene_export.handoff_record import HandoffRecord
-from pythontk.core_utils.engines.scene_export.scene_records import (
-    RecordSpec,
-    SceneRecords,
-)
+from pythontk.core_utils.engines.scene_export.scene_records import RecordSpec
 from pythontk.core_utils.help_mixin import HelpMixin
 from pythontk.file_utils.mesh_convert._animation import _Animation
 from pythontk.file_utils.mesh_convert._articulation import _Articulation
@@ -94,14 +87,6 @@ from pythontk.file_utils.mesh_convert.glb.edit import GlbEdit, GlbTarget
 
 if TYPE_CHECKING:
     from pythontk.file_utils.mesh_convert.fbx_file import FbxFile
-
-#: The removal window of every name :class:`MeshConvert` retired 2026-10-20:
-#: the handoff's, now ``HandoffRecord``'s, and those that restated a record's
-#: declaration, now ``SceneRecords``' alone. Passed by name on each call --
-#: the spelling the registry's expiry gate reads (it cannot read a ``**``).
-_REMOVE_IN = "0.18.0"
-_SINCE = "2026-10-24"
-
 
 class MeshConvert(HelpMixin):
     """3D mesh format conversion via the godotengine/FBX2glTF CLI.
@@ -486,12 +471,13 @@ class MeshConvert(HelpMixin):
                            place of the one the FBX's own ``handoff`` record
                            implies; ``None`` -- every export -- reads it off
                            the file, so the GLB says what its FBX says, and a
-                           file with no record gets none. An envelope
-                           (:meth:`build_scene_sidecar`) gives its handoff;
-                           its sections are no longer read -- the FBX's
-                           ``materials`` record states every material.
+                           file with no record gets none. An envelope (an
+                           older host's ``{"source", "handoff", "sections"}``)
+                           gives its handoff; its sections are no longer read
+                           -- the FBX's ``materials`` record states every
+                           material.
             rendering:     The export's choices over the lighting recipe
-                           (:meth:`rendering_policy`), laid over what the FBX's
+                           (``HandoffRecord.rendering_policy``), laid over what the FBX's
                            handoff states -- a preview's own GLB rows.
             data_export:   ``{channel key: value or None}`` overlaid on the
                            file's in-band channels (:meth:`overlay_data_export`)
@@ -786,255 +772,6 @@ class MeshConvert(HelpMixin):
     HOST_PROPERTIES = _Sidecar.HOST_PROPERTIES
     DATA_EXPORT_NODE = _Sidecar.DATA_EXPORT_NODE
 
-    # ---------------------------------------------------- retired 2026-10-20
-    # The handoff's names, now HandoffRecord's.
-    SIDECAR_VERSION = Deprecation.class_attribute(
-        2, "HandoffRecord.VERSION", remove_in=_REMOVE_IN, since=_SINCE
-    )
-    HANDOFF_INSTRUCTIONS = Deprecation.class_attribute(
-        HandoffRecord.instructions("glb"),
-        "HandoffRecord.instructions('glb')",
-        remove_in=_REMOVE_IN,
-        since=_SINCE,
-    )
-    FBX_HANDOFF_VERSION = Deprecation.class_attribute(
-        HandoffRecord.VERSION,
-        "HandoffRecord.VERSION",
-        remove_in=_REMOVE_IN,
-        since=_SINCE,
-    )
-    FBX_HANDOFF_CHANNEL = Deprecation.class_attribute(
-        HandoffRecord.KEY, "HandoffRecord.KEY", remove_in=_REMOVE_IN, since=_SINCE
-    )
-    FBX_HANDOFF_CHANNELS = Deprecation.class_attribute(
-        {
-            spec.key: spec.description
-            for spec in SceneRecords.deliverable()
-            if spec is not SceneRecords.HANDOFF
-        },
-        "SceneRecords.deliverable() -- each RecordSpec's description",
-        remove_in=_REMOVE_IN,
-        since=_SINCE,
-    )
-    FBX_HANDOFF_INSTRUCTIONS = Deprecation.class_attribute(
-        HandoffRecord.instructions("fbx"),
-        "HandoffRecord.instructions('fbx')",
-        remove_in=_REMOVE_IN,
-        since=_SINCE,
-    )
-    RENDERING_POLICY = Deprecation.class_attribute(
-        HandoffRecord.RENDERING_POLICY,
-        "HandoffRecord.RENDERING_POLICY",
-        remove_in=_REMOVE_IN,
-        since=_SINCE,
-    )
-    RENDERING_CARRIERS = Deprecation.class_attribute(
-        {carrier: {} for carrier in HandoffRecord.CARRIERS},
-        "HandoffRecord.lighting(carrier) -- the policy is values alone",
-        remove_in=_REMOVE_IN,
-        since=_SINCE,
-    )
-    HANDOFF_ASSEMBLY = Deprecation.class_attribute(
-        HandoffRecord.CARRIERS["glb"].own,
-        "HandoffRecord.CARRIERS['glb'].own",
-        remove_in=_REMOVE_IN,
-        since=_SINCE,
-    )
-    LIGHTING_ASSEMBLY = Deprecation.class_attribute(
-        tuple(HandoffRecord.lighting("glb")),
-        "HandoffRecord.lighting('glb')",
-        remove_in=_REMOVE_IN,
-        since=_SINCE,
-    )
-    # Names that restated a record's declaration: a record is read off
-    # SceneRecords alone, and its GLB block takes the record's key.
-    FBX_TAKES_KEY = Deprecation.class_attribute(
-        "fbx_takes",
-        "SceneRecords.SHOTS -- each shot's range rides its clip",
-        remove_in=_REMOVE_IN,
-        since=_SINCE,
-    )
-    SHOT_METADATA_KEY = Deprecation.class_attribute(
-        SceneRecords.SHOTS.key,
-        "SceneRecords.SHOTS.key",
-        remove_in=_REMOVE_IN,
-        since=_SINCE,
-    )
-    ANIMATION_WEB_KEY = Deprecation.class_attribute(
-        SceneRecords.SHOTS.key,
-        "SceneRecords.SHOTS.key",
-        remove_in=_REMOVE_IN,
-        since=_SINCE,
-    )
-    # Held until 0.22.0 (``pythontk/__init__.py``, "Held until 0.22.0"): a
-    # GLB carries each record as it stands -- its version the record's, no
-    # field of it bound by node index.
-    ANIMATION_WEB_VERSION = Deprecation.class_attribute(
-        SceneRecords.SHOTS.version,
-        "SceneRecords.SHOTS.version",
-        remove_in=_REMOVE_IN,
-        since=_SINCE,
-    )
-    LIGHTMAP_METADATA_KEY = Deprecation.class_attribute(
-        SceneRecords.LIGHTMAPS.key,
-        "SceneRecords.LIGHTMAPS.key",
-        remove_in=_REMOVE_IN,
-        since=_SINCE,
-    )
-    LIGHTMAP_METADATA_VERSION = Deprecation.class_attribute(
-        SceneRecords.LIGHTMAPS.version,
-        "SceneRecords.LIGHTMAPS.version",
-        remove_in=_REMOVE_IN,
-        since=_SINCE,
-    )
-    LIGHTMAP_WEB_KEY = Deprecation.class_attribute(
-        SceneRecords.LIGHTMAPS.key,
-        "SceneRecords.LIGHTMAPS.key",
-        remove_in=_REMOVE_IN,
-        since=_SINCE,
-    )
-    SHADOW_METADATA_KEY = Deprecation.class_attribute(
-        SceneRecords.SHADOWS.key,
-        "SceneRecords.SHADOWS.key",
-        remove_in=_REMOVE_IN,
-        since=_SINCE,
-    )
-    SHADOW_METADATA_VERSION = Deprecation.class_attribute(
-        SceneRecords.SHADOWS.version,
-        "SceneRecords.SHADOWS.version",
-        remove_in=_REMOVE_IN,
-        since=_SINCE,
-    )
-    SHADOW_WEB_KEY = Deprecation.class_attribute(
-        SceneRecords.SHADOWS.key,
-        "SceneRecords.SHADOWS.key",
-        remove_in=_REMOVE_IN,
-        since=_SINCE,
-    )
-    SHADOW_WEB_NODE_FIELDS = Deprecation.class_attribute(
-        (),
-        "SceneRecords.SHADOWS.nodes -- a GLB binds the record by name",
-        remove_in=_REMOVE_IN,
-        since=_SINCE,
-    )
-    ARTICULATION_KEY = Deprecation.class_attribute(
-        SceneRecords.ARTICULATION.key,
-        "SceneRecords.ARTICULATION.key",
-        remove_in=_REMOVE_IN,
-        since=_SINCE,
-    )
-    ARTICULATION_VERSION = Deprecation.class_attribute(
-        SceneRecords.ARTICULATION.version,
-        "SceneRecords.ARTICULATION.version",
-        remove_in=_REMOVE_IN,
-        since=_SINCE,
-    )
-    ARTICULATION_WEB_KEY = Deprecation.class_attribute(
-        SceneRecords.ARTICULATION.key,
-        "SceneRecords.ARTICULATION.key",
-        remove_in=_REMOVE_IN,
-        since=_SINCE,
-    )
-    ARTICULATION_WEB_NODE_FIELDS = Deprecation.class_attribute(
-        (),
-        "SceneRecords.ARTICULATION.nodes -- a GLB binds the record by name",
-        remove_in=_REMOVE_IN,
-        since=_SINCE,
-    )
-    VISIBILITY_TRACKS_KEY = Deprecation.class_attribute(
-        SceneRecords.VISIBILITY.key,
-        "SceneRecords.VISIBILITY.key",
-        remove_in=_REMOVE_IN,
-        since=_SINCE,
-    )
-    VISIBILITY_TRACKS_VERSION = Deprecation.class_attribute(
-        SceneRecords.VISIBILITY.version,
-        "SceneRecords.VISIBILITY.version",
-        remove_in=_REMOVE_IN,
-        since=_SINCE,
-    )
-    # The lightmap record's folder hints, which no record has carried since
-    # 0.11.0 (the maps' folders ride the private ``lightmap_dirs``).
-    LOCATE_HINT_KEY = Deprecation.class_attribute(
-        "dir",
-        "nothing -- no record carries a folder hint",
-        remove_in=_REMOVE_IN,
-        since=_SINCE,
-    )
-    LOCATE_HINT_KEYS = Deprecation.class_attribute(
-        ("dir", "dirs"),
-        "nothing -- no record carries a folder hint",
-        remove_in=_REMOVE_IN,
-        since=_SINCE,
-    )
-    #: The per-section outcome a GLB carried beside the envelope -- the
-    #: build's own report, not the file's.
-    SIDECAR_APPLIED_KEY = Deprecation.class_attribute(
-        "scene_sidecar_applied",
-        "nothing -- the build reports what it applied (fbx_to_glb's report)",
-        remove_in=_REMOVE_IN,
-        since=_SINCE,
-    )
-
-    @ClassProperty
-    @Deprecation.symbol(
-        "pythontk.geo_utils.shadow_record.ShadowPlane -- every field is required",
-        remove_in=_REMOVE_IN,
-        since=_SINCE,
-    )
-    def SHADOW_PLANE_DEFAULTS(cls) -> Dict[str, Any]:
-        """A shadow plane's starting values, as 0.16.1 served them -- the v2
-        plane's defaults, ``None`` for no source or contact (the plane spells
-        them ``""``) -- as a literal: the v3 plane (2026-11-07) holds other
-        fields, and a retired name serves what it was."""
-        return {
-            "type": "projected",
-            "intensity": 1.0,
-            "source": None,
-            "source_type": "point",
-            "source_size": 0.0,
-            "source_angle": 0.0,
-            "follow_source": False,
-            "contact": None,
-            "ground": 0.0,
-            "radius": 0.5,
-            "height": 1.0,
-            "max_stretch": 6.0,
-            "canvas": [-1.0, 1.0, -0.5, 0.5],
-        }
-
-    @classmethod
-    @Deprecation.symbol(
-        "HandoffRecord.rendering_policy", remove_in=_REMOVE_IN, since=_SINCE
-    )
-    def rendering_policy(
-        cls,
-        overrides: Optional[Mapping[str, Mapping[str, Any]]] = None,
-        carrier: str = "glb",
-    ) -> Dict[str, Any]:
-        """The lighting recipe with a deliverable's own choices laid over it
-        (``HandoffRecord.rendering_policy``); *carrier* is checked, its values the
-        same on every carrier."""
-        return cls._sidecar.rendering_policy(overrides, carrier)
-
-    @classmethod
-    @Deprecation.symbol(
-        "HandoffRecord.block('glb', ...) -- a GLB carries extras.handoff, not an envelope",
-        remove_in=_REMOVE_IN,
-        since=_SINCE,
-    )
-    def build_scene_sidecar(
-        cls,
-        sections: Optional[Dict[str, Any]],
-        source: Dict[str, str],
-        asset: Optional[str] = None,
-        rendering: Optional[Mapping[str, Mapping[str, Any]]] = None,
-    ) -> Dict[str, Any]:
-        """The envelope a host built before the materials record: the GLB's
-        handoff block with the *sections* a converter applies to a file that
-        carries no record (:meth:`fbx_to_glb`)."""
-        return cls._sidecar.build_scene_sidecar(sections, source, asset, rendering)
-
     @classmethod
     def strip_fbx_records(cls, gltf: dict) -> int:
         """Drop what the source FBX's records left in a converted glTF's nodes.
@@ -1097,36 +834,6 @@ class MeshConvert(HelpMixin):
         return cls._sidecar.finish_glb(glb, rendering)
 
     @classmethod
-    @Deprecation.symbol(
-        "MeshConvert.strip_fbx_records -- every record the FBX carried leaves",
-        remove_in=_REMOVE_IN,
-        since=_SINCE,
-    )
-    def strip_fbx_handoff(cls, gltf: dict) -> int:
-        """Drop the FBX's handoff block from a converted glTF's node extras --
-        one of the records :meth:`strip_fbx_records` now drops together.
-
-        Returns:
-            How many nodes were stripped.
-        """
-        return cls._sidecar.strip_fbx_handoff(gltf)
-
-    @classmethod
-    @Deprecation.symbol(
-        "HandoffRecord.block('fbx', channels, source)",
-        remove_in=_REMOVE_IN,
-        since=_SINCE,
-    )
-    def build_fbx_handoff(
-        cls,
-        channels: Union[Iterable[str], Mapping[str, Any]],
-        source: Optional[Dict[str, str]] = None,
-    ) -> Dict[str, Any]:
-        """The FBX's handoff block for a carrier holding *channels*, or ``{}``
-        when it holds no record (``HandoffRecord.block``)."""
-        return cls._sidecar.build_fbx_handoff(channels, source)
-
-    @classmethod
     def embed_glb_handoff(cls, edit: "GlbEdit", handoff: Mapping[str, Any]) -> None:
         """Write *handoff* (``HandoffRecord.block("glb", ...)``) as the open GLB's
         ``extras.handoff``, name the root-``extras`` blocks the file carries
@@ -1148,16 +855,6 @@ class MeshConvert(HelpMixin):
         geometry is never touched.
         """
         return cls._sidecar.read_glb_handoff(glb)
-
-    @classmethod
-    @Deprecation.symbol(
-        "MeshConvert.read_glb_handoff -- a GLB carries extras.handoff",
-        remove_in=_REMOVE_IN,
-        since=_SINCE,
-    )
-    def read_scene_sidecar(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]:
-        """The handoff block a GLB carries (:meth:`read_glb_handoff`)."""
-        return cls.read_glb_handoff(glb)
 
     @classmethod
     def verify_glb(
@@ -1277,69 +974,6 @@ class MeshConvert(HelpMixin):
     # ------------------ _lightmaps.py: a host's bake, carried for the web viewer
 
     LIGHTMAP_INFO_KEY = _Lightmaps.LIGHTMAP_INFO_KEY
-
-    @classmethod
-    @Deprecation.symbol(
-        "nothing -- no record has carried a folder hint since 0.11.0",
-        remove_in=_REMOVE_IN,
-        since=_SINCE,
-    )
-    def without_locate_hints(cls, data_export: Dict[str, Any]) -> Dict[str, Any]:
-        """*data_export* as given: the folder hints this removed went with
-        0.11.0 (the maps' folders ride the private ``lightmap_dirs``)."""
-        return data_export
-
-    @classmethod
-    @Deprecation.symbol(
-        "SceneRecords.glb_block(gltf, SceneRecords.LIGHTMAPS) -- a finished GLB "
-        "carries the record as it stands in its root extras",
-        remove_in=_REMOVE_IN,
-        since=_SINCE,
-    )
-    def read_glb_lightmap_manifest(cls, glb: GlbTarget) -> Optional[Dict[str, Any]]:
-        """The ``lightmaps`` record riding a GLB's carrier node, or ``None`` --
-        always ``None`` on a finished GLB, whose records leave it
-        (:meth:`strip_fbx_records`); retired with that.
-
-        The manifest travels **in-band**: the host DCC publishes it as a string user
-        property on its ``data_export`` carrier node, Maya's FBX exporter writes it as
-        an FBX user property, and FBX2glTF's ``--user-properties`` (always passed by
-        :meth:`fbx_to_glb`) transcribes it into that node's glTF extras as
-        ``extras.fromFBX.userProperties.<key>`` -- probe-verified against v0.13.1.
-        So no consumer has to pass anything; the deliverable feeds its own repair.
-
-        A GLB that never made the FBX hop carries the same key as a TOP-LEVEL node
-        extra instead (a native glTF export's custom properties), and both shapes
-        are read -- the marker walk knows both, and a probe that knew only one
-        would make this whole path a silent no-op on half the deliverables.
-        Returns ``None`` for a GLB carrying neither, which is a clean no-op for
-        every caller.
-        """
-        return cls._lightmaps.read_glb_lightmap_manifest(glb)
-
-    @classmethod
-    @Deprecation.symbol(
-        "MeshConvert.finish_glb -- it drops every record and marker a GLB's nodes hold",
-        remove_in=_REMOVE_IN,
-        since=_SINCE,
-    )
-    def fix_glb_lightmap_metadata(cls, glb: GlbTarget) -> int:
-        """Leave a GLB its one statement of its lightmaps: ``extras.lightmaps``.
-
-        Each baked object's ``lightmapInfo`` marker and the ``lightmaps``
-        record on the data_export carrier leave the nodes once the record
-        rides the root ``extras`` (:meth:`strip_fbx_records`), as every GLB
-        build leaves them (:meth:`finish_glb`).
-
-        A GLB with no ``extras.lightmaps`` is left as found.
-
-        Parameters:
-            glb: ``.glb`` path (modified in place) or an open :class:`GlbEdit`.
-
-        Returns:
-            How many nodes changed; 0 when the file already states them once.
-        """
-        return cls._lightmaps.fix_glb_lightmap_metadata(glb)
 
     @classmethod
     def lightmap_manifest_coverage(cls, glb: GlbTarget) -> Dict[str, List[str]]:

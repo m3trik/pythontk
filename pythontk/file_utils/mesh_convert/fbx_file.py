@@ -1694,6 +1694,113 @@ class FbxFile(_FbxFileInternal):
                         )
         return takes
 
+    def take_setup_jumps(
+        self,
+        properties: Collection[str] = ("Lcl Translation", "Lcl Rotation", "Lcl Scaling"),
+        hold: float = 1.0,
+        tolerance: float = 1e-3,
+    ) -> List[Dict[str, Any]]:
+        """Takes that end on the NEXT take's setup.
+
+        A target whose last change in a take is a jump -- held before it, held
+        after it to the take's end -- onto the value the take after it starts
+        from, with the new pose showing for *hold* seconds at most.  Played
+        alone (a clip per take: an interactive step, a game's state), such a
+        take shows the next step's first pose before its own is over; the
+        jump belongs to the next take, or the cut belongs before it.  A gap
+        between the takes does not help: the jump is keyed inside this one.
+
+        A smooth move that ends where the next take begins is no jump, and a
+        jump that lands anywhere else, or whose pose shows longer than
+        *hold*, is the take's own action.
+
+        Parameters:
+            properties: The transform properties judged.
+            hold: The longest a jumped-to pose may show, in seconds, and
+                still be read as the next take's setup (measured on a real
+                course: 0, 11 and 21 frames at 30 fps).
+            tolerance: Below this a value did not change.
+
+        Returns:
+            One ``{take, next, target, frame, shown, properties}`` per take
+            and target, takes in timeline order (their declared windows):
+            *frame* the file frame the jump lands on, *shown* how many frames
+            its pose shows before the take ends, *properties* the properties
+            that jump (sorted).  ``[]`` for a file of fewer than two takes
+            with a declared window.  A take whose window holds another
+            take's (a whole-timeline take beside its slices) is no step and
+            is left out of the order.
+
+        Raises:
+            ValueError: *hold* is negative.
+        """
+        if hold < 0:
+            raise ValueError(f"hold is a duration in seconds, got {hold}")
+        fps = self._fps() or 30.0
+        ticks = self.TICKS_PER_SECOND
+        frame = ticks / fps
+        reach = int(round(hold * fps))
+        windows = self.take_windows()
+        samplers = self.take_samplers(properties)
+        spans = {t: windows[t] for t in windows if t in samplers}
+
+        def covers(take: str) -> bool:
+            (start, end) = spans[take]
+            return any(
+                span != spans[take] and start <= span[0] and span[1] <= end
+                for span in spans.values()
+            )
+
+        order = sorted((t for t in spans if not covers(t)), key=spans.get)
+        found: List[Dict[str, Any]] = []
+        for take, after in zip(order, order[1:]):
+            start, end = (int(round(seconds * ticks)) for seconds in windows[take])
+            first = int(round(windows[after][0] * ticks))
+            length = int(round((end - start) / frame))
+            jumps: Dict[str, Dict[str, Any]] = {}
+            for channel, sample in samplers[take].items():
+                onward = samplers[after].get(channel)
+                if onward is None:
+                    continue
+
+                def at(index: int, sample=sample) -> float:
+                    return sample(int(round(end - (length - index) * frame)))
+
+                # The take's last change, sought no further back than a pose
+                # may show: an earlier one is the take's own action.
+                last = next(
+                    (
+                        i
+                        for i in range(length, max(length - reach, 1) - 1, -1)
+                        if abs(at(i) - at(i - 1)) > tolerance
+                    ),
+                    None,
+                )
+                if last is None or last < 2:
+                    continue
+                if abs(at(last - 1) - at(last - 2)) > tolerance:
+                    continue  # moving into it: a move, not a jump
+                if abs(at(last) - onward(first)) > tolerance:
+                    continue  # lands elsewhere: the take's own
+                target, prop, _component = channel
+                entry = jumps.setdefault(
+                    target, {"last": last, "properties": set()}
+                )
+                entry["last"] = min(entry["last"], last)
+                entry["properties"].add(prop)
+            for target, entry in jumps.items():
+                found.append(
+                    {
+                        "take": take,
+                        "next": after,
+                        "target": target,
+                        "frame": int(round((end - (length - entry["last"]) * frame) / frame)),
+                        "shown": length - entry["last"],
+                        "properties": sorted(entry["properties"]),
+                    }
+                )
+        return found
+
     def take_layout(self, tolerance: float = 1e-4) -> Dict[str, Any]:
         """Which takes, imported together, carry ALL of the file's animation.
 

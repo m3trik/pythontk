@@ -405,6 +405,7 @@ def main():
     from pythontk.core_utils.test_sandbox import TestSandbox
 
     TestSandbox.activate()
+    TestSandbox.sweep_scratch(os.path.dirname(os.path.abspath(__file__)))  # its scratch folder ages out
 
     # A name nothing answers to means the run would not cover what was asked
     # for; running the rest and exiting 0 would read as that coverage.

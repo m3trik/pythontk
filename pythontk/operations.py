@@ -74,4 +74,16 @@ OPERATIONS = (
         "pythontk:OperationProvider.check",
         title="Check every package's operations",
     ),
+    Operation(
+        "narration.render",
+        "pythontk.core_utils.engines.shots.manifest.mapping:Mapping.narrate",
+        effect="files",
+        title="Narrate a sheet's voice lines",
+    ),
+    Operation(
+        "sheet.new",
+        "pythontk.core_utils.engines.shots.manifest.mapping:Mapping.new_sheet",
+        effect="files",
+        title="Start a build sheet from its template's starter",
+    ),
 )

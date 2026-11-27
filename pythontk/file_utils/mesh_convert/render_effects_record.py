@@ -19,7 +19,8 @@ material channels, held to that table by the tests.
 
 Version 2 (2026-11-05): v1's ramps (``[[frame, value], ...]`` per channel),
 its ``fps`` and its whole-timeline placement retired; v1 is refused, its fix
-a re-export.
+a re-export. Added to it (2026-11-24, optional): a material's tint channels
+(``tint_r``, ``tint_g``, ``tint_b``) and its named ``states``.
 """
 
 from dataclasses import dataclass
@@ -101,9 +102,36 @@ class RenderEffectsTrack(SchemaSpec):
 
 
 @dataclass
+class RenderEffectsState(SchemaSpec):
+    """One named state of a material's emission: the tint and the weight a
+    runtime sets when it switches to it."""
+
+    TYPED = True
+
+    name: str = _field(
+        help="The state's name, as a runtime switches to it.",
+        required=True,
+        example="green",
+    )
+    tint: _Colour = _field(
+        help=(
+            "The colour the material's emission colour (or map) is multiplied "
+            "by in this state, linear RGB; white keeps the material's own."
+        ),
+        required=True,
+        example=[0.0, 1.0, 0.0],
+    )
+    weight: float = _field(
+        help="The emission's weight in this state, 0..1 (0: off).",
+        required=True,
+        example=1.0,
+    )
+
+
+@dataclass
 class RenderEffectsMaterial(SchemaSpec):
-    """One material whose emission is animated: the channel names it, the
-    curve (a weight 0..1) rides the transport."""
+    """One material whose emission is animated: the channels name it, each
+    curve rides the transport (a weight 0..1; a tint channel 0 or more)."""
 
     TYPED = True
 
@@ -117,11 +145,22 @@ class RenderEffectsMaterial(SchemaSpec):
         example="screen_mat",
     )
     channels: List[str] = _field(
-        help="The material's animated channels: 'emission', its emission's weight 0..1.",
+        help=(
+            "The material's animated channels: 'emission', its emission's "
+            "weight 0..1; 'tint_r', 'tint_g', 'tint_b', the tint its emission "
+            "colour is multiplied by (the three together, linear RGB)."
+        ),
         required=True,
         example=["emission"],
         default_factory=list,
         validate=lambda value: _names_in(_transport().material_channels)(value),
+    )
+    states: List[RenderEffectsState] = _field(
+        help=(
+            "The emission's named states (a tint and a weight each), for a "
+            "runtime that switches them by name; absent when it has none."
+        ),
+        nested=[RenderEffectsState],
     )
     emission_color: _Colour = _field(
         help=(
@@ -136,6 +175,14 @@ class RenderEffectsMaterial(SchemaSpec):
             "above 1 for a glow brighter than white); absent: the material's own."
         ),
         example=4.0,
+    )
+    tint: _Colour = _field(
+        help=(
+            "The tint the delivered material shows, linear RGB: its emission is "
+            "colour x strength x tint x weight, so a runtime reads its resting "
+            "weight off the material over that; absent: white (no tint)."
+        ),
+        example=[0.0, 1.0, 0.0],
     )
 
 

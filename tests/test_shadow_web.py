@@ -685,33 +685,6 @@ class TestApplyGlbShadows(unittest.TestCase):
                 self.assertNotIn(ptk.SceneRecords.SHADOWS.key, gltf.get("extras", {}))
                 self.assertEqual(_media_views(gltf), {})
 
-    def test_the_retired_plane_defaults_are_the_planes_declared_ones(self):
-        """``MeshConvert.SHADOW_PLANE_DEFAULTS`` (retired 2026-10-20, removed
-        in 0.18.0: a plane states every field ``ShadowPlane`` declares, and the
-        pass fills none it leaves unsaid) warns, and serves the table it was
-        in 0.16.1 -- REGRESSION (2026-10-24): it served ``""`` for no source or
-        contact, the plane's own spelling, where its readers test ``None``."""
-        with self.assertWarns(DeprecationWarning):
-            defaults = MeshConvert.SHADOW_PLANE_DEFAULTS
-        self.assertEqual(
-            defaults,
-            {
-                "type": "projected",
-                "intensity": 1.0,
-                "source": None,
-                "source_type": "point",
-                "source_size": 0.0,
-                "source_angle": 0.0,
-                "follow_source": False,
-                "contact": None,
-                "ground": 0.0,
-                "radius": 0.5,
-                "height": 1.0,
-                "max_stretch": 6.0,
-                "canvas": [-1.0, 1.0, -0.5, 0.5],
-            },
-        )
-
     def test_a_file_found_nowhere_is_warned_once_naming_its_planes(self):
         """A plane whose horizon map is nowhere still ships in the record (its
         silhouette is its fallback): the map is warned ONCE, naming every

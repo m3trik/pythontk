@@ -101,6 +101,14 @@ class TestFmt(unittest.TestCase):
         # Notes come after the title
         self.assertLess(html.index("X"), html.index("Tip: use Ctrl-click."))
 
+    def test_a_hint_is_the_last_line_muted_with_no_note_prefix(self):
+        html = TooltipFormat.fmt(title="X", notes=["A caveat."], hint="Click: its menu.")
+        self.assertIn("Click: its menu.", html)
+        self.assertGreater(html.index("Click: its menu."), html.index("A caveat."))
+        tail = html[html.rindex("<p"):]
+        self.assertIn("color:#9a9a9a", tail.replace(" ", ""))
+        self.assertNotIn("note:", tail)
+
     def test_ordering_title_body_bullets_steps_rows_sections_notes(self):
         html = TooltipFormat.fmt(
             title="T",

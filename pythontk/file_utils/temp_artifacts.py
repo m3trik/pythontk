@@ -507,10 +507,10 @@ class TempArtifacts(LoggingMixin):
         still be reading), scoped to this store (its own folder under the root;
         the prefix in a folder the caller named), and errors are swallowed (a
         locked file just waits for the next sweep). A directory is as fresh as
-        its NEWEST entry, not its own mtime: a file rewritten in place (how Maya
-        saves a ``.ma``) never touches the parent's mtime, so a scratch dir
-        someone keeps saving into would otherwise read as abandoned and be
-        reclaimed with their work in it. ``max_age_days=None`` never ages.
+        its newest file at any depth, not its own mtime: a file rewritten in
+        place (how Maya saves a ``.ma``) never touches the parent's mtime, so a
+        scratch dir someone keeps saving into would otherwise read as abandoned
+        and be reclaimed with their work in it. ``max_age_days=None`` never ages.
 
         One exception to the age gate: a ``session`` tag names its owner, and an
         entry whose owner has exited is used by nobody, so it goes at any age. A
@@ -521,6 +521,102 @@ class TempArtifacts(LoggingMixin):
         removed = self._sweep_folder(self.dir, self.prefix, self.max_age_days)
         TempArtifacts._swept_at[self._sweep_key()] = time.monotonic()
         return removed
+
+    #: In a scratch folder :meth:`sweep_scratch` reads: the names it leaves alone,
+    #: one per line (``#`` starts a comment), whatever their age.
+    KEEP_FILE = ".keep"
+
+    @classmethod
+    def sweep_scratch(cls, folder: str, max_age_days: float) -> List[str]:
+        """Remove what *folder* -- a hand-kept scratch folder no store owns, a
+        repo's ``tests/temp_tests`` -- has left untouched for *max_age_days*:
+        each top-level entry, judged by the newest file anywhere in it, except
+        the names its :attr:`KEEP_FILE` lists (compared through
+        ``os.path.normcase``: case-blind on Windows, exact elsewhere). A link
+        (a symlink, a Windows junction) goes as the link alone, judged by its
+        own age; what it points at is never read or removed. Best-effort, as
+        every sweep: a held entry waits for the next one, and an entry it cannot
+        read or remove is a warning naming it. A :attr:`KEEP_FILE` or a folder
+        it cannot read is a warning too, and sweeps nothing: what to keep is
+        unknown. A test run calls it as it starts (``TestSandbox.sweep_scratch``).
+
+        Parameters:
+            folder: The scratch folder; nothing happens when it does not exist.
+            max_age_days: Days since an entry's newest file was written
+                (a test run's: ``TestSandbox.SCRATCH_DAYS``).
+
+        Returns:
+            list[str]: The paths removed.
+        """
+        cutoff = cls._cutoff(max_age_days)
+        if cutoff is None:
+            return []
+        keep = {os.path.normcase(n) for n in (cls.KEEP_FILE, ".gitignore", ".gitkeep")}
+        removed: List[str] = []
+        try:
+            with open(os.path.join(folder, cls.KEEP_FILE), encoding="utf-8") as fh:
+                keep |= {os.path.normcase(ln.split("#", 1)[0].strip().rstrip("/\\")) for ln in fh} - {""}
+        except FileNotFoundError:
+            pass  # a folder that keeps nothing by name, or no folder (below)
+        except (OSError, UnicodeError) as exc:
+            cls.logger.warning(f"Scratch sweep: {folder}'s {cls.KEEP_FILE} could not be read ({exc}); nothing swept.")
+            return removed
+        try:
+            entries = os.scandir(folder)
+        except FileNotFoundError:
+            return removed
+        except OSError as exc:
+            cls.logger.warning(f"Scratch sweep: {folder} could not be read ({exc}); nothing swept.")
+            return removed
+        with entries:
+            for entry in entries:
+                if os.path.normcase(entry.name) in keep:
+                    continue
+                try:
+                    if cls._touched_since(entry.path, cutoff):
+                        continue
+                except OSError as exc:
+                    cls.logger.warning(f"Scratch sweep: {entry.path} could not be read ({exc}); left for the next sweep.")
+                    continue
+                left = cls._remove(entry.path)
+                if left:
+                    cls.logger.warning(f"Scratch sweep: {entry.path} is held ({'; '.join(left[:3])}); left for the next sweep.")
+                else:
+                    removed.append(entry.path)
+        return removed
+
+    @classmethod
+    def _touched_since(cls, path: str, cutoff: float) -> bool:
+        """Whether *path*, or anything at any depth inside it, was written at or
+        after *cutoff* (stops at the first such file). A directory is as fresh
+        as its newest file, never its own mtime alone: a file rewritten in place
+        (how Maya saves a ``.ma``) never touches its folder's. A link is its own
+        age; the walk never enters one."""
+        if os.lstat(path).st_mtime >= cutoff:
+            return True
+        if cls._is_link(path) or not os.path.isdir(path):
+            return False
+        for root, dirs, files in os.walk(path):
+            dirs[:] = [d for d in dirs if not cls._is_link(os.path.join(root, d))]
+            for name in dirs + files:
+                try:
+                    if os.lstat(os.path.join(root, name)).st_mtime >= cutoff:
+                        return True
+                except OSError:
+                    continue
+        return False
+
+    @staticmethod
+    def _is_link(path: str) -> bool:
+        """Whether *path* is a symlink or a Windows directory junction: a link,
+        whose target is not a sweep's to read or delete (``os.path.islink``
+        misses a junction before Python 3.12)."""
+        if os.path.islink(path):
+            return True
+        try:
+            return os.lstat(path).st_reparse_tag == stat.IO_REPARSE_TAG_MOUNT_POINT
+        except (OSError, AttributeError):  # gone, or no junctions on this platform
+            return False
 
     @classmethod
     def sweep_all(cls, root: Optional[str] = None) -> List[str]:
@@ -673,7 +769,7 @@ class TempArtifacts(LoggingMixin):
                     continue
                 try:
                     if not cls._owner_exited(entry.name, prefix) and (
-                        cutoff is None or cls._newest_mtime(entry) >= cutoff
+                        cutoff is None or cls._touched_since(entry.path, cutoff)
                     ):
                         continue
                 except OSError:
@@ -724,6 +820,15 @@ class TempArtifacts(LoggingMixin):
         skipped and the walk carries on, so only what is still held remains.
         """
         left: List[str] = []
+        if TempArtifacts._is_link(path):  # the link alone, never what it points at
+            try:
+                os.unlink(path)
+            except OSError:
+                try:
+                    os.rmdir(path)  # a directory link or a junction, on Windows
+                except OSError as e:
+                    left.append(f"{path}: {e}")
+            return left
 
         def skip(func, target, exc):
             if isinstance(exc, tuple):  # onerror's exc_info, before 3.12
@@ -758,27 +863,6 @@ class TempArtifacts(LoggingMixin):
         The first is the held entry itself; the rest are mostly its ancestors,
         which could not go because it did not."""
         return left[0] + (f" (+{len(left) - 1} more)" if len(left) > 1 else "")
-
-    @staticmethod
-    def _newest_mtime(entry: Any) -> float:
-        """The mtime of *entry* (a ``DirEntry`` or a path), or for a directory
-        the newest of it and its files."""
-        if isinstance(entry, os.DirEntry):  # its stat is already cached
-            path, newest, is_dir = entry.path, entry.stat().st_mtime, entry.is_dir()
-        else:
-            path = os.fspath(entry)
-            newest, is_dir = os.stat(path).st_mtime, os.path.isdir(path)
-        if is_dir:
-            try:
-                with os.scandir(path) as children:
-                    for child in children:
-                        try:
-                            newest = max(newest, child.stat().st_mtime)
-                        except OSError:
-                            continue
-            except OSError:
-                pass
-        return newest
 
     # ------------------------------------------------------------------ context manager
     def __enter__(self) -> "TempArtifacts":

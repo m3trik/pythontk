@@ -115,7 +115,7 @@ class HandoffSource(SchemaSpec):
     TYPED = True
 
     application: str = _field(
-        help="The application that wrote it ('maya', 'blender').", required=True
+        help="The application that wrote it, by its lowercase name.", required=True
     )
     version: str = _field(help="That application's version.")
     scene: str = _field(help="The scene file it was written from.")
@@ -882,7 +882,7 @@ class HandoffRecord:
         choose; a value of another kind is left out, so a block passes its
         settings, never a sentence, to another (``GlbPipeline``), and the C#
         constants unitytk compiles are generated from this
-        (``sync_scene_records.py``)."""
+        (``sync_scene_records.py``: ``HandoffRendering.g.cs``)."""
 
         def kind(value: Any) -> Any:
             if isinstance(value, bool):

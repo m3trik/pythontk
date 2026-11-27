@@ -46,6 +46,11 @@ class Conformance:
             "pythontk.file_utils.mesh_convert._media_conformance",
             "RecordNamesConformance",
         ),
+        # SpotPlacement's stand, view and point over boxes: a first pose's rules.
+        "spot_placement": (
+            "pythontk.geo_utils.spot_placement",
+            "SpotPlacementConformance",
+        ),
     }
 
     @classmethod

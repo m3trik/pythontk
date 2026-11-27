@@ -172,17 +172,26 @@ class _ShotTransferInternal(object):
         """A copy of *store* (a ``to_dict`` shape) with its times on another
         clock -- scaled by *ratio*, then shifted by *offset*: shot bounds
         (whole frames when *snap* -- the RECEIVING store's policy, default
-        this store's own), markers, the gap (a length, so scaled only) and,
-        unless *ledger* is off, the ledger claims (:meth:`decode` rebuilds
-        the ledger from the section's own, so it skips that work).  What
-        :meth:`~pythontk.ShotStore.rescale_to_fps` does to a live store,
-        done on data."""
+        this store's own) and their takes' spans (counted from the shot's
+        start: each edge's frame scaled and snapped as the bounds are, so a
+        take keeps its keys and its tail stays in a clip), markers, the gap (a
+        length, so scaled only) and, unless *ledger* is off, the ledger claims
+        (:meth:`decode` rebuilds the ledger from the section's own, so it
+        skips that work).  What :meth:`~pythontk.ShotStore.rescale_to_fps`
+        does to a live store, done on data."""
         out = deepcopy(store)
         if snap is None:
             snap = bool(store.get("snap_whole_frames", True))
         for shot in out.get("shots") or []:
-            shot["start"] = cls._frame(shot.get("start", 0.0), ratio, offset, snap)
+            old_start = float(shot.get("start", 0.0))
+            shot["start"] = cls._frame(old_start, ratio, offset, snap)
             shot["end"] = cls._frame(shot.get("end", 0.0), ratio, offset, snap)
+            takes = (shot.get("metadata") or {}).get(ShotStore.TAKES)
+            for record in takes if isinstance(takes, list) else ():
+                for edge in ("start", "end"):
+                    if isinstance(record, dict) and record.get(edge) is not None:
+                        at = cls._frame(old_start + float(record[edge]), ratio, offset, snap)
+                        record[edge] = round(at - shot["start"], 4)
         for marker in out.get("markers") or []:
             if "time" in marker:
                 marker["time"] = round(float(marker["time"]) * ratio + offset, 4)
@@ -541,10 +550,11 @@ class ShotTransfer(_ShotTransferInternal):
         same seconds, so its shots must land there too.
 
         A merge renames a shot only to resolve a clash: an incoming name that
-        exports as one of the scene's shots already does (by clip spelling,
-        ignoring case -- two stores can each be unique and still collide) is
-        numbered through :meth:`~pythontk.ShotStore.unique_among`, a legal
-        name whatever the incoming spelling.  Any other name arrives as it
+        exports as one of the scene's clips already does -- a shot's or a
+        take's (by clip spelling, ignoring case -- two stores can each be
+        unique and still collide) -- is numbered through
+        :meth:`~pythontk.ShotStore.unique_among`, a legal name whatever the
+        incoming spelling.  Any other name arrives as it
         was saved, a legacy spelling included, as a store adopted whole
         keeps it.
 
@@ -574,7 +584,15 @@ class ShotTransfer(_ShotTransferInternal):
         taken = [int(s["shot_id"]) for s in out.get("shots") or []]
         next_id = (max(taken) + 1) if taken else 1
         local_ids: Dict[int, int] = {}
+
+        def take_names(shot: Dict[str, Any]) -> List[str]:
+            takes = (shot.get("metadata") or {}).get(ShotStore.TAKES)
+            return [str(t["name"]) for t in takes if isinstance(t, dict) and t.get("name")] if isinstance(takes, list) else []
+
+        # Every clip the scene exports: its shots' names and their takes' (a
+        # take is a clip too, as ``ShotStore.unique_name`` reads it).
         names = [str(s.get("name") or "") for s in out.get("shots") or []]
+        names += [t for s in out.get("shots") or [] for t in take_names(s)]
         clips = {ShotStore._clip_key(name) for name in names}
         for shot in sorted(
             incoming.get("shots") or [],
@@ -588,8 +606,9 @@ class ShotTransfer(_ShotTransferInternal):
             if ShotStore._clip_key(name) in clips:
                 name = ShotStore.unique_among(name, names)
             shot["name"] = name
-            names.append(name)
-            clips.add(ShotStore._clip_key(name))
+            for clip in [name] + take_names(shot):
+                names.append(clip)
+                clips.add(ShotStore._clip_key(clip))
             out["shots"].append(shot)
         for key in cls.OBJECT_LIST_KEYS:
             out[key] = cls._unique(

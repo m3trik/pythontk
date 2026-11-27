@@ -26,7 +26,6 @@ import os
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Tuple, Union
 
-from pythontk.core_utils.deprecation import Deprecation
 from pythontk.core_utils.engines.scene_export.export_profile import ExportProfile
 from pythontk.core_utils.engines.scene_export.handoff_record import HandoffRecord
 from pythontk.core_utils.engines.scene_export.scene_records import SceneRecords
@@ -888,16 +887,6 @@ class ExportVerifier(_ExportVerifierInternal):
             for name, material in MaterialFamilies.materials_by_name(record).items()
             if "metallicRoughnessTexture" in MaterialFamilies.material_files(record, material)
         ]
-
-    @Deprecation.symbol(
-        "ExportVerifier.check_glb_handoff -- a GLB carries extras.handoff, "
-        "not an envelope",
-        remove_in="0.18.0",
-        since="2026-10-24",
-    )
-    def check_glb_envelope(self) -> List[Finding]:
-        """Retired 2026-10-20 (removed in 0.18.0): :meth:`check_glb_handoff`."""
-        return self.check_glb_handoff()
 
     # ---- sidecar gates ----------------------------------------------------
 

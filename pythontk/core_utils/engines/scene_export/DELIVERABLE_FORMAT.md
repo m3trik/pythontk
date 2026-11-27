@@ -8,7 +8,7 @@ Every FBX and GLB a scene exports states itself in-band: the scene's records rid
 - **One key per record, in every file.** The FBX holds a record as a JSON string user property on a node named `data_export`; the GLB holds the record itself -- the same version and shape, its names resolved in the GLB's own scene -- as an object in the root `extras`, under the same key.
 - **One version a reader reads.** A record or block of another version is refused, with a warning, and the file is re-exported; no reader keeps a branch for an older shape.
 - **One frame.** A record whose version is in the frame (`x-in-frame` in the schema) states its values in metres, right-handed with +Y up and +Z forward, rotations as a unit quaternion (x, y, z, w) and times in seconds (glTF 2.0's frame); any other states its units in its assembly.
-- **One transport.** An animated value rides, in an FBX, on a curve proxy per take: a transform named `<target>__<channel>`, the target by its leaf name (no path, no namespace: a reader joins a record's node or material to its curve by that leaf), carrying the `curveProxy` user property, whose `scale.x` holds the curve -- a child of the node for a node channel (visibility, opacity, highlight), of the export's carrier node for a material channel (emission). A node channel plays on its proxy's parent wherever the file carries the proxy; only a track with no proxy joins a node by name, the exact name first, then the one node of its leaf, a tie never guessed; visibility steps. In a GLB it rides on the property itself, per clip, through `KHR_animation_pointer` channels, presence as a stepped scale of the node. A record animating anything else states its own carrier in its assembly.
+- **One transport.** An animated value rides, in an FBX, on a curve proxy per take: a transform named `<target>__<channel>`, the target by its leaf name (no path, no namespace: a reader joins a record's node or material to its curve by that leaf), carrying the `curveProxy` user property, whose `scale.x` holds the curve -- a child of the node for a node channel (visibility, opacity, highlight), of the export's carrier node for a material channel (emission, tint_r, tint_g, tint_b). A node channel plays on its proxy's parent wherever the file carries the proxy; only a track with no proxy joins a node by name, the exact name first, then the one node of its leaf, a tie never guessed; visibility steps. In a GLB it rides on the property itself, per clip, through `KHR_animation_pointer` channels, presence as a stepped scale of the node. A record animating anything else states its own carrier in its assembly.
 - **One media transport.** The files the lightmaps record names -- its maps, its probe and the probe's highlight copies -- and the shadows record names -- each plane's horizon map, silhouette and atlas -- ride a GLB that carries the record, each as the bufferView whose glTF `name` is the file's name (the audio record's sounds ride none yet). A reader joins the record's name to that view by file name, both lower-cased (str.lower, toLowerCase); two views that join one name hold neither. The bufferView's `extras.mimeType` states its bytes -- the file itself where a glTF reader reads its format, else a web encoding of it: an HDR lightmap as 8-bit sRGB (`image/png`, `image/webp`, `image/ktx2`) whose decoded linear texels times `extras.scale` (a finite positive number) are the map, an HDR probe or highlight copy as Radiance RGBE (`image/vnd.radiance`). An FBX embeds each file itself, under the same name.
 - **Extensions name their readers.** A field only some readers use is optional and names them ("Read only by ..."; `x-readers` in the schema); every other reader ignores it, and its generated types leave it out.
 - **One published schema.** `scene_records.schema.json`, beside this file, states all of it as JSON Schema (draft 2020-12).
@@ -23,7 +23,7 @@ Every FBX and GLB a scene exports states itself in-band: the scene's records rid
 | [`lods`](#lods) | `data_export.lods` v1 | -- | unity | LOD groups: per group its node name, its level nodes (LOD0, the most detailed, first) and each level's switch height, a fraction of the screen's height, the last the cull |
 | [`articulation`](#articulation) | `data_export.articulation` v2 | `extras.articulation` v2 | unity, glb | articulated rigs: per rig its joints (node name, parent joint, rest translate and rotation, the anchor frame its channels turn and slide in, rotate order, channels with limits and grab weights) and the parts a hand grabs, each with the joint it rides -- in metres |
 | [`render_effects`](#render_effects) | `data_export.render_effects` v2 | `extras.render_effects` v2 | unity, glb, verifier | which nodes carry an animated render effect -- 'visibility', 'opacity', 'highlight' with its colour stops 'highlight_color' and 'highlight_color_dim' -- and which materials an animated 'emission'; each curve rides the file's animated-value transport, per clip |
-| [`handoff`](#handoff) | `data_export.handoff` v3 | `extras.handoff` v3 | glb | the standalone-reader contract: the approved scene part by part and the lighting it was approved under |
+| [`handoff`](#handoff) | `data_export.handoff` v3 | `extras.handoff` v3 | glb, unity | the standalone-reader contract: the approved scene part by part and the lighting it was approved under |
 
 ## materials
 
@@ -621,14 +621,26 @@ One node's effects: which channels its subtree carries, and the highlight's colo
 
 ##### RenderEffectsMaterial
 
-One material whose emission is animated: the channel names it, the curve (a weight 0..1) rides the transport.
+One material whose emission is animated: the channels name it, each curve rides the transport (a weight 0..1; a tint channel 0 or more).
 
 | Key | Required | Description | Example |
 |---|---|---|---|
 | `material` | yes | The material's name, as the delivered material is named (the 'materials' record's entry); where an import drops the namespace, the name after the last ':' joins. | `"screen_mat"` |
-| `channels` | yes | The material's animated channels: 'emission', its emission's weight 0..1. | `["emission"]` |
+| `channels` | yes | The material's animated channels: 'emission', its emission's weight 0..1; 'tint_r', 'tint_g', 'tint_b', the tint its emission colour is multiplied by (the three together, linear RGB). | `["emission"]` |
+| `states` | no | The emission's named states (a tint and a weight each), for a runtime that switches them by name; absent when it has none. | see *RenderEffectsState* below (list) |
 | `emission_color` | no | The emission's colour at weight 1, linear RGB; absent: the material's own emissive colour. | `[1.0, 0.5, 0.0]` |
 | `emission_strength` | no | The emission's strength at weight 1 (a multiplier of the colour, above 1 for a glow brighter than white); absent: the material's own. | `4.0` |
+| `tint` | no | The tint the delivered material shows, linear RGB: its emission is colour x strength x tint x weight, so a runtime reads its resting weight off the material over that; absent: white (no tint). | `[0.0, 1.0, 0.0]` |
+
+###### RenderEffectsState
+
+One named state of a material's emission: the tint and the weight a runtime sets when it switches to it.
+
+| Key | Required | Description | Example |
+|---|---|---|---|
+| `name` | yes | The state's name, as a runtime switches to it. | `"green"` |
+| `tint` | yes | The colour the material's emission colour (or map) is multiplied by in this state, linear RGB; white keeps the material's own. | `[0.0, 1.0, 0.0]` |
+| `weight` | yes | The emission's weight in this state, 0..1 (0: off). | `1.0` |
 
 ### In the GLB: `extras.render_effects`, version 2
 
@@ -676,7 +688,7 @@ Where the file came from: provenance, never identity.
 
 | Key | Required | Description | Example |
 |---|---|---|---|
-| `application` | yes | The application that wrote it ('maya', 'blender'). |  |
+| `application` | yes | The application that wrote it, by its lowercase name. |  |
 | `version` | no | That application's version. |  |
 | `scene` | no | The scene file it was written from. |  |
 

@@ -55,7 +55,6 @@ import time
 from contextlib import contextmanager
 from typing import Any, Callable, Dict, Iterator, Optional, Sequence
 
-from pythontk.core_utils.deprecation import Deprecation
 from pythontk.core_utils.logging_mixin import LoggingMixin
 from pythontk.file_utils.temp_artifacts import TempArtifacts
 
@@ -80,63 +79,6 @@ class GlbPipeline(LoggingMixin):
         finally:
             elapsed = time.perf_counter() - started
             timings[stage] = round(timings.get(stage, 0.0) + elapsed, 3)
-
-    @classmethod
-    @Deprecation.symbol(
-        "nothing -- GlbPipeline.build reads the handoff off the FBX's own record",
-        remove_in="0.18.0",
-        since="2026-10-24",
-    )
-    def envelope(
-        cls,
-        read_sections: Callable[[], Optional[Dict[str, Any]]],
-        *,
-        source: Dict[str, str],
-        asset: Optional[str] = None,
-        rendering: Optional[Dict[str, Dict[str, Any]]] = None,
-        logger: Any = None,
-    ) -> Dict[str, Any]:
-        """The scene-sidecar envelope a build applies, from a host's reader.
-
-        *read_sections* is a host's read of the sections it sends (no current
-        host sends any: the FBX's ``materials`` record states every material,
-        and a build reads no section) -- passed as a callable so its failure is
-        handled HERE, the same way for every producer: a read that raises is
-        logged and yields an envelope with no sections. Requested-but-empty
-        stays distinguishable from switched-off (the caller attaches nothing
-        when the sidecar is off), and a bare GLB still beats no GLB.
-
-        Parameters:
-            read_sections: Returns the sidecar sections for the export set.
-            source: ``{"application", "version"}`` of the authoring host.
-            asset: The payload's basename, recorded in the envelope.
-            rendering: The export's choices over the lighting recipe the GLB
-                publishes (``ExportRun.rendering``); ``None`` is the policy.
-            logger: Where the outcome line goes; the class logger otherwise.
-        """
-        log = logger or cls.logger
-        try:
-            sections = read_sections() or {}
-        except Exception:  # noqa: BLE001 -- a bare GLB still beats no GLB
-            log.warning("Scene sidecar skipped.", exc_info=True)
-            sections = {}
-        envelope = cls._mesh_convert().build_scene_sidecar(
-            sections, source=source, asset=asset, rendering=rendering
-        )
-        # Names what the sidecar IS, because "riding the GLB" read as a
-        # companion file the consumer has to be handed: it is embedded in the
-        # GLB's `extras`, nothing outside the .glb is produced. Its sections
-        # repair the converter's reading only of a file whose materials no
-        # reader can parse (an ASCII FBX): an FBX's ``materials`` record --
-        # or its own materials, read -- states every material, and the build
-        # says so once it has applied them.
-        log.info(
-            "Scene sidecar read (%s): embedded in the GLB's extras with its "
-            "handoff and lighting; its sections repair only a file whose "
-            "materials cannot be read (no companion file).",
-            ", ".join(sorted(sections)) or "no sections",
-        )
-        return envelope
 
     @staticmethod
     def publishes_as_authored(source: str) -> bool:

@@ -439,59 +439,6 @@ class GlbPipelineTestCase(unittest.TestCase):
                 self.assertEqual(self.calls[-1][1], beside, "the texture pass too")
                 self.assertTrue(os.path.exists(beside))
 
-    # -- the retired sidecar envelope (2026-10-20) ----------------------
-
-    def test_envelope_wraps_the_hosts_read_once_for_every_producer(self):
-        """What an older host still builds through here, until its removal."""
-        with self.assertWarns(DeprecationWarning):
-            envelope = GlbPipeline.envelope(
-                lambda: {"emissive": {"m": {"color": [1, 0, 0]}}},
-                source={"application": "test", "version": "0"},
-                asset="scene.fbx",
-            )
-        self.assertEqual(envelope["version"], 2)
-        self.assertEqual(envelope["asset"], "scene.fbx")
-        self.assertIn("emissive", envelope["sections"])
-        self.assertEqual(
-            envelope["handoff"]["rendering"],
-            HandoffRecord.RENDERING_POLICY,
-            "no choices made: the recipe as declared",
-        )
-
-    def test_the_envelope_publishes_the_exports_lighting_choices(self):
-        """Both producers hand their rows' choices in (``ExportRun.rendering``);
-        the envelope publishes them as ``handoff.rendering``, where the viewer
-        and any other reader find them. Added: 2026-09-21"""
-        rendering = {"lightmappedMaterials": {"envMapIntensity": 0.5}}
-        with self.assertWarns(DeprecationWarning):
-            envelope = GlbPipeline.envelope(
-                lambda: {}, source={"application": "test"}, rendering=rendering
-            )
-        self.assertEqual(
-            envelope["handoff"]["rendering"], HandoffRecord.rendering_policy(rendering)
-        )
-
-    def test_a_failing_read_degrades_to_an_empty_envelope_not_a_failed_build(self):
-        """Requested-but-empty stays distinguishable from switched off: the
-        producer still attaches an envelope, and the panel says 'nothing to
-        carry' rather than 'off' -- a bare GLB still beats no GLB."""
-        import logging
-
-        log = logging.getLogger("test_glb_pipeline")
-
-        def _boom():
-            raise RuntimeError("scene read failed")
-
-        with (
-            self.assertLogs(log, level="WARNING") as caught,
-            self.assertWarns(DeprecationWarning),
-        ):
-            envelope = GlbPipeline.envelope(
-                _boom, source={"application": "test", "version": "0"}, logger=log
-            )
-        self.assertEqual(envelope["sections"], {})
-        self.assertTrue(any("sidecar skipped" in m for m in caught.output))
-
 
 class TestEmbeddedDependencies(GlbPipelineTestCase):
     """A GLB built from a DELIVERED FBX reads the maps the FBX carries.

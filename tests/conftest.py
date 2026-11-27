@@ -28,6 +28,7 @@ os.environ.setdefault("OPENCV_IO_ENABLE_OPENEXR", "1")
 from pythontk.core_utils.test_sandbox import TestSandbox  # noqa: E402
 
 TestSandbox.activate()
+TestSandbox.sweep_scratch(os.path.dirname(os.path.abspath(__file__)))  # its scratch folder ages out
 
 
 # =============================================================================

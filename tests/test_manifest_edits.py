@@ -299,7 +299,7 @@ class TestEditing(unittest.TestCase):
 class TestTheScenesLayers(unittest.TestCase):
     """Bug: a sheet's edit layer was found by its exact path, so a sheet
     moved, renamed in its folder's spelling or opened through another mount
-    found no layer and its edits silently stopped applying (SOL_REPLACE_ASSEMBLY
+    found no layer and its edits silently stopped applying (a production scene
     keeps the 5 renames that fix its sheet's object names under a personal
     Dropbox folder's path).
     Fixed: 2026-10-11 -- the path first, else the ONE layer of that file
@@ -344,6 +344,22 @@ class TestTheScenesLayers(unittest.TestCase):
         self.assertIsNone(ManifestEdits.layer_key(None, self.OLD))
         self.store.manifest_edits[""] = ManifestEdits().to_dict()
         self.assertEqual(ManifestEdits.layer_key(self.store, ""), "")
+
+    def test_the_behavior_modes_are_the_scenes_and_survive_a_change_of_options(self):
+        """Maintainer 2026-11-23: which behavior types a build keys or marks is
+        kept with the scene (whoever builds it builds the same); a sheet the
+        scene keeps none for has ``None`` (the user's choices seed it)."""
+        self.assertIsNone(ManifestEdits.behavior_modes(self.store, self.OLD))
+        self.assertTrue(ManifestEdits.set_behavior_modes(self.store, self.OLD, ["highlight"], ["fade_in", "highlight"]))
+        self.assertFalse(ManifestEdits.set_behavior_modes(self.store, self.OLD, ["highlight"], ["fade_in"]), "unchanged")
+        modes = {"key": ["highlight"], "marker": ["fade_in"]}
+        self.assertEqual(ManifestEdits.behavior_modes(self.store, self.OLD), modes, "a type in both is keyed")
+        self.assertIsNone(
+            ManifestEdits.sheet_options(self.store, self.OLD),
+            "modes alone keep no options: the user's own template still seeds the sheet",
+        )
+        ManifestEdits.set_sheet_options(self.store, self.OLD, "default", {"object_case": "upper"})
+        self.assertEqual(ManifestEdits.behavior_modes(self.store, self.NEW), modes, "kept beside the options, and moved with the sheet")
 
     def test_the_sheets_options_live_beside_its_edits_and_move_with_them(self):
         """Maintainer 2026-10-12: a sheet's mapping template and options are
@@ -395,6 +411,61 @@ class TestTheScenesLayers(unittest.TestCase):
         self.assertTrue(edits.write(self.store, self.OLD))
         self.assertNotIn(self.OLD, self.store.manifest_edits)
         self.assertFalse(ManifestEdits().write(self.store, "O:/docs/y.csv"))
+
+
+class TestDefaultModes(unittest.TestCase):
+    """Bug: the modes a scene that keeps none starts with were the panel's
+    alone (header_menu reading the reader's rows), so a build from code keyed
+    every behavior a sentence implied while the panel kept them Off, and the
+    two built one scene apart.
+    Fixed: 2026-11-26 -- ``ManifestEdits.default_modes`` / ``modes_in_force``,
+    the one rule every builder reads (maintainer 2026-11-25)."""
+
+    TYPES = ("fade_in", "fade_out", "highlight", "set_clip")
+
+    @staticmethod
+    def _celled(sid, *rows, objects=()):
+        step = BuilderStep(sid, "A", "t", "", list(objects))
+        step.rows = [dict(row) for row in rows]
+        step.celled = True
+        return step
+
+    def test_a_cell_rows_word_starts_at_key_with_its_family(self):
+        steps = [self._celled("A01", {"cells": True, "word": "fade_in"}, {"cells": True, "word": "use"})]
+        self.assertEqual(
+            ManifestEdits.default_modes(steps, self.TYPES),
+            {"key": ["fade_in", "fade_out"], "marker": []},
+            "fade_in asks for its family; a word no behavior is (use) asks for nothing",
+        )
+
+    def test_a_celled_steps_audio_asks_for_its_behaviors_and_a_sentence_for_none(self):
+        voice = BuilderObject("A01_Hello", behaviors=["set_clip"], kind="audio")
+        sentence = BuilderStep("B01", "B", "t", "Highlight the door", [BuilderObject("door", behaviors=["highlight"])])
+        sentence.rows = [{"text": "Highlight the door", "assets": ["door"]}]
+        loose = BuilderStep("C01", "C", "t", "", [BuilderObject("C01_Hi", behaviors=["set_clip"], kind="audio")])
+        modes = ManifestEdits.default_modes([self._celled("A01", objects=[voice]), sentence], self.TYPES)
+        self.assertEqual(modes, {"key": ["set_clip"], "marker": []}, "a sentence's highlight stays Off")
+        self.assertEqual(ManifestEdits.default_modes([loose, sentence], self.TYPES)["key"], [], "an uncelled step asks nothing")
+
+    def test_the_users_own_marker_wins_and_their_own_key_is_kept(self):
+        steps = [self._celled("A01", {"cells": True, "word": "highlight"}, {"cells": True, "word": "fade_out"})]
+        modes = ManifestEdits.default_modes(steps, self.TYPES, keyed=["set_clip"], marked=["highlight"])
+        self.assertEqual(modes, {"key": ["fade_in", "fade_out", "set_clip"], "marker": ["highlight"]})
+
+    def test_the_scenes_modes_are_in_force_and_none_kept_starts_the_default(self):
+        store = ShotStore()
+        steps = [self._celled("A01", {"cells": True, "word": "highlight"})]
+        default = {"key": ["highlight"], "marker": []}
+        self.assertEqual(ManifestEdits.modes_in_force(store, "C:/s/x.csv", steps, self.TYPES), default)
+        self.assertEqual(ManifestEdits.modes_in_force(None, "C:/s/x.csv", steps, self.TYPES), default, "no store")
+        ManifestEdits.set_behavior_modes(store, "C:/s/x.csv", ["fade_in"], ["set_clip"])
+        self.assertEqual(
+            ManifestEdits.modes_in_force(store, "C:/s/x.csv", steps, self.TYPES, keyed=["highlight"]),
+            {"key": ["fade_in"], "marker": ["set_clip"]},
+            "the scene's own, whatever the user's",
+        )
+        self.assertEqual(ManifestEdits.modes_in_force(store, "", steps, self.TYPES), default, "no sheet: no scene modes")
+        self.assertIsNone(ManifestEdits.behavior_modes(ShotStore(), "C:/s/x.csv"), "the default is never stored by itself")
 
 
 class TestRebuildThroughEdits(unittest.TestCase):

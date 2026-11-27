@@ -314,13 +314,24 @@ export const LIGHTMAP_UV_SET = 1;
  */
 
 /**
- * One material whose emission is animated: the channel names it, the curve
- * (a weight 0..1) rides the transport.
+ * One material whose emission is animated: the channels name it, each curve
+ * rides the transport (a weight 0..1; a tint channel 0 or more).
  * @typedef {object} RenderEffectsMaterial
  * @property {string} material The material's name, as the delivered material is named (the 'materials' record's entry); where an import drops the namespace, the name after the last ':' joins.
- * @property {string[]} channels The material's animated channels: 'emission', its emission's weight 0..1.
+ * @property {string[]} channels The material's animated channels: 'emission', its emission's weight 0..1; 'tint_r', 'tint_g', 'tint_b', the tint its emission colour is multiplied by (the three together, linear RGB).
+ * @property {RenderEffectsState[]} [states] The emission's named states (a tint and a weight each), for a runtime that switches them by name; absent when it has none.
  * @property {[number, number, number]} [emission_color] The emission's colour at weight 1, linear RGB; absent: the material's own emissive colour.
  * @property {number} [emission_strength] The emission's strength at weight 1 (a multiplier of the colour, above 1 for a glow brighter than white); absent: the material's own.
+ * @property {[number, number, number]} [tint] The tint the delivered material shows, linear RGB: its emission is colour x strength x tint x weight, so a runtime reads its resting weight off the material over that; absent: white (no tint).
+ */
+
+/**
+ * One named state of a material's emission: the tint and the weight a
+ * runtime sets when it switches to it.
+ * @typedef {object} RenderEffectsState
+ * @property {string} name The state's name, as a runtime switches to it.
+ * @property {[number, number, number]} tint The colour the material's emission colour (or map) is multiplied by in this state, linear RGB; white keeps the material's own.
+ * @property {number} weight The emission's weight in this state, 0..1 (0: off).
  */
 
 /* ------------ the `HandoffBlock` block, declared in pythontk ------------ */
@@ -355,7 +366,7 @@ export const LIGHTMAP_UV_SET = 1;
 /**
  * Where the file came from: provenance, never identity.
  * @typedef {object} HandoffSource
- * @property {string} application The application that wrote it ('maya', 'blender').
+ * @property {string} application The application that wrote it, by its lowercase name.
  * @property {string} [version] That application's version.
  * @property {string} [scene] The scene file it was written from.
  */

@@ -371,6 +371,56 @@ class TestARefusedRecordShipsNone(_Case):
         self.assertNotIn(self.WHY, snap.ctx.notes)
 
 
+class TestAnExcludedRecordShipsNone(_Case):
+    """A record the exporter leaves out (``ExportContext.excluded``: the Scene
+    Exporter's Exclude Audio) ships none in any mode: its producer never runs,
+    the stored copy is cleared for the write and put back after it, a reader
+    in the assembly reads none, and nothing is noted -- the user's own choice
+    is no problem to report. Unlike a withheld record, whose fresh copy is its
+    producer's call. Added: 2026-11-25"""
+
+    @staticmethod
+    def _audio():
+        cue = {"clip": "", "sound": "hit.wav", "time": 0.5, "offset": 0.0, "stop": 1.0}
+        return {"version": SR.AUDIO.version, "cues": [cue]}
+
+    def test_its_producer_never_runs_and_the_scene_keeps_its_copy(self):
+        for mode in (ExportContext.PIPELINE, ExportContext.HANDOFF):
+            with self.subTest(mode=mode):
+                _Store.data = {}
+                SR.AUDIO.save(_Store, self._audio())
+                SR.SHOTS.save(_Store, {"fps": 24.0, "shots": []})
+                stored = SR.AUDIO.read_text(_Store)
+                ran = []
+
+                def audio(ctx):
+                    ran.append(True)
+                    return SR.AUDIO.make(self._audio())
+
+                ctx = ExportContext(mode=mode, excluded=frozenset({SR.AUDIO.key}))
+                snap = ExportSnapshot.assemble({SR.AUDIO: audio}, ctx)
+                self.assertEqual(ran, [], "an excluded record's producer never runs")
+                self.assertIsNone(ctx.record(SR.AUDIO, store=_Store), "a reader reads none")
+                self.assertEqual(ctx.notes, [], "the run's own choice is not noted")
+                snap.commit(_Store)
+                self.assertIsNone(SR.AUDIO.load(_Store), "the write ships none")
+                handoff = SR.HANDOFF.load(_Store)
+                self.assertNotIn(
+                    SR.AUDIO.key, [row.get("part") for row in handoff["assembly"]]
+                )
+                snap.restore_scene_wide(_Store)
+                self.assertEqual(SR.AUDIO.read_text(_Store), stored, "the scene keeps it")
+
+    def test_a_scene_with_no_copy_has_nothing_to_put_back(self):
+        snap = ExportSnapshot.assemble(
+            {SR.AUDIO: lambda ctx: SR.AUDIO.make(self._audio())},
+            ExportContext(excluded=frozenset({SR.AUDIO.key})),
+        )
+        snap.commit(_Store)
+        self.assertIsNone(SR.AUDIO.load(_Store))
+        self.assertNotIn(SR.AUDIO.key, snap.scene_wide)
+
+
 class TestWriterUnits(_Case):
     """The writer states its unit, once; every producer labels its record with
     it and converts nothing. Measured 2026-10-17: Blender's native glTF writer

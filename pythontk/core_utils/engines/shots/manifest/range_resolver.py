@@ -114,9 +114,11 @@ class RangeResolver:
             return []
 
         # When more regions than steps, keep only the largest
-        # boundaries so each step maps to a major animation section.
-        if len(gap_starts) > len(steps):
-            gap_starts = RangeResolver.prune_to_top_boundaries(gap_starts, len(steps))
+        # boundaries so each step maps to a major animation section; a step
+        # with no shot takes no region.
+        takers = sum(1 for s in steps if getattr(s, "animated", True))
+        if len(gap_starts) > takers:
+            gap_starts = RangeResolver.prune_to_top_boundaries(gap_starts, takers)
 
         # Build the resolved list
         resolved: List[Tuple[str, float, Optional[float], bool]] = []
@@ -172,6 +174,8 @@ class RangeResolver:
                 continue  # already in frozen prefix
 
             user = user_ranges.get(step.step_id)
+            if user is None and not getattr(step, "animated", True):
+                continue  # no shot: no range, no time on the timeline
             if user is not None:
                 start, end = user
                 resolved.append((step.step_id, start, end, True))

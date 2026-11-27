@@ -91,6 +91,7 @@ class _TestSandboxInternal:
         "can_trash": None,  # ...and the real FileUtils.can_trash
         "trash_owners": None,  # (FileUtils class, its move, its can) per class guarded
         "host_env": {},  # {variable: its value before the first redirect, None = unset}
+        "swept_scratch": set(),  # the scratch folders this process swept (normalized): each once a run
     }
 
     @classmethod
@@ -484,6 +485,40 @@ class TestSandbox(_TestSandboxInternal):
             else:
                 out[key] = value
         return out
+
+    #: The hand-kept scratch folder beside a suite's runner: ``tests/temp_tests``.
+    SCRATCH = "temp_tests"
+    #: Days a scratch entry may sit untouched before a run's start removes it.
+    SCRATCH_DAYS = 14
+
+    @classmethod
+    def sweep_scratch(cls, tests: str) -> List[str]:
+        """Age out the hand-kept scratch folder of the test folder *tests* (its
+        :attr:`SCRATCH`, ``tests/temp_tests``) with
+        :meth:`TempArtifacts.sweep_scratch <pythontk.TempArtifacts.sweep_scratch>`:
+        what was left untouched for :attr:`SCRATCH_DAYS`, but for the names its
+        ``.keep`` lists. A runner or a conftest passes its own folder
+        (``os.path.dirname(__file__)``) as it starts. Once a process: a second
+        call for the same folder (a runner, then a tool that runs several)
+        sweeps nothing. An entry it cannot read or remove is a warning naming it
+        (left for the next sweep); anything else is raised, never swallowed.
+
+        Parameters:
+            tests: A suite's test folder; nothing happens when it holds no
+                scratch folder.
+
+        Returns:
+            list[str]: The paths removed.
+        """
+        folder = os.path.join(tests, cls.SCRATCH)
+        key = os.path.normcase(os.path.abspath(folder))
+        swept = cls._state["swept_scratch"]
+        if key in swept:
+            return []
+        swept.add(key)
+        from pythontk.file_utils.temp_artifacts import TempArtifacts
+
+        return TempArtifacts.sweep_scratch(folder, cls.SCRATCH_DAYS)
 
     @classmethod
     def is_active(cls) -> bool:

@@ -26,7 +26,6 @@ from typing import (
     Sequence,
     Set,
     Tuple,
-    Union,
 )
 
 # Eager: the channel keys below are the registry's and the handoff's own,
@@ -58,29 +57,6 @@ class _Sidecar:
 
     def __init__(self, mc: type) -> None:
         self._mc = mc  # the facade class: every name it exposes is read through it
-
-    def rendering_policy(
-        self,
-        overrides: Optional[Mapping[str, Mapping[str, Any]]] = None,
-        carrier: str = "glb",
-    ) -> Dict[str, Any]:
-        HandoffRecord.carrier(carrier)
-        return HandoffRecord.rendering_policy(overrides)
-
-    def build_scene_sidecar(
-        self,
-        sections: Optional[Dict[str, Any]],
-        source: Dict[str, str],
-        asset: Optional[str] = None,
-        rendering: Optional[Mapping[str, Mapping[str, Any]]] = None,
-    ) -> Dict[str, Any]:
-        return {
-            "version": 2,
-            "source": source,
-            "asset": asset,
-            "sections": dict(sections or {}),
-            "handoff": HandoffRecord.block("glb", None, source, rendering),
-        }
 
     def _handoff_of(
         self, given: Optional[Mapping[str, Any]]
@@ -241,22 +217,6 @@ class _Sidecar:
         if moved and not held:
             del first["extras"]
         return moved
-
-    def strip_fbx_handoff(self, gltf: dict) -> int:
-        stripped = 0
-        for node in gltf.get("nodes") or []:
-            props = (GlbEdit.extras_of(node).get("fromFBX") or {}).get("userProperties")
-            if isinstance(props, dict) and props.pop(HandoffRecord.KEY, None):
-                stripped += 1
-        return stripped
-
-    def build_fbx_handoff(
-        self,
-        channels: Union[Iterable[str], Mapping[str, Any]],
-        source: Optional[Dict[str, str]] = None,
-    ) -> Dict[str, Any]:
-        held = HandoffRecord.carried(channels)
-        return HandoffRecord.block("fbx", channels, source) if held else {}
 
     def embed_glb_handoff(self, edit: "GlbEdit", handoff: Mapping[str, Any]) -> None:
         self._mc._write_glb_handoff(edit, handoff)

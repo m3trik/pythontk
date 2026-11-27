@@ -220,6 +220,219 @@ class TestPackIslands(unittest.TestCase):
         # Still exactly two islands, each moved as one piece.
         self.assertEqual(len(np.unique(np.round(out - uvs, 9), axis=0)), 2)
 
+    @staticmethod
+    def _bridged_quads():
+        """Two quads one island only through a zero-area face -- a real face
+        whose UVs collapsed onto a corner, routine in production layouts (625
+        of a 9,544-face door's triangles). Plus a clean quad beside them."""
+        uvs = np.array(
+            [
+                [0, 0], [1, 0], [1, 1], [0, 1],  # quad A
+                [1, 1], [2, 1], [2, 2], [1, 2],  # quad B, its corner on A's
+                [1, 1],  # the collapsed face's third corner
+                [3, 0], [4, 0], [4, 1], [3, 1],  # quad C, an island of its own
+            ],
+            dtype=np.float64,
+        )
+        tris = np.array(
+            [
+                [0, 1, 2], [0, 2, 3],
+                [4, 5, 6], [4, 6, 7],
+                [2, 4, 8],  # zero area: bridges A and B
+                [9, 10, 11], [9, 11, 12],
+            ],
+            dtype=np.uint32,
+        )
+        return uvs, tris
+
+    def _assert_rigid(self, before, after, rows, what):
+        *_, residual = ptk.UvPack.solve_similarity(before[rows], after[rows])
+        span = float((after[rows].max(0) - after[rows].min(0)).max()) or 1.0
+        self.assertLess(residual / span, 1e-4, f"{what} did not move as one piece")
+
+    def test_an_island_bridged_by_a_collapsed_face_moves_as_one_piece(self):
+        """The engine drops a zero-area face, and an island held together only
+        through one came back as separate charts: the face stretched across
+        the page between them, and corners only it used kept their input
+        coordinates, outside the page, on top of other islands (production
+        door: 66% of triangles off the pack's one scale, 53,237 texels inside
+        two islands). Every island moves rigidly, inside the page."""
+        uvs, tris = self._bridged_quads()
+        for resolution in (0, 256):
+            result = ptk.UvPack.pack_islands(
+                [(uvs, tris)], padding=4, rotate=True, resolution=resolution
+            )
+            out = result.uvs[0]
+            self._assert_rigid(uvs, out, np.arange(9), "the bridged island")
+            self._assert_rigid(uvs, out, np.arange(9, 13), "the clean island")
+            self.assertTrue(((out >= -1e-6) & (out <= 1 + 1e-6)).all(), out)
+            # The collapsed face is still collapsed, not a sliver across the page.
+            (bu, bv), (cu, cv) = out[4] - out[2], out[8] - out[2]
+            self.assertLess(abs(bu * cv - bv * cu), 1e-9)
+            self.assertEqual(result.boxed, [1])
+
+    def test_a_pinched_island_moves_as_one_piece_in_one_round(self):
+        """Two quads sharing one lone UV corner are one island to a DCC (its
+        shells are vertex-connected) and two charts to the engine (edge-
+        connected), which packed them apart over the shared UV: mayatk's
+        write-back refused the whole mesh (production lightmap layout, shell
+        14). Found before the first pack, so one engine pass does."""
+        uvs = np.array(
+            [[0, 0], [1, 0], [1, 1], [0, 1], [2, 1], [2, 2], [1, 2], [3, 0], [4, 0], [4, 1], [3, 1]],
+            dtype=np.float64,
+        )
+        tris = np.array(
+            [[0, 1, 2], [0, 2, 3], [2, 4, 5], [2, 5, 6], [7, 8, 9], [7, 9, 10]],
+            dtype=np.uint32,
+        )
+        calls = []
+        real = ptk.UvPack._generate
+
+        def counted(*args, **kwargs):
+            calls.append(1)
+            return real(*args, **kwargs)
+
+        from unittest import mock
+
+        with mock.patch.object(ptk.UvPack, "_generate", staticmethod(counted)):
+            result = ptk.UvPack.pack_islands([(uvs, tris)], padding=4, align_to_axis=False)
+        self._assert_rigid(uvs, result.uvs[0], np.arange(7), "the pinched island")
+        self.assertEqual(result.boxed, [1])
+        self.assertEqual(len(calls), 1, "a pinch found before packing takes one engine pass")
+
+    def test_a_second_round_searches_from_the_first_rounds_scale(self):
+        """A rigidity round boxes a few islands, so its best scale lies within a
+        few percent of the last round's: it searches the winning candidate
+        alone from there. Each round ran the whole search (a production door:
+        40 engine runs over 2 rounds, 85% of its pack time)."""
+        from unittest import mock
+
+        quads = [self._quad(0.08 + 0.03 * i, (0.2 * i, 0.0)) for i in range(6)]
+        uvs = np.vstack([q[0] for q in quads])
+        tris = np.vstack([q[1] + 4 * i for i, q in enumerate(quads)]).astype(np.uint32)
+        runs, rounds = [], []
+        real_generate = ptk.UvPack._generate
+        real_read = ptk.UvPack._read_back.__func__
+
+        def counted(*args, **kwargs):
+            runs.append(1)
+            return real_generate(*args, **kwargs)
+
+        def first_round_finds_one(cls, *args):
+            out, written, pages, bad = real_read(cls, *args)
+            rounds.append(len(runs))
+            return out, written, pages, ({1} if len(rounds) == 1 else bad)
+
+        with mock.patch.object(
+            ptk.UvPack, "_generate", staticmethod(counted)
+        ), mock.patch.object(ptk.UvPack, "_read_back", classmethod(first_round_finds_one)):
+            result = ptk.UvPack.pack_islands([(uvs, tris)], padding=4, resolution=256)
+
+        self.assertEqual(result.boxed, [1])
+        first, second = rounds[0], rounds[1] - rounds[0]
+        self.assertLessEqual(second, 6, f"round 1: {first} runs, round 2: {second}")
+        self.assertLess(second, first / 2)
+
+    def test_a_large_page_starts_from_the_scale_a_coarse_page_found(self):
+        """The fixed-page search runs in full on a 512 page only; a page of
+        twice the size starts from the scale the half-size page found (a run
+        there costs about a quarter). A production door at 2048: 14.4 s ->
+        5.6 s, fill 0.787 -> 0.786."""
+        from unittest import mock
+
+        import pythontk.geo_utils.uv.pack as pack_module
+
+        rng = np.random.default_rng(7)
+        quads = [
+            self._quad(float(s), tuple(o))
+            for s, o in zip(rng.uniform(0.02, 0.2, 60), rng.uniform(0.0, 5.0, (60, 2)))
+        ]
+        uvs = np.vstack([q[0] for q in quads])
+        tris = np.vstack([q[1] + 4 * i for i, q in enumerate(quads)]).astype(np.uint32)
+        sizes = []
+        real = ptk.UvPack._generate
+
+        def counted(*args, **kwargs):
+            sizes.append(args[5])  # (xatlas, arrays, padding, rotate, brute, resolution, ...)
+            return real(*args, **kwargs)
+
+        with mock.patch.object(ptk.UvPack, "_generate", staticmethod(counted)):
+            fast = ptk.UvPack.pack_islands([(uvs, tris)], padding=4, resolution=2048)
+        with mock.patch.object(pack_module, "_COARSE_LEAST", 10**6):
+            full = ptk.UvPack.pack_islands([(uvs, tris)], padding=4, resolution=2048)
+
+        self.assertEqual(sorted(set(sizes)), [512, 1024, 2048])
+        self.assertLessEqual(sizes.count(2048), 8, sizes)
+        self.assertGreater(fast.utilization, full.utilization - 0.02)
+        self.assertEqual(ptk.UvPack.island_overlaps([(fast.uvs[0], tris)], 2048), 0)
+
+    def test_a_collapsed_island_lands_on_the_page(self):
+        """An island whose UVs all sit on one point has no area to pack: the
+        engine left it where it was (pack_uvs then reported success with 268 UVs
+        outside 0-1). It lands on the page, rigidly, beside the rest."""
+        uvs, tris = self._quad()
+        point = np.full((4, 2), 7.5)
+        both = np.vstack([uvs, point])
+        tris2 = np.vstack([tris, tris + 4]).astype(np.uint32)
+
+        result = ptk.UvPack.pack_islands([(both, tris2)], padding=4)
+
+        out = result.uvs[0]
+        self.assertTrue(((out >= -1e-6) & (out <= 1 + 1e-6)).all(), out)
+        self.assertLess(float(np.ptp(out[4:], axis=0).max()), 1e-9, "still a point")
+        self.assertEqual(result.boxed, [1])
+
+    def test_a_box_is_square_pages_along_its_long_axis(self):
+        """A Full box is one page of the map's size; a 1:3 box three pages of
+        its short side, stacked, each placed in its own cell; a margin insets
+        them all."""
+        pages, resolution, place = ptk.UvPack.box_pages(1024)
+        self.assertEqual((pages, resolution), (1, 1024))
+        np.testing.assert_allclose(place([[0.0, 0.0], [1.0, 1.0]], [0, 0]), [[0, 0], [1, 1]])
+        pages, resolution, place = ptk.UvPack.box_pages(900, (1 / 3, 1.0), margin=0.01)
+        self.assertEqual((pages, resolution), (3, 300))
+        top = place([[0.0, 0.0], [1.0, 1.0]], [2, 2])
+        self.assertAlmostEqual(top[0][1], 0.01 + 2 * (0.98 / 3))
+        self.assertLessEqual(top[1][1], 0.99 + 1e-9)
+        self.assertLessEqual(top[1][0], 1 / 3 - 0.01 + 1e-9)
+        with self.assertRaises(ValueError):
+            ptk.UvPack.box_pages(512, (0.0, 1.0))
+
+    def test_surface_areas_even_texel_density_across_meshes(self):
+        """Two islands of one UV size, one with four times the other's surface:
+        packed with ``surface_areas`` the larger surface gets four times the UV
+        area (one texel density), without them the same; a count that does not
+        match the triangles is refused."""
+        small, large = self._quad(0.3), self._quad(0.3, (0.5, 0.5))
+
+        def uv_area(uvs):
+            return float(np.ptp(uvs[:, 0]) * np.ptp(uvs[:, 1]))
+
+        plain = ptk.UvPack.pack_islands([small, large], padding=4, rotate=False)
+        self.assertAlmostEqual(uv_area(plain.uvs[1]) / uv_area(plain.uvs[0]), 1.0, delta=0.1)
+        evened = ptk.UvPack.pack_islands(
+            [small, large], padding=4, rotate=False, surface_areas=[[1.0, 1.0], [4.0, 4.0]]
+        )
+        self.assertAlmostEqual(uv_area(evened.uvs[1]) / uv_area(evened.uvs[0]), 4.0, delta=0.4)
+        with self.assertRaises(ValueError):
+            ptk.UvPack.pack_islands([small, large], surface_areas=[[1.0], [4.0, 4.0]])
+
+    def test_island_overlaps_counts_islands_on_islands_never_a_fold(self):
+        """The check a pack is held to: two islands on each other count, a fold
+        inside one island and two islands apart do not, across meshes too."""
+        a = self._quad(0.4, (0.05, 0.05))
+        b = self._quad(0.4, (0.55, 0.55))
+        stacked = self._quad(0.4, (0.25, 0.25))
+        fold_uvs = np.array([[0.1, 0.1], [0.5, 0.1], [0.5, 0.5], [0.1, 0.5], [0.3, 0.3]], dtype=np.float64)
+        fold_tris = np.array([[0, 1, 2], [0, 2, 3], [0, 1, 4]], dtype=np.uint32)  # its third face over its first
+
+        self.assertEqual(ptk.UvPack.island_overlaps([a, b], 256), 0)
+        self.assertEqual(ptk.UvPack.island_overlaps([(fold_uvs, fold_tris)], 256), 0)
+        self.assertGreater(ptk.UvPack.island_overlaps([a, stacked], 256), 0, "across meshes")
+        result = ptk.UvPack.pack_islands([a, stacked, (fold_uvs, fold_tris)], padding=4)
+        packed = list(zip(result.uvs, [a[1], stacked[1], fold_tris]))
+        self.assertEqual(ptk.UvPack.island_overlaps(packed, 1024), 0)
+
     def test_triangle_indexing_past_its_uvs_raises_value_error(self):
         """Refused with the documented error before anything reads it: island
         detection indexes the UVs ahead of the engine, where an out-of-range
@@ -394,6 +607,37 @@ class TestPackOptionContract(unittest.TestCase):
         )
         self.assertTrue(
             any(v["align_to_axis"] for v in ptk.UvPack._variants(True, None))
+        )
+
+
+class TestCellBox(unittest.TestCase):
+    """How one layout is packed to fill an atlas cell: the whole number of
+    square pages nearest the cell's shape, the rest of it the layout's u
+    stretch, the cell's long side the map size, a gutter scaled with the atlas."""
+
+    def test_a_square_cell_is_one_page_of_its_size(self):
+        box = ptk.UvPack.cell_box(256, 256, 2048)
+        self.assertEqual(box, ((1.0, 1.0), 1.0, 256, 3))
+
+    def test_a_long_cell_is_pages_side_by_side(self):
+        """2:1 is two pages along u, 1:3 three along v: no stretch either way."""
+        self.assertEqual(ptk.UvPack.cell_box(512, 256, 2048)[:3], ((1.0, 0.5), 1.0, 512))
+        coverage, stretch, size, _padding = ptk.UvPack.cell_box(100, 300, 2048)
+        self.assertEqual((coverage, stretch, size), ((1 / 3, 1.0), 1.0, 300))
+
+    def test_the_rest_of_the_shape_is_the_layouts_stretch(self):
+        """5:2 packs as two pages (2:1): the layout's u is squeezed by 2 / 2.5
+        first, so the cell, wider than its box, shows every texel square; a
+        shape within 1% of its pages needs none."""
+        coverage, stretch, size, _padding = ptk.UvPack.cell_box(250, 100, 2048)
+        self.assertEqual((coverage, size), ((1.0, 0.5), 250))
+        self.assertAlmostEqual(stretch, 0.8)
+        self.assertEqual(ptk.UvPack.cell_box(101, 100, 2048).stretch, 1.0)
+
+    def test_the_gutter_is_three_texels_at_2048_scaled_and_at_least_two(self):
+        self.assertEqual(
+            [ptk.UvPack.cell_box(64, 64, a).padding for a in (512, 1024, 2048, 4096)],
+            [2, 2, 3, 6],
         )
 
 

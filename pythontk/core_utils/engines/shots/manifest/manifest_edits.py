@@ -57,6 +57,7 @@ class _ManifestEditsInternal(object):
         "description": str,
         "step": str,
         "hidden": bool,
+        "animated": bool,
         "behaviors": list,
     }
 
@@ -109,6 +110,36 @@ class _ManifestEditsInternal(object):
             keys += [k for k in getattr(store, layers, None) or {} if k not in keys]
         return keys
 
+    @staticmethod
+    def _asked_behaviors(steps: Iterable[BuilderStep], types: Iterable[str]) -> frozenset:
+        """The behavior types of *types* the sheet's *steps* ask for by name:
+        the word of each row written in cells (``highlight``, ``fade_out``) and,
+        in a step written in cells, each audio object's behaviors (its
+        template's Audio option gives the clip: a person chose it for the
+        sheet) -- each with the rest of its family (``Behaviors.families``:
+        ``fade_in`` asks for ``fade_out`` too, one choice).  A behavior a
+        sentence only implies is no ask.
+        """
+        from pythontk.core_utils.engines.shots.manifest.behaviors import Behaviors
+
+        types = frozenset(types)
+        named = set()
+        for step in steps or ():
+            for row in getattr(step, "rows", None) or ():
+                if row.get("cells") and row.get("word") in types:
+                    named.add(row["word"])
+            if getattr(step, "celled", False):
+                for obj in getattr(step, "objects", None) or ():
+                    if getattr(obj, "kind", "") == "audio":
+                        named.update(name for name in obj.behaviors if name in types)
+        if not named:
+            return frozenset()  # no template read for a sheet that asks nothing
+        families = Behaviors.families(sorted(types))
+        asked = set()
+        for name in named:
+            asked.update(families.get(Behaviors.family_of(name)) or [name])
+        return frozenset(asked)
+
 
 class ManifestEdits(_ManifestEditsInternal):
     """A build sheet's edits: renamed, re-described, hidden and added steps;
@@ -133,7 +164,7 @@ class ManifestEdits(_ManifestEditsInternal):
 
     VERSION = 1
     #: What an edit may change on a step.
-    STEP_FIELDS = ("name", "description", "hidden")
+    STEP_FIELDS = ("name", "description", "hidden", "animated")
     #: What an edit may change on an object.
     OBJECT_FIELDS = ("name", "behaviors", "step", "hidden")
     #: The ID a new step starts from (:meth:`add_step` numbers it unique).
@@ -280,6 +311,8 @@ class ManifestEdits(_ManifestEditsInternal):
         record = (getattr(store, "manifest_options", None) or {}).get(key)
         if key is None or not isinstance(record, dict):
             return None
+        if "template" not in record and "values" not in record:
+            return None  # behavior modes alone (set_behavior_modes): no options kept
         return {
             "template": record.get("template"),
             "values": dict(record.get("values") or {}),
@@ -298,7 +331,7 @@ class ManifestEdits(_ManifestEditsInternal):
 
         What a Build, an option change and a saved Local Edit record: a
         sheet's object names, and so its edits' keys, depend on how it was
-        read (SOL_REPLACE_ASSEMBLY was built with Object Case = upper; read
+        read (a production scene was built with Object Case = upper; read
         As written, every built object and all 5 edits went missing).
 
         Returns:
@@ -306,11 +339,102 @@ class ManifestEdits(_ManifestEditsInternal):
         """
         moved = cls.adopt_layers(store, source)
         record = {"template": template or None, "values": dict(values or {})}
+        kept = (store.manifest_options.get(source) or {}).get("behaviors")
+        if kept is not None:
+            record["behaviors"] = kept  # the scene's behavior modes stay (:meth:`set_behavior_modes`)
         if store.manifest_options.get(source) == record:
             return moved
         store.manifest_options[source] = record
         store.mark_dirty()
         return True
+
+    @classmethod
+    def behavior_modes(cls, store: Any, source: str) -> Optional[Dict[str, List[str]]]:
+        """Which behavior types the scene's builds of sheet *source* key and
+        which they mark: ``{"key": [...], "marker": [...]}``, every other type
+        off -- kept with the scene beside the sheet's options, so whoever opens
+        the scene builds the same and its delivery says the same; ``None`` for
+        a sheet the scene keeps none for, which the user's own choices then
+        seed (maintainer 2026-11-23: "with the scene").
+
+        Returns:
+            A copy, each list sorted; or ``None``.
+        """
+        key = cls.layer_key(store, source)
+        record = (getattr(store, "manifest_options", None) or {}).get(key) if key is not None else None
+        modes = record.get("behaviors") if isinstance(record, dict) else None
+        if not isinstance(modes, dict):
+            return None
+        return {"key": sorted(modes.get("key") or []), "marker": sorted(modes.get("marker") or [])}
+
+    @classmethod
+    def set_behavior_modes(cls, store: Any, source: str, keyed: Iterable[str], marked: Iterable[str]) -> bool:
+        """Keep which behavior types the scene's builds of sheet *source* key
+        (*keyed*) and mark (*marked*; a type in both is keyed), every other type
+        off -- beside the sheet's options, re-keyed to *source* first
+        (:meth:`adopt_layers`). What a Build and a change of a type's mode record.
+
+        Returns:
+            Whether *store* changed (it is then marked dirty).
+        """
+        moved = cls.adopt_layers(store, source)
+        keyed = set(keyed)
+        modes = {"key": sorted(keyed), "marker": sorted(set(marked) - keyed)}
+        record = dict(store.manifest_options.get(source) or {})  # modes alone keep no options
+        if record.get("behaviors") == modes:
+            return moved
+        record["behaviors"] = modes
+        store.manifest_options[source] = record
+        store.mark_dirty()
+        return True
+
+    @classmethod
+    def default_modes(
+        cls,
+        steps: Iterable[BuilderStep],
+        types: Iterable[str],
+        keyed: Iterable[str] = (),
+        marked: Iterable[str] = (),
+    ) -> Dict[str, List[str]]:
+        """The behavior modes a scene that keeps none for a sheet starts with
+        (maintainer 2026-11-25): Key for what its *steps* ask for by name
+        (:meth:`_asked_behaviors`) and for a person's own *keyed*, Marker for
+        their own *marked* -- which wins over an ask -- and every other type of
+        *types* Off until chosen (2026-10-12: "behaviors should default to
+        off").  Read by every builder alike (:meth:`modes_in_force`), never
+        stored by itself: a Build or a mode choice records it with the scene.
+
+        Returns:
+            ``{"key": [...], "marker": [...]}``, as :meth:`behavior_modes`.
+        """
+        marked = set(marked)
+        key = (set(keyed) | cls._asked_behaviors(steps, types)) - marked
+        return {"key": sorted(key), "marker": sorted(marked - key)}
+
+    @classmethod
+    def modes_in_force(
+        cls,
+        store: Any,
+        source: str,
+        steps: Iterable[BuilderStep],
+        types: Iterable[str],
+        keyed: Iterable[str] = (),
+        marked: Iterable[str] = (),
+    ) -> Dict[str, List[str]]:
+        """The behavior modes a build of sheet *source* into *store* uses: the
+        scene's own for that sheet (:meth:`behavior_modes`), else those a scene
+        that keeps none starts with (:meth:`default_modes`, a person's own
+        *keyed* and *marked* seeding them) -- with no *store* or no *source*
+        (``""``), the latter.  The one rule the panel and a build from code
+        (``ShotManifest``) both read, so they build one scene alike.
+
+        Returns:
+            ``{"key": [...], "marker": [...]}``.
+        """
+        modes = cls.behavior_modes(store, source) if store is not None and source else None
+        if modes is not None:
+            return modes
+        return cls.default_modes(steps, types, keyed, marked)
 
     @classmethod
     def read(cls, store: Any, source: str) -> "ManifestEdits":
@@ -449,10 +573,11 @@ class ManifestEdits(_ManifestEditsInternal):
 
         Parameters:
             field: One of :attr:`STEP_FIELDS`.
-            value: ``name`` / ``description``: a string; ``hidden``: a bool.
+            value: ``name`` / ``description``: a string; ``hidden`` /
+                ``animated`` (the step gets a shot): a bool.
             sheet: The sheet's value of *field* -- default the step ID for
                 ``name``, ``False`` for ``hidden``.  Required for
-                ``description``: only the sheet knows it.
+                ``description`` and ``animated``: only the sheet knows it.
 
         Raises:
             ValueError: An unknown field, an empty name, or no *sheet* given
@@ -469,7 +594,7 @@ class ManifestEdits(_ManifestEditsInternal):
             value = str(value).strip()
             if not value:
                 raise ValueError("A step needs a name")
-        elif field == "hidden":
+        elif field in ("hidden", "animated"):
             value = bool(value)
         else:
             value = str(value)
@@ -622,8 +747,10 @@ class ManifestEdits(_ManifestEditsInternal):
         """The sheet's *steps* with every edit applied, as new steps.
 
         *steps* are never changed.  Added steps go in after their anchor and
-        take its section; a step's edits set its ``name`` / ``description``;
-        an object's set its ``name`` / ``behaviors``, move it to the end of the
+        take its section; a step's edits set its ``name`` / ``description`` /
+        ``animated`` (an ``animated`` edit keeps the sheet's value of when it
+        was made, so a later change of the template's Shots option leaves it
+        standing); an object's set its ``name`` / ``behaviors``, move it to the end of the
         step it went to, or (hidden) leave it out; hidden steps are left out.
         Each changed field's sheet value lands in the copy's ``sheet`` dict.
         An edit the sheet gives no place to (:meth:`stale`) is skipped.
@@ -658,6 +785,9 @@ class ManifestEdits(_ManifestEditsInternal):
             if "description" in record:
                 step.sheet["description"] = step.description
                 step.description = record["description"]
+            if "animated" in record:
+                step.sheet["animated"] = step.animated
+                step.animated = record["animated"]
 
         moves: List[Tuple[BuilderObject, BuilderStep, BuilderStep]] = []
         for home, records in self.objects.items():

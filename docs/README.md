@@ -1,7 +1,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![PyPI](https://img.shields.io/pypi/v/pythontk.svg)](https://pypi.org/project/pythontk/)
 [![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/Tests-9325%20passed-brightgreen.svg)](../tests/)
+[![Tests](https://img.shields.io/badge/Tests-9570%20passed-brightgreen.svg)](../tests/)
 ![Platform](https://img.shields.io/badge/Platform-Windows%2C%20Linux-lightgrey.svg)
 
 # pythontk
@@ -247,6 +247,8 @@ Beyond the data-type utilities, `core_utils` supplies the machinery the layers a
 ## Guides
 
 - **[Look match](look_match.md)** — light a baked scene to match a reference image: the layer store and mix, the prediction held to the real WebXR viewer, region scores a person reads, fits and solves, the session file, the rig contract with its fixture modes and the shared rig library, and the Look Match panel that drives it all.
+- **[Narration](narration.md)** — lines of text spoken into WAV files by an open-source engine installed on first use: a file per line named by what decides its sound, a pronunciation list, a record per line.
+- **[Build sheets](build_sheets.md)** — the procedure sheet every reader takes the same way: the Linear, Interactive and default templates, the columns, step IDs, scene names the sheet declares, take names, and the guidance phrases.
 - **[Live WebXR preview](webxr_preview.md)** — the shared DCC → glTF → headset pipeline (`PreviewServer` / `PreviewDeliverer` / `PreviewBridge` + `MeshConvert` + the bundled three.js viewer): how a baked lightmap is carried through a format that has no lightmap slot, what the scene sidecar repairs and how to read it back out of the deliverable, and the measured size/memory budget.
 
 ## Links

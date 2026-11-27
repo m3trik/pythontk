@@ -409,29 +409,6 @@ class TestEncoding(HorizonCase):
         self.assertEqual(block["bounds"], [-1.234568, 1.234568, -0.5, 0.5])
         self.assertEqual(block["frame_a"], [1, 0, 0])
 
-    def test_the_retired_horizon_fields_warn_and_change_nothing(self):
-        """``ShadowHorizon.record(levels=)``, ``MAPPING`` and ``ENCODING``
-        (retired 2026-10-20, removed in 0.18.0): a map's levels are log2 of
-        its size, and a horizon map has one mapping and one encoding, so the
-        record states none. The parameter warns and is ignored; the constants
-        warn and serve their values."""
-        kwargs = dict(
-            texture="a_horizon.png",
-            size=128,
-            spans=2,
-            bounds=(-1.0, 1.0, -0.5, 0.5),
-            height_scale=2.0,
-            frame_a=(1, 0, 0),
-            frame_b=(0, 0, 1),
-            rect=[1.0, 1.0, 0.0, 0.0],
-        )
-        with self.assertWarns(DeprecationWarning):
-            leveled = ShadowHorizon.record(levels=7, **kwargs)
-        self.assertEqual(leveled, ShadowHorizon.record(**kwargs))
-        for name in ("MAPPING", "ENCODING"):
-            with self.subTest(name=name), self.assertWarns(DeprecationWarning):
-                self.assertIsNotNone(getattr(ShadowHorizon, name))
-
     def test_horizon_map_is_the_old_name_for_one_release(self):
         self.assertIs(HorizonMap, HeightFieldMap)
 

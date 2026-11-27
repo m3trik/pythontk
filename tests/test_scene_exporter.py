@@ -579,6 +579,38 @@ class TestCheckFailure(unittest.TestCase):
         with self.assertNoLogs(exporter.logger, level="DEBUG"):
             exporter.note_retired_panel_state(store)
 
+    def test_a_retyped_rows_saved_value_moves_to_the_key_its_widget_reads(self):
+        """REGRESSION (2026-11-26): Check Hierarchy vs Existing FBX became a
+        combo, and the panel's saved state keys a value by its widget's signal
+        (``<objectName>/toggled`` for the checkbox, ``/currentIndexChanged``
+        for the combo), so a user whose check was on opened at OFF: the strict
+        check silently off on the first export after the upgrade. The value
+        moves once, ``True`` to Strict's position and ``False`` to OFF's."""
+        from pythontk.core_utils.engines.scene_export.export_profile import (
+            ExportProfile,
+        )
+
+        options = list(ExportProfile.HIERARCHY_CHECK_OPTIONS.values())
+        row = "check_hierarchy_vs_existing_fbx"
+        for saved, level in ((True, "strict"), (False, None)):
+            with self.subTest(saved=saved):
+                store = _SettingsStore(
+                    {f"{row}/toggled": saved, "cmb004/currentIndexChanged": 1}
+                )
+                _Exporter().note_retired_panel_state(store)
+                self.assertEqual(
+                    sorted(store.data),
+                    sorted(["cmb004/currentIndexChanged", f"{row}/currentIndexChanged"]),
+                )
+                self.assertEqual(options[store.data[f"{row}/currentIndexChanged"]], level)
+                self.assertTrue(store.synced, "the move is flushed, so it holds")
+        # A value the combo already saved stands; the old key just goes.
+        store = _SettingsStore(
+            {f"{row}/toggled": True, f"{row}/currentIndexChanged": 2}
+        )
+        _Exporter().note_retired_panel_state(store)
+        self.assertEqual(store.data, {f"{row}/currentIndexChanged": 2})
+
     def test_a_saved_regex_field_folds_into_the_saved_output_filename_once(self):
         """REGRESSION (2026-10-19): both panels read the retired RegEx field as
         ``settings.value("txt002")``, but the switchboard saves it under

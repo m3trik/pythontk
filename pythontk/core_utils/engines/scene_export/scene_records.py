@@ -85,8 +85,6 @@ from typing import (
     Union,
 )
 
-from pythontk.core_utils.class_property import ClassProperty
-from pythontk.core_utils.deprecation import Deprecation
 from pythontk.iter_utils._iter_utils import IterUtils
 
 logger = logging.getLogger(__name__)
@@ -109,6 +107,41 @@ class NodeNames:
     @staticmethod
     def leaf(name: str) -> str:
         return name.rsplit("|", 1)[-1].rsplit(":", 1)[-1]
+
+    @staticmethod
+    def hierarchy_score(hierarchy: Sequence[Any], lineage: Sequence[str]) -> int:
+        """How many trailing names *hierarchy* and *lineage* share.
+
+        Compared from the object itself upward, namespace-blind, and stopped at
+        the first disagreement. Only the tail can be compared: an export may
+        root the file under a node the scene never had (FBX2glTF's
+        ``RootNode``) or drop ancestors it was not given, but it cannot rename
+        the parents it keeps.
+        """
+        score = 0
+        for mine, theirs in zip(reversed(list(hierarchy)), reversed(list(lineage))):
+            if str(mine).rsplit(":", 1)[-1] != str(theirs).rsplit(":", 1)[-1]:
+                break
+            score += 1
+        return score
+
+    @classmethod
+    def ends(cls, name: str, lineage: Sequence[str]) -> bool:
+        """Whether *name* names the node of *lineage* (its names, root first)
+        as a path's tail does: ``SOLENOID_LOC|PCB_LIGHTS_GRP`` names the
+        ``PCB_LIGHTS_GRP`` under a ``SOLENOID_LOC``, each of its names the
+        lineage's trailing one (:meth:`hierarchy_score`). A name two nodes
+        share is told apart by the fewest of its path's names that no other
+        node's path ends with, never only by its whole path; a reader takes a
+        tail where exactly one node's path ends with it.
+
+        Parameters:
+            name: A name or a path's tail, ``|`` joined (a leading ``|``, a
+                whole path, reads the same).
+            lineage: The node's names from its top level down.
+        """
+        tail = [n for n in str(name or "").split("|") if n]
+        return bool(tail) and cls.hierarchy_score(tail, lineage) == len(tail)
 
     def __contains__(self, name: Any) -> bool:
         if not isinstance(name, str) or not name:
@@ -488,20 +521,6 @@ class RecordSpec:
     nodes: Optional[Tuple[str, Union[str, Tuple[str, ...]]]] = None
     in_frame: bool = False
 
-    @property
-    @Deprecation.symbol(
-        "RecordSpec.glb_verbatim -- a GLB carries each record as it stands",
-        remove_in="0.18.0",
-        since="2026-10-24",
-    )
-    def web(self) -> Optional[Any]:
-        """Held until 0.22.0: the record's GLB block, a ``GlbBlock`` keyed by
-        the record in its own version and shape where a GLB carries it
-        (:attr:`glb_verbatim`), else ``None``."""
-        from pythontk.core_utils.engines.scene_export._retired import record_block
-
-        return record_block(self)
-
     def narrowed(self, payload: Any, nodes: Iterable[str]) -> Any:
         """*payload* with only the entries (:attr:`nodes`) describing a node
         among *nodes*, matched as a reader binds them (a name exactly, else its
@@ -564,16 +583,6 @@ class RecordSpec:
                 f"{self.key!r} is transient, so it is produced for every write: "
                 "declare it Kind.DERIVED."
             )
-
-    @property
-    @Deprecation.symbol(
-        '"version" -- every record states its version under that key',
-        remove_in="0.18.0",
-        since="2026-10-24",
-    )
-    def version_key(self) -> str:
-        """The key every record's version rides under: ``"version"``."""
-        return "version"
 
     def is_current(self, payload: Any) -> bool:
         """Whether *payload* is this record in the schema this declaration
@@ -874,8 +883,10 @@ class Transport:
     glb: str = "KHR_animation_pointer"
     #: The channels a node's proxy carries (``render_effects``' tracks).
     node_channels: Tuple[str, ...] = ("visibility", "opacity", "highlight")
-    #: The channels a material's proxy carries (``render_effects``' materials).
-    material_channels: Tuple[str, ...] = ("emission",)
+    #: The channels a material's proxy carries (``render_effects``' materials):
+    #: the emission's weight, and the three channels of the tint its emission
+    #: colour is multiplied by.
+    material_channels: Tuple[str, ...] = ("emission", "tint_r", "tint_g", "tint_b")
     #: The channels read as steps (on at 1, off at 0), every key a cut.
     stepped: Tuple[str, ...] = ("visibility",)
 
@@ -883,6 +894,12 @@ class Transport:
     def channels(self) -> Tuple[str, ...]:
         """Every channel that rides the transport, node channels first."""
         return self.node_channels + self.material_channels
+
+    @property
+    def tint_channels(self) -> Tuple[str, ...]:
+        """A material's tint channels, r, g and b: its channels after the
+        emission's weight (:attr:`material_channels`)."""
+        return self.material_channels[1:]
 
     @staticmethod
     def target_name(name: str) -> str:
@@ -1266,22 +1283,6 @@ class SceneRecords:
             "of its name: the takes played in turn are the whole sequence."
         ),
     )
-    #: Retired 2026-10-20 (removed in 0.18.0): the take list a file written
-    #: before 0.11.0 carried. No reader reads it; a scene still holding one has
-    #: it cleared (:attr:`RETIRED`).
-    FBX_TAKES = Deprecation.class_attribute(
-        RecordSpec(
-            "fbx_takes",
-            Scope.DELIVERABLE,
-            1,
-            owner="Shots",
-            description="the take list a file written before 0.11.0 carried",
-            envelope=False,
-        ),
-        "SceneRecords.SHOTS -- each shot's range rides its clip",
-        remove_in="0.18.0",
-        since="2026-10-24",
-    )
     #: Version 3 (2026-11-05): cues per clip, in seconds from the clip's
     #: start, each with its sound (the delivered file's name), its offset
     #: into the sound and its stop -- a sound across a cut is cut per clip --
@@ -1612,8 +1613,9 @@ class SceneRecords:
         kind=Kind.DERIVED,
         # The GLB build reads the FBX's to state the GLB's, and the glTF
         # runtimes the GLB's. Unity lights with its pipeline's own Lit and
-        # reads none of it.
-        consumers=("glb",),
+        # reads its 'rendering' renderer section: the look the file was
+        # approved under.
+        consumers=("glb", "unity"),
         shape=(
             "pythontk.core_utils.engines.scene_export.handoff_record",
             "HandoffBlock",
@@ -1727,7 +1729,9 @@ class SceneRecords:
         description=(
             "what crosses a hand-off for the emissive groups: per group copy "
             "its group, base material, emission strength and emission keys "
-            "(the old tool's slot registry, version 1, is converted and removed)"
+            "(the held ones' frames), and its named states, tint and tint keys "
+            "where it has them (the old tool's slot registry, version 1, is "
+            "converted and removed)"
         ),
         renamed_from=("emissive_groups",),
         envelope=False,
@@ -2234,15 +2238,6 @@ class SceneRecords:
             return None
         return cls.resolve_class(*row)
 
-    # Held until 0.22.0 (noticed for 0.18.0 on 2026-10-24, its window closing
-    # 2026-11-23): a GLB carries each record as it stands, so its block's shape
-    # is the record's.
-    @classmethod
-    @Deprecation.symbol("SceneRecords.shape", remove_in="0.18.0", since="2026-10-24")
-    def web_shape(cls, item: Union[RecordSpec, str]) -> Optional[Any]:
-        """:meth:`shape`."""
-        return cls.shape(item)
-
     @classmethod
     def shape(cls, item: Union[RecordSpec, str]) -> Optional[Any]:
         """The :class:`~pythontk.SchemaSpec` declaring *item*'s payload
@@ -2330,62 +2325,10 @@ class SceneRecords:
             return []
         return [_located(where, error) for error in shape.validate(payload).errors]
 
-    # Retired 2026-10-20 (removed in 0.18.0): a record's block is named for
-    # the file it rides, not for one of its readers.
-    @classmethod
-    @Deprecation.symbol(
-        "SceneRecords.glb_records", remove_in="0.18.0", since="2026-10-24"
-    )
-    def web_projected(cls) -> List[RecordSpec]:
-        """:meth:`glb_records`."""
-        return cls.glb_records()
-
     @classmethod
     def portable(cls) -> List[RecordSpec]:
         """The records that cross a DCC hand-off, in declaration order."""
         return [s for s in cls.all() if s.portable]
-
-    # The handoff's names here retired 2026-10-20 (removed in 0.18.0): the
-    # block is declared once, for every carrier, by ``HandoffRecord``, which builds
-    # on this registry -- so each alias reads it at call time.
-    @staticmethod
-    @Deprecation.symbol(
-        "HandoffRecord.rendering_policy", remove_in="0.18.0", since="2026-10-24"
-    )
-    def rendering_policy(
-        overrides: Optional[Mapping[str, Mapping[str, Any]]] = None,
-    ) -> Dict[str, Any]:
-        """What a deliverable claims about how it should be lit
-        (``HandoffRecord.rendering_policy``)."""
-        from pythontk.core_utils.engines.scene_export.handoff_record import (
-            HandoffRecord,
-        )
-
-        return HandoffRecord.rendering_policy(overrides)
-
-    @ClassProperty
-    @Deprecation.symbol(
-        "HandoffRecord.instructions('fbx')", remove_in="0.18.0", since="2026-10-24"
-    )
-    def HANDOFF_INSTRUCTIONS(cls) -> str:
-        """The FBX block's reading contract (``HandoffRecord.instructions``)."""
-        from pythontk.core_utils.engines.scene_export.handoff_record import (
-            HandoffRecord,
-        )
-
-        return HandoffRecord.instructions("fbx")
-
-    @ClassProperty
-    @Deprecation.symbol(
-        "HandoffRecord.CARRIERS['fbx'].own", remove_in="0.18.0", since="2026-10-24"
-    )
-    def HANDOFF_ASSEMBLY(cls) -> Tuple[Dict[str, Any], ...]:
-        """The FBX block's rows for the file's own content (``HandoffRecord.CARRIERS``)."""
-        from pythontk.core_utils.engines.scene_export.handoff_record import (
-            HandoffRecord,
-        )
-
-        return HandoffRecord.CARRIERS["fbx"].own
 
     # ------------------------------------------------------------- catalogue
     @classmethod
@@ -2773,28 +2716,6 @@ class SceneRecords:
             specs.append(spec)
         return specs
 
-    # ---------------------------------------------------------------- handoff
-    @classmethod
-    @Deprecation.symbol(
-        "HandoffRecord.block('fbx', channels, source, rendering)",
-        remove_in="0.18.0",
-        since="2026-10-24",
-    )
-    def handoff_block(
-        cls,
-        channels: Union[Iterable[str], Mapping[str, Any]],
-        source: Optional[Mapping[str, str]] = None,
-        rendering: Optional[Mapping[str, Mapping[str, Any]]] = None,
-    ) -> Dict[str, Any]:
-        """The FBX's handoff block for a carrier holding *channels*, or ``{}``
-        when it holds no record (``HandoffRecord.block``)."""
-        from pythontk.core_utils.engines.scene_export.handoff_record import (
-            HandoffRecord,
-        )
-
-        held = HandoffRecord.carried(channels)
-        return HandoffRecord.block("fbx", channels, source, rendering) if held else {}
-
     @classmethod
     def describe(cls) -> List[Dict[str, Any]]:
         """One row per record, for the docs generator and the gates."""
@@ -2816,11 +2737,3 @@ class SceneRecords:
             }
             for s in cls.all()
         ]
-
-
-# Held until 0.22.0 (``pythontk/__init__.py``, "Held until 0.22.0"): the GLB
-# block names v0.20.0 noticed for removal, whose window closes 2026-11-23.
-from pythontk.core_utils.engines.scene_export._retired import (  # noqa: E402, F401 (re-exported)
-    GlbBlock,
-    WebProjection,
-)

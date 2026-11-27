@@ -2685,6 +2685,36 @@ class PackAtlasRectsTest(unittest.TestCase):
         flat = [d for pair in densities for d in pair]
         self.assertLess(max(flat) / min(flat), 1.05)
 
+    def test_items_free_to_take_any_shape_take_the_densest(self):
+        """A production cabinet's four cells filled 54% of their atlas: fixed
+        shapes leave a square partly empty. An item whose layout can be re-laid
+        (``None`` extent, its surface area given) takes the whole-number shape
+        that packs the group densest, sized for *fill* coverage; fixed items
+        keep theirs."""
+        areas = [256.0, 45.0, 17.0, 0.6]  # the cabinet's body and doors
+        fixed = [ImgUtils.atlas_extent(a, None, fill=0.8) for a in areas]  # all square
+        square = ImgUtils.pack_atlas_rects(fixed, 1024, gutter=4)
+        free = ImgUtils.pack_atlas_shapes(
+            [None] * 4, areas, 1024, gutter=4, fill=0.8
+        )
+        # At one density a cell's area is that density squared times its
+        # item's area over its fill, so the cells' total is the density's.
+        self.assertGreater(
+            sum(r[0] * r[1] for r in free), sum(r[0] * r[1] for r in square) * 1.1
+        )
+        # A fixed item keeps its own shape.
+        mixed = ImgUtils.pack_atlas_shapes([(4.0, 1.0), None], [4.0, 9.0], 512, gutter=2)
+        self.assertAlmostEqual(mixed[0][0] / mixed[0][1], 4.0, delta=0.2)
+
+    def test_items_of_no_size_pack_at_the_least_cell(self):
+        """Every item of zero width (a free item of no surface): no density to
+        search, so each takes the least cell, as pack_atlas_rects packs them."""
+        self.assertEqual(
+            ImgUtils.pack_atlas_shapes([None], [0.0], 512),
+            ImgUtils.pack_atlas_rects([(0.0, 0.0)], 512),
+        )
+        self.assertEqual(len(ImgUtils.pack_atlas_shapes([None, None], [0.0, 0.0], 512)), 2)
+
     def test_one_long_item_does_not_starve_the_rest(self):
         """A cell in its surface's shape can be longer than the atlas at the
         group's density (a 30 m corridor wall laid out in a square): it folds

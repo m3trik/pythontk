@@ -157,9 +157,15 @@ class ProbeRays:
         return self.mesh.normal(payload, face)
 
     def cast(
-        self, origin: Sequence[float], direction: Sequence[float], far: float = 1.0e7
+        self,
+        origin: Sequence[float],
+        direction: Sequence[float],
+        far: float = 1.0e7,
+        skip: Any = None,
     ) -> Optional[ProbeHit]:
-        """The nearest hit along *direction* (unit) from *origin* within *far*."""
+        """The nearest hit along *direction* (unit) from *origin* within *far*,
+        passing over the meshes of the owners in *skip* (what is looked at, or
+        what was passed already)."""
         import numpy as np
 
         if self._lo is None:
@@ -179,6 +185,10 @@ class ProbeRays:
         enter = np.maximum(np.minimum(t1, t2).max(axis=1), 0.0)
         leave = np.maximum(t1, t2).min(axis=1)
         reach = np.nonzero((leave >= enter) & (enter <= far))[0]
+        if skip:
+            reach = np.array(
+                [i for i in reach if self.owners[i] not in skip], dtype=int
+            )
         best = None
         for index in reach[np.argsort(enter[reach])]:
             if best is not None and enter[index] > best[0]:
@@ -196,6 +206,63 @@ class ProbeRays:
             tuple(float(c) for c in normal),
             index,
         )
+
+    def occupied_sphere(self, at: Sequence[float], radius: float) -> bool:
+        """Whether a sphere at *at* overlaps a mesh, read by rays: one out
+        along each axis, either way, as far as *radius* (a point inside a
+        closed mesh meets its inside, both-sided as the hosts intersect)."""
+        for axis in range(3):
+            for sign in (1.0, -1.0):
+                way = [0.0, 0.0, 0.0]
+                way[axis] = sign
+                if self.cast(at, way, radius) is not None:
+                    return True
+        return False
+
+    def occupied_capsule(
+        self, a: Sequence[float], b: Sequence[float], radius: float
+    ) -> bool:
+        """Whether the capsule from *a* to *b*, *radius* round, overlaps a
+        mesh, read by rays: along its axis end to end (and a radius past each
+        end), and along eight lines a radius out round it, which a slab across
+        it meets however thin (a shelf reaching into its side); and out from
+        its axis eight ways square to it at each of its
+        :meth:`~pythontk.SpotPlacement.stations` (the rule the boxes read it
+        by), which a wall beside it meets."""
+        from pythontk.geo_utils.spot_placement import SpotPlacement
+        from pythontk.math_utils._math_utils import MathUtils
+
+        axis = [b[i] - a[i] for i in range(3)]
+        length = MathUtils.get_magnitude(axis)
+        if length < 1.0e-9:
+            return self.occupied_sphere(a, radius)
+        way = MathUtils.normalize(axis)
+        start = [a[i] - way[i] * radius for i in range(3)]
+        if self.cast(start, way, length + 2.0 * radius) is not None:
+            return True
+        # Two unit vectors square to the axis, and the eight ways between them.
+        helper = (1.0, 0.0, 0.0) if abs(way[0]) < 0.9 else (0.0, 1.0, 0.0)
+        side = MathUtils.cross_product(way, helper, normalize=1)
+        other = MathUtils.cross_product(way, side)
+        rounds = [
+            [
+                side[i] * math.cos(k * math.pi / 4.0)
+                + other[i] * math.sin(k * math.pi / 4.0)
+                for i in range(3)
+            ]
+            for k in range(8)
+        ]
+        for out in rounds:
+            if (
+                self.cast([a[i] + out[i] * radius for i in range(3)], way, length)
+                is not None
+            ):
+                return True
+        for point in SpotPlacement.stations(a, b, radius):
+            for out in rounds:
+                if self.cast(point, out, radius) is not None:
+                    return True
+        return False
 
 
 @dataclass

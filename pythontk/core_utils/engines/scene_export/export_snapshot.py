@@ -126,6 +126,14 @@ class ExportContext:
             it reads none (:meth:`record`); a record the assembly produces is
             its producer's call (its own refusal: ``LightmapRecord.
             unless_refused``).
+        excluded: The records this write ships none of by its exporter's
+            choice, by key -- the Scene Exporter's Exclude Audio
+            (``ExportRun.excluded_records``). Unlike :attr:`withheld`, none
+            ships in any mode, produced or stored: no producer runs for one,
+            the stored copy is cleared for the write and kept for the
+            exporter's restore (:meth:`ExportSnapshot.commit`), a producer
+            reading it reads none, and nothing is noted -- the choice is the
+            user's, no problem to report.
     """
 
     #: Each writer's effective metres per scene unit, stated once: ``{(host,
@@ -200,6 +208,7 @@ class ExportContext:
     animated: Optional[bool] = None
     take_window: Optional[Tuple[float, float]] = None
     withheld: Dict[str, str] = field(default_factory=dict)
+    excluded: FrozenSet[str] = frozenset()
     #: :attr:`nodes` as a reader matches them, built on first use.
     _names: Optional[NodeNames] = field(
         default=None, init=False, repr=False, compare=False
@@ -242,13 +251,14 @@ class ExportContext:
         The one read a consumer of another producer's record needs: fresh
         when both run in one assembly, stored when a tool republishes its own
         record alone at authoring time or a hand-off ships it as stored, and
-        *default* for a stored copy the write withholds (:attr:`withheld`).
+        *default* for a stored copy the write withholds (:attr:`withheld`) or
+        a record it excludes (:attr:`excluded`).
         """
         spec = SceneRecords.resolve(spec)
         if spec.key in self.records:
             produced = self.records[spec.key]
             return produced.payload if produced is not None else default
-        if spec.key in self.withheld:
+        if spec.key in self.withheld or spec.key in self.excluded:
             return default
         if store is not None:
             return spec.load(store, default)
@@ -335,7 +345,8 @@ class ExportSnapshot:
             ctx: The :class:`ExportContext`; a pipeline context by default.
             only: Narrow the run to these records (specs or keys).  The mode's
                 own filter still applies (a hand-off never refreshes an
-                authored record, even when named).
+                authored record, even when named), and a record the write
+                excludes (:attr:`ExportContext.excluded`) is never produced.
 
         Each producer is isolated: one that raises, or returns something other
         than records, is noted (:attr:`ExportContext.notes`, why it failed)
@@ -362,7 +373,9 @@ class ExportSnapshot:
         selected = [
             spec
             for spec in table
-            if (wanted is None or spec.key in wanted) and ctx.refreshes(spec)
+            if (wanted is None or spec.key in wanted)
+            and ctx.refreshes(spec)
+            and spec.key not in ctx.excluded
         ]
         running = {spec.key for spec in selected}
         for key, why in ctx.withheld.items():
@@ -601,8 +614,9 @@ class ExportSnapshot:
         stored copy narrowed is committed narrowed and kept whole in
         :attr:`scene_wide`, for the exporter's restore. A failed producer's
         record stays as stored. A stored record the write withholds
-        (``ctx.withheld``) ships none at all -- cleared for the write, kept
-        whole in :attr:`scene_wide` -- whatever the write names.
+        (``ctx.withheld``) or excludes (``ctx.excluded``) ships none at all
+        -- cleared for the write, kept whole in :attr:`scene_wide` --
+        whatever the write names.
 
         Returns:
             :attr:`written` -- key -> the text stored (``None`` = cleared).
@@ -681,11 +695,12 @@ class ExportSnapshot:
         return self.written
 
     def _withhold_stored(self, store) -> None:
-        """Clear for the write each stored record ``ctx.withheld`` names that
-        this assembly did not produce, keeping the stored copy in
+        """Clear for the write each stored record ``ctx.withheld`` or
+        ``ctx.excluded`` names that this assembly did not produce (it never
+        produces an excluded one), keeping the stored copy in
         :attr:`scene_wide` for the exporter's restore. A record its producer
         failed for stays as stored."""
-        for key in self.ctx.withheld:
+        for key in (*self.ctx.withheld, *sorted(self.ctx.excluded)):
             if key in self.produced or key in self.failed:
                 continue
             spec = SceneRecords.resolve(key)

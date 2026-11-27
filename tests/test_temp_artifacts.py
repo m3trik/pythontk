@@ -145,6 +145,110 @@ class TestAllocation(TempArtifactsBase):
         self.assertFalse(os.path.exists(side))
 
 
+class TestSweepScratch(TempArtifactsBase):
+    """A hand-kept scratch folder no store owns (a repo's ``tests/temp_tests``)
+    ages out entry by entry, judged by its newest file, but for what it keeps.
+    Measured 2026-11-24: mayatk's held 566 entries (506 untouched for a week,
+    1.3 GB) on a drive that had filled; nothing ever removed one."""
+
+    def _old_dir(self, name, days, fresh_child=None):
+        folder = os.path.join(self.dir, name)
+        os.makedirs(os.path.join(folder, "deep"))
+        inner = self.touch(os.path.join(folder, "deep", "out.bin"))
+        self.age(inner, days)
+        self.age(os.path.join(folder, "deep"), days)
+        if fresh_child:
+            self.touch(os.path.join(folder, "deep", fresh_child))
+        self.age(folder, days)
+        return folder
+
+    def test_entries_untouched_past_the_age_go_and_the_rest_stay(self):
+        old_file = self.touch(os.path.join(self.dir, "probe.py"))
+        self.age(old_file, 30)
+        new_file = self.touch(os.path.join(self.dir, "today.log"))
+        old_dir = self._old_dir("_repro_out", 30)
+        stirred = self._old_dir("_live_harness", 30, fresh_child="written_today.txt")
+        removed = TempArtifacts.sweep_scratch(self.dir, max_age_days=14)
+        self.assertEqual(sorted(removed), sorted([old_file, old_dir]))
+        self.assertTrue(os.path.exists(new_file))
+        self.assertTrue(os.path.exists(stirred), "a file deep inside written today keeps its folder")
+
+    def _keep(self, text, encoding="utf-8"):
+        path = os.path.join(self.dir, TempArtifacts.KEEP_FILE)
+        with open(path, "w", encoding=encoding) as fh:
+            fh.write(text)
+        self.age(path, 90)
+
+    def test_what_the_keep_file_names_stays_whatever_its_age(self):
+        kept = self._old_dir("_prod_verify", 90)
+        kept_file = self.touch(os.path.join(self.dir, "harness.py"))
+        self.age(kept_file, 90)
+        self._keep("# durable harnesses a note points at\n_prod_verify\nharness.py\n")
+        self.assertEqual(TempArtifacts.sweep_scratch(self.dir, max_age_days=14), [])
+        self.assertTrue(os.path.isdir(kept))
+        self.assertTrue(os.path.isfile(kept_file))
+
+    @unittest.skipIf(os.path.normcase("A") == "A", "a case-sensitive file system")
+    def test_a_kept_name_matches_in_any_case_where_names_do(self):
+        """Added: 2026-11-26. Windows only: on Linux ``Harness.py`` and
+        ``harness.py`` are two files, and the CI leg there swept it."""
+        kept_file = self.touch(os.path.join(self.dir, "Harness.py"))
+        self.age(kept_file, 90)
+        self._keep("harness.py\n")
+        self.assertEqual(TempArtifacts.sweep_scratch(self.dir, max_age_days=14), [])
+
+    def test_a_keep_file_it_cannot_read_keeps_everything_and_says_so(self):
+        """Added: 2026-11-26. A ``.keep`` saved in another encoding raised at a
+        conftest's import and failed the whole repo's collection."""
+        old = self._old_dir("_repro_out", 30)
+        self._keep("_caf\xe9_repro\n", encoding="cp1252")
+        with self.assertLogs(TempArtifacts.logger, level="WARNING") as said:
+            self.assertEqual(TempArtifacts.sweep_scratch(self.dir, max_age_days=14), [])
+        self.assertTrue(os.path.isdir(old))
+        self.assertIn(TempArtifacts.KEEP_FILE, "\n".join(said.output))
+
+    def test_a_scratch_path_that_is_no_folder_sweeps_nothing_and_says_so(self):
+        """Added: 2026-11-26"""
+        not_a_folder = self.touch(os.path.join(self.dir, "temp_tests"))
+        with self.assertLogs(TempArtifacts.logger, level="WARNING"):
+            self.assertEqual(TempArtifacts.sweep_scratch(not_a_folder, max_age_days=14), [])
+
+    def test_an_old_link_goes_alone_and_its_target_stays(self):
+        """Added: 2026-11-26. An old symlink or junction at the top of the
+        folder was refused ("Cannot call rmtree on a symbolic link") at every
+        run; whatever it points at is outside the sweep's reach."""
+        outside, scratch = os.path.join(self.dir, "outside"), os.path.join(self.dir, "scratch")
+        os.makedirs(outside)
+        os.makedirs(scratch)
+        target = self.touch(os.path.join(outside, "elsewhere.bin"))
+        link = os.path.join(scratch, "linked")
+        try:
+            os.symlink(outside, link, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            if os.name != "nt":
+                self.skipTest("no symlinks here")
+            import _winapi
+
+            _winapi.CreateJunction(outside, link)  # no privilege needed, unlike a symlink
+        self.assertTrue(TempArtifacts._is_link(link))
+        # A link's own mtime cannot be set back on every platform: read it as old.
+        with mock.patch.object(TempArtifacts, "_touched_since", return_value=False):
+            self.assertEqual(TempArtifacts.sweep_scratch(scratch, max_age_days=14), [link])
+        self.assertFalse(os.path.lexists(link))
+        self.assertTrue(os.path.isfile(target), "the link's target is never the sweep's")
+
+    def test_a_missing_folder_sweeps_nothing(self):
+        self.assertEqual(TempArtifacts.sweep_scratch(os.path.join(self.dir, "none"), 14), [])
+
+    def test_an_entry_it_cannot_remove_is_said_never_skipped_silently(self):
+        """Added: 2026-11-24"""
+        held = self._old_dir("_held", 30)
+        with mock.patch.object(TempArtifacts, "_remove", return_value=[f"{held}: in use"]):
+            with self.assertLogs(TempArtifacts.logger, level="WARNING") as said:
+                self.assertEqual(TempArtifacts.sweep_scratch(self.dir, max_age_days=14), [])
+        self.assertIn(held, "\n".join(said.output))
+
+
 class TestRelease(TempArtifactsBase):
     """One artifact, deleted early because its consumer is provably done.
 
