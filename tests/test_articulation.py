@@ -945,15 +945,13 @@ class TestRecordShape(unittest.TestCase):
         """The GLB block (``ArticulationBlock``, its parts and the retired
         ``ArticulationWeb`` aliases) left with v2: a GLB carries the record
         itself. Reading one at the root names where it went. The
-        ``ArticulationWeb`` aliases, noticed for 0.18.0 on 2026-10-24, are
-        held, deprecated, until their window closes (``HELD_UNTIL_0_22``;
-        ``test_scene_records.TestRetiredUntil022``). Added: 2026-11-08"""
+        ``ArticulationWeb`` aliases, noticed for 0.18.0 on 2026-10-24, went
+        when their window closed. Added: 2026-11-08"""
         with self.assertRaises(AttributeError) as raised:
             getattr(ptk, "ArticulationBlock")
         self.assertIn("ArticulationRecord", str(raised.exception))
-        self.assertEqual(
-            ptk.HELD_UNTIL_0_22["ArticulationWeb"], ("pythontk.ArticulationRecord", "0.22.0")
-        )
+        with self.assertRaises(AttributeError):
+            getattr(ptk, "ArticulationWeb")
 
     def test_a_drifted_payload_is_named_where_it_drifted(self):
         rig = json.loads(json.dumps(ArticulationConformance.rigs()["arm"]))

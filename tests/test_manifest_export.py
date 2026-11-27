@@ -116,6 +116,19 @@ class TestRecords(_Rows):
         self.assertEqual(recs[0]["status"], "missing_object")
         self.assertEqual(recs[2]["status"], "not_in_doc", "never assessed")
 
+    def test_a_steps_sheet_issues_go_out_for_the_sheets_owner(self):
+        """What the sheet's check found reached no export, so the sheet's owner got a status
+        word and no cell to fix. Added: 2026-11-25"""
+        step = BuilderStep("A01", "A", "t", "", [BuilderObject("door")])
+        step.rows = [{"issues": [("Clip", "use needs its Clip: write the take it plays")],
+                      "warnings": [("Clip", "the take OPEN is not named for its step: A01 says it")]}]
+        (rec,) = ManifestExport.records([(step, None)])
+        self.assertEqual(rec["issues"], ["row 1 (Clip): use needs its Clip: write the take it plays",
+                                         "row 1 (Clip): the take OPEN is not named for its step: A01 says it"])
+        self.assertEqual(ManifestExport.COLUMNS[-1], ("issues", "Sheet Issues"))
+        table = ManifestExport.table([rec], ["step", "issues"], objects="cell")
+        self.assertEqual(table, [["Step", "Sheet Issues"], ["A01", "\n".join(rec["issues"])]])
+
 
 class TestTable(_Rows):
     def test_objects_a_row_each_the_steps_cells_on_the_first(self):

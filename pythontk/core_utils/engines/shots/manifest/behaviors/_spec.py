@@ -84,6 +84,13 @@ class _BehaviorSpecInternal(object):
         return errs
 
     @staticmethod
+    def validate_word(value: Any) -> List[str]:
+        """``family`` / ``variant`` = a short non-empty string."""
+        if value is None or (isinstance(value, str) and value.strip()):
+            return []
+        return [f"expected a non-empty string, got {value!r}"]
+
+    @staticmethod
     def validate_attributes(value: Any) -> List[str]:
         """``attributes`` = {attr: {in?/out?: {offset,duration,values,anchor,tangent}}}."""
         if not isinstance(value, dict):
@@ -172,6 +179,23 @@ class BehaviorSpec(SchemaSpec, _BehaviorSpecInternal):
         ),
         validate=_BehaviorSpecInternal.validate_detect,
         example=[r"\bfades?\s+in\b"],
+        default=None,
+    )
+    family: str = SchemaSpec.spec_field(
+        help=(
+            "The behavior this template is a way of setting, when several "
+            "are: `fade_in` and `fade_out` are both `fade`. A panel reads a "
+            "family as one behavior -- one Key / Marker / Off choice, its "
+            "name led by the family's and followed by the `variant` "
+            "(*Fade · in*) -- while each template keeps its own name in "
+            "saved data and deliveries."
+        ),
+        validate=_BehaviorSpecInternal.validate_word,
+        default=None,
+    )
+    variant: str = SchemaSpec.spec_field(
+        help="How this template sets its `family`, as its suffix reads (`in`, `out`).",
+        validate=_BehaviorSpecInternal.validate_word,
         default=None,
     )
 

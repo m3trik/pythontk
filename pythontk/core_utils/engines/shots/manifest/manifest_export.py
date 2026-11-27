@@ -54,6 +54,7 @@ class _ManifestExportInternal(object):
             "start": frame(record.get("start")),
             "end": frame(record.get("end")),
             "status": record.get("status", "").replace("_", " "),
+            "issues": "\n".join(record.get("issues") or ()),
         }
 
     @staticmethod
@@ -85,6 +86,7 @@ class ManifestExport(_ManifestExportInternal):
         ("start", "Start"),
         ("end", "End"),
         ("status", "Status"),
+        ("issues", "Sheet Issues"),
     )
     #: Each format's file extension.
     FORMATS: Dict[str, str] = {"csv": ".csv", "json": ".json", "markdown": ".md"}
@@ -179,6 +181,8 @@ class ManifestExport(_ManifestExportInternal):
                     "start": start,
                     "end": end,
                     "status": statuses.get(step.step_id, status),
+                    # What the sheet's own check found, each naming its cell and fix: the sheet's owner's.
+                    "issues": [text for _status, text in step.sheet_issues()],
                 }
             )
         return out

@@ -17,6 +17,12 @@ State lives on the materials themselves: a copy is tagged with its group, its
 base and the base's emission strength it was keyed against. The weight is the
 copy's emission divided by that strength: keyed, the animation owns it.
 
+A tint multiplies a copy's emission colour (white: none), and a state is a
+named tint and weight (an indicator's off, green, amber, red...): emission is
+colour x tint x weight x strength. A keyed tint rides the transport as the
+``tint_r``, ``tint_g`` and ``tint_b`` channels; the states and the tint the
+delivered material shows ride its ``render_effects`` entry.
+
 In step with its base: a changed base value or map reaches its copies when
 the tool syncs them -- :meth:`EmissiveGroupsModel.sync`, run by the panel's
 Sync, never implicitly: no other operation changes a copy to match its base.
@@ -99,6 +105,10 @@ class EmissiveGroupsHost(Protocol):
     def material_faces(self, material: str) -> FaceMap:
         """Every face wearing *material*."""
 
+    def face_count(self, face_map: FaceMap) -> int:
+        """How many faces *face_map* names, a face several objects show (one
+        mesh under linked duplicates or instances) counted once."""
+
     def material(self, name: str) -> Optional[str]:
         """The material *name* resolves to here, or ``None``."""
 
@@ -159,11 +169,55 @@ class EmissiveGroupsHost(Protocol):
         where it only gates it -- a luminance in nits (OpenPBR's) never
         scales the delivered emission."""
 
-    def key_emission(self, material: str, value: float, frame: Optional[float] = None) -> None:
-        """Key *material*'s emission at *value*, at *frame* (``None``: now)."""
+    def key_emission(
+        self, material: str, value: float, frame: Optional[float] = None, stepped: bool = False
+    ) -> None:
+        """Key *material*'s emission at *value*, at *frame* (``None``: now);
+        *stepped* holds it until the next key (a state's switch)."""
 
     def clear_emission_keys(self, material: str) -> None:
         """Delete *material*'s emission keys, keeping its value now."""
+
+    def stepped_emission_frames(self, material: str) -> List[float]:
+        """The frames of *material*'s emission keys that hold until the next
+        (a state's switch); empty when none does."""
+
+    # Tint: the colour a copy's emission colour is multiplied by --------------
+
+    def tint_refusal(self, material: str) -> Optional[str]:
+        """Why *material*'s emission cannot be tinted (a mapped colour, a
+        shader that glows by its colour alone), or ``None`` when it can."""
+
+    def emission_tint(self, material: str) -> List[float]:
+        """*material*'s tint now: its emission colour over the base colour it
+        was tinted against; white for one never tinted."""
+
+    def set_emission_tint(self, material: str, tint: Sequence[float]) -> None:
+        """Make *material*'s emission colour its base colour times *tint* (its
+        tint keys, if any, still own it)."""
+
+    def key_emission_tint(
+        self, material: str, tint: Sequence[float], frame: Optional[float] = None, stepped: bool = False
+    ) -> None:
+        """Key *material*'s tint at *frame* (``None``: now), each channel."""
+
+    def emission_tint_keys(self, material: str) -> List[Tuple[float, List[float], bool]]:
+        """*material*'s tint keys, ``(frame, [r, g, b], stepped)``; empty when
+        its tint is not keyed."""
+
+    def clear_emission_tint_keys(self, material: str) -> None:
+        """Delete *material*'s tint keys, keeping its tint now."""
+
+    def emission_tint_channels(self, material: str) -> List[Any]:
+        """What keys each of *material*'s three tint channels (a plug, an
+        fcurve), keyed in its colour's units: over :meth:`emission_color`'s
+        channel, the tint. Empty when it cannot be tinted."""
+
+    def emission_states(self, material: str) -> Dict[str, Dict[str, Any]]:
+        """The named states stored on *material* (:meth:`set_emission_states`)."""
+
+    def set_emission_states(self, material: str, states: Dict[str, Dict[str, Any]]) -> None:
+        """Store *states* (``{name: {"tint", "weight"}}``) on *material*."""
 
     def copy_emission(self, src: str, dst: str, factor: float) -> None:
         """*dst*'s emission becomes *src*'s times *factor*: its value, and its
@@ -174,10 +228,14 @@ class EmissiveGroupsHost(Protocol):
 
     # Export --------------------------------------------------------------
 
-    def stage_emission_proxy(self, material: str, name: str, factor: float) -> Optional[Any]:
+    def stage_emission_proxy(
+        self, material: str, name: str, factor: float, tint: Optional[int] = None
+    ) -> Optional[Any]:
         """Stage the transport proxy *name* under the export's carrier node:
         a marked transform whose curve channel carries *material*'s emission
-        keys times *factor*. ``None`` when *name* is taken."""
+        keys times *factor* -- with *tint* (0, 1, 2), that channel of its
+        tint's keys instead (its colour's over :meth:`emission_color`'s, times
+        *factor*). ``None`` when *name* is taken."""
 
     def emission_proxies(self) -> List[str]:
         """The names of the proxies :meth:`stage_emission_proxy` staged."""
@@ -239,6 +297,9 @@ class PureEmissiveGroupsHost:
     def material_faces(self, material: str) -> FaceMap:
         return {}
 
+    def face_count(self, face_map: FaceMap) -> int:
+        return sum(len(set(indices)) for indices in face_map.values())
+
     def material(self, name: str) -> Optional[str]:
         return None
 
@@ -285,11 +346,45 @@ class PureEmissiveGroupsHost:
     def published_strength(self, material: str, strength: float) -> float:
         return float(strength)  # a scalar that scales: the delivery states it
 
-    def key_emission(self, material: str, value: float, frame: Optional[float] = None) -> None:
+    def key_emission(
+        self, material: str, value: float, frame: Optional[float] = None, stepped: bool = False
+    ) -> None:
         self._refuse(f"key {material!r}'s emission")
 
     def clear_emission_keys(self, material: str) -> None:
         return None  # no keys to delete
+
+    def stepped_emission_frames(self, material: str) -> List[float]:
+        return []
+
+    def tint_refusal(self, material: str) -> Optional[str]:
+        return f"{material!r} is in no scene"
+
+    def emission_tint(self, material: str) -> List[float]:
+        return [1.0, 1.0, 1.0]
+
+    def set_emission_tint(self, material: str, tint: Sequence[float]) -> None:
+        self._refuse(f"tint {material!r}")
+
+    def key_emission_tint(
+        self, material: str, tint: Sequence[float], frame: Optional[float] = None, stepped: bool = False
+    ) -> None:
+        self._refuse(f"key {material!r}'s tint")
+
+    def emission_tint_keys(self, material: str) -> List[Tuple[float, List[float], bool]]:
+        return []
+
+    def clear_emission_tint_keys(self, material: str) -> None:
+        return None
+
+    def emission_tint_channels(self, material: str) -> List[Any]:
+        return []
+
+    def emission_states(self, material: str) -> Dict[str, Dict[str, Any]]:
+        return {}
+
+    def set_emission_states(self, material: str, states: Dict[str, Dict[str, Any]]) -> None:
+        self._refuse(f"store {material!r}'s states")
 
     def copy_emission(self, src: str, dst: str, factor: float) -> None:
         self._refuse(f"key {dst!r}'s emission")
@@ -297,7 +392,9 @@ class PureEmissiveGroupsHost:
     def scale_emission(self, material: str, factor: float) -> None:
         self._refuse(f"scale {material!r}'s emission")
 
-    def stage_emission_proxy(self, material: str, name: str, factor: float) -> Optional[Any]:
+    def stage_emission_proxy(
+        self, material: str, name: str, factor: float, tint: Optional[int] = None
+    ) -> Optional[Any]:
         self._refuse(f"stage {name!r}")
         return None
 
@@ -370,6 +467,190 @@ class _EmissiveGroupsModelInternal:
     @classmethod
     def _keyed_copy(cls, members: Dict[str, Dict[str, Any]]) -> Optional[str]:
         return next((c for c in sorted(members) if cls.HOST.emission_keys(c)), None)
+
+    @classmethod
+    def _rest(cls, members, weight: float, ctx) -> Tuple[float, List[str]]:
+        """Rest *members*' un-keyed copies at *weight* (clamped 0..1), inside
+        the caller's undo step: ``(weight, copies rested)``."""
+        weight = max(0.0, min(1.0, float(weight)))
+        rested = []
+        for copy, info in sorted(members.items()):
+            if cls.HOST.emission_keys(copy):
+                continue
+            if ctx is None or ctx.should_change(copy, f"weight {weight:g}"):
+                cls.HOST.set_emission(copy, float(info["strength"]) * weight)
+                rested.append(copy)
+        return weight, rested
+
+    @staticmethod
+    def _clean_tint(tint) -> List[float]:
+        values = [float(c) for c in list(tint)[:3]]
+        if len(values) != 3 or any(c < 0.0 for c in values):
+            raise ValueError(f"A tint is three linear RGB values of 0 or more, got {tint!r}.")
+        return values
+
+    @classmethod
+    def _clean_states(cls, states) -> Dict[str, Dict[str, Any]]:
+        out: Dict[str, Dict[str, Any]] = {}
+        for state, entry in dict(states or {}).items():
+            entry = dict(entry or {})
+            out[cls.sanitize(state)] = {
+                "tint": cls._clean_tint(entry.get("tint", (1.0, 1.0, 1.0))),
+                "weight": max(0.0, min(1.0, float(entry.get("weight", 1.0)))),
+            }
+        if not out:
+            raise ValueError("A group's states need at least one state.")
+        return out
+
+    @classmethod
+    def _own_states(cls, members) -> Dict[str, Any]:
+        """The states *members* store (their first copy's that has some); ``{}``
+        when none does."""
+        return next((t for t in (cls.HOST.emission_states(c) for c in sorted(members)) if t), {})
+
+    @classmethod
+    def _tintable(cls, members) -> bool:
+        """Whether every copy of *members* can carry a tint."""
+        return not any(cls.HOST.tint_refusal(c) for c in members)
+
+    @classmethod
+    def _defaults(cls, tintable: bool) -> Dict[str, Any]:
+        """The states a group takes when given none: the indicator's, or its
+        weight's alone where a copy cannot be tinted."""
+        return cls.DEFAULT_STATES if tintable else cls.WEIGHT_STATES
+
+    @classmethod
+    def _table(cls, members) -> Dict[str, Any]:
+        """*members*' states: their own, else the defaults they take."""
+        return cls._own_states(members) or cls._defaults(cls._tintable(members))
+
+    @classmethod
+    def _stated(cls, name: str, state: str) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, Any], bool]:
+        """``(members, entry, tinted)`` for putting group *name* in *state*: its
+        copies, the state's cleaned ``{"tint", "weight"}`` (its own states,
+        else the defaults') and whether it sets the tint. Refused
+        (``ValueError``) before any change: an unknown group or state, or a
+        tint a copy cannot carry."""
+        members = cls._known(name)
+        table = cls._table(members)
+        if state not in table:
+            raise ValueError(
+                f"Group {name!r} has no state {state!r}; it has {', '.join(sorted(table))}."
+            )
+        found = table[state]
+        entry = {"tint": cls._clean_tint(found.get("tint", (1.0, 1.0, 1.0))), "weight": float(found.get("weight", 1.0))}
+        tinted = cls._coloured(members, entry, table)
+        if tinted:
+            cls._require_tint(name, members)
+        return members, entry, tinted
+
+    @classmethod
+    def _adopt_defaults(cls, members, ctx) -> None:
+        """Store the defaults on a group put in a state with none of its own,
+        inside the caller's undo step: the states it shows are then its own,
+        and ship with it (:meth:`EmissiveGroupsModel.render_effect_materials`)."""
+        if cls._own_states(members):
+            return
+        table = cls._clean_states(cls._defaults(cls._tintable(members)))
+        for copy in sorted(members):
+            if ctx is None or ctx.should_change(copy, f"states {', '.join(table)}"):
+                cls.HOST.set_emission_states(copy, table)
+
+    @classmethod
+    def _key_state(cls, members, state: str, entry, tinted: bool, frame, ctx) -> List[str]:
+        """Key *members* into *state* (*entry*, as :meth:`_stated` gave it) at
+        *frame*, stepped, inside the caller's undo step: the copies keyed."""
+        cls._adopt_defaults(members, ctx)
+        keyed = []
+        for copy, info in sorted(members.items()):
+            if ctx is not None and not ctx.should_change(copy, f"key state {state}"):
+                continue
+            cls.HOST.key_emission(copy, float(info["strength"]) * entry["weight"], frame, True)
+            if tinted:
+                cls.HOST.key_emission_tint(copy, entry["tint"], frame, True)
+            keyed.append(copy)
+        return keyed
+
+    @classmethod
+    def _tinted(cls, members) -> bool:
+        """Whether a copy of *members* carries a tint (keyed, or not white)."""
+        for copy in members:
+            if cls.HOST.tint_refusal(copy):
+                continue
+            if cls.HOST.emission_tint_keys(copy) or any(
+                abs(c - 1.0) > 1e-6 for c in cls.HOST.emission_tint(copy)
+            ):
+                return True
+        return False
+
+    @classmethod
+    def _coloured(cls, members, entry, table) -> bool:
+        """Whether a state (*entry*, of *table*) sets its group's tint: the
+        state is coloured, the group already tinted, or any state of its table
+        colours it -- then every state keys the tint, so each switch is whole."""
+        white = [1.0, 1.0, 1.0]
+        if entry["tint"] != white or cls._tinted(members):
+            return True
+        return any(cls._clean_tint(e.get("tint", white)) != white for e in table.values())
+
+    @classmethod
+    def _require_tint(cls, name: str, members) -> None:
+        """Refuse (``ValueError``, naming why) a tint on a group a copy of
+        which cannot carry one."""
+        for copy in sorted(members):
+            reason = cls.HOST.tint_refusal(copy)
+            if reason:
+                raise ValueError(f"Group {name!r} cannot be tinted: {reason}.")
+
+    @classmethod
+    def _join(cls, members, copy: str) -> None:
+        """A copy joining *members* takes their states and their tint (its
+        keys, or the colour they rest at)."""
+        src = next(iter(sorted(c for c in members if c != copy)), None)
+        if src is None:
+            return
+        states = cls.HOST.emission_states(src)
+        if states:
+            cls.HOST.set_emission_states(copy, states)
+        if cls.HOST.tint_refusal(src) or cls.HOST.tint_refusal(copy):
+            return
+        keys = cls.HOST.emission_tint_keys(src)
+        for frame, tint, stepped in keys:
+            cls.HOST.key_emission_tint(copy, tint, frame, stepped)
+        if not keys:
+            tint = cls.HOST.emission_tint(src)
+            if any(abs(c - 1.0) > 1e-6 for c in tint):
+                cls.HOST.set_emission_tint(copy, tint)
+
+    @classmethod
+    def _state_of(cls, members, table) -> Optional[str]:
+        """The state of *table* the group shows now (its tint and weight), or
+        ``None``."""
+        weight = cls._weight_of(members)
+        if weight is None:
+            return None
+        copy = next((c for c in sorted(members) if not cls.HOST.tint_refusal(c)), None)
+        tint = cls.HOST.emission_tint(copy) if copy else [1.0, 1.0, 1.0]
+        for state, entry in sorted(table.items()):
+            if abs(entry["weight"] - weight) > 1e-3:
+                continue
+            if entry["weight"] <= 0.0 or all(abs(a - b) <= 1e-3 for a, b in zip(entry["tint"], tint)):
+                return state
+        return None
+
+    @classmethod
+    def _key(cls, members, value: Optional[float], frame, ctx) -> List[str]:
+        """Key *members*' weight at *value* (``None``: the weight now), inside
+        the caller's undo step: the copies keyed."""
+        if value is None:
+            value = cls._weight_of(members)
+        value = max(0.0, min(1.0, float(1.0 if value is None else value)))
+        keyed = []
+        for copy, info in sorted(members.items()):
+            if ctx is None or ctx.should_change(copy, f"key weight {value:g}"):
+                cls.HOST.key_emission(copy, float(info["strength"]) * value, frame)
+                keyed.append(copy)
+        return keyed
 
     @classmethod
     def _strength_of(cls, base: str) -> float:
@@ -457,14 +738,22 @@ class _EmissiveGroupsModelInternal:
 
     @classmethod
     def _animated(cls, ctx) -> List[Tuple[str, float]]:
-        """``(copy, strength)`` for each keyed copy the write ships
-        (:meth:`EmissiveGroupsModel.render_effect_materials` says which), in
-        name order: *strength* the tag's, in the shader's own units -- what
+        """``(copy, strength)`` for each copy a runtime plays that the write
+        ships (:meth:`EmissiveGroupsModel.render_effect_materials` says
+        which), in name order: keyed, or holding named states a runtime
+        switches. *strength* is the tag's, in the shader's own units -- what
         the copy's weight scales, so its keys over it are the weight."""
         out = []
         for copy, info in sorted(cls.HOST.copies().items()):
             strength = float(info.get("strength") or 0.0)
-            if strength <= 0.0 or not cls.HOST.emission_keys(copy):
+            if strength <= 0.0:
+                continue
+            played = (
+                cls.HOST.emission_keys(copy)
+                or cls.HOST.emission_tint_keys(copy)
+                or cls.HOST.emission_states(copy)
+            )
+            if not played:
                 continue
             if cls._ships(copy, ctx):
                 out.append((copy, strength))
@@ -554,6 +843,13 @@ class EmissiveGroupsModel(_EmissiveGroupsModelInternal, ptk.LoggingMixin, ptk.He
             copies = cls.HOST.copies()
             members = cls._members(name, copies)
             plan = cls._plan(name, cls.HOST.face_materials(face_map), copies)
+            if cls._tinted(members):  # every copy of a tinted group carries the tint
+                for _material, base, _strength, _faces in plan:
+                    reason = cls.HOST.tint_refusal(base)
+                    if reason:
+                        raise ValueError(
+                            f"Group {name!r} is tinted and {base!r} cannot be: {reason}."
+                        )
             if weight is None:
                 weight = cls._weight_of(members)
             weight = 1.0 if weight is None else max(0.0, min(1.0, float(weight)))
@@ -573,6 +869,7 @@ class EmissiveGroupsModel(_EmissiveGroupsModelInternal, ptk.LoggingMixin, ptk.He
                         cls.HOST.copy_emission(keyed, copy, strength / members[keyed]["strength"])
                     else:
                         cls.HOST.set_emission(copy, strength * weight)
+                    cls._join(members, copy)
                     members[copy] = {"group": name, "base": base, "strength": strength}
                 count = sum(len(i) for i in faces_on.values())
                 if ctx is None or ctx.should_change(copy, f"{count} face(s) of {material} join"):
@@ -637,25 +934,40 @@ class EmissiveGroupsModel(_EmissiveGroupsModelInternal, ptk.LoggingMixin, ptk.He
 
     @classmethod
     def list_groups(cls) -> Dict[str, dict]:
-        """``{name: {"weight", "keyed", "materials", "bases", "faces"}}`` by
-        name: the weight now, whether a copy is keyed, the copies and their
-        bases (``None`` for a lost one) and the face count."""
+        """``{name: {"weight", "keyed", "weight_keyed", "tint_keyed",
+        "materials", "bases", "faces", "tint", "states", "state"}}`` by name:
+        the weight now; whether a copy's weight or tint is keyed (``keyed``:
+        either), the copies and their bases (``None`` for a lost one), the face
+        count, the tint now (``None`` when the group cannot be tinted), the
+        names of its states -- its own, else the defaults a state put on it
+        stores (:meth:`default_states`) -- and the one of its own it shows now
+        (``None``: none, or none of its own yet)."""
         grouped: Dict[str, Dict[str, Dict[str, Any]]] = {}
         for copy, info in cls.HOST.copies().items():
             grouped.setdefault(info.get("group"), {})[copy] = info
         out = {}
         for name in sorted(grouped):
             members = grouped[name]
+            worn: FaceMap = {}
+            for copy in members:
+                for obj, indices in cls.HOST.material_faces(copy).items():
+                    worn.setdefault(obj, []).extend(indices)
+            tintable = cls._tintable(members)
+            own = cls._own_states(members)
+            weight_keyed = cls._keyed_copy(members) is not None
+            tint_keyed = any(cls.HOST.emission_tint_keys(c) for c in members)
             out[name] = {
                 "weight": cls._weight_of(members),
-                "keyed": cls._keyed_copy(members) is not None,
+                "keyed": weight_keyed or tint_keyed,
+                "weight_keyed": weight_keyed,
+                "tint_keyed": tint_keyed,
                 "materials": sorted(members),
                 "bases": [members[c].get("base") for c in sorted(members)],
-                "faces": sum(
-                    len(i)
-                    for c in members
-                    for i in cls.HOST.material_faces(c).values()
-                ),
+                "faces": cls.HOST.face_count(worn),
+                "tint": cls.HOST.emission_tint(sorted(members)[0]) if tintable else None,
+                # As authored: an indicator's order.
+                "states": list(own or cls._defaults(tintable)),
+                "state": cls._state_of(members, own) if own else None,
             }
         return out
 
@@ -678,20 +990,32 @@ class EmissiveGroupsModel(_EmissiveGroupsModelInternal, ptk.LoggingMixin, ptk.He
     def set_weight(cls, name: str, weight: float, ctx=None) -> float:
         """Rest the group's weight at *weight* (clamped 0..1): each un-keyed
         copy's emission becomes its strength times it; a keyed copy is the
-        animation's, left alone.
+        animation's, left alone (:meth:`key_weight` writes it).
 
         Returns:
             The weight set.
         """
-        weight = max(0.0, min(1.0, float(weight)))
         members = cls._known(name)
         with cls.HOST.undo_step(f"Emissive Groups: weight {name}"):
-            for copy, info in sorted(members.items()):
-                if cls.HOST.emission_keys(copy):
-                    continue
-                if ctx is None or ctx.should_change(copy, f"weight {weight:g}"):
-                    cls.HOST.set_emission(copy, float(info["strength"]) * weight)
-        return weight
+            return cls._rest(members, weight, ctx)[0]
+
+    @classmethod
+    def set_weights(cls, weights: Dict[str, float], ctx=None) -> Dict[str, float]:
+        """:meth:`set_weight` for several groups, in one undo step (the
+        panel's All On / All Off).
+
+        Returns:
+            ``{group: weight}`` for each group whose copies rest at it; a group
+            every copy of which is keyed is left out (its curve plays).
+        """
+        known = {name: cls._known(name) for name in weights}
+        out = {}
+        with cls.HOST.undo_step("Emissive Groups: weights"):
+            for name, members in sorted(known.items()):
+                weight, rested = cls._rest(members, weights[name], ctx)
+                if rested:
+                    out[name] = weight
+        return out
 
     @classmethod
     def key_weight(
@@ -708,20 +1032,35 @@ class EmissiveGroupsModel(_EmissiveGroupsModelInternal, ptk.LoggingMixin, ptk.He
             The copies keyed.
         """
         members = cls._known(name)
-        if value is None:
-            value = cls._weight_of(members)
-        value = max(0.0, min(1.0, float(1.0 if value is None else value)))
-        keyed = []
         with cls.HOST.undo_step(f"Emissive Groups: key {name}"):
-            for copy, info in sorted(members.items()):
-                if ctx is None or ctx.should_change(copy, f"key weight {value:g}"):
-                    cls.HOST.key_emission(copy, float(info["strength"]) * value, frame)
-                    keyed.append(copy)
+            return cls._key(members, value, frame, ctx)
+
+    @classmethod
+    def key_weights(
+        cls, names: Optional[Iterable[str]] = None, frame: Optional[float] = None, ctx=None
+    ) -> List[str]:
+        """:meth:`key_weight` at each group's weight now, in one undo step.
+
+        Parameters:
+            names: Groups to key; ``None`` = every group.
+            frame: Where; ``None`` = the current time.
+
+        Returns:
+            The copies keyed.
+        """
+        copies = cls.HOST.copies()
+        wanted = sorted({i.get("group") for i in copies.values()} if names is None else names)
+        known = {name: cls._known(name) for name in wanted}
+        keyed: List[str] = []
+        with cls.HOST.undo_step("Emissive Groups: key weights"):
+            for name, members in known.items():
+                keyed += cls._key(members, None, frame, ctx)
         return keyed
 
     @classmethod
     def remove_keys(cls, name: str, ctx=None) -> List[str]:
-        """Delete the group's weight keys on every copy, keeping the weight now.
+        """Delete the group's weight and tint keys on every copy, keeping its
+        weight and tint now.
 
         Returns:
             The copies that had keys.
@@ -729,12 +1068,223 @@ class EmissiveGroupsModel(_EmissiveGroupsModelInternal, ptk.LoggingMixin, ptk.He
         cleared = []
         with cls.HOST.undo_step(f"Emissive Groups: remove keys {name}"):
             for copy in sorted(cls._known(name)):
-                if cls.HOST.emission_keys(copy) and (
-                    ctx is None or ctx.should_change(copy, "remove weight keys")
-                ):
+                keyed = cls.HOST.emission_keys(copy) or cls.HOST.emission_tint_keys(copy)
+                if keyed and (ctx is None or ctx.should_change(copy, "remove keys")):
                     cls.HOST.clear_emission_keys(copy)
+                    cls.HOST.clear_emission_tint_keys(copy)
                     cleared.append(copy)
         return cleared
+
+    # ------------------------------------------------------------------
+    # States: a tint and a weight under a name
+    # ------------------------------------------------------------------
+
+    #: An indicator light's states, as data: a group stores its own
+    #: (:meth:`set_states`), these when it is given none. A tint multiplies the
+    #: base's emission colour (linear RGB), so over a white base it is the
+    #: colour that shows. Prior art weighed: glTF's ``KHR_materials_variants``
+    #: swaps a whole material per variant name; a state tints the one copy's
+    #: emission instead, so a clip keys it and no material is made per state.
+    DEFAULT_STATES: Dict[str, Dict[str, Any]] = {
+        "off": {"tint": [1.0, 1.0, 1.0], "weight": 0.0},
+        "green": {"tint": [0.0, 1.0, 0.0], "weight": 1.0},
+        "blue": {"tint": [0.0, 0.0, 1.0], "weight": 1.0},
+        "amber": {"tint": [1.0, 0.5, 0.0], "weight": 1.0},
+        "red": {"tint": [1.0, 0.0, 0.0], "weight": 1.0},
+    }
+    #: The states of a group whose emission cannot be tinted (a map, a black
+    #: channel): its weight's alone.
+    WEIGHT_STATES: Dict[str, Dict[str, Any]] = {
+        "off": {"tint": [1.0, 1.0, 1.0], "weight": 0.0},
+        "on": {"tint": [1.0, 1.0, 1.0], "weight": 1.0},
+    }
+
+    @classmethod
+    def default_states(cls, name: str) -> Dict[str, Any]:
+        """The states group *name* takes when given none:
+        :attr:`DEFAULT_STATES`, or :attr:`WEIGHT_STATES` when a copy of it
+        cannot be tinted (``EmissiveGroupsHost.tint_refusal``)."""
+        return cls._defaults(cls._tintable(cls._known(name)))
+
+    @classmethod
+    def set_states(cls, name: str, states: Optional[Dict[str, Any]] = None, ctx=None) -> Dict[str, Any]:
+        """Give the group its named states, stored on every copy (a copy that
+        joins later takes them).
+
+        Parameters:
+            name: Group name.
+            states: ``{state: {"tint": [r, g, b], "weight": w}}``, a tint
+                (default white) multiplying the base's emission colour and a
+                weight (0..1, default 1); ``None``: :meth:`default_states`.
+            ctx: An optional ``ptk.OpContext``.
+
+        Returns:
+            The states stored, cleaned.
+
+        Raises:
+            ValueError: No state, a malformed one, or a coloured state on a
+                group whose emission cannot be tinted (named, with why).
+        """
+        members = cls._known(name)
+        clean = cls._clean_states(cls.default_states(name) if states is None else states)
+        if any(entry["tint"] != [1.0, 1.0, 1.0] for entry in clean.values()):
+            cls._require_tint(name, members)
+        with cls.HOST.undo_step(f"Emissive Groups: states {name}"):
+            for copy in sorted(members):
+                if ctx is None or ctx.should_change(copy, f"states {', '.join(clean)}"):
+                    cls.HOST.set_emission_states(copy, clean)
+        return clean
+
+    @classmethod
+    def states(cls, name: str) -> Dict[str, Any]:
+        """The group's stored states (``{}`` before :meth:`set_states`, or a
+        state put on it, stores them)."""
+        return cls._own_states(cls._known(name))
+
+    @classmethod
+    def groups_on(cls, objects: Iterable[str]) -> List[str]:
+        """The groups whose faces lie on *objects* (named as the host's face
+        maps name them: a long path or a bare object name, as the host keeps it), sorted:
+        what a part and the parts under it wear."""
+        wanted = set(objects)
+        found = set()
+        for copy, info in cls.HOST.copies().items():
+            group = info.get("group")
+            if group and group not in found and not wanted.isdisjoint(cls.HOST.material_faces(copy)):
+                found.add(group)
+        return sorted(found)
+
+    @classmethod
+    def ensure_state(cls, names: Iterable[str], state: str, ctx=None) -> Tuple[str, str]:
+        """Make sure every group of *names* has the state *state*: one with no
+        states of its own stores its defaults (:meth:`default_states`), one
+        with states keeps them. Whole or not at all: where one group's states
+        (its own, else its defaults) lack *state*, nothing changes. Nothing is
+        keyed: switching to it is the business of whatever runs the steps.
+
+        Returns:
+            ``("given", "")`` where it stored states (one undo step),
+            ``("kept", "")`` where every group had them, else
+            ``("skipped", why)``: no group, or one lacking *state*.
+        """
+        copies = cls.HOST.copies()
+        members = {name: cls._members(name, copies) for name in names}
+        if not members:
+            return "skipped", "it wears no emissive group"
+        for name, held in sorted(members.items()):
+            if not held:
+                raise ValueError(f"Unknown group {name!r}.")
+            table = cls._table(held)
+            if state not in table:
+                return "skipped", f"its emissive group {name!r} has no state {state!r} (it has {', '.join(table)})"
+        bare = [name for name, held in sorted(members.items()) if not cls._own_states(held)]
+        if not bare:
+            return "kept", ""
+        with cls.HOST.undo_step(f"Emissive Groups: states {', '.join(bare)}"):
+            for name in bare:
+                cls._adopt_defaults(members[name], ctx)
+        return "given", ""
+
+    @classmethod
+    def set_tint(cls, name: str, tint: Sequence[float], ctx=None) -> List[float]:
+        """Rest the group's tint at *tint* (linear RGB, each 0 or more): each
+        copy whose tint is not keyed shows its base colour times it.
+
+        Raises:
+            ValueError: A copy whose emission cannot be tinted (named, why).
+        """
+        members = cls._known(name)
+        tint = cls._clean_tint(tint)
+        cls._require_tint(name, members)
+        with cls.HOST.undo_step(f"Emissive Groups: tint {name}"):
+            for copy in sorted(members):
+                if cls.HOST.emission_tint_keys(copy):
+                    continue
+                if ctx is None or ctx.should_change(copy, f"tint {tint}"):
+                    cls.HOST.set_emission_tint(copy, tint)
+        return tint
+
+    @classmethod
+    def key_tint(
+        cls, name: str, tint: Sequence[float], frame: Optional[float] = None, stepped: bool = False, ctx=None
+    ) -> List[str]:
+        """Key the group's tint on every copy at *frame* (``None``: now);
+        *stepped* holds it to the next key.
+
+        Returns:
+            The copies keyed.
+        """
+        members = cls._known(name)
+        tint = cls._clean_tint(tint)
+        cls._require_tint(name, members)
+        keyed = []
+        with cls.HOST.undo_step(f"Emissive Groups: key tint {name}"):
+            for copy in sorted(members):
+                if ctx is None or ctx.should_change(copy, f"key tint {tint}"):
+                    cls.HOST.key_emission_tint(copy, tint, frame, stepped)
+                    keyed.append(copy)
+        return keyed
+
+    @classmethod
+    def set_state(cls, name: str, state: str, ctx=None) -> Dict[str, Any]:
+        """Rest the group in its *state*: its tint and weight, on each copy
+        not keyed (a keyed copy is the animation's: :meth:`key_state`). A
+        group with no states of its own stores its defaults
+        (:meth:`default_states`) in the same undo step, so it ships the states
+        it shows.
+
+        Returns:
+            The state's ``{"tint", "weight"}``.
+        """
+        members, entry, tinted = cls._stated(name, state)
+        with cls.HOST.undo_step(f"Emissive Groups: {name} {state}"):
+            cls._adopt_defaults(members, ctx)
+            cls._rest(members, entry["weight"], ctx)
+            if tinted:
+                for copy in sorted(members):
+                    if not cls.HOST.emission_tint_keys(copy) and (
+                        ctx is None or ctx.should_change(copy, f"tint {entry['tint']}")
+                    ):
+                        cls.HOST.set_emission_tint(copy, entry["tint"])
+        return entry
+
+    @classmethod
+    def key_state(cls, name: str, state: str, frame: Optional[float] = None, ctx=None) -> List[str]:
+        """Key the group into its *state* at *frame* (``None``: now), stepped:
+        it holds until the next key, a switch rather than a fade. Its weight
+        and, on a group that is or becomes tinted, its tint; a group with no
+        states of its own stores its defaults, as :meth:`set_state` does.
+
+        Returns:
+            The copies keyed.
+        """
+        members, entry, tinted = cls._stated(name, state)
+        with cls.HOST.undo_step(f"Emissive Groups: key {name} {state}"):
+            return cls._key_state(members, state, entry, tinted, frame, ctx)
+
+    @classmethod
+    def key_states(cls, states: Dict[str, str], frame: Optional[float] = None, ctx=None) -> List[str]:
+        """:meth:`key_state` for several groups, in one undo step (the panel's
+        Key States).
+
+        Parameters:
+            states: ``{group: state}``.
+            frame: Where; ``None`` = the current time.
+            ctx: An optional ``ptk.OpContext``.
+
+        Returns:
+            The copies keyed.
+
+        Raises:
+            ValueError: An unknown group or state, or a tint a copy cannot
+                carry: refused whole, before any change.
+        """
+        planned = {name: cls._stated(name, state) for name, state in states.items()}
+        keyed: List[str] = []
+        with cls.HOST.undo_step("Emissive Groups: key states"):
+            for name, (members, entry, tinted) in sorted(planned.items()):
+                keyed += cls._key_state(members, states[name], entry, tinted, frame, ctx)
+        return keyed
 
     # ------------------------------------------------------------------
     # In step with the base
@@ -756,7 +1306,10 @@ class EmissiveGroupsModel(_EmissiveGroupsModelInternal, ptk.LoggingMixin, ptk.He
         """
         wanted = None if names is None else {str(n) for n in names}
         found: List[str] = []
-        with cls.HOST.undo_step("Emissive Groups: sync"):
+        # A check changes nothing, so it leaves no undo step (a host may push
+        # one for every step opened: every export's check added an empty one).
+        step = contextlib.nullcontext() if check_only else cls.HOST.undo_step("Emissive Groups: sync")
+        with step:
             for copy, info in sorted(cls.HOST.copies().items()):
                 if wanted is not None and info.get("group") not in wanted:
                     continue
@@ -782,6 +1335,14 @@ class EmissiveGroupsModel(_EmissiveGroupsModelInternal, ptk.LoggingMixin, ptk.He
                 )
                 if rescale:
                     said.append(f"emission strength {old:g} -> {float(strength):g}")
+                dark = strength is not None and float(strength) <= 0.0 and old > 0.0
+                if dark:
+                    # No weight scales a glow of 0: the copy keeps its own, and
+                    # says so rather than reading as in step.
+                    said.append(
+                        "its base no longer glows (emission 0); the copy keeps "
+                        f"strength {old:g} until the base glows again"
+                    )
                 if not said:
                     continue
                 found.append(f"{copy!r} is out of step with {base!r}: {'; '.join(said)}.")
@@ -816,10 +1377,15 @@ class EmissiveGroupsModel(_EmissiveGroupsModelInternal, ptk.LoggingMixin, ptk.He
 
     @classmethod
     def render_effect_materials(cls, ctx=None) -> List[dict]:
-        """Each animated copy as a ``render_effects`` material entry:
-        ``{"material", "channels": ["emission"], "emission_color",
-        "emission_strength"}`` -- the colour its weight scales (white over a
-        map, which glTF multiplies) and its base's strength as the delivery
+        """Each copy a runtime plays -- keyed, or holding named states it
+        switches -- as a ``render_effects`` material entry:
+        ``{"material", "channels", "emission_color", "emission_strength",
+        "tint"?, "states"?}`` -- the channels its keys animate (none for
+        states alone; ``emission``,
+        its weight; ``tint_r/g/b``, its tint, where its colour is not black),
+        the tint it shows now and its named states (a tintable copy's, where
+        it has them), the colour its weight scales (white over a map, which
+        glTF multiplies) and its base's strength as the delivery
         states it (:meth:`EmissiveGroupsHost.published_strength`: the
         ``materials`` record's emission weight -- 1 for a scalar that only
         gates, OpenPBR's nits), so weight 1 is the base's own glow. The copy
@@ -842,15 +1408,36 @@ class EmissiveGroupsModel(_EmissiveGroupsModelInternal, ptk.LoggingMixin, ptk.He
         entries = []
         for copy, strength in cls._animated(ctx):
             colour = cls.HOST.emission_color(copy)
-            entries.append(
-                {
-                    "material": copy,
-                    "channels": ["emission"],
-                    "emission_color": [float(c) for c in (colour or (1.0, 1.0, 1.0))[:3]],
-                    "emission_strength": float(cls.HOST.published_strength(copy, strength)),
-                }
-            )
+            entry = {
+                "material": copy,
+                "channels": cls._channels_of(copy),
+                "emission_color": [float(c) for c in (colour or (1.0, 1.0, 1.0))[:3]],
+                "emission_strength": float(cls.HOST.published_strength(copy, strength)),
+            }
+            if not cls.HOST.tint_refusal(copy):
+                tint = [float(c) for c in cls.HOST.emission_tint(copy)[:3]]
+                if any(abs(c - 1.0) > 1e-6 for c in tint) or cls.HOST.emission_tint_keys(copy):
+                    entry["tint"] = tint
+            states = cls.HOST.emission_states(copy)
+            if states:
+                entry["states"] = [
+                    {"name": name, "tint": list(state["tint"]), "weight": float(state["weight"])}
+                    for name, state in cls._clean_states(states).items()
+                ]
+            entries.append(entry)
         return entries
+
+    @classmethod
+    def _channels_of(cls, copy: str) -> List[str]:
+        """The channels *copy*'s keys animate: ``emission`` (its weight) and
+        the tint channels (``ptk.SceneRecords.TRANSPORT.tint_channels``) its
+        colour does not leave black."""
+        channels = ["emission"] if cls.HOST.emission_keys(copy) else []
+        if cls.HOST.emission_tint_keys(copy):
+            colour = cls.HOST.emission_color(copy) or (1.0, 1.0, 1.0)
+            tints = ptk.SceneRecords.TRANSPORT.tint_channels
+            channels += [name for name, c in zip(tints, colour) if float(c) > 0.0]
+        return channels
 
     @classmethod
     def weight_curves(cls, keys_of: Callable[[str], Sequence[Sequence[Any]]], ctx=None) -> List[dict]:
@@ -875,11 +1462,7 @@ class EmissiveGroupsModel(_EmissiveGroupsModelInternal, ptk.LoggingMixin, ptk.He
         curves = []
         for copy, strength in cls._animated(ctx):
             scale = strength * cls.HOST.emission_scale(copy)
-            keys = [
-                [float(k[0]), float(k[1]) / scale, *[str(i) for i in k[2:3]]]
-                for k in keys_of(copy) or ()
-                if len(k) >= 2
-            ]
+            keys = cls._scaled(keys_of(copy), scale)
             if keys:
                 curves.append(
                     {
@@ -891,11 +1474,51 @@ class EmissiveGroupsModel(_EmissiveGroupsModelInternal, ptk.LoggingMixin, ptk.He
         return curves
 
     @classmethod
+    def tint_curves(cls, keys_of: Callable[[Any], Sequence[Sequence[Any]]], ctx=None) -> List[dict]:
+        """Each animated copy's tint curves as its ``<copy>__tint_r/g/b``
+        proxies carry them (:meth:`stage_export_proxies`), in the scene's
+        frames -- :meth:`weight_curves`' twin, for the same writes.
+
+        Parameters:
+            keys_of: The host's reader of a channel's keys (as
+                :meth:`weight_curves`' reader), handed each of
+                :meth:`EmissiveGroupsHost.emission_tint_channels`; the values
+                are divided by the copy's colour's channel, which makes them
+                the tint.
+            ctx: The export's ``ptk.ExportContext`` (as
+                :meth:`render_effect_materials`).
+        """
+        curves = []
+        for copy, _strength in cls._animated(ctx):
+            if not cls.HOST.emission_tint_keys(copy):
+                continue
+            colour = cls.HOST.emission_color(copy) or (1.0, 1.0, 1.0)
+            plugs = cls.HOST.emission_tint_channels(copy)
+            for name, plug, scale in zip(ptk.SceneRecords.TRANSPORT.tint_channels, plugs, colour):
+                keys = cls._scaled(keys_of(plug), float(scale)) if float(scale) > 0.0 else []
+                if keys:
+                    curves.append(
+                        {"target": ptk.SceneRecords.TRANSPORT.target_name(copy), "channel": name, "keys": keys}
+                    )
+        return curves
+
+    @staticmethod
+    def _scaled(keys, scale: float) -> List[list]:
+        """``[frame, value / scale, interpolation?]`` per key of *keys*."""
+        return [
+            [float(k[0]), float(k[1]) / scale, *[str(i) for i in k[2:3]]]
+            for k in keys or ()
+            if len(k) >= 2
+        ]
+
+    @classmethod
     def stage_export_proxies(cls, ctx=None) -> List[Any]:
         """Stage each animated copy's weight on its ``<copy>__emission`` proxy
-        (``ptk.SceneRecords.TRANSPORT``) for an FBX write -- staged by the
+        (``ptk.SceneRecords.TRANSPORT``), and a keyed tint on its
+        ``<copy>__tint_r/g/b`` ones, for an FBX write -- staged by the
         ``render_effects`` stager, which hands it the write's context. The
-        curve is the copy's emission over its strength: the weight, 0..1.
+        weight curve is the copy's emission over its strength, 0..1; a tint
+        curve its colour's channel over the base colour's.
         Copies out of step with their base are said (a warning, the export's
         check) and ship as they stand: never a swap at export. Stale proxies
         are cleaned first.
@@ -915,15 +1538,21 @@ class EmissiveGroupsModel(_EmissiveGroupsModelInternal, ptk.LoggingMixin, ptk.He
             cls.logger.warning(f"{line} It exports as it stands; Sync puts it in step.")
         staged = []
         for copy, strength in cls._animated(ctx):
-            name = ptk.SceneRecords.TRANSPORT.proxy_name(copy, "emission")
-            proxy = cls.HOST.stage_emission_proxy(copy, name, 1.0 / strength)
-            if proxy is None:
-                cls.logger.warning(
-                    f"Curve-proxy name {name!r} is taken by another object: "
-                    f"{copy}'s weight animation does not ship this export."
-                )
-                continue
-            staged.append(proxy)
+            for channel in cls._channels_of(copy):
+                name = ptk.SceneRecords.TRANSPORT.proxy_name(copy, channel)
+                if channel == "emission":
+                    proxy = cls.HOST.stage_emission_proxy(copy, name, 1.0 / strength)
+                else:
+                    tint = ptk.SceneRecords.TRANSPORT.tint_channels.index(channel)
+                    proxy = cls.HOST.stage_emission_proxy(copy, name, 1.0, tint)
+                if proxy is None:
+                    what = "weight" if channel == "emission" else "tint"
+                    cls.logger.warning(
+                        f"Curve-proxy name {name!r} is taken by another object: "
+                        f"{copy}'s {what} animation does not ship this export."
+                    )
+                    continue
+                staged.append(proxy)
         return staged
 
     @classmethod
@@ -1069,9 +1698,12 @@ class EmissiveGroupsModel(_EmissiveGroupsModelInternal, ptk.LoggingMixin, ptk.He
     @classmethod
     def transfer_out(cls, ctx: "ptk.TransferContext") -> Optional[dict]:
         """The groups' hand-off payload: per copy its group, base, strength and
-        emission keys -- an interchange file carries the materials and their
-        faces, never the tags or the material animation. Scoped to the copies
-        a face of ``ctx.objects`` wears; ``None`` without groups."""
+        emission keys (``stepped``: the frames of those that hold), and where
+        it has them its named states and its tint (``tint`` now,
+        ``tint_keys`` ``[frame, [r, g, b], stepped]``) -- an interchange file
+        carries the materials and their faces, never the tags or the material
+        animation. Scoped to the copies a face of ``ctx.objects`` wears;
+        ``None`` without groups."""
         copies = cls.HOST.copies()
         if not copies:
             return None
@@ -1086,22 +1718,42 @@ class EmissiveGroupsModel(_EmissiveGroupsModelInternal, ptk.LoggingMixin, ptk.He
                 cls._leaf(o) in scope for o in cls.HOST.material_faces(copy)
             ):
                 continue
-            out[copy] = {
+            entry = {
                 "group": info["group"],
                 "base": info["base"],
                 "strength": float(info["strength"]),
                 "keys": [[float(f), float(v)] for f, v in cls.HOST.emission_keys(copy)],
             }
+            stepped = cls.HOST.stepped_emission_frames(copy)
+            if stepped:
+                entry["stepped"] = sorted(float(f) for f in stepped)
+            states = cls.HOST.emission_states(copy)
+            if states:
+                entry["states"] = cls._clean_states(states)
+            if not cls.HOST.tint_refusal(copy):
+                tint_keys = cls.HOST.emission_tint_keys(copy)
+                tint = [float(c) for c in cls.HOST.emission_tint(copy)]
+                if tint_keys:
+                    entry["tint_keys"] = [[float(f), [float(c) for c in t], bool(s)] for f, t, s in tint_keys]
+                if tint_keys or any(abs(c - 1.0) > 1e-6 for c in tint):
+                    entry["tint"] = tint
+            out[copy] = entry
         return {"copies": out} if out else None
 
     @classmethod
     def transfer_in(cls, payload: dict, ctx: "ptk.TransferContext") -> None:
         """Land a received payload (:meth:`transfer_out`'s shape, from either
-        host): each arrived copy is tagged again, and keyed when it arrived
-        with no keys. A copy or base that did not arrive is noted."""
+        host): each arrived copy is tagged again, keyed when it arrived with no
+        keys (a stepped key held), given its states, and its tint against its
+        base's colour (the copy put in step with its base first: it arrives
+        showing the tinted colour). A copy or base that did not arrive is
+        noted. Names go
+        through ``ctx.spell`` (the record does not respell on its own): a
+        material this side renamed on import (a ``.001`` suffix, a ``_``
+        for a ``.``) is found under its new name."""
         for copy_name, entry in ((payload or {}).get("copies") or {}).items():
-            copy = cls.HOST.material(copy_name)
-            base = cls.HOST.material(entry.get("base") or "")
+            copy = cls.HOST.material(ctx.spell(copy_name))
+            base = cls.HOST.material(ctx.spell(entry.get("base") or ""))
             if copy is None or base is None:
                 ctx.note(
                     f"Emissive group {entry.get('group')!r}: {copy_name!r} or its "
@@ -1111,5 +1763,20 @@ class EmissiveGroupsModel(_EmissiveGroupsModelInternal, ptk.LoggingMixin, ptk.He
                 continue
             cls.HOST.tag(copy, entry["group"], base, float(entry["strength"]))
             if entry.get("keys") and not cls.HOST.emission_keys(copy):
+                held = {round(float(f), 4) for f in entry.get("stepped") or ()}
                 for frame, value in entry["keys"]:
-                    cls.HOST.key_emission(copy, float(value), float(frame))
+                    cls.HOST.key_emission(copy, float(value), float(frame), round(float(frame), 4) in held)
+            if entry.get("states"):
+                cls.HOST.set_emission_states(copy, cls._clean_states(entry["states"]))
+            if (entry.get("tint") or entry.get("tint_keys")) and not cls.HOST.emission_tint_keys(copy):
+                # It arrives showing its base's colour x the tint it had: put in
+                # step with its base first, the colour a tint multiplies.
+                cls.HOST.sync_copy(copy, base)
+                reason = cls.HOST.tint_refusal(copy)
+                if reason:
+                    ctx.note(f"Emissive group {entry['group']!r}: {copy!r} cannot be tinted here ({reason}).")
+                    continue
+                for frame, tint, stepped in entry.get("tint_keys") or ():
+                    cls.HOST.key_emission_tint(copy, cls._clean_tint(tint), float(frame), bool(stepped))
+                if not entry.get("tint_keys"):
+                    cls.HOST.set_emission_tint(copy, cls._clean_tint(entry["tint"]))

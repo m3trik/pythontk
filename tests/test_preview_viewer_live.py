@@ -5616,14 +5616,15 @@ export default function probe(viewer) {
 }
 """
 
-    def _grouped_glb(self):
+    def _grouped_glb(self, entry=None, curves=None):
         """An emissive group as the hosts now deliver it (2026-11-07): the
         group's faces wear a copy of their material, ``glowMat_signal``, a
         plain material beside its base ``glowMat``, the copy's emission a
         ``render_effects`` material entry whose weight rises 0 -> 1 over the
         clip (exactly ``clip_time / 2``), the colour (0.2, 0.5, 1.0) at
-        strength 1. Built through the GLB pass from the curve, as a file's
-        proxy carries it -- never a hand-written channel."""
+        strength 1 -- or *entry* and its *curves*. Built through the GLB pass
+        from the curves, as a file's proxies carry them -- never a
+        hand-written channel."""
         gltf = {
             "asset": {"version": "2.0"},
             "scenes": [{"nodes": [0, 1, 2]}],
@@ -5662,7 +5663,8 @@ export default function probe(viewer) {
             "render_effects": ptk.MeshConvert.build_visibility_tracks(
                 [],
                 [
-                    {
+                    entry
+                    or {
                         "material": "glowMat_signal",
                         "channels": ["emission"],
                         "emission_color": [0.2, 0.5, 1.0],
@@ -5680,7 +5682,7 @@ export default function probe(viewer) {
             }
         }
         path = self._write(gltf)
-        curves = {"SHOT": {("glowMat_signal", "emission"): [[0.0, 0.0, "linear"], [2.0, 1.0, "linear"]]}}
+        curves = curves or {"SHOT": {("glowMat_signal", "emission"): [[0.0, 0.0, "linear"], [2.0, 1.0, "linear"]]}}
         ptk.MeshConvert.apply_glb_visibility(path, curves=curves)
         ptk.MeshConvert.apply_glb_fades(path, curves=curves)
         ptk.MeshConvert.apply_glb_animations(path)
@@ -5717,6 +5719,107 @@ export default function probe(viewer) {
                 self.assertAlmostEqual(got, value, places=3, msg=f"base at t={t}")
             self.assertFalse(samples[t]["glowerTransparent"], "an emission never blends")
         self.assertEqual(found["animation"]["materials"], 1)
+
+    def test_an_indicators_states_play_on_its_materials_emission(self):
+        """An indicator light's states (2026-11-24): its weight and tint keyed
+        stepped -- off, then green at 0.5 s, then amber at 1.5 s -- play in the
+        page as the material's emission, colour x tint x weight, held between
+        the keys; its base keeps its own."""
+        probe = self.temp.path(extension=".js")
+        with open(probe, "w", encoding="utf-8") as fh:
+            fh.write(self.HIGHLIGHT_PROBE_JS)
+        s = "step"
+        entry = {
+            "material": "glowMat_signal",
+            "channels": ["emission", "tint_r", "tint_g", "tint_b"],
+            "emission_color": [1.0, 1.0, 1.0],
+            "emission_strength": 1.0,
+            "tint": [1.0, 1.0, 1.0],
+        }
+        keys = {  # off, green, amber
+            "emission": [[0.0, 0.0, s], [0.5, 1.0, s], [1.5, 1.0, s]],
+            "tint_r": [[0.0, 1.0, s], [0.5, 0.0, s], [1.5, 1.0, s]],
+            "tint_g": [[0.0, 1.0, s], [0.5, 1.0, s], [1.5, 0.5, s]],
+            "tint_b": [[0.0, 1.0, s], [0.5, 0.0, s], [1.5, 0.0, s]],
+        }
+        curves = {"SHOT": {("glowMat_signal", c): k for c, k in keys.items()}}
+        found = self._load(self._grouped_glb(entry, curves), probe=probe)
+
+        self.assertEqual(found["errors"], [])
+        samples = {round(s_["t"], 3): s_ for s_ in found["samples"]}
+        self.assertEqual(sorted(samples), [0.0, 1.0, 2.0])
+        for t, want in ((0.0, [0.0, 0.0, 0.0]), (1.0, [0.0, 1.0, 0.0]), (2.0, [1.0, 0.5, 0.0])):
+            for got, value in zip(samples[t]["glower"], want):
+                self.assertAlmostEqual(got, value, places=3, msg=f"t={t}")
+            for got, value in zip(samples[t]["untouched"], [0.2, 0.5, 1.0]):
+                self.assertAlmostEqual(got, value, places=3, msg=f"base at t={t}")
+
+    def test_a_lit_indicator_wears_a_glow_card_seen_from_afar(self):
+        """User 2026-11-24: "the user must notice the led light blinking from
+        where they are standing". A real indicator covers a pixel or two at a
+        standing distance and the look keeps bloom off, so an indicator (an
+        emissive material with states) wears a glow card: hidden while off,
+        in the emission's colour while lit, never under ``MIN_PIXELS``
+        across; an emissive material without states wears none.
+        Added: 2026-11-24 (kernel/indicators.js)"""
+        probe = self.temp.path(extension=".js")
+        with open(probe, "w", encoding="utf-8") as fh:
+            fh.write(
+                self.HIGHLIGHT_PROBE_JS.replace(
+                    "          untouchedMapped: untouched ? !!untouched.material.emissiveMap : null,\n",
+                    "          untouchedMapped: untouched ? !!untouched.material.emissiveMap : null,\n"
+                    "          card: (() => {\n"
+                    "            const card = viewer.scene.getObjectByName('GLOWER_GEO glow');\n"
+                    "            if (!card) return null;\n"
+                    "            const cam = viewer.camera;\n"
+                    "            const at = card.position.clone();\n"
+                    "            const d = at.distanceTo(cam.getWorldPosition(at.clone()));\n"
+                    "            const size = viewer.renderer.domElement.height;\n"
+                    "            const span = 2 * Math.tan(cam.fov * Math.PI / 360) * d;\n"
+                    "            const c = card.material.color;\n"
+                    "            return { visible: card.visible, colour: [c.r, c.g, c.b], pixels: card.scale.x / span * size };\n"
+                    "          })(),\n"
+                    "          cards: (() => { let n = 0; viewer.scene.traverse((o) => { if (o.isSprite && o.name.endsWith(' glow')) n += 1; }); return n; })(),\n",
+                )
+            )
+        s = "step"
+        entry = {
+            "material": "glowMat_signal",
+            "channels": ["emission", "tint_r", "tint_g", "tint_b"],
+            "emission_color": [1.0, 1.0, 1.0],
+            "emission_strength": 1.0,
+            "tint": [1.0, 1.0, 1.0],
+            "states": [
+                {"name": "off", "tint": [1.0, 1.0, 1.0], "weight": 0.0},
+                {"name": "green", "tint": [0.0, 1.0, 0.0], "weight": 1.0},
+            ],
+        }
+        keys = {  # off, then green from 0.5 s
+            "emission": [[0.0, 0.0, s], [0.5, 1.0, s]],
+            "tint_r": [[0.0, 1.0, s], [0.5, 0.0, s]],
+            "tint_g": [[0.0, 1.0, s], [0.5, 1.0, s]],
+            "tint_b": [[0.0, 1.0, s], [0.5, 0.0, s]],
+        }
+        curves = {"SHOT": {("glowMat_signal", c): k for c, k in keys.items()}}
+        path = self._grouped_glb(entry, curves)
+        # In the root extras, where a delivery's record-carry pass puts it.
+        with ptk.MeshConvert.open_glb(path) as edit:
+            edit.gltf.setdefault("extras", {})[ptk.SceneRecords.VISIBILITY.key] = (
+                ptk.MeshConvert.build_visibility_tracks([], [entry])
+            )
+            edit.dirty = True
+        found = self._load(path, probe=probe)
+
+        self.assertEqual(found["errors"], [])
+        samples = {round(s_["t"], 3): s_ for s_ in found["samples"]}
+        self.assertIsNotNone(samples[0.0]["card"], "the indicator wears a card")
+        self.assertEqual(samples[0.0]["cards"], 1, "one: the base material has no states")
+        self.assertFalse(samples[0.0]["card"]["visible"], "off: no glow")
+        lit = samples[1.0]["card"]
+        self.assertTrue(lit["visible"], "lit: its glow")
+        for got, value in zip(lit["colour"], [0.0, 1.0, 0.0]):
+            self.assertAlmostEqual(got, value, places=3)
+        self.assertGreaterEqual(lit["pixels"], 10 - 0.01, "never under MIN_PIXELS across")
 
     def test_an_authored_highlight_drives_the_materials_emissive(self):
         """The second channel of the pointer table plays like the first.

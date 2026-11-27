@@ -458,7 +458,7 @@ class TestPureQueries(_SequencerTest):
     def test_reconcile_forgets_behavior_claims_on_a_deleted_curve(self):
         """A curve holding only behavior keys (a highlight, a fade) was swept
         by neither the gap-hold nor the boundary pass, so its claims outlived
-        it -- SOL_REPLACE_ASSEMBLY held 399 on 24 curves the scene no longer
+        it -- a production scene held 399 on 24 curves the scene no longer
         had -- and a key later set on a curve of that name at a claimed frame
         read as the tool's.  Renamed claims are followed first."""
 
@@ -1178,7 +1178,7 @@ class TestAClosingSeamStaysOneFrameApartWhereItsPosesDiffer(_SequencerTest):
 class TestMoveToShotCopiesASharedSample(unittest.TestCase):
     """Move to Shot copies, not carries, a run's sample on a FLUSH seam of
     its shot: it is the neighbour's pose too (the fencepost gives the shot
-    before the shared frame).  Bug (2026-10-11, SOL_REPLACE_ASSEMBLY gap 0):
+    before the shared frame).  Bug (2026-10-11, a production scene at gap 0):
     "B12"'s last run opened on B11's end, the curve's first key; carried
     away, every shot before played the new first key's extrapolation --
     SOLENOID 4.85 off over 1734 frames."""
@@ -1332,7 +1332,7 @@ class TestContentLeavingAShotKeepsItsNeighboursPoses(_SequencerTest):
     removed keys gave those shots (a held last value, the ramp into or out
     of them) stays theirs.
 
-    Bug (found 2026-10-11 by the SOL_REPLACE_ASSEMBLY acceptance, gap 10):
+    Bug (found 2026-10-11 by a production scene's acceptance, gap 10):
     deleting a shot whose last key held a curve's value for the rest of the
     timeline left the next shot playing the shot BEFORE's value instead --
     KEYS 78 units off over all 81 frames of "A02", SOLENOID 7.2 over 256 of
@@ -1818,6 +1818,301 @@ class TestSwapPlaceMembers(_SequencerTest):
         self.seq.segments = {a: [{"obj": "a"}], c: [{"obj": "c"}]}
         self.seq.swap_shots(a, c, retain=("name",))
         self.assertEqual(self.seq.shot_by_id(a).objects, ["a", "doc_a"])
+
+
+class TestTakesKeepTheirContent(_SequencerTest):
+    """A take is a span of its shot's content, counted from the shot's start:
+    every edit that writes a bound keeps each take on the frames it plays (or
+    carries it with the content), drops one left no room and says so, and
+    never ships a clip of no length.  A01 [0, 100] takes A01_1 [10-40],
+    A01_2 [60-90]; A02 [110, 200] takes A02_1 [120-150], A02_2 [150-190]."""
+
+    def setUp(self):
+        super().setUp()
+        self.seq = ShotSequencer()
+        self.seq.store.snap_whole_frames = False
+        a = self.seq.define_shot("A01", 0, 100)
+        b = self.seq.define_shot("A02", 110, 200)
+        self.seq.store.set_takes(a.shot_id, [("A01_1", 10, 40), ("A01_2", 60, 90)])
+        self.seq.store.set_takes(b.shot_id, [("A02_1", 120, 150), ("A02_2", 150, 190)])
+        ShotStore.set_active(self.seq.store)
+
+    def takes(self, name):
+        return self.seq.store.takes_of(self.seq.shot_by_name(name))
+
+    def test_a_pushed_neighbour_keeps_its_takes_on_their_frames(self):
+        """Bug: ``set_shot_edge(push=True)`` wrote the neighbour's facing
+        bound with no rebase, so A02's takes moved with its start though its
+        content did not: [130-160], [160-190] for content at [120-150],
+        [150-190].
+        Fixed: 2026-11-26"""
+        self.seq.set_shot_edge(self.sid("A01"), new_end=130, push=True)
+        self.assertBounds(("A01", 0, 130), ("A02", 130, 200))
+        self.assertEqual(self.takes("A02"), [("A02_1", 130, 150), ("A02_2", 150, 190)])
+        self.seq.set_shot_edge(self.sid("A02"), new_start=70, push=True)
+        self.assertBounds(("A01", 0, 70), ("A02", 70, 200))
+        self.assertEqual(self.takes("A01"), [("A01_1", 10, 40), ("A01_2", 60, 70)])
+
+    def test_every_bound_edit_keeps_the_takes_on_their_content(self):
+        """Each sequencer edit a scene-free sequencer drives, from the takes
+        above: a resize that leaves the keys keeps the frames, a retime
+        scales them, a move or a ripple carries them."""
+        cases = (
+            ("expand_shot", lambda s, a: s.expand_shot(a, 105), [(10, 40), (60, 90)]),
+            (
+                "resize_shot_bounds",
+                lambda s, a: s.resize_shot_bounds(a, 5, 95),
+                [(10, 40), (60, 90)],
+            ),
+            (
+                "resize_shot",
+                lambda s, a: s.resize_shot(a, 0, 200),
+                [(20, 80), (120, 180)],
+            ),
+            (
+                "set_shot_duration",
+                lambda s, a: s.set_shot_duration(a, 50),
+                [(5, 20), (30, 45)],
+            ),
+            ("move_shot", lambda s, a: s.move_shot(a, 50), [(60, 90), (110, 140)]),
+            (
+                "add_shot_space leading",
+                lambda s, a: s.add_shot_space(a, 10, "leading"),
+                [(20, 50), (70, 100)],
+            ),
+            (
+                "add_shot_space trailing",
+                lambda s, a: s.add_shot_space(a, -20, "trailing"),
+                [(10, 40), (60, 80)],
+            ),
+            (
+                "set_shot_edge",
+                lambda s, a: s.set_shot_edge(a, new_start=20),
+                [(20, 40), (60, 90)],
+            ),
+            (
+                "set_shot_edge scaled",
+                lambda s, a: s.set_shot_edge(a, new_end=50, scale=True),
+                [(5, 20), (30, 45)],
+            ),
+        )
+        for label, edit, spans in cases:
+            with self.subTest(label):
+                self.setUp()
+                edit(self.seq, self.sid("A01"))
+                self.assertEqual(
+                    self.takes("A01"), [("A01_1",) + spans[0], ("A01_2",) + spans[1]]
+                )
+                self.assertEqual(
+                    [t["name"] for t in ShotStore.declared_takes()],
+                    ["A01_1", "A01_2", "A02_1", "A02_2"],
+                )
+
+    def test_a_trim_that_leaves_a_take_no_room_drops_it(self):
+        with self.assertLogs("pythontk.core_utils.engines.shots.shot_model", "WARNING"):
+            self.seq.add_shot_space(self.sid("A01"), -45, "trailing")
+        self.assertEqual(self.takes("A01"), [("A01_1", 10, 40)])
+        self.assertNotIn("A01_2", [t["name"] for t in ShotStore.declared_takes()])
+
+    def test_every_bound_write_is_a_rebase_or_says_why_none_is_needed(self):
+        """A sweep of the module: each method writing a shot's ``start`` or
+        ``end`` itself either rebases the takes, or is listed here with why
+        they need none.  A new bound write fails until it is decided."""
+        import ast
+        import inspect
+
+        from pythontk.core_utils.engines.shots import shot_sequencer
+
+        rides = {  # the whole shot and its content move together
+            "_move_shot_content",
+        }
+        grows_end = {  # the start stays and the end only grows: every take stays inside
+            "_send_sequences_to_shot",
+            "expand_shot",
+        }
+        replaced = {  # the animation is replaced: the copied one's spans come with it (ShotStore.takes_over)
+            "copy_shot_content",
+        }
+        writers = set()
+        tree = ast.parse(inspect.getsource(shot_sequencer.ShotSequencer))
+        for method in ast.walk(tree):
+            if not isinstance(method, ast.FunctionDef):
+                continue
+            for node in ast.walk(method):
+                targets = node.targets if isinstance(node, ast.Assign) else []
+                for target in targets:
+                    elts = target.elts if isinstance(target, ast.Tuple) else [target]
+                    if any(
+                        isinstance(e, ast.Attribute) and e.attr in ("start", "end")
+                        for e in elts
+                    ):
+                        writers.add(method.name)
+        rebasing = writers - rides - grows_end - replaced
+        self.assertTrue(
+            rides | grows_end | replaced <= writers,
+            "a listed method no longer writes a bound: drop it",
+        )
+        for name in sorted(rebasing | replaced):
+            with self.subTest(name):
+                source = inspect.getsource(getattr(shot_sequencer.ShotSequencer, name))
+                needed = "takes_over" if name in replaced else "rebase_takes"
+                self.assertIn(
+                    needed,
+                    source,
+                    f"{name} writes a bound: rebase the takes, or list why not",
+                )
+
+    def test_a_merge_keeps_every_take_of_the_shots_it_fuses(self):
+        """Bug: ``merge_shots`` removed the absorbed shots and grew the
+        keeper, so A02's takes went with it: [0, 200] declared only A01's
+        takes and the export range (0, 100), frames 110-200 in no clip.
+        Each take is carried at its frames under its name.
+        Fixed: 2026-11-26"""
+        kept = self.seq.merge_shots([self.sid("A02"), self.sid("A01")])
+        self.assertEqual((kept.name, kept.start, kept.end), ("A01", 0, 200))
+        self.assertEqual(
+            self.seq.store.takes_of(kept),
+            [
+                ("A01_1", 10, 40),
+                ("A01_2", 60, 90),
+                ("A02_1", 120, 150),
+                ("A02_2", 150, 190),
+            ],
+        )
+        self.assertEqual(ShotStore.declared_range(), (10, 190))
+
+    def test_a_merge_of_a_shot_that_is_its_own_take_keeps_it_as_a_take(self):
+        """A shot that declares no takes is its own clip, named by it: merged
+        into a shot of takes, it is one of them."""
+        own = self.seq.define_shot("A03", 210, 240)
+        kept = self.seq.merge_shots([self.sid("A02"), own.shot_id])
+        self.assertEqual(
+            self.seq.store.takes_of(kept),
+            [("A02_1", 120, 150), ("A02_2", 150, 190), ("A03", 210, 240)],
+        )
+        plain = (
+            self.seq.define_shot("B01", 300, 320),
+            self.seq.define_shot("B02", 320, 340),
+        )
+        merged = self.seq.merge_shots([s.shot_id for s in plain])
+        self.assertIsNone(
+            self.seq.store.takes_of(merged),
+            "neither declares takes: the merged shot is its own",
+        )
+
+    def test_a_split_of_a_step_with_two_takes_names_its_tail_freely(self):
+        """Bug: the tail's default name (``A01_2``) was the head's own take,
+        and the store refused it: the Shot Sequencer's lane splits with no name, so
+        Split failed on every two-take step.
+        Fixed: 2026-11-26"""
+        tail = self.seq.split_shot(self.sid("A01"), 50)
+        self.assertNotIn(tail.name.casefold(), {"a01_1", "a01_2"})
+        self.assertEqual(self.takes("A01"), [("A01_1", 10, 40)])
+        self.assertEqual(self.takes(tail.name), [("A01_2", 60, 90)], "the take past the cut moves to the tail")
+
+    def test_a_split_keeps_every_take_on_its_frames(self):
+        """Bug: a split dropped every take lying past the cut from the head
+        with a warning, and carried none into the tail: its frames left the
+        export.
+        Fixed: 2026-11-26 -- one wholly after the cut moves to the tail, one
+        across it is cut there and its rest is a take of the tail."""
+
+        def exported():
+            frames = set()
+            for shot in self.seq.sorted_shots():
+                for _name, lo, hi in self.seq.store.takes_of(shot) or [(shot.name, shot.start, shot.end)]:
+                    frames.update(range(int(lo), int(hi) + 1))
+            return frames
+
+        a = self.sid("A01")
+        self.seq.store.set_takes(a, [("A01_1", 10, 40), ("A01_2", 30, 70), ("A01_3", 60, 90), ("A01_all", None, None)])
+        before = exported()
+        with self.assertLogs("pythontk.core_utils.engines.shots.shot_sequencer", "WARNING") as logs:
+            self.seq.split_shot(a, 50, name="A01_tail")
+        self.assertEqual(
+            self.takes("A01"),
+            [("A01_all", 0, 50), ("A01_1", 10, 40), ("A01_2", 30, 50)],
+            "before the cut stays; across it, up to the cut",
+        )
+        self.assertEqual(
+            self.takes("A01_tail"),
+            [("A01_2_2", 50, 70), ("A01_all_2", 50, 100), ("A01_3", 60, 90)],
+            "the rest, and what lay past the cut, at its frames",
+        )
+        self.assertIn("'A01_2_2'", "\n".join(logs.output))
+        self.assertEqual(exported(), before, "every frame a take played still exports")
+        tail = self.seq.split_shot(self.sid("A01_tail"), 80, name="A01_end", gap=5)
+        self.assertEqual(self.takes(tail.name), [("A01_3_2", 85, 95), ("A01_all_2_2", 85, 105)], "riding a gap")
+
+    def test_a_swap_keeping_its_records_keeps_the_names_and_carries_the_spans(self):
+        """Bug: retained metadata exchanged the takes whole, so each place
+        kept its own spans over the other's content: A02's [120-150],
+        [150-190] read over A01's keys.  The offsets belong to the keys (they
+        travel); the take names to the step (they stay).
+        Fixed: 2026-11-26"""
+        self.seq.store.gap = 10
+        self.seq.swap_shots(
+            self.sid("A01"), self.sid("A02"), retain=("name", "metadata")
+        )
+        self.assertBounds(("A01", 0, 90), ("A02", 100, 200))
+        self.assertEqual(
+            self.takes("A01"),
+            [("A01_1", 10, 40), ("A01_2", 40, 80)],
+            "A02's content's spans",
+        )
+        self.assertEqual(
+            self.takes("A02"),
+            [("A02_1", 110, 140), ("A02_2", 160, 190)],
+            "A01's content's spans",
+        )
+
+    def test_a_swap_whose_takes_do_not_pair_keeps_the_names_unplaced(self):
+        """Two names over one span cannot be paired: each name is the whole
+        shot (every frame still exported), for a build or a person to place,
+        and it is said."""
+        a03 = self.seq.define_shot("A03", 210, 240)
+        self.seq.store.set_takes(a03.shot_id, [("A03", 210, 240)])
+        with self.assertLogs("pythontk.core_utils.engines.shots.shot_model", "WARNING"):
+            self.seq.swap_shots(
+                self.sid("A01"), a03.shot_id, retain=("name", "metadata")
+            )
+        a01 = self.seq.shot_by_name("A01")
+        self.assertEqual(
+            self.takes("A01"),
+            [("A01_1", a01.start, a01.end), ("A01_2", a01.start, a01.end)],
+        )
+        self.assertEqual(self.takes("A03")[0][0], "A03")
+
+    def test_a_swap_without_its_records_carries_the_takes_whole(self):
+        self.seq.store.gap = 10
+        self.seq.swap_shots(self.sid("A01"), self.sid("A02"))
+        self.assertBounds(("A02", 0, 90), ("A01", 100, 200))
+        self.assertEqual(self.takes("A02"), [("A02_1", 10, 40), ("A02_2", 40, 80)])
+        self.assertEqual(self.takes("A01"), [("A01_1", 110, 140), ("A01_2", 160, 190)])
+
+
+class TestCopyKeepsTheTakeNamesOverTheCopiedSpans(_SequencerTest):
+    """Bug: ``copy_shot_content`` replaced the destination's animation and
+    kept its take spans, cut for the animation that was gone.  The copied
+    content brings its spans; the destination keeps its names.
+    Fixed: 2026-11-26"""
+
+    SEQUENCER = _ReplaceScene
+
+    def test_the_destination_keeps_its_take_names_over_the_sources_spans(self):
+        store = self.seq.store
+        a, c = self.sid("A"), self.sid("C")
+        store.set_takes(a, [("A_1", 1, 5), ("A_2", 5, 10)])
+        store.set_takes(c, [("C_1", 35, 45), ("C_2", 45, 50)])
+        self.seq.copy_shot_content(c, a)
+        shot = self.seq.shot_by_id(a)
+        self.assertEqual((shot.start, shot.end), (1, 16))
+        self.assertEqual(store.takes_of(shot), [("A_1", 1, 11), ("A_2", 11, 16)])
+        self.assertEqual(
+            store.takes_of(self.seq.shot_by_id(c)),
+            [("C_1", 41, 51), ("C_2", 51, 56)],
+            "the source keeps its own",
+        )
 
 
 class TestDescribeKeySelection(unittest.TestCase):

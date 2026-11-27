@@ -18,12 +18,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
-from pythontk.core_utils.handoff.app_handoff import (
-    HandoffBridge,
-    HandoffRequest,
-    Payload,
-)
-from pythontk.core_utils.deprecation import Deprecation
+from pythontk.core_utils.handoff.app_handoff import HandoffBridge, Payload
 from pythontk.net_utils.preview.deliverer import PreviewDeliverer
 from pythontk.net_utils.preview.server import PreviewServer
 
@@ -193,55 +188,6 @@ class PreviewBridge(HandoffBridge):
             "INCLUDE_ANIMATION": False,
         }
 
-    @Deprecation.symbol(
-        "nothing -- the FBX states its materials and the handoff "
-        "(mayatk 0.28 / blendertk 0.20 attach no envelope)",
-        remove_in="0.18.0",
-        since="2026-10-24",
-    )
-    def _attach_sidecar(
-        self,
-        payload: Payload,
-        read_sections: Callable[[], Optional[Dict[str, Any]]],
-        source: Dict[str, str],
-        request: Optional[HandoffRequest] = None,
-    ) -> Payload:
-        """Attach the retired scene-sidecar envelope for this push to *payload*.
-
-        What a host that predates the ``materials`` record calls from its
-        producer -- mayatk 0.27 and blendertk 0.19 do on every push unless
-        ``SCENE_SIDECAR`` is off -- kept one more minor so such a host's push
-        still publishes, and publishes what it did. The envelope is built as
-        it was (:meth:`GlbPipeline.envelope`) and rides ``Payload.extras`` to
-        the build, whose legacy path applies its sections to a file that
-        states no materials -- that host's FBX carries no ``materials``
-        record -- and embeds the handoff its source and lighting make
-        (:meth:`MeshConvert.fbx_to_glb`). Returning *payload* bare instead
-        would publish the converter's own reading of those materials, with
-        nothing saying so. The key's presence is what the result's
-        ``sidecar_requested`` reports.
-
-        *read_sections* is the host's scene-state read, called inside the
-        envelope build so a read that raises degrades to an envelope with no
-        sections rather than failing the push. *request* is the push's own:
-        the envelope publishes the lighting recipe with whatever overrides the
-        deliverer's preflight left on it (:attr:`PreviewDeliverer.RENDERING_KEY`).
-        """
-        from pythontk.file_utils.mesh_convert.glb.pipeline import GlbPipeline
-
-        payload.extras["scene_sidecar"] = GlbPipeline.envelope(
-            read_sections,
-            source=source,
-            asset=os.path.basename(payload.primary) if payload.primary else None,
-            rendering=(
-                request.get(PreviewDeliverer.RENDERING_KEY)
-                if request is not None
-                else None
-            ),
-            logger=self.logger,
-        )
-        return payload
-
     @property
     def url(self) -> Optional[str]:
         """The preview URL, or ``None`` before the first push."""
@@ -252,21 +198,14 @@ class PreviewBridge(HandoffBridge):
     #: instead. ``**params`` would otherwise sweep a stale caller's spelling
     #: into the EXPORT bag, where nothing reads it, and the knob would do
     #: nothing with no word said; :meth:`push` drops it and warns once per
-    #: session (:attr:`_retired_announced`). ``SCENE_SIDECAR`` joins when its
-    #: notice comes due: until then a released host's producer reads it.
+    #: session (:attr:`_retired_announced`).
     RETIRED_PARAMS: Dict[str, str] = {
         "texture_format": 'glb_options={"texture_file_type": ...}',
+        "SCENE_SIDECAR": "nothing (the FBX states its own materials and handoff)",
     }
     #: The :attr:`RETIRED_PARAMS` already warned about this session.
     _retired_announced: set = set()
 
-    @Deprecation.parameter(
-        "SCENE_SIDECAR",
-        remove_in="0.18.0",
-        since="2026-10-24",
-        reason="The FBX states its own materials and handoff; only a host "
-        "older than mayatk 0.28 / blendertk 0.20 still reads it.",
-    )
     def push(
         self,
         objects: Optional[List[Any]] = None,
@@ -337,8 +276,6 @@ class PreviewBridge(HandoffBridge):
                 render-effect curves to it, unless it states effects itself
                 (:meth:`_with_scene_effects`).
             **params: Export param overrides (see :meth:`params_defaults`).
-                ``SCENE_SIDECAR`` is deprecated: it warns, and still travels
-                for a released host's producer (:meth:`_attach_sidecar`).
 
         The start node -- the scene's camera named by the deliverer's
         ``user_pos`` -- joins any push that has something in it, whatever
@@ -517,39 +454,6 @@ class PreviewBridge(HandoffBridge):
             shown = ", ".join(missing[:4]) + (", ..." if len(missing) > 4 else "")
             line += f"; {len(missing)} map(s) not found: {shown}"
         return line + "."
-
-    @staticmethod
-    @Deprecation.symbol(
-        "PreviewBridge.materials_summary -- the FBX states its materials",
-        remove_in="0.18.0",
-        since="2026-10-24",
-    )
-    def sidecar_summary(result: Optional[Dict[str, Any]]) -> str:
-        """One plain-text line describing what the scene sidecar did.
-
-        Lives here rather than in each host's panel because it reads only the
-        deliverer's result -- nothing about it is Maya- or Blender-specific,
-        and written per panel it would be the same paragraph twice.
-
-        A push no envelope rode -- every current host's -- has no sidecar to
-        report, so the line is :meth:`materials_summary`'s: the released
-        panel prints this one after every push, and "sidecar off" would name
-        a switch the preview no longer has. For an older host's envelope it
-        separates the two outcomes that render the *same* preview: the scene
-        had nothing to carry, and the sections matched nothing.
-        """
-        if not (result or {}).get("sidecar_requested"):
-            return PreviewBridge.materials_summary(result)
-        applied = result.get("sidecar") or {}
-        if not applied:
-            # Section-agnostic on purpose: a build applies no section any
-            # more (the FBX's materials record states every material).
-            return (
-                "Scene sidecar: nothing to carry (the scene has nothing the FBX drops)."
-            )
-        return "Scene sidecar: " + ", ".join(
-            f"{name} {outcome}" for name, outcome in sorted(applied.items())
-        )
 
     @classmethod
     def lightmap_summary(cls, result: Optional[Dict[str, Any]]) -> str:

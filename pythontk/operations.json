@@ -267,6 +267,89 @@
       }
     },
     {
+      "id": "narration.render",
+      "title": "Narrate a sheet's voice lines",
+      "summary": "Narrate a sheet's voice lines (`narration.render`): every step's voice text that no recording covers, into the folder its mapping's `narrate` method names, so reading the sheet finds them.",
+      "effect": "files",
+      "target": "pythontk.core_utils.engines.shots.manifest.mapping:Mapping.narrate",
+      "dry_run": true,
+      "args": {
+        "type": "object",
+        "properties": {
+          "sheet": {
+            "type": "string",
+            "description": "The sheet (a CSV path)."
+          },
+          "mapping": {
+            "type": "string",
+            "description": "Its template's name (`default`, `linear`, `interactive`), or a mapping file's path.",
+            "default": "default"
+          },
+          "options": {
+            "anyOf": [
+              {
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Values for the template's options (`{\"audio\": \"narrate\"}`).",
+            "default": null
+          },
+          "base": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The project folder relative audio folders are read against (where its settings live).",
+            "default": null
+          },
+          "accept": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Step IDs whose recordings are accepted for their current lines.",
+            "default": null
+          },
+          "prune": {
+            "type": "boolean",
+            "description": "Remove narration files no line uses (asked; a person's file never).",
+            "default": false
+          },
+          "workers": {
+            "type": "integer",
+            "description": "Engine runs at once (0: chosen from the cores).",
+            "default": 0
+          },
+          "prompt": {
+            "type": "boolean",
+            "description": "Ask before the narration engine's first install (about 170 MB); False installs it unasked (the caller consents). Where nobody can be asked (no console, no *confirm*), nothing is downloaded and the run stops.",
+            "default": true
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "sheet"
+        ]
+      },
+      "result": {
+        "type": "object"
+      }
+    },
+    {
       "id": "operations.catalog",
       "title": "Rewrite a package's catalog",
       "summary": "Rewrite *module*'s committed catalog from its declarations, when it changed; returns its path.",
@@ -383,6 +466,35 @@
         "additionalProperties": false,
         "required": [
           "code"
+        ]
+      },
+      "result": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "sheet.new",
+      "title": "Start a build sheet from its template's starter",
+      "summary": "Start a new sheet (`sheet.new`): *template*'s starter sheet written to *out*, to rename and fill.",
+      "effect": "files",
+      "target": "pythontk.core_utils.engines.shots.manifest.mapping:Mapping.new_sheet",
+      "dry_run": true,
+      "args": {
+        "type": "object",
+        "properties": {
+          "out": {
+            "type": "string",
+            "description": "The CSV to write. A file that exists is never replaced."
+          },
+          "template": {
+            "type": "string",
+            "description": "A template that ships a starter (`interactive`, `linear`).",
+            "default": "interactive"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "out"
         ]
       },
       "result": {

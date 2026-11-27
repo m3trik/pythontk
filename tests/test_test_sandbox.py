@@ -9,6 +9,7 @@ this module activates it in ``setUp``.
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -215,6 +216,28 @@ class TestSandboxTestCase(unittest.TestCase):
                 FileUtils.__dict__["can_trash"], TestSandbox._state["can_trash"]
             )
         self.assertIsNot(FileUtils.__dict__["move_to_trash"], real, "guarded again")
+
+    def test_a_run_ages_out_a_scratch_folder_once_and_a_failure_surfaces(self):
+        """The one entry a run sweeps its scratch folder through: the
+        :attr:`SCRATCH` of the test folder it names, at :attr:`SCRATCH_DAYS`,
+        once a process (a runner, then a tool running several, sweep it once);
+        a failure is raised, never a silent nothing. Changed: 2026-11-24 (it
+        took a runner's path and swallowed); 2026-11-26 (it takes the test
+        folder: nine callers each joined the scratch folder's name)."""
+        tests = tempfile.mkdtemp(prefix="sandbox_scratch_")
+        self.addCleanup(shutil.rmtree, tests, True)
+        folder = os.path.join(tests, TestSandbox.SCRATCH)
+        swept_before = set(TestSandbox._state["swept_scratch"])
+        self.addCleanup(lambda: TestSandbox._state.__setitem__("swept_scratch", swept_before))
+        with unittest.mock.patch.object(TempArtifacts, "sweep_scratch", return_value=["x"]) as swept:
+            self.assertEqual(TestSandbox.sweep_scratch(tests), ["x"])
+            swept.assert_called_once_with(folder, TestSandbox.SCRATCH_DAYS)
+            self.assertEqual(TestSandbox.sweep_scratch(os.path.join(tests, ".")), [], "once a process")
+            swept.assert_called_once()
+        other = os.path.join(tests, "other")
+        with unittest.mock.patch.object(TempArtifacts, "sweep_scratch", side_effect=OSError("held")):
+            with self.assertRaises(OSError):
+                TestSandbox.sweep_scratch(other)
 
     def test_activate_is_idempotent(self):
         self.assertEqual(TestSandbox.activate(), TestSandbox.activate())

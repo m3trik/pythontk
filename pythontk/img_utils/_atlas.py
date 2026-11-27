@@ -163,6 +163,63 @@ class _ImgAtlasInternal:
             for (x, y), (w, h) in zip(result.positions, result.sizes)
         ]
 
+    @classmethod
+    def pack_atlas_shapes(
+        cls,
+        extents: Sequence[Optional[Tuple[float, float]]],
+        areas: Sequence[float],
+        size: Union[int, Tuple[int, int]],
+        gutter: int,
+        min_texels: int,
+        align: int,
+        aspects: Sequence[float],
+        fill: float,
+        search_max: int,
+    ) -> Optional[List[Tuple[float, float, float, float]]]:
+        """Body of :meth:`ImgUtils.pack_atlas_shapes`."""
+        if len(areas) != len(extents):
+            raise ValueError(f"{len(areas)} areas for {len(extents)} items")
+        free = [i for i, e in enumerate(extents) if e is None]
+        square = {i: cls.atlas_extent(areas[i], None, (1.0, 1.0), fill) for i in free}
+
+        def sized(shape):
+            return [
+                extents[i]
+                if extents[i] is not None
+                else (
+                    square[i][0] * math.sqrt(shape[i]),
+                    square[i][1] / math.sqrt(shape[i]),
+                )
+                for i in range(len(extents))
+            ]
+
+        def density(shape):
+            boxes = sized(shape)
+            rects = cls.pack_atlas_rects(boxes, size, gutter, min_texels, align)
+            if not rects:
+                return 0.0, rects
+            # Items of no width have no density: each takes the least cell.
+            scales = [r[0] / b[0] for r, b in zip(rects, boxes) if b[0] > 0]
+            return min(scales, default=0.0), rects
+
+        shape = {i: 1.0 for i in free}
+        best, rects = density(shape)
+        if free and len(extents) <= search_max:
+            order = sorted(free, key=lambda i: -float(areas[i]))
+            for _pass in range(3):
+                changed = False
+                for i in order:
+                    for aspect in aspects:
+                        if aspect == shape[i]:
+                            continue
+                        trial = {**shape, i: float(aspect)}
+                        found, found_rects = density(trial)
+                        if found > best * (1.0 + 1e-6):
+                            best, rects, shape, changed = found, found_rects, trial, True
+                if not changed:
+                    break
+        return rects
+
     @staticmethod
     def atlas_extent(
         area: float,

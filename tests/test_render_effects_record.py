@@ -31,7 +31,7 @@ class TestRenderEffectsRecord(unittest.TestCase):
         )
         self.assertEqual(
             set(RenderEffectsMaterial.json_schema()["properties"]),
-            {"material", "channels", "emission_color", "emission_strength"},
+            {"material", "channels", "emission_color", "emission_strength", "tint", "states"},
         )
         self.assertEqual(
             set(RenderEffectsRecord.json_schema()["properties"]),
@@ -41,13 +41,15 @@ class TestRenderEffectsRecord(unittest.TestCase):
     def test_channel_names_are_the_transports(self):
         """A track's channels are the transport's node channels, a material's
         its material channels, and every one the GLB writes as a pointer has a
-        row in ``GlbFades.CHANNELS``; a highlight's colour stops are the
+        row in ``GlbFades.CHANNELS`` -- a tint channel plays on the emission's
+        row, its factor weight x tint; a highlight's colour stops are the
         track's stop keys."""
         transport = SceneRecords.TRANSPORT
         self.assertEqual(
-            set(CHANNELS) | set(transport.stepped),
+            set(CHANNELS) | set(transport.stepped) | set(transport.tint_channels),
             set(transport.node_channels) | set(transport.material_channels),
         )
+        self.assertEqual(transport.tint_channels, ("tint_r", "tint_g", "tint_b"))
         stops = {key for row in CHANNELS.values() if row.color_stops for key in row.color_stops.keys}
         self.assertEqual(stops, {"highlight_color", "highlight_color_dim"})
         bad = {"version": 2, "tracks": [{"node": "A", "channels": ["opacity", "wobble"]}]}

@@ -2095,6 +2095,49 @@ class ImgUtils(
         )
 
     @staticmethod
+    def pack_atlas_shapes(
+        extents: Sequence[Optional[Tuple[float, float]]],
+        areas: Sequence[float],
+        size: Union[int, Tuple[int, int]],
+        gutter: int = 2,
+        min_texels: int = 4,
+        align: int = 4,
+        aspects: Sequence[float] = (1 / 3, 1 / 2, 1.0, 2.0, 3.0),
+        fill: float = 0.8,
+        search_max: int = 16,
+    ) -> Optional[List[Tuple[float, float, float, float]]]:
+        """:meth:`pack_atlas_rects` where some items take the shape that packs densest.
+
+        Fixed shapes leave a square partly empty whatever the density (a
+        production cabinet's four cells filled 54% of their atlas). An item
+        whose layout will be re-laid to its cell (``None`` in *extents*) is
+        sized as one covering *fill* of a cell of one of *aspects* (width
+        over height) -- :meth:`atlas_extent` of its *areas* entry, widened by
+        the square root of the aspect and shortened by as much -- and the
+        shapes that pack the group densest win: starting square, each free
+        item in turn, largest first, takes the shape that raises the least
+        density of any item, until a pass changes nothing. A group of more
+        than *search_max* items packs its free ones square: its many cells
+        fill the atlas already.
+
+        Parameters:
+            extents: ``(width, height)`` per item as :meth:`pack_atlas_rects`
+                takes them, or ``None`` for an item free to take any shape.
+            areas: Each item's surface area (read for the free ones).
+            size, gutter, min_texels, align: As :meth:`pack_atlas_rects`.
+            aspects: The shapes a free item may take.
+            fill: The coverage a re-laid layout reaches in its cell.
+            search_max: The most items the shape search runs for.
+
+        Returns:
+            As :meth:`pack_atlas_rects`; a free item's rect is the cell its
+            layout is to be re-laid into.
+        """
+        return _ImgAtlasInternal.pack_atlas_shapes(
+            extents, areas, size, gutter, min_texels, align, aspects, fill, search_max
+        )
+
+    @staticmethod
     def atlas_extent(
         area: float,
         uv_area: Optional[float] = None,

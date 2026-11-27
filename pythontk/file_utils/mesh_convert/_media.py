@@ -124,23 +124,6 @@ class _Media:
             leaf_index.setdefault(full.rsplit(":", 1)[-1], []).append(full)
         return nodes_by_name, leaf_index, mesh_users, lineage
 
-    @staticmethod
-    def hierarchy_score(hierarchy: Sequence[Any], lineage: Sequence[str]) -> int:
-        """How many trailing names *hierarchy* and *lineage* share.
-
-        Compared from the object itself upward, namespace-blind, and stopped at
-        the first disagreement. Only the tail can be compared: an export may
-        root the file under a node the scene never had (FBX2glTF's
-        ``RootNode``) or drop ancestors it was not given, but it cannot rename
-        the parents it keeps.
-        """
-        score = 0
-        for mine, theirs in zip(reversed(list(hierarchy)), reversed(list(lineage))):
-            if str(mine).rsplit(":", 1)[-1] != str(theirs).rsplit(":", 1)[-1]:
-                break
-            score += 1
-        return score
-
     def resolve_entries(
         self,
         entries: Sequence[Any],
@@ -163,7 +146,7 @@ class _Media:
         settled together -- two such sets settled apart could each bind the
         same node, and the object would wear whichever came last. Each
         (entry, node) pair ranks by the entry's ``hierarchy`` (its scene path,
-        root first) against the node's lineage (:meth:`hierarchy_score`),
+        root first) against the node's lineage (``NodeNames.hierarchy_score``),
         then by whether the NAME matched exactly, so an exact name still beats
         a namespace-stripped one wherever the hierarchy cannot tell them apart
         (the file carries ``PROPS_DA:prop352``, the manifest also lists
@@ -236,7 +219,7 @@ class _Media:
                 exact = int(resolved[i][1] == "exact")
                 for node in pools[i]:
                     score = (
-                        self.hierarchy_score(hierarchy, lineage.get(id(node), ()))
+                        NodeNames.hierarchy_score(hierarchy, lineage.get(id(node), ()))
                         if usable
                         else 0
                     )

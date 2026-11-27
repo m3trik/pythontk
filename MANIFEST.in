@@ -5,4 +5,4 @@ include pyproject.toml
 # pyproject.toml -- one governs the sdist, the other the wheel, and a
 # pattern in only one ships the file to only one channel. Gated by
 # test_packaging_metadata.TestDataFileParity.
-recursive-include pythontk *.gif *.glsl *.html *.js *.json *.md *.png *.txt *.ui
+recursive-include pythontk *.csv *.gif *.glsl *.html *.js *.json *.md *.png *.txt *.ui

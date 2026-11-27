@@ -20,6 +20,7 @@ Mirrors the :class:`ShotStore` hook pattern: the pure core never imports
 from __future__ import annotations
 
 import logging
+import os
 from typing import (
     Any,
     Callable,
@@ -185,8 +186,9 @@ class ShotManifest(_ShotManifestInternal):
         store: ShotStore,
         match: str = "name",
         rebuild_edited: bool = False,
-        disabled_behaviors: Iterable[str] = (),
-        marked_behaviors: Iterable[str] = (),
+        disabled_behaviors: Optional[Iterable[str]] = None,
+        marked_behaviors: Optional[Iterable[str]] = None,
+        source: str = "",
     ):
         """
         Parameters:
@@ -202,13 +204,29 @@ class ShotManifest(_ShotManifestInternal):
                 a timeline marker where each would be keyed
                 (:meth:`place_markers`), which Assess checks for.  Like a
                 turned-off behavior it is neither keyed nor released.  A name
-                also turned off is off.
+                also turned off is off.  With neither mode given, a build and
+                an assessment use the modes in force for *source* and their
+                steps (``ManifestEdits.modes_in_force``: the scene's own, else
+                Key for what the sheet's cells name), as the panel does.
+            source: The sheet the steps are read from (its path): whose modes
+                the scene keeps (``ManifestEdits.behavior_modes``).  ``""``:
+                none read.
         """
         self.store = store
         self.match = match
         self.rebuild_edited = bool(rebuild_edited)
-        self.disabled_behaviors = frozenset(disabled_behaviors)
-        self.marked_behaviors = frozenset(marked_behaviors) - self.disabled_behaviors
+        self.source = str(source or "")
+        #: Whether the modes were given; else :meth:`_settle_modes` reads those in force.
+        self._modes_given = disabled_behaviors is not None or marked_behaviors is not None
+        self._disabled: Optional[frozenset] = None
+        self._marked: Optional[frozenset] = None
+        if self._modes_given:
+            self.disabled_behaviors = disabled_behaviors or ()
+            self.marked_behaviors = marked_behaviors or ()
+        self._templates: Optional[frozenset] = None  # the behavior templates, read once (:meth:`_behavior_types`)
+        #: The step IDs a scoped build is rebuilding (``sync(only=...)``),
+        #: ``None`` outside one.
+        self._only: Optional[frozenset] = None
         self._fps_cache: Optional[float] = None
         # Per-cycle caches (cleared at the top of update()/assess()):
         # transform → standard-attr curves, and per-curve key data.
@@ -231,6 +249,91 @@ class ShotManifest(_ShotManifestInternal):
         # A blank cell writes nothing (and, being the doc's column, takes out
         # the value it held -- _content_kwargs).
         meta.update({k: v for k, v in (pass_through or {}).items() if v})
+        return meta
+
+    #: What each ``behaviors`` entry of a shot's metadata says of how this build made it: ``key``
+    #: (keyed into the shot's take), ``marker`` (a timeline marker where its keys would go); absent:
+    #: off, or no template keys it. Shipped with the entry, so another reader of the same sheet
+    #: (a manifest in the app the delivery lands in) knows per object which behaviors the delivery
+    #: already carries: the two manifests build each one once between them, and each alone builds
+    #: all it can.
+    MODE = "mode"
+
+    def _behavior_types(self) -> frozenset:
+        """Every behavior type (``Behaviors.list_behaviors``), read once."""
+        if self._templates is None:
+            from pythontk.core_utils.engines.shots.manifest.behaviors import Behaviors
+
+            self._templates = frozenset(Behaviors.list_behaviors())
+        return self._templates
+
+    @property
+    def disabled_behaviors(self) -> frozenset:
+        """The behavior names turned off (``disabled_behaviors=``); with no
+        mode given, those the modes in force leave Off (:meth:`_settle_modes`)."""
+        if self._disabled is None:
+            self._settle_modes(())
+        return self._disabled
+
+    @disabled_behaviors.setter
+    def disabled_behaviors(self, names: Iterable[str]) -> None:
+        self._disabled = frozenset(names)
+        if self._marked is not None:
+            self._marked -= self._disabled
+
+    @property
+    def marked_behaviors(self) -> frozenset:
+        """The behavior names a build marks instead of keying
+        (``marked_behaviors=``), none of them turned off; with no mode given,
+        those the modes in force mark (:meth:`_settle_modes`)."""
+        if self._marked is None:
+            self._settle_modes(())
+        return self._marked
+
+    @marked_behaviors.setter
+    def marked_behaviors(self, names: Iterable[str]) -> None:
+        self._marked = frozenset(names) - (self._disabled or frozenset())
+
+    def _settle_modes(self, steps: Iterable[BuilderStep]) -> None:
+        """With no mode given, take the modes in force for :attr:`source` and
+        *steps* (``ManifestEdits.modes_in_force``): the scene's own for the
+        sheet, else Key for what its cells name and every other type Off --
+        what the panel builds the scene with, so a build from code and the
+        panel's agree.  Given modes stay as given."""
+        if self._modes_given:
+            return
+        from pythontk.core_utils.engines.shots.manifest.manifest_edits import ManifestEdits
+
+        types = self._behavior_types()
+        modes = ManifestEdits.modes_in_force(self.store, self.source, steps, types)
+        keyed = frozenset(modes["key"])
+        self._disabled = types - keyed - frozenset(modes["marker"])
+        self._marked = frozenset(modes["marker"]) - keyed - self._disabled
+
+    def _record_modes(self) -> bool:
+        """Keep the modes this build keys and marks with the scene, for
+        :attr:`source` (``ManifestEdits.set_behavior_modes``), as the panel's
+        Build does: whoever builds the scene next builds the same.  Nothing
+        without a sheet named."""
+        if not self.source:
+            return False
+        from pythontk.core_utils.engines.shots.manifest.manifest_edits import ManifestEdits
+
+        keyed = self._behavior_types() - self.disabled_behaviors - self.marked_behaviors
+        return ManifestEdits.set_behavior_modes(self.store, self.source, keyed, self.marked_behaviors)
+
+    def _with_modes(self, meta: Dict[str, Any]) -> Dict[str, Any]:
+        """*meta* with each ``behaviors`` entry's :attr:`MODE` as this build makes it."""
+        types = self._behavior_types()
+        entries = []
+        for entry in meta.get("behaviors") or ():
+            entry = {k: v for k, v in entry.items() if k != self.MODE}
+            behavior = entry.get("behavior")
+            if behavior in types and behavior not in self.disabled_behaviors:
+                entry[self.MODE] = "marker" if behavior in self.marked_behaviors else "key"
+            entries.append(entry)
+        if "behaviors" in meta:
+            meta["behaviors"] = entries
         return meta
 
     @classmethod
@@ -323,6 +426,11 @@ class ShotManifest(_ShotManifestInternal):
             out.append(node if reason == "found" else name)
         return out
 
+    def _pairs(self, names: Iterable[str], members: Iterable[str]) -> List[Tuple[str, str]]:
+        """``ShotStore.name_pairs`` through the store's own host: a path's tail
+        is compared with each member's lineage as that host reads it."""
+        return ShotStore.name_pairs(names, members, self.store.host)
+
     def _resolve_object(self, name: str) -> Tuple[str, str]:
         """``(node, reason)`` for a doc object name: ``"found"`` / ``"missing"``
         / ``"ambiguous"`` -- the store's :meth:`~ShotStore.resolve_member`,
@@ -385,9 +493,13 @@ class ShotManifest(_ShotManifestInternal):
     ) -> List[str]:
         """Find animated scene objects in [start, end] not in *exclude_names* (hook).
 
-        Pure default: ``[]`` — the pure core has no scene to walk.  DCC
-        subclasses override to return transform nodes with non-flat standard-
-        attribute animation whose leaf names are not already excluded.
+        *exclude_names* are names -- the step's doc names and its shot's
+        members as stored -- each leaving out what it names
+        (``ShotStore.name_pairs`` through the store's host): ``PANEL|LATCH``
+        never hides a ``DOOR|LATCH``.  Pure default: ``[]`` — the pure core
+        has no scene to walk.  DCC subclasses override to return transform
+        nodes with non-flat standard-attribute animation that no excluded
+        name names.
         """
         return []
 
@@ -490,6 +602,7 @@ class ShotManifest(_ShotManifestInternal):
         fit_mode: FitMode = DEFAULT_FIT_MODE,
         initial_shot_length: float = DEFAULT_INITIAL_SHOT_LENGTH,
         skip_scene_discovery: bool = False,
+        only: Optional[Iterable[str]] = None,
     ) -> Tuple[Dict[str, str], Dict[str, list], List[StepStatus]]:
         """Full build pipeline: plan -> commit -> apply behaviors -> assess.
 
@@ -513,34 +626,58 @@ class ShotManifest(_ShotManifestInternal):
                 selected-keys build only considers the selected keys'
                 objects instead of discovering every animated scene
                 object in each shot's range.
+            only: Step IDs to rebuild from the sheet, and nothing else (a
+                row's own "Rebuild from Sheet"): their shots are rebuilt
+                though a hand edited them (a locked one stays), and no other
+                shot is planned, keyed, marked or removed.  The assessment
+                is still of every step in *steps*.  ``None``: a full build.
 
         Returns:
             ``(actions, behavior_result, assessment)`` tuple; the behavior
-            result's ``"marked"`` lists what :meth:`place_markers` marked.
+            result's ``"marked"`` lists what :meth:`place_markers` marked and its
+            ``"placed"`` is what :meth:`place_helpers` made, kept and skipped,
+            and its ``"states"`` what :meth:`set_states` gave, kept and skipped.
         """
-        if apply_behaviors:
-            # Before any shot moves: a clip keyed by a build that did not claim
-            # it is the manifest's, and must move with its claim.
-            self.adopt_placed_clips()
-        actions = self.update(
-            steps,
-            ranges=ranges,
-            remove_missing=remove_missing,
-            zero_duration_fallback=zero_duration_fallback,
-            fit_mode=fit_mode,
-            initial_shot_length=initial_shot_length,
-        )
+        scope = None if only is None else frozenset(only)
+        chosen = steps if scope is None else [s for s in steps if s.step_id in scope]
+        self._settle_modes(steps)
+        self._only = scope
+        try:
+            if apply_behaviors:
+                # Before any shot moves: a clip keyed by a build that did not
+                # claim it is the manifest's, and must move with its claim.
+                self.adopt_placed_clips()
+            joined = self.join_takes(chosen)
+            if joined and ranges:
+                # A range read before the join is its first part's: the step's shot is the joined one.
+                shots = self.pair(chosen).shots
+                ranges = dict(ranges)
+                ranges.update({sid: (shots[sid].start, shots[sid].end) for sid in joined if sid in ranges and sid in shots})
+            actions = self.update(
+                chosen,
+                ranges=ranges,
+                # A step left out of a scoped build is not a step the sheet lost.
+                remove_missing=remove_missing and scope is None,
+                zero_duration_fallback=zero_duration_fallback,
+                fit_mode=fit_mode,
+                initial_shot_length=initial_shot_length,
+            )
 
-        behavior_result: Dict[str, list] = {"applied": [], "skipped": []}
-        if apply_behaviors:
-            self.release_dropped(steps)
-            behavior_result = self.apply_behaviors()
-            self._record_authored(behavior_result)
-            behavior_result["marked"] = self.place_markers()
+            behavior_result: Dict[str, list] = {"applied": [], "skipped": []}
+            if apply_behaviors:
+                self._record_modes()
+                self.release_dropped(chosen)
+                behavior_result = self.apply_behaviors()
+                self._record_authored(behavior_result)
+                behavior_result["marked"] = self.place_markers()
+                behavior_result["placed"] = self.place_helpers(chosen)
+                behavior_result["states"] = self.set_states(chosen)
 
-        # Rewire managed audio nodes so the sequencer/timeline reflects any
-        # key changes authored above.  Idempotent.
-        self.rewire_audio()
+            # Rewire managed audio nodes so the sequencer/timeline reflects
+            # any key changes authored above.  Idempotent.
+            self.rewire_audio()
+        finally:
+            self._only = None
 
         assessment = self.assess(steps, skip_scene_discovery=skip_scene_discovery)
         return actions, behavior_result, assessment
@@ -576,6 +713,8 @@ class ShotManifest(_ShotManifestInternal):
         self._fps_cache = None
         self._animated_transforms = None
         self._curve_data = None
+        if self._only is None:  # a scoped build's modes are its whole sheet's, settled by sync
+            self._settle_modes(steps)
         plan = self._compute_plan(
             steps,
             ranges=ranges,
@@ -603,6 +742,13 @@ class ShotManifest(_ShotManifestInternal):
         orphan -- reported, never removed by a build -- and one split off a
         step's shot is linked to that step (``ShotPairing.links``,
         ``ShotStore.step_links``) without pairing.
+
+        A scene whose takes were cut as shots of their own (a step's shot
+        split by hand, each part named by its take) pairs too: a step no shot
+        is bound to or named for takes the first shot named by one of its
+        takes (``how``: ``"take"``), and every other shot so named is linked
+        to it, for a build to join them into the step's one shot
+        (:meth:`join_takes`).
         """
         shots = self.store.sorted_shots()
         by_binding: Dict[str, Any] = {}
@@ -636,6 +782,20 @@ class ShotManifest(_ShotManifestInternal):
         # Where a shot nothing pairs with belongs: a tail split off a step's
         # shot is in that step's section -- a link, never a pairing.
         links = self.store.step_links()
+        # A take cut as a shot of its own is its step's: the step's shot where
+        # it has none yet, else linked to it.
+        for step in steps:
+            sid = step.step_id
+            for name in step.takes or ():
+                shot = by_name.get(name)
+                if shot is None or shot.shot_id in used:
+                    continue
+                if (shot.metadata or {}).get("step") not in (None, sid):
+                    continue  # bound to another step
+                if sid not in pairing.shots:
+                    take(sid, shot, "take")
+                else:
+                    links[shot.shot_id] = sid
         if self.match == "name_then_order":
             # A linked shot is its step's tail, not another step's shot: the
             # order pass passes it by (maintainer 2026-10-12).
@@ -694,6 +854,9 @@ class ShotManifest(_ShotManifestInternal):
         )
         if placeholder is not None:
             return placeholder
+        if step.takes is not None and not step.takes:
+            # A step that plays no take needs no room to animate in: as long as what it holds.
+            fit_mode = "fit_contents"
         dur, _beh, _aud = ShotManifest.resolve_duration(
             step,
             initial_shot_length,
@@ -791,6 +954,8 @@ class ShotManifest(_ShotManifestInternal):
             if any(row[0] == ("typed", step.step_id) for row in line):
                 anchor = ("typed", step.step_id)  # its shot is made at its range
                 continue
+            if not step.animated:
+                continue  # no animation: no shot to insert
             name = step.shot_name
             if name.lower() in taken or store.name_error(name):
                 continue
@@ -1230,6 +1395,141 @@ class ShotManifest(_ShotManifestInternal):
                 )
         return out
 
+    def place_helpers(self, steps: List[BuilderStep]) -> Dict[str, list]:
+        """Make the helper each placing row of *steps* names, where the scene has none.
+
+        A row of a word that places something (its ``places``: a viewpoint the
+        user stands on, an arrow's tip, a picture's camera) happens at the
+        object its ``where`` names, else at its own helper
+        (:meth:`ManifestPlacement.helper_name`: ``CAM_<step>_<target>``, the
+        name every reader of the sheet gives it).  One the scene has is the truth: it is
+        used as it stands and never moved.  One it lacks is made under that
+        name (:meth:`_make_helper`: a camera for a picture, a locator for a
+        viewpoint or an arrow), riding what :attr:`ManifestPlacement.RIDES`
+        says, with a plain first pose (:meth:`ManifestPlacement.first_pose`)
+        as the scene stands at its step's shot's first frame -- there to be
+        moved.  A row whose word is turned off (:attr:`disabled_behaviors`)
+        is left to the tool that runs the steps, which makes its own under the
+        same name.
+
+        Returns:
+            ``{"made": [name], "kept": [name], "skipped": [(name, why)]}``.
+        """
+        from pythontk.core_utils.engines.shots.manifest.manifest_actions import ManifestActions
+        from pythontk.core_utils.engines.shots.manifest.manifest_placement import ManifestPlacement
+
+        out: Dict[str, list] = {"made": [], "kept": [], "skipped": []}
+        shots = None
+        seen = set()
+        for step in steps:
+            rows = list(step.rows or ())
+            for row, own in zip(rows, ManifestPlacement.helper_names(step.step_id, rows)):
+                purpose = row.get("places")
+                if not purpose or row.get("word") in self.disabled_behaviors:
+                    continue
+                where = own or str((row.get("settings") or {}).get(ManifestActions.WHERE) or "").strip()
+                if not where:
+                    continue
+                if where in seen:
+                    if own:  # one written twice is one object; a name two rows derive is two rows' helpers
+                        out["skipped"].append(
+                            (where, "an earlier row of step %s names its own helper so too: give this one its own "
+                                    "object (where=<name>)" % step.step_id)
+                        )
+                    continue
+                seen.add(where)
+                if self._object_exists(where):
+                    out["kept"].append(where)
+                    continue
+                targets = list(row.get("assets") or ())
+                if purpose not in ManifestPlacement.KINDS:
+                    out["skipped"].append((where, "no helper is made for a row that places for %r" % purpose))
+                    continue
+                if not targets:
+                    out["skipped"].append((where, "its row names no Target to place it by"))
+                    continue
+                if shots is None:
+                    shots = self.pair(steps).shots
+                shot = shots.get(step.step_id)
+                made = self._make_helper(where, purpose, targets[0], None if shot is None else shot.start)
+                if made:
+                    out["made"].append(made)
+                else:
+                    out["skipped"].append((where, "it could not be made by '%s' in this scene" % targets[0]))
+        return out
+
+    #: The setting a row names an indicator's state in (the effect's: one meaning in every word).
+    STATE = "state"
+
+    def set_states(self, steps: List[BuilderStep]) -> Dict[str, list]:
+        """Give what each row of *steps* that sets a state is about the states it names.
+
+        A row with a ``state`` setting (``set | LED | state=amber``) switches
+        its Target's indicator to that state as its step starts.  Switching it
+        is the business of whatever runs the steps; what a build makes sure of
+        is that the Target *has* the state: its emission's named states, a
+        tint and a weight each (:meth:`_ensure_state`: in a host with emissive
+        groups, the group worn there, given the tool's default states where it
+        has none of its own), so the delivery carries them and every reader
+        switches by the same names.  A Target with no states to give (no
+        emissive group; a host with none) is left to the tool that runs the
+        steps, and said; so is a state its states do not include.  A word
+        turned off (:attr:`disabled_behaviors`) sets nothing.
+
+        Returns:
+            ``{"given": [(target, state)], "kept": [(target, state)],
+            "skipped": [(target, state, why)]}``: states a build stored, those
+            it found there, and those it could not give.
+        """
+        out: Dict[str, list] = {"given": [], "kept": [], "skipped": []}
+        seen = set()
+        for step in steps:
+            for row in step.rows or ():
+                state = str((row.get("settings") or {}).get(self.STATE) or "").strip()
+                if not state or row.get("word") in self.disabled_behaviors:
+                    continue
+                for target in row.get("assets") or ():
+                    if (target, state) in seen:
+                        continue
+                    seen.add((target, state))
+                    outcome, why = self._ensure_state(target, state)
+                    if outcome in ("given", "kept"):
+                        out[outcome].append((target, state))
+                    else:
+                        out["skipped"].append((target, state, why))
+        return out
+
+    def _ensure_state(self, target: str, state: str) -> Tuple[str, str]:
+        """Make sure *target*'s indicator has the state named *state* (hook).
+
+        A host with emissive groups finds the group *target* wears, gives it
+        the tool's default states where it has none, and answers ``"given"``
+        (it stored states), ``"kept"`` (the state was there) or ``"skipped"``
+        with why (no group there; the group's states do not include it).  Pure
+        default: ``("skipped", ...)`` -- no scene, so no states to give.
+
+        Returns:
+            ``(outcome, why)``: *why* is empty unless skipped.
+        """
+        return "skipped", "this host keeps no emission states: left to the tool that runs the steps"
+
+    def _make_helper(self, name: str, purpose: str, target: str, frame: Optional[float]) -> Optional[str]:
+        """Make the helper *name* a row placing for *purpose* names, by *target* (hook).
+
+        A host makes what :attr:`ManifestPlacement.KINDS` says (a camera, a
+        locator) under exactly that name, as a child of what
+        :attr:`ManifestPlacement.RIDES` says, at
+        :meth:`ManifestPlacement.first_pose` of *target*'s bounds as the scene
+        stands at *frame* (``None``: now), its forward (a camera's view)
+        turned to the pose's aim.  Pure default: ``None`` -- no scene to make
+        it in.
+
+        Returns:
+            The made object's name, or ``None`` where it could not be made
+            (*target* is not in the scene).
+        """
+        return None
+
     def place_markers(self) -> List[Dict[str, Any]]:
         """Mark where the :attr:`marked_behaviors` would be keyed, on the
         shots a build reaches (:meth:`_behavior_shots`).
@@ -1308,7 +1608,7 @@ class ShotManifest(_ShotManifestInternal):
         """
         sorted_shots = self.store.sorted_shots()
         pairing = self.pair(steps)
-        key = ShotStore.member_key
+        pairs = self._pairs
         plan: List[PlannedShot] = []
 
         # Removals: only when asked, and only of shots no step pairs with.
@@ -1339,10 +1639,12 @@ class ShotManifest(_ShotManifestInternal):
 
         for step in steps:
             existing = pairing.shots.get(step.step_id)
-            meta = self._step_metadata(
-                step, pass_through=getattr(step, "_pass_through", None)
+            meta = self._with_modes(
+                self._step_metadata(step, pass_through=getattr(step, "_pass_through", None))
             )
 
+            if existing is None and not step.animated:
+                continue  # plays no animation: no shot, no time on the timeline
             if existing is None:
                 # ---- NEW SHOT ----
                 # Placement comes from ``rng[0]`` (when provided) or the
@@ -1385,7 +1687,7 @@ class ShotManifest(_ShotManifestInternal):
                         dur = self._new_shot_duration(
                             step, initial_shot_length, fit_mode
                         )
-                    end = start + dur
+                    end = self.store.snap(start + dur)  # as the grow below: the cursor stays whole
 
                 scene_objs = [o for o in step.objects if o.kind != "audio"]
                 obj_names = [o.name for o in scene_objs]
@@ -1446,11 +1748,13 @@ class ShotManifest(_ShotManifestInternal):
             new_audio = {o.name for o in step.objects if o.kind == "audio"}
             if range_is_noop and new_audio:
                 audio_objs = [o for o in step.objects if o.kind == "audio"]
-                new_dur = self._audio_grow_duration(audio_objs)
-                current_dur = ex_end - ex_start
-                if new_dur > current_dur + 1e-6:
-                    ripple_delta = (ex_start + new_dur) - ex_end
-                    ex_end = ex_start + new_dur
+                # Snapped here, as the store snaps it and as the clip's OFF key
+                # rounds: a part-frame ripple, each bound snapped on its own
+                # later, cut a later shot a frame short of its clip.
+                grown = self.store.snap(ex_start + self._audio_grow_duration(audio_objs))
+                if grown > ex_end + 1e-6:
+                    ripple_delta = grown - ex_end
+                    ex_end = grown
                     repositioned = True
                     cumulative_ripple += ripple_delta
 
@@ -1460,51 +1764,48 @@ class ShotManifest(_ShotManifestInternal):
             }
             csv_objs = set(csv_obj_map)
             old_csv_objs, old_audio = self._recorded_doc(existing)
-            # Doc names vs stored (long, namespaced) members: one identity rule.
-            csv_keys = {key(n) for n in csv_objs}
-            old_keys = {key(n) for n in old_csv_objs}
-            member_keys = {key(n) for n in existing.objects}
-            scene_discovered = {n for n in existing.objects if key(n) not in old_keys}
-
-            old_behaviors: Dict[str, List[str]] = {}
+            # Doc names vs stored (long, namespaced) members and the doc names
+            # a build recorded: one identity rule, a path's tail read whole.
+            members = set(existing.objects)
+            old_pairs = pairs(csv_objs, old_csv_objs)
+            scene_discovered = members - {m for _n, m in pairs(old_csv_objs, members)}
+            old_beh: Dict[str, List[str]] = {}
             for entry in existing.metadata.get("behaviors", []):
-                old_behaviors.setdefault(key(entry["name"]), []).append(
-                    entry.get("behavior", "")
-                )
-            for k in old_behaviors:
-                old_behaviors[k] = sorted(old_behaviors[k])
+                old_beh.setdefault(entry["name"], []).append(entry.get("behavior", ""))
 
-            new_objs = {n for n in csv_objs if key(n) not in old_keys}
-            dropped = {n for n in old_csv_objs if key(n) not in csv_keys}
+            new_objs = csv_objs - {n for n, _o in old_pairs}
+            dropped = set(old_csv_objs) - {o for _n, o in old_pairs}
             if "csv_objects" not in (existing.metadata or {}):
                 # A shot no build made (the Shot Sequencer's, or split off
                 # there): its members are the scene's, none a previous doc's
                 # to drop -- read as doc objects, a step paired with it
                 # stripped every member it did not list.
                 dropped = set()
-                scene_discovered = {
-                    n for n in existing.objects if key(n) not in csv_keys
-                }
+                scene_discovered = members - {m for _n, m in pairs(csv_objs, members)}
+            was: Dict[str, List[str]] = {}
+            for name, entry in pairs(csv_objs, old_beh):
+                was.setdefault(name, []).extend(old_beh[entry])
             changed_beh = {
-                name
-                for name in csv_objs
-                if key(name) in old_keys
-                and csv_obj_map.get(name, []) != old_behaviors.get(key(name), [])
+                name for name in csv_objs - new_objs if csv_obj_map.get(name, []) != sorted(was.get(name, []))
             }
             # A doc object in the scene but not among the members (removed from
-            # the shot by hand, or never added): a build puts it back.
-            absent = {
-                n
-                for n in csv_objs
-                if key(n) not in member_keys and self._resolve_object(n)[1] == "found"
-            }
+            # the shot by hand, or never added): a build puts it back.  Its
+            # node is asked too: a host whose node names are no paths.
+            held = {n for n, _m in pairs(csv_objs, members)}
+            absent = set()
+            for name in csv_objs - held:
+                node, reason = self._resolve_object(name)
+                if reason == "found" and node not in members:
+                    absent.add(name)
 
             audio_changed = new_audio != old_audio
             renamed = self._new_name(existing, step) is not None
 
             has_content_change = bool(new_objs or dropped or changed_beh or absent)
+            # Judged against the shot as the plan leaves it: a grown shot gives a loose take more room.
+            retaken = self._takes_pending(step, existing, (ex_start, ex_end))
 
-            if has_content_change or repositioned or audio_changed or renamed:
+            if has_content_change or repositioned or audio_changed or renamed or retaken:
                 action: Action = "patched"
             else:
                 action = "skipped"
@@ -1569,11 +1870,15 @@ class ShotManifest(_ShotManifestInternal):
     @staticmethod
     def _build_record(shot) -> Dict[str, Any]:
         """What a build leaves on *shot* that only a hand changes: its length
-        (a ripple moves a shot, it does not resize it), its members, its
-        description.  The name has its own record (:attr:`BUILD_NAME`)."""
+        (a ripple moves a shot, it does not resize it), its members by name
+        (``ShotStore.member_names``: a path's tail where two share a leaf, so a
+        hand removing one of them is an edit), its description.  The name has
+        its own record (:attr:`BUILD_NAME`).  A record a build kept before
+        (``members``: each by its leaf) is still read, by leaf
+        (:meth:`edited_by_hand`)."""
         return {
             "length": round(shot.end - shot.start, 3),
-            "members": sorted({ShotStore.member_key(n) for n in shot.objects}),
+            "member_names": sorted(set(ShotStore.member_names(shot.objects).values())),
             "description": shot.description or "",
         }
 
@@ -1600,12 +1905,23 @@ class ShotManifest(_ShotManifestInternal):
         if record is None:
             return False
         current = self._build_record(shot)
+        field = "member_names"
+        key = ShotStore.member_key
+        if field not in record:  # an older build's record: its members by leaf
+            del current[field]
+            field = "members"
+            current[field] = sorted({key(n) for n in shot.objects})
         tagged = set(meta.get(ShotStore.SYSTEM_MEMBERS) or ())
         if tagged:
-            built = set(record.get("members") or ())
-            current["members"] = [
-                k for k in current["members"] if k not in tagged or k in built
-            ]
+            # The system's additions are tagged by leaf: a name of a tagged leaf
+            # is read as that leaf on both sides, and one the build never had
+            # is the system's.
+            def fold(names):
+                return {key(n) if key(n) in tagged else n for n in names}
+
+            built = fold(record.get(field) or ())
+            record = dict(record, **{field: sorted(built)})
+            current[field] = sorted(n for n in fold(current[field]) if n in built or n not in tagged)
         return record != current
 
     def _built_metadata(
@@ -1616,8 +1932,8 @@ class ShotManifest(_ShotManifestInternal):
         pass-through columns) and the name it gives the shot
         (:attr:`BUILD_NAME`) -- a first build's and an insert's alike."""
         if meta is None:
-            meta = self._step_metadata(
-                step, pass_through=getattr(step, "_pass_through", None)
+            meta = self._with_modes(
+                self._step_metadata(step, pass_through=getattr(step, "_pass_through", None))
             )
         return {**meta, self.BUILD_NAME: step.shot_name}
 
@@ -1626,12 +1942,26 @@ class ShotManifest(_ShotManifestInternal):
         and not asked to rebuild edited shots (2026-10-07: "make sure that
         the manifest does not override edited shots on re-build by
         default")."""
-        return shot.locked or (not self.rebuild_edited and self.edited_by_hand(shot))
+        return shot.locked or (not self._rebuilds(shot) and self.edited_by_hand(shot))
+
+    def _in_scope(self, shot) -> bool:
+        """Whether a build reaches *shot* at all: any shot, or -- in one
+        scoped to steps (``sync(only=...)``) -- a shot bound to one of them
+        (``metadata["step"]``, which every build writes)."""
+        return self._only is None or (shot.metadata or {}).get("step") in self._only
+
+    def _rebuilds(self, shot) -> bool:
+        """Whether a build rebuilds *shot* though a hand edited it: every such
+        shot (``rebuild_edited``), or the shots a scoped build was asked for
+        (:meth:`_in_scope`)."""
+        return self.rebuild_edited or (self._only is not None and self._in_scope(shot))
 
     def _behavior_shots(self) -> list:
-        """The shots a build's behavior pass reaches: every one it does not
-        keep (:meth:`_kept`)."""
-        return [s for s in self.store.sorted_shots() if not self._kept(s)]
+        """The shots a build's behavior pass reaches: every one in its scope
+        (:meth:`_in_scope`) that it does not keep (:meth:`_kept`)."""
+        return [
+            s for s in self.store.sorted_shots() if self._in_scope(s) and not self._kept(s)
+        ]
 
     def _record_build(self, shot_ids: Iterable[int]) -> None:
         """Write :attr:`BUILT` on each of *shot_ids*, as the build left it."""
@@ -1657,7 +1987,7 @@ class ShotManifest(_ShotManifestInternal):
             return None
         built = (existing.metadata or {}).get(self.BUILD_NAME)
         if not step.name and existing.name != built:
-            if built is None or not self.rebuild_edited:
+            if built is None or not self._rebuilds(existing):
                 return None
         return target
 
@@ -1682,13 +2012,15 @@ class ShotManifest(_ShotManifestInternal):
         """Commit a build plan to the store in a single pass.
 
         Applies removals first, then creates/patches in plan order.
-        All positional data comes from the plan -- no re-reading of
-        the store is needed.
+        All positional data comes from the plan; a shot it grew grows
+        through :meth:`_sequencer` (``resize_shot_bounds``), so the shots
+        after it move with their keys and audio.
 
         Returns:
             Dict mapping ``step_id`` -> action string.
         """
         actions: Dict[str, str] = {}
+        sequencer = None  # made on a grow's first use (:meth:`_sequencer`)
 
         # Coalesce per-shot mutations into a single flush/save and a
         # single BatchComplete event for UI listeners.
@@ -1727,19 +2059,37 @@ class ShotManifest(_ShotManifestInternal):
                     )
                     for n in obj_names:
                         self.store.set_object_pinned(n)
+                    self._settle_takes(ps.step, self.store.shot_by_name(ps.step.shot_name))
                     actions[ps.step.step_id] = "created"
 
                 elif ps.action in ("locked", "kept", "skipped", "patched"):
                     # All writes go through update_shot so the store is
                     # dirtied/notified (direct attribute writes are
                     # silently lost on save).  Positions are absolute —
-                    # the plan already computed final positions for every
-                    # shot, so no ripple pass is needed here.
+                    # the plan computed them; a grow's ripple (below) has
+                    # already moved the shots after it there, keys and all.
                     existing = (
                         self.store.shot_by_id(ps.existing_shot_id)
                         if ps.existing_shot_id is not None
                         else None
                     )
+                    if existing is not None and ps.ripple_delta > 0:
+                        # A grow is the sequencer's edge drag: the shots after
+                        # it move with their keys and audio (bounds alone left
+                        # them off their animation), so each one this ripple
+                        # moves stands where the plan put it.
+                        if sequencer is None:
+                            sequencer = self._sequencer()
+                        # The room a grow adds is the narration's: a take that was the whole
+                        # shot stays where the shot ended, on its animation.
+                        self._pin_whole_takes(ps.step, existing)
+                        sequencer.resize_shot_bounds(
+                            existing.shot_id, existing.start, existing.start + (ps.end - ps.start)
+                        )
+                        # The keys moved: what this cycle read of them is
+                        # stale, and a member read there looked unanimated.
+                        self._animated_transforms = None
+                        self._curve_data = None
                     if existing is not None:
                         # Every action repositions if an upstream ripple
                         # displaced the shot; locked and kept shots are
@@ -1762,11 +2112,8 @@ class ShotManifest(_ShotManifestInternal):
                             csv_objs = {
                                 o.name for o in ps.step.objects if o.kind != "audio"
                             }
-                            key = ShotStore.member_key
-                            csv_keys = {key(n) for n in csv_objs}
-                            scene_objs = {
-                                n for n in ps.objects if key(n) not in csv_keys
-                            }
+                            named = self._pairs(csv_objs, ps.objects)
+                            scene_objs = set(ps.objects) - {m for _n, m in named}
                             if scene_objs:
                                 scene_objs = set(
                                     self._filter_to_animated(
@@ -1784,6 +2131,8 @@ class ShotManifest(_ShotManifestInternal):
                             self.store.update_shot(existing.shot_id, **kwargs)
                         for n in csv_resolved:
                             self.store.set_object_pinned(n)
+                        if ps.action == "patched":
+                            self._settle_takes(ps.step, existing)
 
                     actions[ps.step.step_id] = ps.action
 
@@ -1818,14 +2167,14 @@ class ShotManifest(_ShotManifestInternal):
         empty -- its range would be a guess.  Members the scene no longer
         holds (:meth:`_object_exists`) and non-assets
         (:meth:`_is_asset_candidate`: cameras, lights, ...) are left out.
-        Names are member keys -- the leaf, namespace dropped -- as a doc
-        writes them, added in place with ``origin="shot"`` and no behaviors.
+        Names are as a doc writes them (``ShotStore.member_names``: the leaf,
+        namespace dropped, or a path's tail where two share it), added in place
+        with ``origin="shot"`` and no behaviors.
 
         Returns:
             ``{step_id: [names added]}`` for every step that was filled.
         """
         pairing = self.pair(steps)
-        key = ShotStore.member_key
         self._animated_transforms = None  # one discovery cycle per call
         self._curve_data = None
         filled: Dict[str, List[str]] = {}
@@ -1836,14 +2185,9 @@ class ShotManifest(_ShotManifestInternal):
             if shot is None:
                 continue
             members = [n for n in shot.objects if self._object_exists(n)]
-            animated = self._discover_scene_objects(
-                shot.start, shot.end, {key(n) for n in members}
-            )
-            names = list(
-                dict.fromkeys(
-                    key(n) for n in members + animated if self._is_asset_candidate(n)
-                )
-            )
+            animated = self._discover_scene_objects(shot.start, shot.end, set(members))
+            named = ShotStore.member_names(members + animated)  # told apart among all it holds
+            names = list(dict.fromkeys(named[str(n)] for n in members + animated if self._is_asset_candidate(n)))
             if not names:
                 continue
             step.objects.extend(BuilderObject(name=n, origin="shot") for n in names)
@@ -1897,6 +2241,7 @@ class ShotManifest(_ShotManifestInternal):
 
         if audio_exists_fn is None:
             audio_exists_fn = self._audio_exists
+        self._settle_modes(steps)
 
         # Invalidate per-assess caches
         self._animated_transforms = None
@@ -1919,7 +2264,7 @@ class ShotManifest(_ShotManifestInternal):
                 return None
 
         pairing = self.pair(steps)
-        key = ShotStore.member_key
+        pairs = self._pairs
         from pythontk.core_utils.engines.shots.manifest.behaviors import Behaviors
 
         known = set(Behaviors.list_behaviors())
@@ -1960,18 +2305,30 @@ class ShotManifest(_ShotManifestInternal):
                         built=True,
                         objects=obj_statuses,
                         locked=True,
+                        sheet=step.sheet_issues(),
+                        celled=step.celled,
                     )
                 )
                 continue
 
-            members = {key(n) for n in shot.objects} if built else set()
+            members = set(shot.objects) if built else set()  # what a scene discovery leaves out: names, never leaves
             dropped = dropped_by_step.get(shot.shot_id, []) if built else []
             obj_statuses = []
+            listed_nodes: List[Any] = []  # the scene's own name for each object the step lists
             for obj in step.objects:
                 if obj.kind == "audio":
+                    if not built and not step.animated:
+                        continue  # no shot to hold the clip: its narration plays where the task runs, as its step does
                     exists = audio_exists_fn(obj.name)
                     broken = []
-                    if not exists:
+                    wanted = [b for b in obj.behaviors if b not in off]
+                    if not exists and obj.behaviors and not wanted:
+                        status = "valid"  # every behavior of the clip is Off: not reported
+                    elif not exists and wanted and obj.source_path and os.path.isfile(obj.source_path):
+                        # Its file is there and a build keys it: the build's to make, not a person's.
+                        broken = [b for b in wanted if b not in marked]
+                        status = "missing_behavior" if broken else "valid"
+                    elif not exists:
                         status = "missing_object"
                     elif built and obj.behaviors:
                         broken = [
@@ -1999,15 +2356,18 @@ class ShotManifest(_ShotManifestInternal):
                     continue
                 node, reason = resolve(obj.name)
                 exists = reason == "found"
+                if exists:
+                    listed_nodes.append(node)
                 key_range = None
                 unknown = [b for b in obj.behaviors if b not in known]
                 broken = list(unknown)
                 stale: List[str] = []
+                conflicts: List[str] = []
                 if reason == "missing":
                     status = "missing_object"
                 elif reason == "ambiguous":
                     status = "ambiguous_object"
-                elif built and key(node) not in members:
+                elif built and node not in shot.objects and not pairs([obj.name], shot.objects):
                     status = "not_in_shot"
                 elif built and obj.behaviors:
                     # Check each declared behavior individually, at the anchor
@@ -2084,6 +2444,8 @@ class ShotManifest(_ShotManifestInternal):
                         broken_behaviors=broken,
                         key_range=key_range,
                         stale_behaviors=stale,
+                        unknown_behaviors=unknown,
+                        conflict_behaviors=conflicts,
                     )
                 )
 
@@ -2092,8 +2454,9 @@ class ShotManifest(_ShotManifestInternal):
             # (the sequencer's own discovery maintains membership).
             additional = []
             if shot is not None:
-                doc_keys = {key(o.name) for o in step.objects}
-                stored_extra = [n for n in shot.objects if key(n) not in doc_keys]
+                doc_names = {o.name for o in step.objects}
+                listed_members = {m for _n, m in pairs([o.name for o in step.objects], shot.objects)}
+                stored_extra = [n for n in shot.objects if n not in listed_members]
                 # Filter stored extras to only those with actual motion
                 # (removes flat-key objects from previous builds).
                 if stored_extra:
@@ -2106,9 +2469,13 @@ class ShotManifest(_ShotManifestInternal):
                 if not skip_scene_discovery:
                     additional.extend(
                         self._discover_scene_objects(
-                            shot.start, shot.end, doc_keys | members
+                            shot.start, shot.end, doc_names | members
                         )
                     )
+                # What moves inside an object the step lists is that object (a group's own
+                # node, a part of it): listed, by the step naming what holds it.
+                tops = [str(node) + "|" for node in listed_nodes]
+                additional = [n for n in additional if not any(str(n).startswith(top) for top in tops)]
 
             # The unused tail: what Trim Trailing Space would cut.
             shrinkable = 0.0
@@ -2129,6 +2496,9 @@ class ShotManifest(_ShotManifestInternal):
                     dropped_behaviors=[list(pair) for pair in dropped],
                     edited=edited,
                     updates=self._updates(shot, step) if built and not edited else [],
+                    animated=getattr(step, "animated", True),
+                    sheet=step.sheet_issues(),
+                    celled=step.celled,
                 )
             )
         return results
@@ -2145,13 +2515,194 @@ class ShotManifest(_ShotManifestInternal):
         if (shot.description or "") != (step.display_text or ""):
             updates.append("description")
         if "csv_objects" in (shot.metadata or {}):
-            key = ShotStore.member_key
             objs, audio = self._recorded_doc(shot)
-            listed = {key(o.name) for o in step.objects if o.kind != "audio"}
+            listed = [o.name for o in step.objects if o.kind != "audio"]
             clips = {o.name for o in step.objects if o.kind == "audio"}
-            if any(key(n) not in listed for n in objs) or audio != clips:
+            kept = {n for _d, n in self._pairs(listed, objs)}
+            if set(objs) - kept or audio != clips:
                 updates.append("objects")
+        if self._takes_pending(step, shot):
+            updates.append("takes")
         return updates
+
+    # ---- takes (what a step's rows play, inside its shot) ------------------
+
+    def _planned_takes(
+        self, step: BuilderStep, shot, bounds: Optional[Tuple[float, float]] = None
+    ) -> Optional[List[Tuple[str, Optional[float], Optional[float]]]]:
+        """The takes a build leaves on *shot*, *step*'s: ``(name, start, end)``
+        in row order, in the timeline's frames; ``None`` where the sheet names
+        no takes (the shot is left as it is).
+
+        A take with a span keeps it: a person placed it, or a build before
+        this one did.  The others are first guesses, for a person to move: a
+        step's only take is the whole shot (no span, so it follows the shot);
+        several share the room after the last placed take, in row order, or
+        the whole shot where that is too little.  A take the step no longer
+        names goes.
+
+        Parameters:
+            step: The step.
+            shot: Its shot.
+            bounds: The shot's ``(start, end)`` as a plan leaves them; default
+                as it stands.
+        """
+        if step.takes is None:
+            return None
+        start, end = bounds if bounds is not None else (shot.start, shot.end)
+        moved = start - shot.start
+        placed = {
+            record["name"]: (shot.start + record["start"] + moved, shot.start + record["end"] + moved)
+            for record in ShotStore.take_records(shot) or ()
+            if record.get("start") is not None and record.get("end") is not None
+        }
+        loose = [name for name in step.takes if name not in placed]
+        if loose and len(step.takes) == 1:
+            return [(loose[0], None, None)]
+        spans: Dict[str, Tuple[Optional[float], Optional[float]]] = {
+            name: placed[name] for name in step.takes if name in placed
+        }
+        if loose:
+            room_start = max([span[1] for span in spans.values()], default=start)
+            if end - room_start < len(loose):
+                room_start = start
+            each = (end - room_start) / len(loose)
+            for n, name in enumerate(loose):
+                lo = self.store.snap(room_start + n * each)
+                hi = end if n == len(loose) - 1 else self.store.snap(room_start + (n + 1) * each)
+                spans[name] = (lo, hi) if hi - lo >= 1 else (None, None)  # no room yet: the whole shot
+        return [(name,) + spans[name] for name in step.takes]
+
+    def _takes_pending(
+        self, step: BuilderStep, shot, bounds: Optional[Tuple[float, float]] = None
+    ) -> bool:
+        """Whether a build would change the takes *shot* holds for *step*
+        (:meth:`_planned_takes`)."""
+        planned = self._planned_takes(step, shot, bounds)
+        if planned is None:
+            return False
+        start = bounds[0] if bounds is not None else shot.start
+        records = ShotStore.take_records(shot)
+        if records is None:
+            return True
+        held = [
+            (
+                record["name"],
+                None if record.get("start") is None else start + record["start"],
+                None if record.get("end") is None else start + record["end"],
+            )
+            for record in records
+        ]
+        return held != planned
+
+    def _pin_whole_takes(self, step: BuilderStep, shot) -> None:
+        """Give each take of *shot* that is the whole shot (no span: a step's
+        only take, as a build first records it; a shot of a sheet that names
+        takes and has recorded none yet) the span the shot has now, before a
+        build grows the shot for its narration: the room it adds is no part
+        of what the take plays."""
+        if not step.takes or shot.end - shot.start < 1:
+            return
+        records = ShotStore.take_records(shot)
+        if records is None:
+            if len(step.takes) != 1:
+                return  # several, none placed yet: _settle_takes shares the shot between them
+            whole = [(step.takes[0], shot.start, shot.end)]
+        else:
+            held = {name: (start, end) for name, start, end in self.store.takes_of(shot) or ()}
+            if all(r.get("start") is not None for r in records):
+                return
+            whole = [(r["name"],) + held[r["name"]] for r in records]
+        try:
+            self.store.set_takes(shot.shot_id, whole)
+        except ValueError as exc:
+            log.warning("Step %s: its take is not kept on its animation: %s", step.step_id, exc)
+
+    def _settle_takes(self, step: BuilderStep, shot) -> None:
+        """Record on *shot* the takes *step*'s rows play (:meth:`_planned_takes`).
+        A take the store refuses (its name is another shot's or take's) is
+        logged and the shot's takes are left as they are."""
+        if shot is None:
+            return
+        planned = self._planned_takes(step, shot)
+        if planned is None:
+            return
+        try:
+            self.store.set_takes(shot.shot_id, planned)
+        except ValueError as exc:
+            log.warning("Step %s: its takes are not recorded: %s", step.step_id, exc)
+
+    def join_takes(self, steps: List[BuilderStep]) -> Dict[str, List[str]]:
+        """Join the takes that are shots of their own into their step's shot.
+
+        A scene made before a shot was its step's has each take cut as a shot
+        (a step's shot split by hand and named ``A01_1``, ``A01_2``).  For
+        each step whose takes :meth:`pair` finds so, the step's shot becomes
+        the one shot, named for the step and spanning them all, and each
+        joined shot's range is recorded as the take of its name
+        (``ShotStore.TAKES``).  Bounds and records only: no key moves.  Shots
+        with another shot between them, or a locked one among them, are left
+        and said.  It is a migration of the scene's structure, not a rebuild,
+        so it runs on shots edited by hand too (``edited_by_hand``: what a
+        hand made of each is kept, its frames as the take of its name, its
+        members in the one shot); a lock is what keeps a shot out of it.
+        Wrap the call in ``store.scene_edit`` for one undo step (:meth:`sync`
+        makes it).
+
+        Returns:
+            ``{step_id: [take, ...]}`` for every step joined.
+        """
+        pairing = self.pair(steps)
+        timeline = self.store.sorted_shots()
+        by_name = {shot.name: shot for shot in timeline}
+        joined: Dict[str, List[str]] = {}
+        for step in steps:
+            own = pairing.shots.get(step.step_id)
+            if own is None or not step.takes:
+                continue
+            parts = [
+                by_name[name]
+                for name in step.takes
+                if name in by_name
+                and (by_name[name] is own or pairing.links.get(by_name[name].shot_id) == step.step_id)
+            ]
+            others = [shot for shot in parts if shot is not own]
+            if not others and own.name == step.shot_name:
+                continue  # its takes are inside its shot already
+            group = sorted({shot.shot_id: shot for shot in [own] + parts}.values(), key=lambda s: s.start)
+            lo, hi = group[0].start, max(shot.end for shot in group)
+            ids = {shot.shot_id for shot in group}
+            between = [s.name for s in timeline if s.shot_id not in ids and lo <= s.start < hi]
+            locked = [s.name for s in group if s.locked]
+            if between or locked:
+                log.warning(
+                    "Step %s: its takes' shots (%s) are not joined into one: %s. Join them by hand, "
+                    "or remove what stands between them.",
+                    step.step_id,
+                    ", ".join(shot.name for shot in group),
+                    "%s lies between them" % ", ".join(between) if between else "%s is locked" % ", ".join(locked),
+                )
+                continue
+            spans = [(shot.name, shot.start, shot.end) for shot in parts]
+            members = sorted({name for shot in group for name in shot.objects})
+            for shot in group:
+                if shot is not own:
+                    self.store.remove_shot(shot.shot_id)
+            meta = dict(own.metadata or {})
+            meta["step"] = step.step_id
+            kwargs: Dict[str, Any] = {"start": lo, "end": hi, "objects": members, "metadata": meta}
+            if own.name != step.shot_name and not self.store.name_error(step.shot_name, own.shot_id):
+                kwargs["name"] = step.shot_name
+                meta[self.BUILD_NAME] = step.shot_name
+            self.store.update_shot(own.shot_id, **kwargs)
+            try:
+                self.store.set_takes(own.shot_id, spans)
+            except ValueError as exc:
+                log.warning("Step %s: its joined takes are not recorded: %s", step.step_id, exc)
+                continue
+            joined[step.step_id] = [name for name, _start, _end in spans]
+            log.info("Step %s: joined %s into its one shot.", step.step_id, ", ".join(joined[step.step_id]))
+        return joined
 
     @staticmethod
     def _recorded_doc(shot) -> Tuple[Set[str], Set[str]]:
@@ -2226,7 +2777,7 @@ class ShotManifest(_ShotManifestInternal):
         """
         steps = ManifestModel.parse_csv(filepath, columns, post_process=post_process)
         st = store or ShotStore.active()
-        builder = cls(st)
+        builder = cls(st, source=filepath)
         return builder, steps
 
     @staticmethod

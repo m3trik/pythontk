@@ -1612,15 +1612,15 @@ class _StubBridge(HandoffBridge):
         return Payload(primary=path)
 
 
-def _sidecar(sections):
-    """An older host's envelope, as `MeshConvert.build_scene_sidecar` shapes
-    it: its sections, and the GLB handoff its source makes.
+def _sidecar(sections, source=None):
+    """An older host's envelope, as it shipped one: its sections, and the
+    GLB handoff its source makes.
 
     Deliverer tests build their fixtures through this rather than as bare
     section maps, so a drift between what the producer wraps and what the
     deliverer unwraps fails here instead of only in a live DCC.
     """
-    source = {"application": "test", "version": "0"}
+    source = source or {"application": "test", "version": "0"}
     return {
         "version": 2,
         "source": source,
@@ -1659,26 +1659,20 @@ class _StubPreviewBridge(PreviewBridge):
 
 
 class _SidecarPreviewBridge(_StubPreviewBridge):
-    """A released host's producer (mayatk 0.27.1 / blendertk 0.19.2), call
-    for call: unless the push switched ``SCENE_SIDECAR`` off, it hands its
-    scene read to the bridge's ``_attach_sidecar``, which builds the retired
-    envelope -- so the producer -> deliverer pair is tested end to end the
-    way an old host drives it, through the one schema owner rather than a
-    hand-built dict. Every push warns.
+    """A producer attaching an older host's envelope to its payload
+    (``Payload.extras["scene_sidecar"]``), so the producer -> deliverer pair
+    is tested end to end with one.
     """
 
     sections = {"emissive": {"m": {"color": [1, 0, 0]}}}
 
     def _produce(self, objects, request):
         payload = super()._produce(objects, request)
-        if payload is None or not request.params.get("SCENE_SIDECAR", True):
-            return payload
-        return self._attach_sidecar(
-            payload,
-            lambda: self.sections,
-            source={"application": "stub", "version": "0"},
-            request=request,
-        )
+        if payload is not None:
+            payload.extras["scene_sidecar"] = _sidecar(
+                self.sections, {"application": "stub", "version": "0"}
+            )
+        return payload
 
 
 class _StartBridge(_StubPreviewBridge):
@@ -2776,36 +2770,6 @@ class PreviewDelivererTestCase(unittest.TestCase):
                 )
         applied.assert_not_called()
 
-    def test_summary_separates_off_from_nothing_to_carry(self):
-        """Both render the same unlit preview; the report must tell them apart.
-        (The retired line, for an older host's envelope.)"""
-        for result, said in (
-            ({"sidecar_requested": True, "sidecar": {}}, "nothing to carry"),
-            (
-                {"sidecar_requested": True, "sidecar": {"emissive": "2 of 3"}},
-                "emissive 2 of 3",
-            ),
-        ):
-            with self.subTest(said=said), self.assertWarns(DeprecationWarning):
-                self.assertIn(said, PreviewBridge.sidecar_summary(result))
-
-    def test_the_retired_line_without_an_envelope_is_the_materials_line(self):
-        """Bug: the released WebXR panel (extapps) prints ``sidecar_summary``
-        after every push, and no current host attaches an envelope -- so every
-        push read "Scene sidecar off - showing what the FBX carried", naming a
-        switch the preview no longer has. Fixed: 2026-10-24 -- with no
-        envelope offered it is the materials line, which says how the
-        preview's materials were stated."""
-        for result in (
-            {"sidecar_requested": False, "materials": [{"material": "a"}]},
-            {"materials": []},
-            None,
-        ):
-            with self.subTest(result=result), self.assertWarns(DeprecationWarning):
-                line = PreviewBridge.sidecar_summary(result)
-            self.assertEqual(line, PreviewBridge.materials_summary(result))
-            self.assertNotIn("sidecar off", line)
-
     def test_the_materials_line_says_how_the_preview_stated_them(self):
         """Read off the result alone: how many materials the file stated, the
         maps it named that were not found -- the one miss a render shows as
@@ -2846,72 +2810,6 @@ class PreviewDelivererTestCase(unittest.TestCase):
         self.assertFalse(off["sidecar_requested"])
         self.assertTrue(on["sidecar_requested"])
 
-    def test_requested_but_empty_scene_reports_nothing_to_carry_not_off(self):
-        """The panel must not claim "off" while the user's checkbox is on.
-
-        An unlit, untextured scene produces no sections. Before the fix the
-        producer then attached nothing at all, `sidecar_requested` read False,
-        and the summary line was "Scene sidecar off - showing what the FBX
-        carried" — the exact misreport `sidecar_summary` exists to prevent.
-        """
-        bridge = _SidecarPreviewBridge()
-        bridge.sections = {}
-        bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
-        target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.fbx_to_glb"
-        with (
-            unittest.mock.patch(target, side_effect=self._fake_convert),
-            self.assertWarns(DeprecationWarning),
-        ):
-            result = bridge.send()
-        self.assertTrue(result["sidecar_requested"])
-        self.assertEqual(result["sidecar"], {})
-        with self.assertWarns(DeprecationWarning):
-            self.assertIn("nothing to carry", PreviewBridge.sidecar_summary(result))
-
-    def test_a_released_hosts_push_still_publishes(self):
-        """Bug: mayatk 0.27.1 and blendertk 0.19.2 hand their scene read to
-        ``PreviewBridge._attach_sidecar``, which this release had deleted --
-        their producer raised AttributeError, the skeleton logged "Failed to
-        produce the export payload", and no push from a released host
-        published, though both hosts' floors admit this pythontk. Fixed:
-        2026-10-24 -- the method stays, deprecated, for one more minor, and
-        builds the envelope as before so the push publishes what it did."""
-        bridge = _SidecarPreviewBridge()
-        bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
-        target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.fbx_to_glb"
-        with (
-            unittest.mock.patch(target, side_effect=self._fake_convert),
-            self.assertWarns(DeprecationWarning) as caught,
-        ):
-            result = bridge.push(objects=["stub_object"])
-        self.assertIsNotNone(result, "the released host's push published nothing")
-        self.assertEqual(self.server.version, 1)
-        self.assertTrue(result["sidecar_requested"])
-        self.assertTrue(
-            any("_attach_sidecar" in str(w.message) for w in caught.warnings),
-            [str(w.message) for w in caught.warnings],
-        )
-
-    def test_a_released_hosts_sidecar_switch_still_reaches_it(self):
-        """The released panel passes ``SCENE_SIDECAR`` on every push, and a
-        released host's producer is its only reader: the keyword warns, but
-        still travels in the export bag, so that host's switch keeps working
-        for the one minor ``_attach_sidecar`` survives."""
-        bridge = _SidecarPreviewBridge()
-        bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
-        target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.fbx_to_glb"
-        with (
-            unittest.mock.patch(target, side_effect=self._fake_convert),
-            self.assertWarns(DeprecationWarning) as caught,
-        ):
-            result = bridge.push(objects=["stub_object"], SCENE_SIDECAR=False)
-        self.assertIsNotNone(result)
-        self.assertFalse(result["sidecar_requested"])
-        self.assertTrue(
-            any("SCENE_SIDECAR" in str(w.message) for w in caught.warnings),
-            [str(w.message) for w in caught.warnings],
-        )
-
     def test_a_removed_push_keyword_is_dropped_with_one_warning(self):
         """Bug: ``push`` takes ``**params``, so ``texture_format=`` -- the
         keyword ``glb_options`` replaced, removed this release -- no longer
@@ -2927,22 +2825,34 @@ class PreviewDelivererTestCase(unittest.TestCase):
                 self.params_seen.append(dict(request.params))
                 return super()._produce(objects, request)
 
-        bridge = _Recording()
-        bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
         target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.fbx_to_glb"
-        with (
-            unittest.mock.patch.object(PreviewBridge, "_retired_announced", set()),
-            unittest.mock.patch(target, side_effect=self._fake_convert),
-            self.assertLogs(bridge.logger, level="WARNING") as logged,
+        # ``SCENE_SIDECAR``'s notice came due (2026-11-26): the switch of a
+        # sidecar the preview no longer has goes the same way.
+        for keyword, value, hint in (
+            ("texture_format", "KTX2", "texture_file_type"),
+            ("SCENE_SIDECAR", False, "materials and handoff"),
         ):
-            for _ in range(2):
-                bridge.push(objects=["stub_object"], texture_format="KTX2")
-        self.assertEqual(len(bridge.params_seen), 2)
-        for params in bridge.params_seen:
-            self.assertNotIn("texture_format", params)
-        said = [line for line in logged.output if "texture_format" in line]
-        self.assertEqual(len(said), 1, logged.output)
-        self.assertIn("texture_file_type", said[0])
+            with self.subTest(keyword=keyword):
+                bridge = _Recording()
+                bridge.params_seen = []
+                bridge.deliverer = PreviewDeliverer(
+                    server=self.server, open_browser=False
+                )
+                with (
+                    unittest.mock.patch.object(
+                        PreviewBridge, "_retired_announced", set()
+                    ),
+                    unittest.mock.patch(target, side_effect=self._fake_convert),
+                    self.assertLogs(bridge.logger, level="WARNING") as logged,
+                ):
+                    for _ in range(2):
+                        bridge.push(objects=["stub_object"], **{keyword: value})
+                self.assertEqual(len(bridge.params_seen), 2)
+                for params in bridge.params_seen:
+                    self.assertNotIn(keyword, params)
+                said = [line for line in logged.output if keyword in line]
+                self.assertEqual(len(said), 1, logged.output)
+                self.assertIn(hint, said[0])
 
     def test_the_envelopes_handoff_is_embedded_in_the_published_glb(self):
         """The published artifact is self-describing -- the handoff the
@@ -2954,10 +2864,7 @@ class PreviewDelivererTestCase(unittest.TestCase):
         bridge = _SidecarPreviewBridge()
         bridge.deliverer = PreviewDeliverer(server=self.server, open_browser=False)
         target = "pythontk.file_utils.mesh_convert._mesh_convert.MeshConvert.fbx_to_glb"
-        with (
-            unittest.mock.patch(target, side_effect=self._fake_convert),
-            self.assertWarns(DeprecationWarning),
-        ):
+        with unittest.mock.patch(target, side_effect=self._fake_convert):
             result = bridge.send()
         served = Path(self.server.root) / result["asset"]
         handoff = MeshConvert.read_glb_handoff(str(served))

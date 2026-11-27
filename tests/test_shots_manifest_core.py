@@ -20,6 +20,7 @@ _PKG_PARENT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PKG_PARENT not in sys.path:
     sys.path.insert(0, _PKG_PARENT)
 
+from pythontk.core_utils.engines.shots.shot_model import SHOT_STATUS_LEVELS
 from pythontk.core_utils.engines.shots.manifest.manifest_model import (
     ManifestModel,
     ColumnMap,
@@ -119,6 +120,142 @@ class TestManifestParse(unittest.TestCase):
         a01 = steps[0]
         self.assertIn("wing detail continuation", a01.description)
         self.assertEqual([o.name for o in a01.objects], ["aileron_geo", "wing_geo"])
+
+    def test_lines_keep_each_row_apart_in_sheet_order(self):
+        """``description`` joins the rows; ``lines`` keeps them, for a reader
+        acting on one row at a time (a row the joined text cannot split back)."""
+        path = _write_csv(
+            """SECTION A: T
+Step,Step Contents,Asset Names,Voice Support
+A01.),Highlight the door,door_geo,vo
+,,lid_geo,
+,Selecting the door triggers Door open Animation,,
+A02.),,,
+"""
+        )
+        try:
+            a01, a02 = ManifestModel.parse_csv(path)
+        finally:
+            os.remove(path)
+        self.assertEqual(
+            a01.lines,
+            ["Highlight the door", "Selecting the door triggers Door open Animation"],
+            "a blank cell is no line",
+        )
+        self.assertEqual(a01.description, " ".join(a01.lines))
+        self.assertEqual(a02.lines, [])
+
+    def test_rows_keep_each_rows_text_names_and_own_cells(self):
+        """``rows``: each row of a step with its own text, its own Asset Names and the
+        template's per-row cells (``row_pass``), for a reader binding a row's words
+        to that row's names alone."""
+        path = _write_csv(
+            """Step,Step Contents,Asset Names,Action,Animation Clip Names
+A01,Highlight the red door locks,RED_DOOR_LOCKS,,
+,Click the top lock to open it,"LOCK_UPPER
+KEYS",use,A01_1
+,,,,
+A02,Auto Advance,,,
+"""
+        )
+        col_map = ColumnMap.from_dict({"step_pattern": [r"^([A-Z]+_?\d+(?:\.\d+)?)$"],
+                                       "row_pass": {"action": ["Action"], "clip": ["Animation Clip Names"]}})
+        try:
+            a01, a02 = ManifestModel.parse_csv(path, col_map)
+        finally:
+            os.remove(path)
+        self.assertEqual(a01.rows, [
+            {"text": "Highlight the red door locks", "assets": ["RED_DOOR_LOCKS"], "action": "", "clip": ""},
+            {"text": "Click the top lock to open it", "assets": ["LOCK_UPPER", "KEYS"], "action": "use", "clip": "A01_1"},
+        ], "a row with nothing in it is no row")
+        self.assertEqual(a02.rows, [{"text": "Auto Advance", "assets": [], "action": "", "clip": ""}])
+
+    def test_the_headers_no_field_takes_are_named(self):
+        col_map = ColumnMap.from_dict({"row_pass": {"clip": ["Animation Clip Names"]}})
+        header = ["Step", "Step Contents", "Asset Names", "Narration", "Animation Clip Names", ""]
+        self.assertEqual(col_map.unmapped(header), ["Narration"])
+
+    def test_a_sheets_unmapped_columns_are_read_off_every_header_row(self):
+        path = _write_csv(
+            "SECTION A: Open\nStep,Step Contents,Asset Names,Remarks\nA01,Highlight the lid,LID,Hello\n"
+            "SECTION B: Close\nStep,Step Contents,Asset Names,Comments,Remarks,Narration\nB01,Highlight the lid,LID,,,\n"
+        )
+        try:
+            self.assertEqual(mapping_mod.Mapping.unmapped_columns(path, mapping_mod.Mapping.load_mapping("linear")),
+                             ["Remarks", "Comments"], "Narration is the Linear template's voice column")
+        finally:
+            os.remove(path)
+
+    def test_a_data_row_holding_a_step_id_alias_is_no_header(self):
+        """A data cell that happens to read as a step-ID alias ("Number": a
+        placard's number pad) is no header row: only a row the parser would
+        read as one is."""
+        path = _write_csv(
+            "Step,Step Contents,Asset Names\nA01,Highlight the lid,LID\n,Number,PAD\n"
+        )
+        try:
+            self.assertEqual(
+                mapping_mod.Mapping.unmapped_columns(path, mapping_mod.Mapping.load_mapping("interactive")), []
+            )
+        finally:
+            os.remove(path)
+
+    def test_the_format_templates_ship_a_starter_sheet_their_template_reads(self):
+        for name, first in (("linear", "A01"), ("interactive", "IN_01")):
+            with self.subTest(name=name):
+                sheet = mapping_mod.Mapping.starter_sheet(name)
+                steps = mapping_mod.Mapping.resolve(str(sheet), mapping_mod.Mapping.load_mapping(name))
+                self.assertEqual(steps[0].step_id, first)
+                self.assertEqual(mapping_mod.Mapping.unmapped_columns(str(sheet), mapping_mod.Mapping.load_mapping(name)), [])
+        self.assertIsNone(mapping_mod.Mapping.starter_sheet("default"), "the tolerant template reads any sheet")
+
+    def test_a_sheet_in_cells_says_which_template_reads_it(self):
+        """A panel read every sheet with its user's last template: the format's own starter, under
+        the tolerant default, stopped at "Column 'description' not found". A sheet written in cells
+        names its template by its header and its words. Added: 2026-11-25"""
+        for name in ("interactive", "linear"):
+            self.assertEqual(mapping_mod.Mapping.template_for(str(mapping_mod.Mapping.starter_sheet(name))), name)
+        # A word no template has (a typo) still reads as the template the rest of the sheet is written for.
+        typo = _write_csv("Step,Step Name,Voice,Action,Target,With,Clip,Label,To,Settings\n"
+                          "A01,Open,Open it.,,,,,,,\n,,,hilight,DOOR,,,,,\n,,,use,DOOR,,A01,,,\n")
+        sentences = _write_csv("Step,Step Contents,Asset Names\nA01,Highlight the door,DOOR\n")
+        own = _write_csv("Step,Step Name,Voice,Action,Target,Settings,Reviewer\nA01,Open,Open it.,,,,\n,,,highlight,DOOR,,\n")
+        try:
+            self.assertEqual(mapping_mod.Mapping.template_for(typo), "interactive")
+            self.assertIsNone(mapping_mod.Mapping.template_for(sentences), "a sheet of sentences names none")
+            self.assertEqual(mapping_mod.Mapping.template_for(own), "linear", "the smallest template that reads its cells")
+        finally:
+            for path in (typo, sentences, own):
+                os.remove(path)
+
+    def test_a_new_sheet_is_its_templates_starter_and_never_replaces_a_file(self):
+        """The starter was reached by a deep import alone: no operation started a sheet. Added: 2026-11-25"""
+        import tempfile
+
+        import pythontk as ptk
+
+        folder = tempfile.mkdtemp()
+        out = os.path.join(folder, "new", "door_service.csv")
+        planned = ptk.OpContext(dry_run=True)
+        mapping_mod.Mapping.new_sheet(out, ctx=planned)
+        self.assertFalse(os.path.exists(out), "a dry run plans it")
+        self.assertEqual([c.kind for c in planned.changes], ["write"])
+        made = mapping_mod.Mapping.new_sheet(out, "interactive")
+        with open(out, encoding="utf-8") as written, open(mapping_mod.Mapping.starter_sheet("interactive"), encoding="utf-8") as starter:
+            self.assertEqual(written.read(), starter.read())
+        self.assertEqual((made["sheet"], made["template"], made["columns"][:3]), (out, "interactive", ["Step", "Step Name", "Voice"]))
+        with self.assertRaises(FileExistsError):
+            mapping_mod.Mapping.new_sheet(out, "linear")
+        with self.assertRaises(ValueError) as refused:
+            mapping_mod.Mapping.new_sheet(os.path.join(folder, "other.csv"), "default")
+        self.assertIn("interactive, linear", str(refused.exception))
+
+    def test_pass_through_is_a_copy_of_the_steps_pass_through_columns(self):
+        step = ManifestModel.parse_csv(self.path)[0]
+        step._pass_through = {"hint": "the lid"}
+        seen = step.pass_through
+        seen["hint"] = "changed"
+        self.assertEqual(step.pass_through, {"hint": "the lid"})
 
     def test_behaviors_detected_from_description(self):
         steps = ManifestModel.parse_csv(self.path)
@@ -286,6 +423,24 @@ class TestBehaviorsFromText(unittest.TestCase):
         # Unknown items stay (spelled as a name) so Assess can flag them.
         self.assertEqual(cell("Wobble; fade_in"), ["wobble", "fade_in"])
         self.assertEqual(cell("  "), [])
+
+    def test_a_family_reads_as_one_behavior_with_a_suffix(self):
+        """User 2026-11-23: consolidate the manifest's behaviors, a suffix
+        saying how one is set. Added: 2026-11-24 -- a template's ``family``
+        and ``variant``: fade_in and fade_out read as one Fade, each keeping
+        its own name in saved data and deliveries."""
+        B = beh.Behaviors
+        self.assertEqual(B.label("fade_in"), "Fade · in")
+        self.assertEqual(B.label("fade_out"), "Fade · out")
+        self.assertEqual(B.label("set_clip"), "Set Clip", "no family: its own name")
+        self.assertEqual(B.label("wobble"), "Wobble", "no template: its own name")
+        self.assertEqual(B.family_of("fade_out"), "fade")
+        self.assertEqual(B.family_of("highlight"), "highlight")
+        self.assertEqual(
+            B.families(["highlight", "fade_out", "wobble", "fade_in"]),
+            {"highlight": ["highlight"], "fade": ["fade_out", "fade_in"], "wobble": ["wobble"]},
+        )
+        self.assertEqual(B.from_cell("Fade · out, Fade In"), ["fade_out", "fade_in"], "its label reads back")
 
     def test_shipped_templates_validate_with_their_phrases(self):
         for name in beh.Behaviors.list_behaviors():
@@ -549,8 +704,9 @@ class TestMapping(unittest.TestCase):
     def test_discover_builtins(self):
         names = mapping_mod.Mapping.discover()
         self.assertIn("default", names)
-        # One flexible built-in: layouts are its options, not sibling files.
-        self.assertEqual(names, ["default"])
+        # One template per production scenario (a sheet's layouts stay options of each, not
+        # sibling files): any sheet, linear animation, an interactive task.
+        self.assertEqual(names, ["default", "interactive", "linear"])
 
     def test_load_default(self):
         spec = mapping_mod.Mapping.load_mapping("default")
@@ -650,7 +806,7 @@ class TestMappingResolveRoundTrip(unittest.TestCase):
     CSV = (
         "SECTION A: INTRO\n"
         "Step,Step Contents,Asset Names,Voice Support\n"
-        "A01.),Aileron fades in,wing_L,Welcome to the course\n"
+        "A01.),Aileron fades in,wing_L,Welcome to the task\n"
         "A02.),Rudder appears,rudder,N/A\n"
     )
 
@@ -688,9 +844,101 @@ class TestMappingResolveRoundTrip(unittest.TestCase):
         self.assertFalse([o for o in steps[1].objects if o.kind == "audio"])  # N/A
 
 
+class TestAudioChain(unittest.TestCase):
+    """A step's audio found by a list of methods, the first that finds a file winning: the sheet's
+    Audio Files cell, a recording by prefix, then narration looked up by its words -- never spoken
+    while a sheet is read. Relative folders resolve against the base the caller names."""
+
+    CSV = (
+        "SECTION A: INTRO\n"
+        "Step,Step Contents,Asset Names,Voice Support,Audio Files\n"
+        "A01.),Aileron fades in,wing_L,Welcome to the task,take_a01.wav\n"
+        "A02.),Rudder appears,rudder,Open the panel,\n"
+        "A03.),Flap moves,flap,Check the flap,\n"
+        "A04.),Gear drops,gear,Lower the gear,\n"
+    )
+
+    def _sheet(self, d):
+        sheets = Path(d) / "exports"
+        sheets.mkdir()
+        p = sheets / "Sheet (3).csv"
+        p.write_text(self.CSV, encoding="utf-8")
+        return str(p)
+
+    def _audio(self, steps):
+        return {s.step_id: [(o.name, Path(o.source_path).name if o.source_path else "") for o in s.objects if o.kind == "audio"]
+                for s in steps}
+
+    def test_a_relative_folder_resolves_against_the_base_not_the_sheet(self):
+        with tempfile.TemporaryDirectory() as d:
+            sheet = self._sheet(d)
+            project = Path(d) / "project"
+            (project / "rec").mkdir(parents=True)
+            (project / "rec" / "A02_open.wav").write_bytes(b"RIFF")
+            mapping = mapping_mod.Mapping.load_mapping("default")
+            mapping["audio_resolve"] = {"method": "prefix", "directory": "rec"}
+            steps = mapping_mod.Mapping.resolve(sheet, mapping=mapping, base=str(project))
+        self.assertEqual(self._audio(steps)["A02"], [("A02_open", "A02_open.wav")])
+
+    def test_a_list_takes_the_first_method_that_finds_a_file(self):
+        from pythontk.audio_utils.narrator import Narrator
+
+        with tempfile.TemporaryDirectory() as d:
+            sheet = self._sheet(d)
+            project = Path(d) / "project"
+            for sub in ("rec", "narration"):
+                (project / sub).mkdir(parents=True)
+            (project / "rec" / "take_a01.wav").write_bytes(b"RIFF")
+            (project / "rec" / "A02_open.wav").write_bytes(b"RIFF")
+            narrator = Narrator(pronounce={"flap": "flap"})
+            (project / "narration" / (narrator.key("Check the flap") + ".wav")).write_bytes(b"RIFF")
+            mapping = mapping_mod.Mapping.load_mapping("default")
+            mapping["audio_resolve"] = [
+                {"method": "cell", "directory": "rec"},
+                {"method": "prefix", "directory": "rec"},
+                {"method": "narrate", "directory": "narration", "pronounce": {"flap": "flap"}},
+            ]
+            from pythontk.core_utils.engines.shots.manifest.mapping._spec import _MappingSpecInternal
+
+            self.assertEqual(_MappingSpecInternal.validate_audio_resolve(mapping["audio_resolve"]), [], "a list validates")
+            steps = mapping_mod.Mapping.resolve(sheet, mapping=mapping, base=str(project))
+            narrated = list((project / "narration").iterdir())
+        audio = self._audio(steps)
+        self.assertEqual(audio["A01"], [("take_a01", "take_a01.wav")], "the sheet's own cell first")
+        self.assertEqual(audio["A02"], [("A02_open", "A02_open.wav")], "then a recording by prefix")
+        self.assertEqual(audio["A03"], [("A03_CheckTheFlap", narrator.key("Check the flap") + ".wav")], "then narration")
+        self.assertEqual(audio["A04"], [("A04_LowerTheGear", "")],
+                         "nothing found: the first placeholder clip, so the step still gets one")
+        self.assertEqual(len(narrated), 1, "reading a sheet never speaks a line")
+
+    def test_a_cell_naming_a_missing_file_is_a_clip_with_no_source(self):
+        with tempfile.TemporaryDirectory() as d:
+            sheet = self._sheet(d)
+            mapping = mapping_mod.Mapping.load_mapping("default")
+            mapping["audio_resolve"] = {"method": "cell", "directory": "rec"}
+            steps = mapping_mod.Mapping.resolve(sheet, mapping=mapping, base=d)
+        self.assertEqual(self._audio(steps)["A01"], [("take_a01", "")])
+        self.assertEqual(self._audio(steps)["A02"], [], "an empty cell names nothing")
+
+
+class TestAudioMethodSettings(unittest.TestCase):
+    """A reader outside the mapping (the narrator) asks it for an audio
+    method's settings, instead of reaching into its internals.
+    Added: 2026-11-22"""
+
+    def test_a_methods_settings_come_with_their_paths_under_the_base(self):
+        mapping = {"audio_resolve": [{"method": "files"}, {"method": "narrate", "directory": "narration"}]}
+        Mapping = mapping_mod.Mapping
+        found = Mapping.audio_method(mapping, "narrate", base=os.path.join("C:" + os.sep, "task"))
+        self.assertEqual(found["directory"], os.path.join("C:" + os.sep, "task", "narration"))
+        self.assertEqual(Mapping.audio_method({"audio_resolve": {"method": "narrate"}}, "narrate")["method"], "narrate")
+        self.assertIsNone(Mapping.audio_method(mapping, "speak"))
+        self.assertIsNone(Mapping.audio_method({}, "narrate"))
+
+
 class TestSequenceDocMapping(unittest.TestCase):
-    """The default template's ``numbered`` step IDs read the interactive-
-    training sequence doc: ``IN_01`` / ``A01`` / ``B03.5`` step IDs, an
+    """The default template's ``numbered`` step IDs read an interactive
+    task's sequence doc: ``IN_01`` / ``A01`` / ``B03.5`` step IDs, an
     ``INTRO`` banner, a header repeated per section, multi-line voice cells,
     and a quiz block after the last step.  Its ``classic`` IDs (``A01.)``)
     parse none of them."""
@@ -699,7 +947,7 @@ class TestSequenceDocMapping(unittest.TestCase):
         "INTRO,,,,,,,\n"
         "Step,Step Name,Hint,Text On Placard,Voice Support,Step Contents,"
         "Asset Names,Frame Ranges\n"
-        "IN_01,Welcome,,,Welcome to the training.,User starts in the room.,,\n"
+        "IN_01,Welcome,,,Welcome to the task.,User starts in the room.,,\n"
         ",,,,,Auto Advance,,\n"
         "IN_02,Teleport 01,,,\"Open the machine.\n\nSelect 'Next'.\","
         "Destination circle fades in,,\n"
@@ -744,7 +992,7 @@ class TestSequenceDocMapping(unittest.TestCase):
     def test_contents_voice_name_and_objects(self):
         intro, teleport, _b03, branch = self._resolve()
         self.assertEqual(intro.description, "User starts in the room. Auto Advance")
-        self.assertEqual(intro.audio, "Welcome to the training.")
+        self.assertEqual(intro.audio, "Welcome to the task.")
         self.assertEqual(teleport.audio, "Open the machine.\n\nSelect 'Next'.")
         self.assertEqual(intro._pass_through.get("step_name"), "Welcome")
         self.assertEqual(
@@ -776,7 +1024,7 @@ class TestSequenceDocMapping(unittest.TestCase):
 
     def test_infer_options_reads_back_what_a_build_recorded(self):
         """A scene built before it kept its sheet's options: its shots'
-        ``csv_objects`` say how the sheet was read (SOL_REPLACE_ASSEMBLY:
+        ``csv_objects`` say how the sheet was read (a production scene:
         Object Case = upper), and the user's empty options read it otherwise.
         Added: 2026-10-12"""
         template = mapping_mod.Mapping.load_mapping("default")
@@ -930,7 +1178,7 @@ class TestTemplateOptions(unittest.TestCase):
                         "fill_missing_assets",
                     ],
                 ),
-                ("Shots", ["match"]),
+                ("Shots", ["match", "shots"]),
             ],
         )
         untitled = {
@@ -1417,6 +1665,17 @@ class TestRangeResolver(unittest.TestCase):
             "nothing placed: frame 1",
         )
 
+    def test_a_step_with_no_shot_takes_no_detected_region(self):
+        """Surplus regions are pruned to the steps that take one: a step
+        with no shot (``animated`` False) counts for none, so the animated
+        steps keep the major boundaries, not the small ones."""
+        steps = self._steps(3)
+        steps[1].animated = False
+        resolved = rr.RangeResolver.resolve_ranges(
+            steps, {}, [0.0, 1.0, 2.0, 100.0, 101.0], {}, 0.0, True, []
+        )
+        self.assertEqual([(r[0], r[1]) for r in resolved], [("A01", 0.0), ("A03", 100.0)])
+
     def test_prune_to_top_boundaries(self):
         # starts 0,1,2,100,101 -> largest gap before 100; keep 2 -> [0,100]
         self.assertEqual(
@@ -1552,6 +1811,83 @@ class TestStatusRollup(unittest.TestCase):
         )
         self.assertEqual(st.status, "behavior_conflict")
 
+    def test_a_hand_edited_step_is_marked_apart_from_a_locked_one(self):
+        """Edited-by-hand and locked shared one severity, so a panel drew both
+        with the lock's glyph and colour: two states, one mark.
+        Fixed: 2026-11-22
+        """
+        from pythontk.core_utils.engines.shots.shot_model import SHOT_STATUS_LEVELS
+
+        self.assertNotEqual(SHOT_STATUS_LEVELS["edited"], "locked")
+        self.assertNotIn(SHOT_STATUS_LEVELS["edited"], ("warn", "error"), "kept on purpose: no alarm")
+
+    def test_every_status_says_itself_in_a_few_words(self):
+        """A row says its cause without a hover: each status a panel shows has
+        a label of three words at most, beside its sentence (HELP).
+        Added: 2026-11-22
+        """
+        from pythontk.core_utils.engines.shots.shot_model import SHOT_STATUS_LEVELS
+
+        shown = set(StepStatus.HELP) | set(StepStatus.ROLLUP) | {
+            s for s, level in SHOT_STATUS_LEVELS.items() if level != "valid"
+        }
+        for status in sorted(shown):
+            label = StepStatus.LABELS.get(status, "")
+            self.assertTrue(label, status)
+            self.assertLessEqual(len(label.split()), 3, f"{status}: {label}")
+
+    def test_a_steps_label_names_its_cause_and_how_many(self):
+        """Added: 2026-11-22"""
+        st = StepStatus(
+            step_id="A01",
+            built=True,
+            objects=[
+                ObjectStatus("a", False, "missing_object"),
+                ObjectStatus("b", False, "missing_object"),
+                ObjectStatus("c", True, "missing_behavior"),
+            ],
+        )
+        self.assertEqual(st.label, f"2 {StepStatus.LABELS['missing_object']}")
+        self.assertEqual(StepStatus(step_id="A02", built=False).label, StepStatus.LABELS["missing_shot"])
+        self.assertEqual(
+            StepStatus(step_id="A03", built=True, objects=[ObjectStatus("a", True, "valid")]).label, ""
+        )
+        renamed = StepStatus(
+            step_id="A04", built=True, objects=[ObjectStatus("a", True, "valid")], updates=["name"]
+        )
+        self.assertEqual(renamed.label, StepStatus.LABELS["shot_update"], "valid, yet Build changes it")
+
+    def test_a_plan_counts_what_a_build_does_keeps_and_cannot_do(self):
+        """What Build would do with assessed steps, before it is pressed: the
+        shots it creates, those it updates, those it keeps (edited by hand),
+        those it skips (locked), and the steps waiting on a person (an object
+        no Build can supply). Added: 2026-11-22
+        """
+        ok = ObjectStatus("a", True, "valid")
+        results = [
+            StepStatus(step_id="A01", built=False, objects=[ok]),
+            StepStatus(step_id="A02", built=True, objects=[ObjectStatus("b", True, "missing_behavior")]),
+            StepStatus(step_id="A03", built=True, edited=True, objects=[ok]),
+            StepStatus(step_id="A04", built=True, locked=True, objects=[ok]),
+            StepStatus(step_id="A05", built=True, objects=[ObjectStatus("c", False, "missing_object")]),
+            StepStatus(
+                step_id="A06",
+                built=True,
+                objects=[ObjectStatus("d", False, "missing_object"), ObjectStatus("e", True, "not_in_shot")],
+            ),
+            StepStatus(step_id="A07", built=True, objects=[ok]),
+        ]
+        plan = StepStatus.plan(results)
+        self.assertEqual(
+            plan,
+            {"create": 1, "update": 2, "keep": 1, "skip": 1, "needs_you": 2, "in_sync": 1, "no_shot": 0},
+        )
+        self.assertEqual(plan["create"] + plan["update"], sum(1 for r in results if r.needs_build))
+        text = StepStatus.plan_text(plan)
+        for part in ("1 to create", "2 to update", "1 kept", "1 locked", "2 need you"):
+            self.assertIn(part, text)
+        self.assertEqual(StepStatus.plan_text(StepStatus.plan([results[-1]])), "Nothing to build: 1 in sync.")
+
 
 class TestManifestEngine(unittest.TestCase):
     """The pure ShotManifest planner + commit against a real ShotStore."""
@@ -1648,6 +1984,108 @@ class TestManifestEngine(unittest.TestCase):
         measured["v"] = 300.0
         mani.sync(step, initial_shot_length=50)
         self.assertAlmostEqual(store.sorted_shots()[0].duration, 300.0)
+
+    def test_a_shot_grown_after_a_part_frame_grow_upstream_still_holds_its_clip(self):
+        # A production sheet: an earlier shot grew by part of a frame, the store
+        # snapped each bound on its own, and a later shot grown for its
+        # 138.51-frame narration came out 138 long, its clip's OFF key (start
+        # + 139: the key writer rounds as shot bounds do) past its end.
+        lengths = {"vo_a": 100.0, "vo_b": 138.0}
+
+        class AudioMani(ShotManifest):
+            def _measure_audio(self, obj):
+                return lengths[obj.name]
+
+        store = ShotStore()
+        mani = AudioMani(store)
+        steps = [
+            BuilderStep("A01", "A", "t", "", [BuilderObject("vo_a", kind="audio", source_path="a.wav")]),
+            BuilderStep("B01", "B", "t", "", [BuilderObject("vo_b", kind="audio", source_path="b.wav")]),
+        ]
+        mani.sync(steps, initial_shot_length=50)
+        b_start = store.shot_by_name("B01").start
+        lengths.update(vo_a=100.6, vo_b=138.51)
+        mani.sync(steps, initial_shot_length=50)
+        a, b = store.shot_by_name("A01"), store.shot_by_name("B01")
+        self.assertEqual(a.end - a.start, 101.0)
+        self.assertEqual(b.start, b_start + 1.0, "moved by the whole frame A grew")
+        self.assertEqual(b.end - b.start, 139.0, "ends on its clip's OFF key, round(138.51)")
+
+    def test_a_grown_shot_moves_the_shots_after_it_through_the_sequencer(self):
+        # Written as bounds alone, a grow moved the later shots off their
+        # animation (a production sheet: every shot after the first narration).
+        # It is the sequencer's edge drag, whose ripple moves a shot's keys
+        # and audio with it on a host.
+        from pythontk.core_utils.engines.shots.shot_sequencer import ShotSequencer
+
+        lengths = {"vo_a": 100.0, "vo_b": 50.0}
+        ripples = []
+
+        class Seq(ShotSequencer):
+            def ripple_downstream(self, shot_id, after_frame, delta, carry_gap=True):
+                ripples.append((self.store.shot_by_id(shot_id).name, after_frame, delta))
+                super().ripple_downstream(shot_id, after_frame, delta, carry_gap=carry_gap)
+
+        class AudioMani(ShotManifest):
+            def _measure_audio(self, obj):
+                return lengths[obj.name]
+
+            def _sequencer(self):
+                return Seq(store=self.store)
+
+        store = ShotStore()
+        mani = AudioMani(store)
+        steps = [
+            BuilderStep("A01", "A", "t", "", [BuilderObject("vo_a", kind="audio", source_path="a.wav")]),
+            BuilderStep("B01", "B", "t", "", [BuilderObject("vo_b", kind="audio", source_path="b.wav")]),
+        ]
+        mani.sync(steps, initial_shot_length=50)
+        a_end, b_start = store.shot_by_name("A01").end, store.shot_by_name("B01").start
+        lengths["vo_a"] = 120.0
+        mani.sync(steps, initial_shot_length=50)
+        self.assertEqual(ripples, [("A01", a_end, 20.0)])
+        self.assertEqual(store.shot_by_name("A01").end, a_end + 20.0)
+        self.assertEqual(store.shot_by_name("B01").start, b_start + 20.0)
+
+    def test_a_shot_grown_for_its_narration_leaves_its_take_on_the_animation(self):
+        # A step's narration is its shot's, never its take's: grown with the shot, the take shipped a clip
+        # with seconds of nothing after the motion (a production sheet: a 50-frame latch in a 267-frame clip).
+        lengths = {"vo": 40.0}
+
+        class AudioMani(ShotManifest):
+            def _measure_audio(self, obj):
+                return lengths[obj.name]
+
+        store = ShotStore()
+        mani = AudioMani(store)
+        step = BuilderStep("A01", "A", "t", "", [BuilderObject("vo", kind="audio", source_path="a.wav")])
+        step.takes = ["A01"]
+        mani.sync([step], initial_shot_length=50)
+        shot = store.shot_by_name("A01")
+        self.assertEqual(store.takes_of(shot), [("A01", shot.start, shot.end)], "its one take: the whole shot")
+        was = shot.end
+        lengths["vo"] = 300.0
+        mani.sync([step], initial_shot_length=50)
+        self.assertEqual(shot.end - shot.start, 300.0)
+        self.assertEqual(store.takes_of(shot), [("A01", shot.start, was)], "where the shot ended before it grew")
+        mani.sync([step], initial_shot_length=50)
+        self.assertEqual(store.takes_of(shot), [("A01", shot.start, was)], "and a build after keeps it")
+
+    def test_a_step_that_only_speaks_is_as_long_as_its_narration(self):
+        # The room a new shot starts with is for animating in; a step that plays no take needs none
+        # (a production sheet: 41 pages at 200 frames each for lines of 30 to 90).
+        class AudioMani(ShotManifest):
+            def _measure_audio(self, obj):
+                return 40.0
+
+        def step(sid, takes):
+            made = BuilderStep(sid, "A", "t", "", [BuilderObject("vo_" + sid, kind="audio", source_path="a.wav")])
+            made.takes = takes
+            return made
+
+        store = ShotStore()
+        AudioMani(store).sync([step("A01", []), step("A02", ["A02"])], initial_shot_length=200)
+        self.assertEqual([(s.name, s.end - s.start) for s in store.sorted_shots()], [("A01", 40.0), ("A02", 200.0)])
 
     def test_audio_grow_via_measure_hook(self):
         class AudioMani(ShotManifest):
@@ -1902,7 +2340,7 @@ class TestShotPairing(_EngineCase):
     def test_a_split_off_shot_is_linked_to_its_step_never_paired(self):
         """Bug: a shot split off a step's shot had no relation to that step,
         so nothing could say which section it was in (Unity read a null
-        section for 8 of SOL_REPLACE_ASSEMBLY's 28 clips).  The split's link
+        section for 8 of a production scene's 28 clips).  The split's link
         -- or, for a tail split before it wrote one, its ``<step>_<n>`` name
         -- now links it; it stays an orphan, the step's shot unchanged.
         Fixed: 2026-10-11"""
@@ -2015,8 +2453,8 @@ class TestStepRename(_EngineCase):
 
 
 class TestReconcileMembership(_EngineCase):
-    """Membership is compared through ``ShotStore.member_key``: a doc name
-    against a stored long, namespaced node."""
+    """Membership is compared through ``ShotStore.names_member``: a doc name
+    (a path's tail read whole) against a stored long, namespaced node."""
 
     def test_an_object_dropped_from_the_doc_leaves_the_shot(self):
         """Bug: the planner diffed stored long paths against the doc's short
@@ -2114,6 +2552,34 @@ class TestReconcileMembership(_EngineCase):
         # Built now: a doc object dropped later still leaves, the rest stay.
         mani.update([self._step("A01")], remove_missing=False)
         self.assertEqual(sorted(self.store.shot_by_name("A01").objects), members)
+
+    def test_two_objects_sharing_a_leaf_are_two_members_across_a_rebuild(self):
+        """Bug: the planner compared a doc name with the members by its leaf,
+        so a shot holding ``PANEL|LATCH`` read a sheet adding ``DOOR|LATCH``
+        as nothing new: the sync skipped it, its node never joined the shot,
+        and Assess called it valid (only a fresh create kept both).
+        Fixed: 2026-11-26"""
+
+        class _Paths(PureShotsHost):
+            NODES = ("|rig|PANEL|LATCH", "|rig|DOOR|LATCH")
+
+            def member_nodes(self, name):  # a path's tail: the nodes whose paths end with it
+                tail = [n for n in name.split("|") if n]
+                return [p for p in self.NODES if p.split("|")[-len(tail):] == tail]
+
+        store = ShotStore(host=_Paths())
+        mani = ShotManifest(store)
+        mani._filter_to_animated = lambda names, s, e: list(names)  # all animated
+        both = self._step("A01", "PANEL|LATCH", "DOOR|LATCH")
+        mani.update([self._step("A01", "PANEL|LATCH")], initial_shot_length=50)
+        self.assertEqual(store.shot_by_name("A01").objects, ["|rig|PANEL|LATCH"])
+        (status,) = mani.assess([both])
+        self.assertEqual([o.status for o in status.objects], ["valid", "not_in_shot"])
+        self.assertEqual(mani.update([both], remove_missing=False), {"A01": "patched"})
+        self.assertEqual(store.shot_by_name("A01").objects, ["|rig|DOOR|LATCH", "|rig|PANEL|LATCH"])
+        self.assertEqual(mani.update([both], remove_missing=False), {"A01": "skipped"}, "nothing new the second time")
+        mani.update([self._step("A01", "DOOR|LATCH")], remove_missing=False)
+        self.assertEqual(store.shot_by_name("A01").objects, ["|rig|DOOR|LATCH"], "the one the sheet dropped leaves")
 
     def test_an_orphan_shot_is_kept_unless_removal_is_asked_for(self):
         mani = ShotManifest(self.store)
@@ -2235,7 +2701,7 @@ class TestReconcileStatuses(_EngineCase):
     """Assess reports; it never writes the store."""
 
     def _built(self, step):
-        mani = ShotManifest(self.store)
+        mani = ShotManifest(self.store, disabled_behaviors=())  # every behavior keyed
         mani.update([step], initial_shot_length=50)
         return mani
 
@@ -2249,12 +2715,59 @@ class TestReconcileStatuses(_EngineCase):
         )
         self.assertEqual(st.status, "missing_object")
 
+    def test_what_the_sheets_check_found_is_the_steps_status_and_waits_on_a_person(self):
+        """The reader checked each row and kept its issues on it, and the assessment read none: a
+        row with an unknown word, an empty needed cell or a setting it lacks showed as built and
+        in order. Added: 2026-11-25"""
+        step = self._step("A01", "door")
+        step.issues = [("To", "the sheet has no step Z99: write a step's ID")]
+        step.rows = [
+            {"issues": [("Clip", "use needs its Clip: write the take it plays")], "warnings": []},
+            {"issues": [], "warnings": [("Clip", "the take OPEN is not named for its step: A01 says which step it is")]},
+        ]
+        self.assertEqual(step.sheet_issues(), [
+            ("sheet", "(To): the sheet has no step Z99: write a step's ID"),
+            ("sheet", "row 1 (Clip): use needs its Clip: write the take it plays"),
+            ("sheet_warning", "row 2 (Clip): the take OPEN is not named for its step: A01 says which step it is"),
+        ])
+        mani = self._built(step)
+        (st,) = mani.assess([step])
+        self.assertEqual(st.sheet, step.sheet_issues())
+        self.assertEqual((st.status, st.label, st.quiet), ("sheet", "2 sheet issues", False))
+        self.assertEqual(StepStatus.plan([st])["needs_you"], 1, "no Build fixes a sheet")
+        self.assertFalse(st.needs_build, "its shot is built and in order")
+        # A warning alone leaves the step's status its own, and is still something to report.
+        step.issues, step.rows = [], step.rows[1:]
+        (st,) = mani.assess([step])
+        self.assertEqual((st.status, st.quiet, [s for s, _ in st.sheet]), ("valid", False, ["sheet_warning"]))
+        # A step not built yet with a sheet error says the error: Build makes its shot, the sheet's fix is a person's.
+        fresh = self._step("A02", "lid")
+        fresh.rows = [{"issues": [("Action", "'hilight' is no action of this template: write one of highlight")]}]
+        (st,) = ShotManifest(self.store).assess([fresh])
+        self.assertEqual((st.status, st.label, st.needs_build), ("sheet", "sheet issue", True))
+        for status in ("sheet", "sheet_warning"):
+            self.assertIn(status, StepStatus.LABELS)
+            self.assertIn(status, StepStatus.HELP)
+            self.assertIn(status, SHOT_STATUS_LEVELS)
+
+    def test_a_step_in_cells_that_names_no_object_is_in_order(self):
+        """A question or a line of narration in a sheet written in cells read "no objects" on its
+        row: most of a real sheet's rows, hiding the ones with something to say. Added: 2026-11-25"""
+        asked = BuilderStep("B04", "B", "Did it light?", "", [], celled=True)
+        prose = BuilderStep("B05", "B", "Did it light?", "", [])
+        mani = ShotManifest(self.store)
+        mani.update([asked, prose], initial_shot_length=50)
+        celled, sentence = mani.assess([asked, prose])
+        self.assertEqual((celled.status, celled.quiet), ("valid", True))
+        self.assertEqual(sentence.status, "no_objects", "a sheet of sentences may have left them out")
+
     def test_unknown_behavior_is_reported_not_verified(self):
         step = self._step("A01", "door", behaviors={"door": ["wobble"]})
         mani = self._built(step)
         mani._verify_behavior = lambda *a, **k: self.fail("verified an unknown")
         (st,) = mani.assess([step])
         self.assertEqual(st.objects[0].status, "unknown_behavior")
+        self.assertEqual(st.objects[0].unknown_behaviors, ["wobble"], "named, per behavior")
 
     def test_a_broken_behavior_over_animator_keys_is_a_conflict(self):
         step = self._step("A01", "door", behaviors={"door": ["fade_in"]})
@@ -2263,6 +2776,10 @@ class TestReconcileStatuses(_EngineCase):
         mani._key_samples = lambda obj, behavior, s, e: [("door_opacity", 5.0)]
         (st,) = mani.assess([step])
         self.assertEqual(st.objects[0].status, "behavior_conflict")
+        self.assertEqual(st.objects[0].conflict_behaviors, ["fade_in"], "named, per behavior")
+        self.assertEqual(
+            [s for _b, s, _w in StepStatus.behavior_states(st, "door", ["fade_in"])], ["conflict"]
+        )
         # The same keys, claimed by the ledger, are the manifest's own: fixable.
         self.store.edit_ledger.record_authored(
             "door_opacity",
@@ -2279,6 +2796,41 @@ class TestReconcileStatuses(_EngineCase):
         mani = self._built(step)
         (st,) = mani.assess([step])
         self.assertEqual(st.status, "no_objects")
+
+    def test_a_clip_a_build_will_key_is_the_builds_and_one_turned_off_says_nothing(self):
+        """Before its first Build a narrated sheet read "13 need you": each step's clip is not in
+        the scene yet, and that read as an object a person must find, though its file is there
+        and Build keys it. Added: 2026-11-25"""
+        import tempfile
+
+        fd, wav = tempfile.mkstemp(suffix=".wav")
+        os.close(fd)
+        self.addCleanup(os.remove, wav)
+        step = BuilderStep("A01", "A", "t", "", [
+            BuilderObject("A01_Welcome", behaviors=["set_clip"], kind="audio", source_path=wav),
+            BuilderObject("A01_Lost", behaviors=["set_clip"], kind="audio", source_path=wav + ".gone"),
+        ])
+        mani = self._built(self._step("A00", "door"))
+        absent = lambda name: False  # noqa: E731 -- no clip of the name is in the scene
+        (st,) = mani.assess([step], audio_exists_fn=absent)
+        self.assertEqual([(o.name, o.status, o.broken_behaviors) for o in st.objects], [
+            ("A01_Welcome", "missing_behavior", ["set_clip"]),   # its file is there: Build keys it
+            ("A01_Lost", "missing_object", []),                  # no file: a person's (a line not narrated yet)
+        ])
+        off = ShotManifest(self.store, disabled_behaviors=["set_clip"])
+        (st,) = off.assess([step], audio_exists_fn=absent)
+        self.assertEqual([o.status for o in st.objects], ["valid", "valid"], "Off: not reported")
+
+    def test_what_moves_inside_a_listed_object_is_that_object_never_unlisted(self):
+        """A step lists a door's group and its take keys the door's own node inside it: 16 of a
+        real scene's 61 steps read "not listed" for nodes of the objects they list. A member
+        inside a listed object is part of it; one beside it is still said. Added: 2026-11-25"""
+        step = self._step("A01", "door")
+        mani = self._built(step)
+        mani._discover_scene_objects = lambda s, e, known: [
+            "|set|AC:door|AC:door_loc", "|set|AC:door|hinge|pin", "|set|AC:doorstop", "|set|AC:camera"]
+        (st,) = mani.assess([step])
+        self.assertEqual(st.additional_objects, ["|set|AC:doorstop", "|set|AC:camera"])
 
     def test_assess_leaves_the_store_untouched(self):
         step = self._step("A01", "door")
@@ -2504,6 +3056,209 @@ class TestEditedShotsAreKept(_EngineCase):
         self.assertEqual(ShotManifest(self.store)._dropped_pairs([step]), [])
 
 
+class TestAStepWithNoShot(_EngineCase):
+    """A step that plays no animation gets no shot: an interactive task's
+    "Auto Advance" or "Selecting 'Next'" step is a page of the tool that runs
+    the steps, not a take
+    (the user, 2026-11-22: "we need a way to mark shots that have no
+    animation ... a shot isn't built for that row"; on a production sheet 37 of
+    57 steps, each projected and counted by Build).  The sheet says it: under
+    the template's Shots option "Steps that play a take", a step none of whose
+    rows names a clip (Animation Clip Names) has none; a Local Edit marks one
+    either way.  Added: 2026-11-22.  The Interactive template's own choice is
+    every step since 2026-11-25 (a shot is its step's and holds its narration;
+    a step that only speaks ships no take), so these ask for the rule."""
+
+    SHEET = (
+        "Step,Step Contents,Asset Names,Animation Clip Names\n"
+        "A01,Selecting the door triggers Door Open Animation,DOOR,A01\n"
+        "A02,Auto Advance,,\n"
+        "A03,Highlight the lever,LEVER,\n"
+        ",Selecting the lever triggers Lever Animation,LEVER,A03_2\n"
+    )
+
+    def _read(self, name, text=None, **options):
+        path = _write_csv(text or self.SHEET)
+        self.addCleanup(os.remove, path)
+        return mapping_mod.Mapping.resolve(path, name=name, options=options or None)
+
+    def test_the_sheet_says_which_steps_play_animation(self):
+        steps = self._read("interactive", shots="clip")
+        self.assertEqual({s.step_id: s.animated for s in steps}, {"A01": True, "A02": False, "A03": True})
+
+    def test_every_step_is_a_shot_where_the_template_says_so(self):
+        """A video's step plays its narration whether or not anything moves:
+        the Linear and Default templates give every step a shot, unless their
+        Shots option says otherwise."""
+        for name in ("linear", "default"):
+            with self.subTest(template=name):
+                self.assertTrue(all(s.animated for s in self._read(name)))
+        steps = self._read("default", shots="clip")
+        self.assertEqual([s.step_id for s in steps if not s.animated], ["A02"])
+
+    def test_a_sheet_with_no_clip_column_names_no_clip(self):
+        """A named switch does its whole job: no clip column, no step names a
+        clip, so none gets a shot -- and the reading says why."""
+        text = "Step,Step Contents,Asset Names\nA01,Door Open Animation,DOOR\n"
+        steps = self._read("interactive", text, shots="clip")
+        self.assertEqual([s.animated for s in steps], [False])
+
+    def test_each_step_reads_its_own_sections_header(self):
+        """A sheet repeats its header per section, with different columns: a
+        step's clip is read under the header above it, never the last one."""
+        text = (
+            "Step,Step Contents,Asset Names,Animation Clip Names\n"
+            "A01,Open the door,DOOR,A01\n"
+            "Step,Step Contents,Asset Names\n"
+            "B01,Read the placard,PLACARD\n"
+        )
+        steps = self._read("interactive", text, shots="clip")
+        self.assertEqual({s.step_id: s.animated for s in steps}, {"A01": True, "B01": False})
+
+    def test_a_clip_cell_the_template_excludes_names_no_clip(self):
+        """A cell the template's ``exclude_values`` treats as empty ("N/A",
+        "-") names no clip, so its step plays nothing."""
+        text = (
+            "Step,Step Contents,Asset Names,Animation Clip Names\n"
+            "A01,Open the door,DOOR,N/A\n"
+            "A02,Close the door,DOOR,-\n"
+            "A03,Lock the door,DOOR,A03\n"
+        )
+        steps = self._read("interactive", text, shots="clip")
+        self.assertEqual({s.step_id: s.animated for s in steps}, {"A01": False, "A02": False, "A03": True})
+
+    def test_build_makes_no_shot_for_it_and_assess_says_so(self):
+        steps = self._read("interactive", shots="clip")
+        mani = ShotManifest(self.store)
+        mani.update(steps, initial_shot_length=50)
+        self.assertEqual(sorted(s.name for s in self.store.shots), ["A01", "A03"])
+        by_id = {r.step_id: r for r in mani.assess(steps)}
+        self.assertEqual(by_id["A02"].status, "no_shot")
+        self.assertFalse(by_id["A02"].needs_build)
+        self.assertEqual(by_id["A02"].label, "", "nothing to say: the frames say no shot")
+        plan = StepStatus.plan(list(by_id.values()))
+        self.assertEqual((plan["create"], plan["no_shot"]), (0, 1))
+        self.assertIn("1 with no shot", StepStatus.plan_text(plan))
+
+    def test_it_takes_no_place_on_the_timeline(self):
+        steps = self._read("interactive", shots="clip")
+        ShotManifest(self.store).update(steps, initial_shot_length=50)
+        without = ShotStore(host=_ScenicHost())
+        ShotManifest(without).update([s for s in steps if s.step_id != "A02"], initial_shot_length=50)
+        self.assertEqual(
+            [(s.name, s.start, s.end) for s in self.store.sorted_shots()],
+            [(s.name, s.start, s.end) for s in without.sorted_shots()],
+            "A02 left no hole: laid out as a sheet without it",
+        )
+        resolved = rr.RangeResolver.resolve_ranges(
+            steps=steps, user_ranges={}, gap_starts=[], gap_end_map={}, gap=10.0,
+            use_selected_keys=False, last_resolved=[], default_duration=50,
+        )
+        self.assertEqual([r[0] for r in resolved], ["A01", "A03"])
+
+    def test_an_insert_skips_it(self):
+        steps = self._read("interactive", shots="clip")
+        ShotManifest(self.store).update([steps[0]], initial_shot_length=50)
+        plans = ShotManifest(self.store).plan_insertions(steps, initial_shot_length=50)
+        self.assertEqual([p.step.step_id for p in plans], ["A03"])
+
+    def test_a_shot_it_already_has_stays_its_shot(self):
+        """The mark stops a Build making a shot; one bound to the step (made
+        before, or by hand) is still its shot, assessed like any."""
+        steps = self._read("interactive", shots="clip")
+        self.store.define_shot("A02", 500, 550, metadata={"step": "A02"})
+        (a02,) = [r for r in ShotManifest(self.store).assess(steps) if r.step_id == "A02"]
+        self.assertTrue(a02.built)
+        self.assertNotEqual(a02.status, "no_shot")
+
+    def test_a_local_edit_marks_a_step_either_way(self):
+        from pythontk.core_utils.engines.shots.manifest.manifest_edits import ManifestEdits
+
+        steps = self._read("interactive", shots="clip")
+        edits = ManifestEdits()
+        edits.set_step("A02", "animated", True, sheet=False)
+        edits.set_step("A01", "animated", False, sheet=True)
+        edits = ManifestEdits.from_dict(json.loads(json.dumps(edits.to_dict())))
+        by_id = {s.step_id: s for s in edits.apply(steps)}
+        self.assertEqual((by_id["A01"].animated, by_id["A02"].animated), (False, True))
+        self.assertEqual((by_id["A01"].sheet, by_id["A02"].sheet), ({"animated": True}, {"animated": False}))
+        edits.set_step("A02", "animated", False, sheet=False)  # back to the sheet's: no edit
+        self.assertNotIn("animated", edits.steps.get("A02", {}))
+
+
+class TestARowRebuiltFromTheSheet(_EngineCase):
+    """``sync(only=...)``: the rows a person asked to rebuild from the sheet.
+    Their shots are rebuilt though a hand edited them, and no other shot is
+    touched: not another edited one, not one a full Build would update.  (A
+    row's own "Rebuild from Sheet" beside the header's Edits mode, which
+    decides for every shot at once.)  Added: 2026-11-22"""
+
+    def _two(self):
+        """Two built steps, each shot's description then changed by hand."""
+        steps = [self._step("A01", "door"), self._step("A02", "window")]
+        for step in steps:
+            step.description = "the doc's text"
+        ShotManifest(self.store).update(steps, initial_shot_length=50)
+        for shot in list(self.store.shots):
+            self.store.update_shot(shot.shot_id, description="the artist's note")
+        return steps
+
+    def test_only_the_chosen_steps_shot_is_rebuilt_from_the_sheet(self):
+        steps = self._two()
+        mani = ShotManifest(self.store)
+        actions, _behaviors, assessment = mani.sync(steps, remove_missing=False, only=["A01"])
+        self.assertEqual(list(actions), ["A01"], "the other step is not planned at all")
+        self.assertNotEqual(actions["A01"], "kept")
+        self.assertEqual(self.store.shot_by_name("A01").description, "the doc's text")
+        self.assertEqual(self.store.shot_by_name("A02").description, "the artist's note")
+        self.assertEqual(
+            {s.step_id: s.status for s in assessment},
+            {"A01": "valid", "A02": "edited"},
+            "the assessment is of every step given, and the scope ended with the build",
+        )
+        self.assertFalse(mani.edited_by_hand(self.store.shot_by_name("A01")))
+
+    def test_a_shot_a_full_build_would_update_is_left_alone(self):
+        steps = [self._step("A01", "door"), self._step("A02", "window")]
+        ShotManifest(self.store).update(steps, initial_shot_length=50)
+        steps[1].objects.append(BuilderObject("lamp"))  # A02: the sheet changed
+        ShotManifest(self.store).sync(steps, remove_missing=False, only=["A01"])
+        self.assertFalse(
+            [n for n in self.store.shot_by_name("A02").objects if n.endswith("lamp")]
+        )
+
+    def test_the_behavior_pass_reaches_the_chosen_shots_alone(self):
+        steps = self._two()
+        reached = []
+
+        class Recording(ShotManifest):
+            def apply_behaviors(self):
+                reached.extend(shot.name for shot in self._behavior_shots())
+                return {"applied": [], "skipped": []}
+
+        Recording(self.store).sync(steps, remove_missing=False, only=["A02"])
+        self.assertEqual(reached, ["A02"])
+        reached.clear()
+        Recording(self.store, rebuild_edited=True).sync(steps, remove_missing=False)
+        self.assertEqual(reached, ["A01", "A02"], "no scope: every shot a build reaches")
+
+    def test_a_locked_shot_stays_as_it_is(self):
+        steps = self._two()
+        shot = self.store.shot_by_name("A01")
+        self.store.update_shot(shot.shot_id, locked=True)
+        actions, _behaviors, _assessment = ShotManifest(self.store).sync(
+            steps, remove_missing=False, only=["A01"]
+        )
+        self.assertEqual(actions, {"A01": "locked"})
+        self.assertEqual(self.store.shot_by_name("A01").description, "the artist's note")
+
+    def test_a_hand_renamed_shot_is_named_back(self):
+        steps = self._two()
+        self.store.update_shot(self.store.shot_by_name("A01").shot_id, name="Hand_Named")
+        ShotManifest(self.store).sync(steps, remove_missing=False, only=["A01"])
+        self.assertEqual(sorted(s.name for s in self.store.shots), ["A01", "A02"])
+
+
 class TestAssessSeesWhatBuildRewrites(_EngineCase):
     """``StepStatus.updates``: what a Build rewrites on a built shot that no
     object status shows -- a step's Local Edits rename or re-description, an
@@ -2585,12 +3340,29 @@ class TestDisabledBehaviors(_EngineCase):
         def verify(node, behavior, start, end, anchor_override=None):
             return behavior != "fade_in"
 
-        (status,) = ShotManifest(self.store).assess([step], verify_fn=verify)
+        (status,) = ShotManifest(self.store, disabled_behaviors=()).assess([step], verify_fn=verify)
         self.assertEqual(status.objects[0].status, "missing_behavior")
         mani = ShotManifest(self.store, disabled_behaviors={"fade_in"})
         (status,) = mani.assess([step], verify_fn=verify)
         self.assertEqual(status.objects[0].status, "valid")
         self.assertEqual(status.objects[0].behaviors, ["fade_in", "fade_out"])
+
+    def test_each_behavior_entry_ships_how_its_build_made_it(self):
+        """Each object's behavior in a shot's metadata says how the build made
+        it (key, marker; none: off), so another reader's manifest built from the
+        same sheet knows per object what the delivery carries (2026-11-23:
+        "behaviors work hand-in-hand when both manifests are used in the same
+        pipeline, and work independently when not")."""
+        step = self._step("A01", "door", behaviors={"door": ["fade_in", "fade_out"]})
+        ShotManifest(self.store, disabled_behaviors=()).update([step], initial_shot_length=50)
+        def modes():
+            return {e["behavior"]: e.get(ShotManifest.MODE) for e in self.store.shot_by_name("A01").metadata["behaviors"]}
+
+        self.assertEqual(modes(), {"fade_in": "key", "fade_out": "key"})
+        ShotManifest(self.store, disabled_behaviors={"fade_in"}, marked_behaviors={"fade_out"}).update(
+            [step], remove_missing=False
+        )
+        self.assertEqual(modes(), {"fade_in": None, "fade_out": "marker"}, "off says nothing; the old mode goes")
 
     def test_the_build_loop_skips_it_and_keeps_the_others_anchors(self):
         _step, shot = self._built_step()
@@ -2664,8 +3436,8 @@ class TestMarkedBehaviors(_EngineCase):
         self.assertEqual(
             got,
             [
-                (shot.start, "Fade In: door, lamp", ["door", "lamp"]),
-                (shot.end - fade, "Fade Out: door", ["door"]),
+                (shot.start, "Fade · in: door, lamp", ["door", "lamp"]),
+                (shot.end - fade, "Fade · out: door", ["door"]),
             ],
         )
         (first, _second) = self._marks()
@@ -2684,7 +3456,7 @@ class TestMarkedBehaviors(_EngineCase):
         ShotManifest(self.store, marked_behaviors={"fade_in"}).place_markers()
         self.assertEqual([m["time"] for m in self._marks()], [101.0])
         # Keyed again: its marker goes.
-        ShotManifest(self.store).place_markers()
+        ShotManifest(self.store, disabled_behaviors=()).place_markers()
         self.assertEqual(self._marks(), [])
         self.assertEqual(self.store.markers, [{"time": 3.0, "note": "the animator's"}])
 
@@ -2726,6 +3498,137 @@ class TestMarkedBehaviors(_EngineCase):
         _actions, result, _assessment = mani.sync([step], initial_shot_length=50)
         self.assertEqual([r["object"] for r in result["marked"]], ["door"])
         self.assertEqual(len(self._marks()), 1)
+
+
+class TestModesInForce(_EngineCase):
+    """Bug: a build from code (``ShotManifest.from_csv`` + ``sync``) keyed
+    every behavior while the panel started a scene that keeps no modes at Key
+    only for what the sheet's cells name: one scene built two ways.
+    Fixed: 2026-11-26 -- with no mode given, ``sync`` and ``assess`` read
+    ``ManifestEdits.modes_in_force`` for the sheet, as the panel does."""
+
+    def _sheet(self, text, template):
+        path = _write_csv(text)
+        self.addCleanup(os.remove, path)
+        return path, mapping_mod.Mapping.resolve(path, name=template)
+
+    def _modes(self, shot):
+        return {e["behavior"]: e.get(ShotManifest.MODE) for e in shot.metadata.get("behaviors") or ()}
+
+    def test_a_code_build_keys_a_cell_rows_highlight_and_leaves_a_sentences_off(self):
+        path, steps = self._sheet(
+            "Step,Step Name,Voice,Action,Target,Settings\nA01,Open,Open it.,,,\n,,,highlight,DOOR,\n", "linear"
+        )
+        from pythontk.core_utils.engines.shots.manifest.manifest_edits import ManifestEdits
+
+        mani = ShotManifest(self.store, source=path)
+        mani.sync(steps, initial_shot_length=50)
+        self.assertEqual(self._modes(self.store.shot_by_name("A01")), {"highlight": "key"})
+        self.assertEqual(
+            ManifestEdits.behavior_modes(self.store, path), {"key": ["highlight"], "marker": []},
+            "the build records what it built with, as the panel's Build does",
+        )
+        self.assertNotIn("highlight", mani.unkeyed_behaviors)
+        self.assertIn("fade_in", mani.disabled_behaviors, "every other behavior Off until chosen")
+        sentence_store = ShotStore(host=_ScenicHost())
+        path, _steps = self._sheet("Step,Step Contents,Asset Names\nA01.),Highlight the door,DOOR\n", "default")
+        mani, steps = ShotManifest.from_csv(path, store=sentence_store)
+        self.assertEqual(mani.source, path, "from_csv names its sheet")
+        mani.sync(steps, initial_shot_length=50)
+        self.assertEqual(self._modes(sentence_store.shot_by_name("A01")), {"highlight": None}, "a sentence asks nothing")
+
+    def test_the_scenes_own_modes_and_given_modes_win(self):
+        from pythontk.core_utils.engines.shots.manifest.manifest_edits import ManifestEdits
+
+        path, steps = self._sheet(
+            "Step,Step Name,Voice,Action,Target,Settings\nA01,Open,Open it.,,,\n,,,highlight,DOOR,\n", "linear"
+        )
+        ManifestEdits.set_behavior_modes(self.store, path, [], ["highlight"])
+        ShotManifest(self.store, source=path).sync(steps, initial_shot_length=50)
+        self.assertEqual(self._modes(self.store.shot_by_name("A01")), {"highlight": "marker"})
+        ShotManifest(self.store, disabled_behaviors={"highlight"}, source=path).update(steps, remove_missing=False)
+        self.assertEqual(self._modes(self.store.shot_by_name("A01")), {"highlight": None}, "given modes are as given")
+
+
+class TestNamesNeverLeaves(_EngineCase):
+    """What a build, Assess, discovery and auto-fill compare and keep are
+    names (a node's own, or a path's tail), never a bare leaf: two nodes
+    sharing a leaf stay two."""
+
+    class _BareNames(PureShotsHost):
+        """Members kept as bare object names, the path in the parents (a host that keeps no paths)."""
+
+        PARENTS = {"LIGHTS": "SOLENOID_LOC"}
+
+        def member_nodes(self, name):
+            return ["LIGHTS"] if name == "SOLENOID_LOC|LIGHTS" else [name]
+
+        def member_lineage(self, member):
+            return [self.PARENTS[member], member] if member in self.PARENTS else str(member).split("|")
+
+    def test_a_steps_path_tail_owns_its_bare_named_member(self):
+        """Bug: a step listing ``SOLENOID_LOC|LIGHTS`` showed its own ``LIGHTS``
+        unlisted on a host that keeps bare names, and Assess said it
+        was not in its shot.
+        Fixed: 2026-11-26 -- compared through the store's host
+        (``ShotsHost.member_lineage``)."""
+        store = ShotStore(host=self._BareNames())
+        store.define_shot("A01", 1, 50, objects=["LIGHTS"], metadata={"step": "A01"})
+        (st,) = ShotManifest(store, disabled_behaviors=()).assess([self._step("A01", "SOLENOID_LOC|LIGHTS")])
+        self.assertEqual(st.additional_objects, [])
+        self.assertEqual(st.objects[0].status, "valid")
+
+    def test_discovery_is_given_names_so_a_member_hides_only_its_own_node(self):
+        """Bug: discovery was given leaves (``{member_key(...)}``), so a member
+        ``|rig|PANEL|LATCH`` hid an animated ``|rig|DOOR|LATCH``.
+        Fixed: 2026-11-26 -- the doc names and the members as stored."""
+        given = []
+
+        class Host(ShotManifest):
+            def _discover_scene_objects(self, start, end, exclude_names):
+                given.append(set(exclude_names))
+                animated = ["|rig|PANEL|LATCH", "|rig|DOOR|LATCH"]
+                known = {m for _n, m in self._pairs(exclude_names, animated)}
+                return [a for a in animated if a not in known]
+
+        self.store.define_shot("A01", 1, 50, objects=["|rig|PANEL|LATCH"], metadata={"step": "A01"})
+        mani = Host(self.store, disabled_behaviors=())
+        (st,) = mani.assess([self._step("A01", "PANEL|LATCH")])
+        self.assertEqual(given, [{"PANEL|LATCH", "|rig|PANEL|LATCH"}])
+        self.assertEqual(st.additional_objects, ["|rig|DOOR|LATCH"])
+        given.clear()
+        empty = self._step("A01")
+        self.assertEqual(mani.fill_missing_assets([empty]), {"A01": ["PANEL|LATCH", "DOOR|LATCH"]},
+                         "auto-fill names two same-leaf members apart, by the tail that tells them apart")
+        self.assertEqual(given, [{"|rig|PANEL|LATCH"}])
+
+    def test_a_hand_removing_one_of_two_same_leaf_members_is_an_edit(self):
+        """Bug: the build's record kept members by leaf, so a hand removing
+        ``|rig|DOOR|LATCH`` beside ``|rig|PANEL|LATCH`` read as no edit and the
+        next build undid it.
+        Fixed: 2026-11-26 -- the record keeps names (``ShotStore.member_names``)."""
+        mani = ShotManifest(self.store, disabled_behaviors=())
+        shot = self.store.define_shot("A01", 1, 50, objects=["|rig|PANEL|LATCH", "|rig|DOOR|LATCH", "|set|AC:door"])
+        mani._record_build([shot.shot_id])
+        self.assertEqual(shot.metadata[ShotManifest.BUILT]["member_names"], ["DOOR|LATCH", "PANEL|LATCH", "door"])
+        self.assertFalse(mani.edited_by_hand(shot))
+        self.store.update_shot(shot.shot_id, objects=["|rig|PANEL|LATCH", "|set|AC:door"])
+        self.assertTrue(mani.edited_by_hand(shot))
+
+    def test_an_older_leaf_record_still_matches_and_the_systems_additions_are_no_edit(self):
+        shot = self.store.define_shot("A01", 1, 50, objects=["|rig|PANEL|LATCH", "|rig|DOOR|LATCH"])
+        meta = dict(shot.metadata or {})
+        meta[ShotManifest.BUILT] = {"length": 49.0, "members": ["LATCH"], "description": ""}  # an older build's
+        self.store.update_shot(shot.shot_id, metadata=meta)
+        mani = ShotManifest(self.store, disabled_behaviors=())
+        self.assertFalse(mani.edited_by_hand(shot), "a leaf record reads by leaf")
+        self.store.update_shot(shot.shot_id, objects=["|rig|PANEL|LATCH"])
+        mani._record_build([shot.shot_id])
+        self.assertEqual(shot.metadata[ShotManifest.BUILT]["member_names"], ["LATCH"])
+        self.store.add_system_members(shot.shot_id, ["|rig|DOOR|LATCH", "|set|lid"])
+        self.assertFalse(mani.edited_by_hand(shot), "what the system filled in is no hand's")
+        self.store.update_shot(shot.shot_id, objects=list(shot.objects) + ["|set|bolt"])
+        self.assertTrue(mani.edited_by_hand(shot), "a member a hand adds still counts")
 
 
 class TestFillFromPairs(_EngineCase):
@@ -2838,6 +3741,126 @@ class TestFindObjectStatus(unittest.TestCase):
         self.assertIsNone(StepStatus.find_object(results, "door", "A09"))
         self.assertIsNone(StepStatus.find_object(results, "wall"))
         self.assertIsNone(StepStatus.find_object([], "door"))
+
+
+class TestBehaviorStates(unittest.TestCase):
+    """``StepStatus.behavior_states``: each behavior of an object row in the
+    state a panel shows it in, judged once here so every panel says the same.
+
+    Bug: the Shot Manifest panel judged each behavior chip itself and called
+    one "built" on a step with no shot: an existing object of an unbuilt step
+    assesses ``valid``, and the panel read that as built.
+    Fixed: 2026-11-23 (the judgment moved here)
+    """
+
+    @staticmethod
+    def _states(step, behaviors=("fade_in",), **kwargs):
+        return {
+            b: state
+            for b, state, _words in StepStatus.behavior_states(
+                step, "door", list(behaviors), **kwargs
+            )
+        }
+
+    @staticmethod
+    def _step(status="valid", built=True, **fields):
+        door = ObjectStatus("door", status != "missing_object", status, ["fade_in"], **fields)
+        return StepStatus("A01", built, [door])
+
+    def test_an_unbuilt_steps_behavior_is_to_build_never_built(self):
+        self.assertEqual(self._states(self._step(built=False)), {"fade_in": "to_build"})
+        status, words = StepStatus.BEHAVIOR_STATES["to_build"]
+        self.assertEqual(status, "missing_shot", "a note, as the step's own row says")
+        self.assertNotIn("built", words.split(":")[0])
+
+    def test_each_state(self):
+        cases = {
+            # state: (step, behavior_states' keywords)
+            "built": (self._step(), {}),
+            "marked": (self._step(), {"marked": {"fade_in"}}),
+            "off": (self._step(), {"off": {"fade_in"}}),
+            "taken": (self._step(), {"sheet": ["fade_in"], "behaviors": []}),
+            "added": (self._step(), {"sheet": []}),
+            "object_missing": (self._step("missing_object"), {}),
+            "object_ambiguous": (self._step("ambiguous_object"), {}),
+            "not_in_shot": (self._step("not_in_shot"), {}),
+            "missing": (self._step("missing_behavior", broken_behaviors=["fade_in"]), {}),
+            "marker_missing": (
+                self._step("missing_behavior", broken_behaviors=["fade_in"]),
+                {"marked": {"fade_in"}},
+            ),
+            "stale": (self._step("stale_behavior", stale_behaviors=["fade_in"]), {}),
+            "unknown": (
+                self._step(
+                    "unknown_behavior",
+                    broken_behaviors=["fade_in"],
+                    unknown_behaviors=["fade_in"],
+                ),
+                {},
+            ),
+            "conflict": (
+                self._step(
+                    "behavior_conflict",
+                    broken_behaviors=["fade_in"],
+                    conflict_behaviors=["fade_in"],
+                ),
+                {},
+            ),
+            "to_build": (self._step(built=False), {}),
+            "no_shot": (StepStatus("A01", False, self._step().objects, animated=False), {}),
+            "locked": (StepStatus("A01", True, self._step().objects, locked=True), {}),
+            "": (None, {}),  # not assessed
+        }
+        self.assertEqual(set(cases), set(StepStatus.BEHAVIOR_STATES), "every state is covered")
+        for state, (step, kwargs) in cases.items():
+            with self.subTest(state=state):
+                behaviors = kwargs.pop("behaviors", ["fade_in"])
+                self.assertEqual(self._states(step, behaviors, **kwargs), {"fade_in": state})
+
+    def test_every_state_says_itself_at_a_status_a_panel_colours(self):
+        from pythontk.core_utils.engines.shots.shot_model import SHOT_PALETTE
+
+        for state, (status, words) in StepStatus.BEHAVIOR_STATES.items():
+            with self.subTest(state=state):
+                self.assertTrue(status is None or status in SHOT_PALETTE, status)
+                self.assertEqual(bool(words), bool(state), "a state has words; none has none")
+
+    def test_a_taken_behavior_follows_the_objects_own(self):
+        """The sheet's behaviors a Local Edit took away close the list, after
+        the object's own, each once."""
+        got = StepStatus.behavior_states(
+            self._step(), "door", ["highlight", "fade_out"], sheet=["fade_in", "highlight"]
+        )
+        self.assertEqual(
+            [(b, s) for b, s, _w in got],
+            [("highlight", "built"), ("fade_out", "added"), ("fade_in", "taken")],
+        )
+
+    def test_an_object_this_step_did_not_assess_is_not_judged(self):
+        """A step judged, its object not (renamed since): no state but an edit's."""
+        self.assertEqual(self._states(StepStatus("A01", True, [])), {"fade_in": ""})
+        self.assertEqual(self._states(StepStatus("A01", True, []), sheet=[]), {"fade_in": "added"})
+
+    def test_a_quiet_step_has_nothing_to_report(self):
+        """``StepStatus.quiet``: what a view of the steps that need something
+        leaves out, read off the assessment (a panel read its cells' text)."""
+        ok = ObjectStatus("door", True, "valid")
+        self.assertTrue(StepStatus("A01", True, [ok]).quiet)
+        self.assertTrue(StepStatus("A01", True, [ok], shrinkable_frames=12.0).quiet, "a trim is no issue")
+        self.assertTrue(StepStatus("A01", False, [ok], animated=False).quiet, "plays no animation: needs none")
+        for loud in (
+            StepStatus("A01", False, [ok]),
+            StepStatus("A01", True, [ObjectStatus("door", False, "missing_object")]),
+            StepStatus("A01", True, [ObjectStatus("door", True, "user_animated")]),
+            StepStatus("A01", True, [ok], additional_objects=["stray"]),
+            StepStatus("A01", True, [ok], updates=["name"]),
+            StepStatus("A01", True, [ok], dropped_behaviors=[["door", "highlight"]]),
+            StepStatus("A01", True, [ok], locked=True),
+            StepStatus("A01", True, [ok], edited=True),
+            StepStatus("A01", True, []),
+        ):
+            with self.subTest(step=loud):
+                self.assertFalse(loud.quiet)
 
 
 class TestStepsFromShots(unittest.TestCase):
@@ -3022,7 +4045,7 @@ class TestReapplyObject(unittest.TestCase):
         """One curve; each behavior keys it at the frame ``plan`` names."""
 
         def __init__(self, store):
-            super().__init__(store)
+            super().__init__(store, disabled_behaviors=())
             self.plan, self.curve, self.anchors = {}, {}, []
 
         def _apply_one(self, node, behavior, start, end, **kwargs):
@@ -3078,7 +4101,7 @@ class TestReapplyObject(unittest.TestCase):
                 calls.append((node, behavior, kwargs.get("source_path")))
                 return [("vo_track", start)]
 
-        host = Host(self.store)
+        host = Host(self.store, disabled_behaviors=())
         clip = BuilderObject(
             "A01_Hello", ["set_clip"], kind="audio", source_path="a.wav"
         )
@@ -3110,7 +4133,7 @@ class TestReapplyObject(unittest.TestCase):
 
         class Host(ShotManifest):
             def __init__(self, store):
-                super().__init__(store)
+                super().__init__(store, disabled_behaviors=())
                 self.curve, self.anchors = {}, []
 
             def apply_behaviors(self):
@@ -3154,7 +4177,7 @@ class TestRecipeOwnership(unittest.TestCase):
         out at the end) and reports it, as a host applier does."""
 
         def __init__(self, store):
-            super().__init__(store)
+            super().__init__(store, disabled_behaviors=())  # every behavior keyed
             self.curves = {}
 
         def apply_behaviors(self):
@@ -3341,6 +4364,7 @@ class TestRecipeOwnership(unittest.TestCase):
         step, door = self._door(steps)
         self.assertEqual(door.status, "behavior_conflict")
         self.assertEqual(door.stale_behaviors, [])
+        self.assertEqual(door.conflict_behaviors, ["fade_in"], "a stale one in conflict is named too")
         self.assertFalse(step.needs_build)
         # Build agrees: it leaves the fade and the animator's key alone.
         _actions, result, _status = self.host.sync(
@@ -3925,6 +4949,269 @@ class TestInsertPlanMatchesTheInserts(unittest.TestCase):
             with self.subTest(case=case, sheet=sheet, typed=typed, before=order_before):
                 for sid, bounds in planned.items():
                     self.assertEqual(got[sid], bounds, sid)
+
+
+class TestManifestPlacement(unittest.TestCase):
+    """``ManifestPlacement.first_pose``: the plain first pose of a helper a
+    placing row is given where the scene has none -- read from bounds alone.
+    The cases each host's making of a helper is held to."""
+
+    BOX = ((-10.0, 100.0, 40.0), (10.0, 120.0, 60.0))  # a part 20 cm across, 1.1 m up, half a metre out
+    ROOM = ((-100.0, 0.0, -100.0), (100.0, 250.0, 100.0))  # the delivery around it, its floor at 0
+
+    def setUp(self):
+        from pythontk.core_utils.engines.shots.manifest.manifest_placement import ManifestPlacement
+
+        self.P = ManifestPlacement
+
+    def test_a_camera_stands_on_the_outer_side_far_enough_to_frame_its_part_looking_at_it(self):
+        import math
+
+        position, aim = self.P.first_pose("view", self.BOX, self.ROOM, unit=100.0)
+        self.assertEqual(aim, (0.0, 110.0, 50.0), "it looks at the part's middle")
+        radius = math.sqrt(3 * 10.0 ** 2)
+        distance = radius * self.P.MARGIN / math.sin(math.radians(self.P.VIEW_ANGLE) / 2)
+        # Toward the eyes of the part's viewpoint (out of the delivery), from a little above: looking down onto it.
+        rise = math.radians(10.0)
+        self.assertEqual(position[0], 0.0, "straight out")
+        self.assertAlmostEqual(position[1], 110.0 + distance * math.sin(rise), places=6)
+        self.assertAlmostEqual(position[2], 50.0 + distance * math.cos(rise), places=6, msg="at the distance that frames it")
+
+    def test_a_tiny_part_is_framed_with_what_it_sits_on(self):
+        dot = ((-0.5, 110.0, 49.5), (0.5, 111.0, 50.5))  # a centimetre across
+        position, _ = self.P.first_pose("view", dot, self.ROOM, unit=100.0)
+        self.assertGreater(position[2] - 50.0, 30.0, "never a macro of a dot: the least it frames is a 6 cm radius")
+
+    def test_a_viewpoint_stands_on_the_floor_the_stand_off_outside_its_part_facing_it_level(self):
+        position, aim = self.P.first_pose("stand", self.BOX, self.ROOM, unit=100.0)
+        self.assertEqual(position, (0.0, 0.0, 50.0 + 10.0 + self.P.STAND_OFF * 100.0), "on the floor, outside the part's side")
+        self.assertEqual(aim, (0.0, 0.0, 50.0), "facing it, level")
+        # A part's own group may start above the floor (a cabinet on feet, the room another group): a host that knows
+        # the scene's floor says it, and the viewpoint stands there.
+        raised = ((-100.0, 24.0, -100.0), (100.0, 250.0, 100.0))
+        self.assertEqual(self.P.first_pose("stand", self.BOX, raised, unit=100.0)[0][1], 24.0, "the delivery's lowest point, with nothing said")
+        position, aim = self.P.first_pose("stand", self.BOX, raised, unit=100.0, floor=0.0)
+        self.assertEqual((position[1], aim[1]), (0.0, 0.0), "the scene's floor, where the host says it")
+
+    def test_an_arrows_tip_rests_just_above_its_part_pointing_down_at_it(self):
+        position, aim = self.P.first_pose("point", self.BOX, self.ROOM, unit=100.0)
+        self.assertEqual(position, (0.0, 120.0 + self.P.GAP * 100.0, 50.0))
+        self.assertEqual(aim, (0.0, 110.0, 50.0))
+
+    def test_the_up_axis_and_the_unit_are_the_scenes(self):
+        # A Z-up scene in metres: the same part, the same room.
+        box = ((-0.1, -0.6, 1.0), (0.1, -0.4, 1.2))
+        room = ((-1.0, -1.0, 0.0), (1.0, 1.0, 2.5))
+        position, aim = self.P.first_pose("stand", box, room, up=2, unit=1.0)
+        self.assertEqual((position[0], position[2]), (0.0, 0.0), "on the floor, Z up")
+        self.assertAlmostEqual(position[1], -0.5 - 0.1 - self.P.STAND_OFF, places=6, msg="out of the room on the part's side")
+        self.assertEqual(aim, (0.0, -0.5, 0.0))
+
+    def test_a_part_in_the_middle_of_its_delivery_is_seen_from_the_level_axis_after_up(self):
+        middle = ((-10.0, 100.0, -10.0), (10.0, 120.0, 10.0))
+        position, _ = self.P.first_pose("view", middle, self.ROOM, unit=100.0)
+        self.assertGreater(position[2], 10.0)
+        self.assertEqual(position[0], 0.0)
+        self.assertEqual(self.P.outer(middle, None), (0.0, 0.0, 1.0), "with no delivery: the same")
+        # A cabinet's body, a latch on its front pulling the delivery's middle 2 cm forward: the body stands over that
+        # middle, so no side of it is outer and the hair's breadth decides nothing (a viewpoint stood behind it).
+        body = ((-50.0, 0.0, -30.0), (50.0, 200.0, 30.0))
+        whole = ((-50.0, 0.0, -30.0), (50.0, 200.0, 34.0))
+        self.assertEqual(self.P.outer(body, whole), (0.0, 0.0, 1.0))
+
+    def test_a_rows_own_helper_is_named_by_its_purpose_step_and_target_alike_in_every_tool(self):
+        self.assertEqual(self.P.helper_name("view", "B02", "ROOT|CABINET|DOOR_GRP"), "CAM_B02_DOOR_GRP")
+        self.assertEqual(self.P.helper_name("stand", "C05A", "SCREWS_GRP"), "VIEW_C05A_SCREWS_GRP")
+        self.assertEqual(self.P.helper_name("point", "B03.5", "panel light #2"), "ARROW_B03_5_panel_light_2", "a legal name")
+        self.assertNotEqual(self.P.helper_name("view", "C09", "DIALS"), self.P.helper_name("view", "C09", "LIGHT"),
+                            "two pictures in a step: two names")
+        # Bug: only the leaf was kept, so two targets sharing it in a step named one helper. The name keeps the
+        # end of the target's path that tells it apart from the step's other targets (Fixed: 2026-11-26).
+        among = ["PANEL|LATCH", "DOOR|LATCH", "LATCH", "ROOT|CABINET|DOOR_GRP"]
+        self.assertEqual([self.P.helper_name("view", "A01", t, among) for t in among],
+                         ["CAM_A01_PANEL_LATCH", "CAM_A01_DOOR_LATCH", "CAM_A01_LATCH", "CAM_A01_DOOR_GRP"])
+        for bad in (("hold", "A01", "X"), ("view", "", "X"), ("view", "A01", "")):
+            with self.assertRaises(ValueError):
+                self.P.helper_name(*bad)
+
+    def test_a_held_parts_place_is_its_takes_and_no_helper(self):
+        with self.assertRaises(ValueError):
+            self.P.first_pose("hold", self.BOX, self.ROOM)
+        self.assertEqual(self.P.KINDS, {"stand": "locator", "point": "locator", "view": "camera"})
+        self.assertAlmostEqual(self.P.focal_length(24.0), 44.785, places=2, msg="30 degrees over a 24 mm high film")
+
+
+class TestThePlacingRowsHelpers(_EngineCase):
+    """``ShotManifest.place_helpers``: a build makes the helper a placing row
+    names in ``where`` where the scene has none, and never touches one it has.
+    The real task's viewpoints, its arrow and its pictures' cameras were made
+    by hand, or left to the tool that runs the steps."""
+
+    class _Manifest(ShotManifest):
+        def __init__(self, store, have=(), **kw):
+            super().__init__(store, **kw)
+            self.have, self.made = set(have), []
+
+        def _object_exists(self, name):
+            return name in self.have
+
+        def _make_helper(self, name, purpose, target, frame):
+            if target == "GONE":
+                return None
+            self.made.append((name, purpose, target, frame))
+            return name
+
+    @staticmethod
+    def _rows(sid, *rows):
+        return BuilderStep(sid, "A", "t", "", rows=[dict(r) for r in rows])
+
+    def test_a_row_read_by_cells_carries_what_its_word_places_for(self):
+        import pythontk
+
+        starter = Path(pythontk.__file__).parent / "core_utils/engines/shots/manifest/mapping/starters/interactive.csv"
+        steps = mapping_mod.Mapping.resolve(str(starter), name="interactive")
+        placing = {r["word"]: r["places"] for s in steps for r in s.rows if r.get("places")}
+        self.assertEqual(placing, {"teleport": "stand", "indicate": "point", "pip": "view"},
+                         "as the template declares each word (its 'places'), and nothing else places")
+
+    def test_two_rows_of_one_placing_word_and_target_in_a_step_are_told_apart_only_by_a_where(self):
+        from pythontk.core_utils.engines.shots.manifest.manifest_actions import ManifestActions
+
+        actions = {"pip": {"places": "view", "settings": {"where": {"type": "object"}}}, "highlight": {}}
+        rows = [{"word": "pip", "assets": ["DIALS"], "settings": {}},
+                {"word": "pip", "assets": ["DIALS"], "settings": {}},
+                {"word": "pip", "assets": ["DIALS"], "settings": {"where": "CAM_WIDE"}},
+                {"word": "highlight", "assets": ["DIALS"], "settings": {}},
+                {"word": "highlight", "assets": ["DIALS"], "settings": {}}]
+        found = [(n, issue[1]) for n, issue, warn in ManifestActions.check_step(rows, actions, {}, "A01", ["A01"]) if not warn]
+        self.assertEqual([n for n, _ in found], [1], "the second unnamed picture of one target; a named one, or a word that places nothing, is fine")
+        self.assertIn("where=<name>", found[0][1])
+
+    def test_the_check_keys_on_the_helpers_name_so_two_rows_sharing_one_are_said(self):
+        """Bug: the check keyed on the Target as written while the helper kept
+        only its leaf, so ``pip PANEL|LATCH`` and ``pip DOOR|LATCH`` passed and
+        a build made one camera for both, silent of the other.
+        Fixed: 2026-11-26"""
+        from pythontk.core_utils.engines.shots.manifest.manifest_actions import ManifestActions
+
+        actions = {"pip": {"places": "view"}, "snap": {"places": "view"}}
+        told = [{"word": "pip", "assets": ["PANEL|LATCH"], "settings": {}},
+                {"word": "pip", "assets": ["DOOR|LATCH"], "settings": {}}]
+        self.assertEqual(ManifestActions.check_step(told, actions, {}, "A01", ["A01"]), [], "two targets, two helpers")
+        shared = [{"word": "pip", "assets": ["LATCH"], "settings": {}},
+                  {"word": "snap", "assets": ["LATCH"], "settings": {}}]
+        found = [(n, issue[1]) for n, issue, _ in ManifestActions.check_step(shared, actions, {}, "A01", ["A01"])]
+        self.assertEqual([n for n, _ in found], [1], "two words of one purpose would be one helper")
+        self.assertIn("CAM_A01_LATCH", found[0][1])
+
+    def test_a_row_that_names_no_helper_gets_its_own_by_the_derived_name(self):
+        steps = [self._rows("A01", {"word": "pip", "places": "view", "assets": ["PANEL|LATCH"], "settings": {}},
+                            {"word": "pip", "places": "view", "assets": ["DIALS"], "settings": {}},
+                            {"word": "teleport", "places": "stand", "assets": ["DOOR"], "settings": {"where": "VIEW_FRONT"}})]
+        mani = self._Manifest(self.store)
+        self.assertEqual(mani.place_helpers(steps)["made"], ["CAM_A01_LATCH", "CAM_A01_DIALS", "VIEW_FRONT"],
+                         "two pictures in one step: two cameras; a named one keeps its name")
+
+    def test_two_targets_sharing_a_leaf_get_a_helper_each_and_a_name_two_rows_share_is_said(self):
+        """Bug: ``place_helpers`` skipped a helper name it had seen, unsaid:
+        ``pip PANEL|LATCH`` and ``pip DOOR|LATCH`` were one camera.
+        Fixed: 2026-11-26"""
+        steps = [self._rows("A01", {"word": "pip", "places": "view", "assets": ["PANEL|LATCH"], "settings": {}},
+                            {"word": "pip", "places": "view", "assets": ["DOOR|LATCH"], "settings": {}},
+                            {"word": "pip", "places": "view", "assets": ["DIALS"], "settings": {}},
+                            {"word": "pip", "places": "view", "assets": ["DIALS"], "settings": {}},
+                            {"word": "teleport", "places": "stand", "assets": ["DOOR"], "settings": {"where": "VIEW_FRONT"}},
+                            {"word": "teleport", "places": "stand", "assets": ["LID"], "settings": {"where": "VIEW_FRONT"}})]
+        placed = self._Manifest(self.store).place_helpers(steps)
+        self.assertEqual(placed["made"], ["CAM_A01_PANEL_LATCH", "CAM_A01_DOOR_LATCH", "CAM_A01_DIALS", "VIEW_FRONT"])
+        self.assertEqual([n for n, _ in placed["skipped"]], ["CAM_A01_DIALS"], "a name two rows derive is said; one written twice is one object")
+        self.assertIn("where=<name>", placed["skipped"][0][1])
+
+    def test_a_build_makes_the_helper_a_placing_row_names_and_keeps_one_the_scene_has(self):
+        steps = [
+            self._rows("A01",
+                       {"word": "teleport", "places": "stand", "assets": ["DOOR"], "settings": {"where": "VIEW_A01"}},
+                       {"word": "pip", "places": "view", "assets": ["LATCH"], "settings": {"where": "CAM_A01", "until": "A02"}},
+                       {"word": "indicate", "places": "point", "assets": ["LATCH"], "settings": {}},  # names none: its own, ARROW_A01_LATCH
+                       {"word": "highlight", "places": "", "assets": ["LATCH"], "settings": {}}),
+            self._rows("A02",
+                       {"word": "teleport", "places": "stand", "assets": ["DOOR"], "settings": {"where": "VIEW_A01"}},  # the same viewpoint again
+                       {"word": "indicate", "places": "point", "assets": ["BOLT"], "settings": {"where": "ARROW_BOLT"}},
+                       {"word": "pip", "places": "view", "assets": ["GONE"], "settings": {"where": "CAM_A02"}},
+                       {"word": "pip", "places": "view", "assets": [], "settings": {"where": "CAM_NONE"}}),
+        ]
+        mani = self._Manifest(self.store, have={"ARROW_BOLT"})
+        placed = mani.place_helpers(steps)
+        self.assertEqual(placed["made"], ["VIEW_A01", "CAM_A01", "ARROW_A01_LATCH"], "each made once, under the name its row gives")
+        self.assertEqual([(n, p, t) for n, p, t, _ in mani.made][:2], [("VIEW_A01", "stand", "DOOR"), ("CAM_A01", "view", "LATCH")])
+        self.assertEqual(placed["kept"], ["ARROW_BOLT"], "one the scene has is the truth: never made again, never moved")
+        self.assertEqual([name for name, _ in placed["skipped"]], ["CAM_A02", "CAM_NONE"], "what could not be made is said, with why")
+
+        mani.have.update(placed["made"])
+        again = mani.place_helpers(steps)
+        self.assertEqual((again["made"], sorted(again["kept"])), ([], ["ARROW_A01_LATCH", "ARROW_BOLT", "CAM_A01", "VIEW_A01"]),
+                         "a second build makes nothing")
+
+    def test_a_word_turned_off_places_nothing_and_a_sync_reports_what_it_placed(self):
+        steps = [self._rows("A01", {"word": "pip", "places": "view", "assets": ["LATCH"], "settings": {"where": "CAM_A01"}},
+                            {"word": "teleport", "places": "stand", "assets": ["DOOR"], "settings": {"where": "VIEW_A01"}})]
+        off = self._Manifest(self.store, disabled_behaviors=["pip"])
+        self.assertEqual(off.place_helpers(steps)["made"], ["VIEW_A01"], "the picture's word is off: its camera is left to the tool that runs the steps")
+        _, result, _ = self._Manifest(self.store).sync(steps)
+        self.assertEqual(result["placed"]["made"], ["CAM_A01", "VIEW_A01"], "in the order its rows name them")
+        self.assertEqual(ShotManifest(self.store).place_helpers(steps), {"made": [], "kept": ["CAM_A01", "VIEW_A01"], "skipped": []},
+                         "with no scene (the pure engine) nothing is missing, so nothing is made")
+
+
+class TheStatesARowNames(_EngineCase):
+    """``ShotManifest.set_states``: a build makes sure what a row that sets a
+    state is about has that state, so the delivery carries it.  The real
+    task's indicators were given theirs by a script written for that task."""
+
+    class _Manifest(ShotManifest):
+        def __init__(self, store, have=None, **kw):
+            super().__init__(store, **kw)
+            self.have = dict(have or {})  # target -> its states; a target with none has no group
+
+        def _ensure_state(self, target, state):
+            if target not in self.have:
+                return "skipped", "no emissive group on it"
+            if not self.have[target]:
+                self.have[target] = ["off", "green", "amber"]  # the tool's defaults
+                return ("given", "") if state in self.have[target] else ("skipped", "its states do not include it")
+            return ("kept", "") if state in self.have[target] else ("skipped", "its states do not include it")
+
+    @staticmethod
+    def _rows(sid, *rows):
+        return BuilderStep(sid, "A", "t", "", rows=[dict(r) for r in rows])
+
+    def test_a_build_gives_each_set_rows_target_its_states_and_says_what_it_could_not(self):
+        steps = [
+            self._rows("A01",
+                       {"word": "set", "assets": ["LED_A"], "settings": {"state": "off"}},
+                       {"word": "set", "assets": ["LED_B"], "settings": {"state": "amber"}},
+                       {"word": "highlight", "assets": ["LED_A"], "settings": {}}),
+            self._rows("A02",
+                       {"word": "set", "assets": ["LED_A"], "settings": {"state": "green"}},
+                       {"word": "set", "assets": ["LED_A"], "settings": {"state": "purple"}},
+                       {"word": "set", "assets": ["PLAIN_PART"], "settings": {"state": "off"}}),
+        ]
+        mani = self._Manifest(self.store, have={"LED_A": [], "LED_B": ["off", "amber"]})
+        states = mani.set_states(steps)
+        self.assertEqual(states["given"], [("LED_A", "off")], "a group with none takes the tool's defaults")
+        self.assertEqual(states["kept"], [("LED_B", "amber"), ("LED_A", "green")], "states that are there are left as they are")
+        self.assertEqual([(t, s) for t, s, _ in states["skipped"]], [("LED_A", "purple"), ("PLAIN_PART", "off")],
+                         "a state its states lack, and a part with no states to give: said, never guessed")
+        self.assertTrue(all(why for _t, _s, why in states["skipped"]))
+
+    def test_a_word_turned_off_sets_nothing_and_the_pure_engine_leaves_it_to_the_tool_that_runs_the_steps(self):
+        steps = [self._rows("A01", {"word": "set", "assets": ["LED_A"], "settings": {"state": "off"}})]
+        off = self._Manifest(self.store, have={"LED_A": []}, disabled_behaviors=["set"])
+        self.assertEqual(off.set_states(steps), {"given": [], "kept": [], "skipped": []})
+        _, result, _ = self._Manifest(self.store, have={"LED_A": []}).sync(steps)
+        self.assertEqual(result["states"]["given"], [("LED_A", "off")], "a build reports the states it gave")
+        pure = ShotManifest(self.store).set_states(steps)
+        self.assertEqual([(t, s) for t, s, _ in pure["skipped"]], [("LED_A", "off")])
 
 
 if __name__ == "__main__":

@@ -65,19 +65,6 @@ class _Lightmaps:
         record = self._lightmap_manifest(gltf)
         return record if SceneRecords.LIGHTMAPS.is_current(record) else None
 
-    def read_glb_lightmap_manifest(self, glb: GlbTarget) -> Optional[Dict[str, Any]]:
-        with self._mc.open_glb(glb) as edit:
-            return self._mc._lightmap_manifest(edit.gltf)
-
-    def fix_glb_lightmap_metadata(self, glb: GlbTarget) -> int:
-        with self._mc.open_glb(glb) as edit:
-            if not SceneRecords.glb_block(edit.gltf, SceneRecords.LIGHTMAPS):
-                return 0
-            changed = self._mc.strip_fbx_records(edit.gltf)
-            if changed:
-                edit.dirty = True
-            return changed
-
     def lit_nodes(self, gltf: dict) -> Dict[int, Dict[str, Any]]:
         """``{node index: entry}``: the mesh nodes *gltf*'s ``lightmaps`` record
         lights -- each resolved to its entry (``_Media.resolve_entries``),

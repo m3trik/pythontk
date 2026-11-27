@@ -55,10 +55,16 @@ class _ManifestModelInternal(object):
     def _resolve_columns(header: List[str], col_map: ColumnMap) -> _ResolvedColumns:
         """Match header cell text to column indices via *col_map* aliases.
 
+        A header written in cells (one of ``col_map.cell_marks`` among its columns, under a
+        template that declares its actions) needs no description column: a cell row is read
+        by its cells, and its notes column is for people.
+
         Raises:
             ValueError: If a required column cannot be found.
         """
         normalized = [c.strip().lower() for c in header]
+        marks = {m.strip().lower() for m in col_map.cell_marks}
+        in_cells = bool(col_map.actions) and bool(marks) and any(c in marks for c in normalized)
 
         def _find_optional(aliases: Tuple[str, ...]) -> Optional[int]:
             for alias in aliases:
@@ -79,7 +85,9 @@ class _ManifestModelInternal(object):
 
         resolved = _ResolvedColumns(
             step_id=_find(col_map.step_id, "step_id"),
-            description=_find(col_map.description, "description"),
+            description=(
+                _find_optional(col_map.description) if in_cells else _find(col_map.description, "description")
+            ),
             assets=_find(col_map.assets, "assets"),
             audio=_find_optional(col_map.audio) if col_map.audio else None,
             behaviors=_find_optional(col_map.behaviors) if col_map.behaviors else None,
@@ -88,7 +96,98 @@ class _ManifestModelInternal(object):
             idx = _find_optional(aliases)
             if idx is not None:
                 resolved.metadata_pass[key] = idx
+        for key, aliases in col_map.row_pass.items():
+            idx = _find_optional(aliases)
+            if idx is not None:
+                resolved.row_pass[key] = idx
         return resolved
+
+    @staticmethod
+    def _header_names(header: List[str], cols: "_ResolvedColumns") -> Dict[str, str]:
+        """``{column key: the sheet's own header}`` for an issue to name its cell by: ``target``
+        (the assets column), ``step``, and each other column the header carries (``action``,
+        ``with``, ``clip``..., ``description``, ``audio``, a pass-through column's key). A
+        column the header lacks has no key."""
+
+        def at(index: Optional[int]) -> str:
+            return header[index].strip() if index is not None and index < len(header) else ""
+
+        names = {"target": at(cols.assets), "step": at(cols.step_id)}
+        names.update({key: at(index) for key, index in cols.metadata_pass.items()})
+        names.update({key: at(index) for key, index in cols.row_pass.items()})
+        for key in ("description", "audio", "behaviors"):
+            if getattr(cols, key) is not None:
+                names[key] = at(getattr(cols, key))
+        return names
+
+    @staticmethod
+    def _reads_by_cells(row: List[str], cols: "_ResolvedColumns", actions: Dict[str, Any]) -> bool:
+        """Whether *row*, of a sheet written in cells (``ColumnMap.cell_marks``), is read by
+        its cells: its Action cell is filled, the template declares what a row with none is
+        (the empty word), or it fills a cell only the cell format has (which then asks for
+        its action)."""
+
+        def filled(key: str) -> bool:
+            index = cols.row_pass.get(key)
+            return index is not None and index < len(row) and bool(row[index].strip())
+
+        return filled("action") or "" in actions or any(
+            filled(key) for key in ("with", "members", "label", "to", "settings")
+        )
+
+    @staticmethod
+    def _read_cells(
+        record: Dict[str, Any], actions: Dict[str, Any], headers: Dict[str, str], keyed: set, shots: str,
+        step_looks: str = "key",
+    ) -> None:
+        """Read *record*, a row's cells, against the template's *actions*, in place.
+
+        Adds ``cells`` (True), ``word``, ``with`` and ``members`` as names, ``settings`` as
+        a mapping, ``take`` (its word plays the take its Clip names), ``places`` (what its
+        word places a helper for, as the template declares it; empty: nothing), ``says`` (the row as a
+        sentence), ``issues`` and ``warnings`` (``[(header, what is wrong and its fix)]``),
+        ``headers`` (``{cell key: the sheet's own header}``, for a reader's own issues)
+        and ``shot``: the ``[name, behaviors]`` it puts in its shot. A row that plays a take
+        lists what the take animates; a row of a word this host keys (*keyed*) lists its
+        Target with that word where it names a take; one that names none belongs to its step,
+        and lists its Target where every step is a shot (*shots* is ``every``: a step with no
+        shot has nothing to key it on), with that word where the step's looks are this host's
+        to key (*step_looks* is ``key``) and with none where they are left to the tool that
+        runs the steps (``leave``); a row with no word lists its Target; any other row lists
+        nothing.
+        """
+        from pythontk.core_utils.engines.shots.manifest.manifest_actions import ManifestActions
+
+        word = ManifestActions.word(record.get("action", ""))
+        declared = actions.get(word) or {}
+        settings, errors = ManifestActions.read_settings(record.get("settings", ""))
+        record.update(
+            {
+                "cells": True,
+                "word": word,
+                "with": ManifestActions.names(record.get("with", "")),
+                "members": ManifestActions.names(record.get("members", "")),
+                "settings": settings,
+                "setting_errors": errors,
+                "warnings": [],
+                "headers": headers,
+            }
+        )
+        record["take"] = bool(declared.get("take")) and bool(record.get("clip"))
+        record["places"] = declared.get("places") or ""
+        record["issues"] = ManifestActions.check_row(record, actions, headers)
+        record["says"] = ManifestActions.sentence(record, actions)
+        if record["take"]:
+            shot = [[name, []] for name in ManifestActions.members(record)]
+        elif not word and word in actions:
+            shot = [[name, []] for name in record["assets"]]
+        elif word in keyed and word in actions and record.get("clip"):
+            shot = [[name, [word]] for name in record["assets"]]  # keyed into the take it names
+        elif word in keyed and word in actions and shots == "every":
+            shot = [[name, [word] if step_looks == "key" else []] for name in record["assets"]]
+        else:
+            shot = []
+        record["shot"] = shot
 
     @staticmethod
     def _parse_rows(
@@ -137,9 +236,42 @@ class _ManifestModelInternal(object):
         _first = _ManifestModelInternal._first_match
         _group = _ManifestModelInternal._group
         asset_excludes = {v.upper() for v in col_map.exclude_values.get("assets", ())}
+        # A row cell the template treats as empty (``exclude_values``) reads "".
+        pass_excludes = {
+            key: {v.upper() for v in col_map.exclude_values.get(key, ())}
+            for key in col_map.row_pass
+        }
+        # Per step: whether the header above it carried the clip column (a
+        # sheet repeats its header per section, with different columns).
+        clip_header: Dict[str, bool] = {}
 
         behavior_source = col_map.behavior_source
         from pythontk.core_utils.engines.shots.manifest.behaviors import Behaviors
+        from pythontk.core_utils.engines.shots.manifest.manifest_actions import ManifestActions
+
+        # The cell format: a template that declares its actions reads a row with an Action
+        # by its cells (and one with none, where it declares the empty word), never by its
+        # sentence.  A row it does not read so is read as before.
+        actions = col_map.actions
+        keyed = set(Behaviors.list_behaviors()) if actions else set()
+        headers: Dict[str, str] = {}
+        in_cells = False  # whether the header above says the sheet is written in cells
+        marks = {m.strip().lower() for m in col_map.cell_marks}
+        cell_rows: Dict[str, List[Dict[str, Any]]] = {}
+        celled: set = set()  # the steps under a header that says the sheet is in cells
+        own_cells: Dict[str, Tuple[List[str], Dict[str, str]]] = {}  # a step row's Settings errors and headers
+        # A row no step reads is said with its row in the sheet, at the step before it (else the
+        # next one read): never dropped. *unheld*: under a step row that was not read, whose
+        # issue speaks for the rows under it.
+        stray: List[Tuple[str, str]] = []
+        unheld = False
+
+        def _unread(key: str, text: str) -> None:
+            issue = (headers.get(key) or key.title(), text)
+            (steps[-1].issues if steps else stray).append(issue)
+
+        def _marked(header: List[str]) -> bool:
+            return not marks or any(c.strip().lower() in marks for c in header)
 
         phrases = Behaviors.phrase_table()  # once per parse, not once per row
         # Objects the prose names, per step -- listed only where every asset
@@ -205,11 +337,14 @@ class _ManifestModelInternal(object):
                 current_section = _group(sec_match, 1)
                 current_section_title = _group(sec_match, 2)
                 current_step = None
+                unheld = False
                 continue
 
             # --- column header row (resolve indices) ---
             if first.lower() in step_id_aliases:
                 cols = _ManifestModelInternal._resolve_columns(row, col_map)
+                headers = _ManifestModelInternal._header_names(row, cols)
+                in_cells = _marked(row)
                 continue
             # The step-ID header may not sit in the first column.  Accept a
             # row with a matching cell anywhere — but only if it actually
@@ -224,6 +359,8 @@ class _ManifestModelInternal(object):
             ):
                 try:
                     cols = _ManifestModelInternal._resolve_columns(row, col_map)
+                    headers = _ManifestModelInternal._header_names(row, cols)
+                    in_cells = _marked(row)
                     continue
                 except ValueError:
                     pass
@@ -243,9 +380,17 @@ class _ManifestModelInternal(object):
             step_match = _first(step_res, step_cell) if step_cell else None
             if step_cell and not step_match and len(unread) < 3:
                 unread.append(step_cell)
+            if step_cell and not step_match and actions and in_cells:
+                # In the cell format a filled Step cell is a step's row or a section's: any other
+                # is a mistake, and its rows are no part of the step above.
+                _unread("step", "sheet row %d: '%s' is no step ID and no section, so it and the rows under it are "
+                                "not read: write a step's ID (A02, IN_01, B03A), or a section as SECTION C, a colon, its title"
+                        % (row_idx + 1, step_cell))
+                current_step, unheld = None, True
+                continue
             description = (
                 _ManifestModelInternal._strip_cell(row[cols.description])
-                if len(row) > cols.description
+                if cols.description is not None and len(row) > cols.description
                 else ""
             )
             asset = (
@@ -263,7 +408,43 @@ class _ManifestModelInternal(object):
                 if cols.behaviors is not None and len(row) > cols.behaviors
                 else ""
             )
-            row_behaviors, speaks = _row_behaviors(description, behavior_cell)
+            cells = bool(actions) and in_cells and _ManifestModelInternal._reads_by_cells(row, cols, actions)
+            if cells:
+                row_behaviors, speaks = [], True  # its cells say what it does; its notes are never read
+            else:
+                row_behaviors, speaks = _row_behaviors(description, behavior_cell)
+            row_cells = {
+                key: (_ManifestModelInternal._strip_cell(row[idx]) if len(row) > idx else "")
+                for key, idx in cols.row_pass.items()
+            }
+            row_cells = {
+                key: "" if cell.upper() in pass_excludes.get(key, ()) else cell
+                for key, cell in row_cells.items()
+            }
+            row_record = (
+                dict({"text": description, "assets": _asset_names(asset)}, **row_cells)
+                if description or asset or any(row_cells.values())
+                else None
+            )
+            # A step row is the step alone: its To and Settings are the step's own, and it holds no action.
+            own = None
+            if cells and step_match and row_record is not None:
+                acts = bool(row_record["assets"]) or any(
+                    row_record.get(key) for key in ("action", "with", "clip", "members", "label")
+                )
+                if not acts:
+                    own = (row_record.get("to", ""), row_record.get("settings", ""))
+                    row_record = None
+                    description = ""
+            if cells and row_record is not None:
+                _ManifestModelInternal._read_cells(row_record, actions, headers, keyed, col_map.shots, col_map.step_looks)
+                if step_match:
+                    row_record["issues"].append(
+                        (headers.get("action") or "Action",
+                         "a step's row holds no action: write this one on the row below it")
+                    )
+                # The step's words are its rows said back, never its notes.
+                description = row_record["says"]
 
             if step_match:
                 # The step becomes a shot whose name is its exported clip
@@ -271,10 +452,17 @@ class _ManifestModelInternal(object):
                 # store accepts it and every later lookup agrees.
                 step_id = StrUtils.to_legal_name(_group(step_match, 1))
                 if step_id in seen_ids:
-                    notes.append(f"Duplicate step_id '{step_id}' — skipping.")
-                    current_step = None
+                    first = next(s for s in steps if s.step_id == step_id)
+                    first.issues.append(
+                        (headers.get("step") or "Step",
+                         "sheet row %d is step %s too, so it and the rows under it are not read: give that step "
+                         "its own ID" % (row_idx + 1, step_id))
+                    )
+                    notes.append(f"Duplicate step_id '{step_id}' (sheet row {row_idx + 1}): not read.")
+                    current_step, unheld = None, True
                     continue
                 seen_ids.add(step_id)
+                unheld = False
                 step_behaviors = row_behaviors
                 # Every metadata_pass column the doc has, a blank cell as "":
                 # the doc speaks for the key, so a cleared cell clears it.
@@ -291,10 +479,33 @@ class _ManifestModelInternal(object):
                     section_title=current_section_title,
                     description=description,
                     audio=audio,
+                    lines=[description] if description else [],
                 )
                 current_step._pass_through = dict(step_pass)
+                current_step.headers = headers
+                current_step.issues.extend(stray)
+                del stray[:]
+                if own is not None:
+                    current_step.to = own[0]
+                    current_step.settings, errors = ManifestActions.read_settings(own[1])
+                    own_cells[step_id] = (errors, dict(headers))
+                clip_header[step_id] = "clip" in cols.row_pass
+                if actions and in_cells:
+                    celled.add(step_id)
+                    current_step.celled = True
+                if row_record:
+                    current_step.rows.append(row_record)
                 steps.append(current_step)
 
+                if cells:
+                    assets_spoken.add(step_id)
+                    cell_rows.setdefault(step_id, [])
+                    if row_record:
+                        cell_rows[step_id].append(row_record)
+                        for name, behaviors in row_record["shot"]:
+                            _add_object(current_step, name, behaviors)
+                    step_behaviors = []
+                    continue
                 if asset:
                     assets_spoken.add(step_id)
                 for name in _asset_names(asset):
@@ -305,11 +516,22 @@ class _ManifestModelInternal(object):
 
             # --- continuation row (belongs to previous step) ---
             if current_step is not None:
+                if row_record:
+                    current_step.rows.append(row_record)
                 # Merge continuation description into the parent step
                 if description:
-                    current_step.description += " " + description
-                    if read_prose:
+                    joined = "; " if cells and current_step.description else " "
+                    current_step.description = (current_step.description + joined + description).strip()
+                    current_step.lines.append(description)
+                    if read_prose and not cells:
                         _note_subjects(current_step.step_id, description)
+                if cells:
+                    assets_spoken.add(current_step.step_id)
+                    if row_record:
+                        cell_rows.setdefault(current_step.step_id, []).append(row_record)
+                        for name, behaviors in row_record["shot"]:
+                            _add_object(current_step, name, behaviors)
+                    continue
 
                 if asset:
                     assets_spoken.add(current_step.step_id)
@@ -326,7 +548,71 @@ class _ManifestModelInternal(object):
                     behaviors = row_behaviors if speaks else step_behaviors
                     for name in names:
                         _add_object(current_step, name, behaviors)
+            elif cells and row_record is not None and not unheld:
+                stray.append(
+                    (headers.get("action") or "Action",
+                     "sheet row %d: the row stands above its section's first step, so no step reads it: move it "
+                     "under its step" % (row_idx + 1))
+                )
 
+        if stray and steps:  # rows after the last step's section header
+            steps[-1].issues.extend(stray)
+        elif stray:
+            notes.extend("'%s' (%s): %s" % (source, header, text) for header, text in stray)
+        ids = [step.step_id for step in steps]
+        for step in steps:
+            if step.step_id in own_cells:
+                errors, heads = own_cells[step.step_id]
+                step.issues = ManifestActions.check_step_row(
+                    step.to, step.settings, errors, col_map.step_settings, heads, ids, StrUtils.to_legal_name
+                ) + step.issues
+        if cell_rows:
+            celled_rows = [row for step in steps for row in cell_rows.get(step.step_id) or ()]
+            lacking = ManifestActions.missing_columns(celled_rows, actions)
+            if lacking:  # the sheet's own, said once: at the first step whose rows are read by cells
+                next(s for s in steps if cell_rows.get(s.step_id)).issues.extend(lacking)
+            for step in steps:
+                rows_read = cell_rows.get(step.step_id) or []
+                found = ManifestActions.check_step(
+                    rows_read, actions, headers, step.step_id, ids, StrUtils.to_legal_name
+                )
+                for n, issue, warning in found:
+                    rows_read[n]["warnings" if warning else "issues"].append(issue)
+            wrong = sum(len(r["issues"]) for rows_read in cell_rows.values() for r in rows_read)
+            wrong += sum(len(step.issues) for step in steps)
+            if wrong:
+                notes.append(
+                    f"'{source}': {wrong} cell{'s' if wrong != 1 else ''} to fix "
+                    "(each row's issues name its cell and the fix)."
+                )
+
+        if any(spec.get("take") for spec in actions.values()):
+            # A template with a word that plays a take: each step names the takes its rows
+            # play, in row order (none for a step that only speaks). A sheet of sentences
+            # names none this way: its shot is its own take.
+            for step in steps:
+                if step.step_id not in celled:
+                    continue
+                step.takes = list(dict.fromkeys(
+                    StrUtils.to_legal_name(row["clip"]) for row in cell_rows.get(step.step_id, ()) if row.get("take")
+                ))
+
+        if col_map.shots == "clip":
+            # Only a step one of whose rows names a clip plays animation, read
+            # under its own section's header; a sheet with no clip column
+            # names none (the option says so).
+            has_clip = any(clip_header.values())
+            for step in steps:
+                step.animated = clip_header.get(step.step_id, False) and any(
+                    row.get("clip") for row in step.rows
+                )
+            if steps and not has_clip:
+                notes.append(
+                    f"'{source}' has no animation clip column (one of "
+                    f"{list(col_map.row_pass.get('clip', ()))}): the template "
+                    "gives a shot only to a step whose rows name a clip, so no "
+                    "step gets one."
+                )
         # A missing header row used to fail silently: every data row was
         # skipped and the caller saw 0 steps with no explanation.
         if cols is None and rows:
@@ -347,10 +633,21 @@ class _ManifestModelInternal(object):
                 step.objects.extend(prose_objects.get(step.step_id, {}).values())
         return steps
 
+    @staticmethod
+    def validate_actions(value: Any) -> List[str]:
+        """What is wrong with a template's ``actions`` (``ManifestActions.validate_actions``)."""
+        from pythontk.core_utils.engines.shots.manifest.manifest_actions import ManifestActions
+
+        return ManifestActions.validate_actions(value)
+
     #: Values ``ColumnMap.behavior_source`` accepts.
     BEHAVIOR_SOURCES = ("description", "column", "column_else_description")
     #: Values ``ColumnMap.object_source`` accepts.
     OBJECT_SOURCES = ("column", "column_else_description")
+    #: Values ``ColumnMap.shots`` accepts.
+    SHOT_RULES = ("every", "clip")
+    #: Values ``ColumnMap.step_looks`` accepts.
+    STEP_LOOKS = ("key", "leave")
     #: ``ColumnMap.object_case`` / ``object_name_rule`` value that leaves a
     #: prose name as the doc wrote it.
     KEEP = "keep"
@@ -533,7 +830,6 @@ class ManifestModel(_ManifestModelInternal):
         if post_process:
             for step in steps:
                 post_process(step)
-
         return steps
 
 
@@ -581,6 +877,58 @@ class BuilderStep:
     #: The sheet's own value of each field an edit changed (``name``,
     #: ``description``) -- filled by ``ManifestEdits.apply``.
     sheet: Dict[str, Any] = field(default_factory=dict)
+    #: Each row's step-contents cell as the sheet writes it, in order (the
+    #: step row's own first, then each continuation row's; a blank cell left
+    #: out): what :attr:`description` joins, kept apart for a reader that acts
+    #: on one row at a time. The sheet's text: an edit changes only
+    #: :attr:`description`.
+    lines: List[str] = field(default_factory=list)
+    #: Each row of the step as the sheet writes it, in order (a row with nothing
+    #: in it left out): ``{"text", "assets": [names], <row_pass key>: cell}``, so
+    #: a reader binds a row's words to that row's own names.
+    rows: List[Dict[str, Any]] = field(default_factory=list)
+    #: Where the step goes by itself once done, as its row's To cell writes it (a sheet in
+    #: cells): empty, the next step; a step's ID, ``next``, ``restart`` or ``exit``.
+    to: str = ""
+    #: The step's own settings, from its row's Settings cell (a sheet in cells).
+    settings: Dict[str, str] = field(default_factory=dict)
+    #: What is wrong with the step row's own cells: ``[(header, what and its fix)]``.
+    issues: List[Tuple[str, str]] = field(default_factory=list)
+    #: The step stands under a header written in cells, read by a template that declares its
+    #: actions: its rows say all it holds, so one that names no object says so on purpose.
+    celled: bool = False
+    #: ``{column key: the sheet's own header}`` of the header row above the step: what a
+    #: reader names a cell by (``target``, ``step``, ``audio`` and each column it carries).
+    headers: Dict[str, str] = field(default_factory=dict, repr=False, compare=False)
+    #: Whether the step plays animation, so a build gives it a shot.  Every
+    #: step does unless its template's ``shots`` is ``clip`` and none of its
+    #: rows names an animation clip (``ColumnMap.shots``); a Local Edit marks
+    #: one either way (``ManifestEdits``, field ``animated``).  A shot already
+    #: bound to the step stays its shot.
+    animated: bool = True
+    #: The takes the step's rows play, by name, in row order: each a span inside the
+    #: step's shot and a clip of its own in an export (``ShotStore.TAKES``). Empty: the
+    #: step only speaks. ``None``: the sheet names no takes (a sheet of sentences, a
+    #: template with no word that plays one), and the step's shot is its own take.
+    takes: Optional[List[str]] = None
+
+    def sheet_issues(self) -> List[Tuple[str, str]]:
+        """What the sheet's own check found in the step, ``[(status, text)]`` in sheet order:
+        ``sheet`` an error, ``sheet_warning`` a row read anyway. A text names its cell as
+        every reader says it: ``row 2 (Clip): <reason>: <fix>`` (the row counted in the
+        step), or ``(To): ...`` for the step's own row."""
+        found = [("sheet", "(%s): %s" % (header, text)) for header, text in self.issues]
+        for n, row in enumerate(self.rows, 1):
+            found += [("sheet", "row %d (%s): %s" % (n, h, t)) for h, t in row.get("issues") or ()]
+            found += [("sheet_warning", "row %d (%s): %s" % (n, h, t)) for h, t in row.get("warnings") or ()]
+        return found
+
+    @property
+    def pass_through(self) -> Dict[str, str]:
+        """The step's pass-through columns (its mapping's ``metadata_pass``):
+        ``{key: cell}`` as the step's first row writes them, a blank cell as
+        ``""``; a copy, for a reader outside the manifest."""
+        return dict(self._pass_through)
 
     @property
     def shot_name(self) -> str:
@@ -817,6 +1165,13 @@ class ObjectStatus:
     #: Verified behaviors whose keys an older effect recipe made -- Build
     #: re-keys them (``ShotManifest.is_stale``).
     stale_behaviors: List[str] = field(default_factory=list)
+    #: Of *behaviors*, those no behavior template names (in
+    #: *broken_behaviors* too): never verified.
+    unknown_behaviors: List[str] = field(default_factory=list)
+    #: Of *behaviors*, those whose channels hold keys the animator owns
+    #: (``ShotManifest.unowned_keys``): Build leaves them, unsatisfied (in
+    #: *broken_behaviors*) or stale (in neither list) alike.
+    conflict_behaviors: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -839,14 +1194,26 @@ class StepStatus:
     #: What a Build rewrites on the shot that no object status shows, in
     #: :attr:`UPDATES` order: ``"name"`` (the step was renamed),
     #: ``"description"``, ``"objects"`` (one the last build listed, the step
-    #: no longer does) -- a Local Edit's, or the doc's.
+    #: no longer does), ``"takes"`` (the takes its rows play, where the shot
+    #: holds others) -- a Local Edit's, or the doc's.
     updates: List[str] = field(default_factory=list)
+    #: The step plays animation (``BuilderStep.animated``): off, a step with
+    #: no shot needs none, and Build makes none.
+    animated: bool = True
+    #: What the sheet's own check found in the step (``BuilderStep.sheet_issues``):
+    #: ``[(status, text)]``, ``sheet`` an error no Build resolves, ``sheet_warning``
+    #: a row read anyway.
+    sheet: List[Tuple[str, str]] = field(default_factory=list)
+    #: The step is written in cells (``BuilderStep.celled``): one that names no object
+    #: (a question, a line of narration) is in order, never ``no_objects``.
+    celled: bool = False
 
     #: What a Build does for each of :attr:`updates`, as a panel says it.
     UPDATES = {
         "name": "renames its shot",
         "description": "rewrites its description",
         "objects": "takes out the objects the step no longer lists",
+        "takes": "records the takes its rows play",
     }
 
     @property
@@ -854,26 +1221,41 @@ class StepStatus:
         """Worst-of-children rollup.
 
         Priority: ``"locked"`` (user-finalized) > ``"edited"`` (kept as the
-        hand left it) > ``"missing_shot"`` > the object statuses in
-        :attr:`ROLLUP` order > ``"no_objects"`` (the doc lists none --
-        informational, never a silent "valid") > ``"valid"``.  An edited
-        step's objects keep their own statuses.
+        hand left it) > ``"sheet"`` (the sheet's check found an error in its
+        rows: a person's to fix, whatever a Build does) > ``"missing_shot"`` >
+        the object statuses in
+        :attr:`ROLLUP` order > ``"no_objects"`` (a sheet of sentences lists
+        none -- informational, never a silent "valid"; a step written in
+        cells says all it holds, so none is in order) > ``"valid"``.  An edited
+        step's objects keep their own statuses.  A step with no shot that
+        plays no animation is ``"no_shot"`` unless an object of it is wrong.
         """
         if self.locked:
             return "locked"
         if self.edited:
             return "edited"
-        if not self.built:
+        if self.sheet_errors:
+            return "sheet"
+        if not self.built and self.animated:
             return "missing_shot"
         found = {o.status for o in self.objects}
         for status in self.ROLLUP:
             if status in found:
                 return status
-        return "valid" if self.objects else "no_objects"
+        if not self.built:
+            return "no_shot"
+        return "valid" if self.objects or self.celled else "no_objects"
+
+    @property
+    def sheet_errors(self) -> int:
+        """How many errors the sheet's check found in the step (:attr:`sheet`)."""
+        return sum(1 for status, _text in self.sheet if status == "sheet")
 
     #: What each status means and what to do about it -- the one wording every
     #: panel shows (step rows, object rows, "not in doc" shot rows).
     HELP = {
+        "sheet": "The sheet's own check found a problem in this step's rows -- its fix is the sheet's; no Build resolves it.",
+        "sheet_warning": "The sheet's own check has a warning for this step's rows -- read anyway.",
         "missing_shot": "No shot yet -- Build creates it.",
         "missing_object": "Not found in the scene -- an artist's to add; Build never creates objects.",
         "ambiguous_object": "Several scene objects answer to this name -- rename one, or write its path in the doc.",
@@ -885,8 +1267,46 @@ class StepStatus:
         "no_objects": "The doc lists no objects for this step.",
         "not_in_doc": "No doc step pairs with this shot -- Build never removes it; right-click to remove it yourself.",
         "locked": "Locked: user-finalized, never modified by Build.",
-        "edited": "Edited by hand since its last Build -- Build leaves it as it is; set Edits to Rebuild Hand-Edited Shots (header menu) to rebuild it from the doc.",
+        "edited": "Edited by hand since its last Build -- Build leaves it as it is. Right-click > Rebuild from Sheet takes the doc back for this step; Edits > Rebuild Hand-Edited Shots (header menu) for every step.",
+        "dropped_behavior": "Keys of behaviors the doc dropped -- Build removes them.",
+        "shot_update": "The step changed since its shot was built -- Build updates the shot.",
+        "no_shot": "No shot: the step plays no animation (no row names an animation clip) -- Build makes none. Right-click > Mark as a Shot to give it one.",
     }
+
+    #: Each status in three words at most: what a row says without a hover,
+    #: beside the sentence :attr:`HELP` gives it.
+    LABELS = {
+        "missing_shot": "not built",
+        "missing_object": "not in scene",
+        "ambiguous_object": "ambiguous name",
+        "not_in_shot": "not in shot",
+        "behavior_conflict": "keys conflict",
+        "unknown_behavior": "unknown behavior",
+        "missing_behavior": "keys missing",
+        "stale_behavior": "old recipe",
+        "no_objects": "no objects",
+        "not_in_doc": "not in sheet",
+        "locked": "locked",
+        "edited": "edited by hand",
+        "user_animated": "hand keyed",
+        "additional": "not listed",
+        "scene_discovered": "found in scene",
+        "collision": "overlaps",
+        "dropped_behavior": "keys to remove",
+        "shot_update": "to update",
+        "no_shot": "no shot",
+        "sheet": "sheet issue",
+        "sheet_warning": "sheet warning",
+    }
+
+    #: Object statuses no Build resolves: the step waits on a person
+    #: (:meth:`plan`'s ``needs_you``).
+    NEEDS_YOU = (
+        "missing_object",
+        "ambiguous_object",
+        "behavior_conflict",
+        "unknown_behavior",
+    )
 
     #: Object statuses that name the step, worst first: by the severity a
     #: panel shows each at (``SHOT_STATUS_LEVELS``: errors, warnings, then
@@ -915,9 +1335,219 @@ class StepStatus:
         for a locked or a kept (edited) step: Build leaves both as they are."""
         if self.locked or self.edited:
             return False
-        if not self.built or self.dropped_behaviors or self.updates:
+        if not self.built:
+            return self.animated
+        if self.dropped_behaviors or self.updates:
             return True
         return any(o.status in self.BUILD_FIXES for o in self.objects)
+
+    @property
+    def quiet(self) -> bool:
+        """Whether the assessment has nothing to report of the step: in order
+        (``valid``, or ``no_shot``: it plays no animation and needs none),
+        nothing for a Build to do, every object ``valid`` and nothing in its
+        shot it does not list -- what a view of the steps that need something
+        leaves out.  An unused tail (:attr:`shrinkable_frames`) is no issue."""
+        return (
+            self.status in ("valid", "no_shot")
+            and not self.needs_build
+            and not self.additional_objects
+            and not self.sheet
+            and all(o.status == "valid" for o in self.objects)
+        )
+
+    #: Each state :meth:`behavior_states` gives a behavior of an object row:
+    #: the status whose colour and severity a panel shows it at (a key of
+    #: ``SHOT_PALETTE``; ``None``: no status's, a Local Edit's mark or none)
+    #: and the state in a few words.  ``""``: not assessed.
+    BEHAVIOR_STATES = {
+        "": (None, ""),
+        "taken": ("locked", "taken away here (a Local Edit)"),
+        "off": ("locked", "off for every row (its mode: Off)"),
+        "locked": ("locked", "locked -- Build leaves its step as it is"),
+        "object_missing": ("missing_object", "its object is not in the scene"),
+        "object_ambiguous": (
+            "ambiguous_object",
+            "several scene objects answer to its object's name -- not checked",
+        ),
+        "not_in_shot": (
+            "not_in_shot",
+            "its object is not in the step's shot -- Build adds it, then this",
+        ),
+        "unknown": ("unknown_behavior", "no behavior template has this name"),
+        "conflict": (
+            "behavior_conflict",
+            "animator keys sit on its channels -- Build leaves them",
+        ),
+        "missing": (
+            "missing_behavior",
+            "keys not found in the shot's range -- Build applies them",
+        ),
+        "marker_missing": (
+            "missing_behavior",
+            "no marker where its keys would go -- Build places it",
+        ),
+        "stale": (
+            "stale_behavior",
+            "keyed under an older effect recipe -- Build re-keys it",
+        ),
+        "added": (None, "added here (a Local Edit)"),
+        "to_build": ("missing_shot", "to build -- its step has no shot yet"),
+        "no_shot": (
+            "no_shot",
+            "its step plays no animation -- Build makes no shot for it",
+        ),
+        "built": ("valid", "built"),
+        "marked": ("valid", "marked on the timeline"),
+    }
+
+    #: An object's own status that says what each of its behaviors is: Assess
+    #: checked none of them (:meth:`behavior_states`).
+    _OBJECT_BEHAVIOR_STATES = {
+        "missing_object": "object_missing",
+        "ambiguous_object": "object_ambiguous",
+        "not_in_shot": "not_in_shot",
+    }
+
+    @staticmethod
+    def behavior_states(
+        step: Optional["StepStatus"],
+        name: str,
+        behaviors: Iterable[str],
+        sheet: Optional[Iterable[str]] = None,
+        off: Iterable[str] = (),
+        marked: Iterable[str] = (),
+    ) -> List[Tuple[str, str, str]]:
+        """Each behavior of the object *name* in *step*'s assessment, as an
+        object row shows it: ``(behavior, state, words)``, a
+        :attr:`BEHAVIOR_STATES` key and its words -- the object's own
+        *behaviors*, then those *sheet* gives it that it no longer has.
+
+        One judgment for every panel: a behavior is built only where its
+        step is (an unbuilt step's object assesses ``valid``: its behaviors
+        are ``to_build``), and a state an object's own status decides (not in
+        the scene, ambiguous, not in the shot) says that.
+
+        Parameters:
+            step: The step's assessment, or ``None`` before one.
+            name: The object, as the step lists it.
+            behaviors: Its behaviors, its Local Edits applied.
+            sheet: What the sheet gives it (``None``: *behaviors*); one only
+                there was taken away here, one only in *behaviors* added.
+            off: The behavior types set to Off for every row.
+            marked: The behavior types Build marks on the timeline instead
+                of keying.
+        """
+        behaviors = list(behaviors)
+        given = behaviors if sheet is None else list(sheet)
+        off, marked = set(off), set(marked)
+        # Last wins within a step, as a name -> status map reads it.
+        found = {o.name: o for o in step.objects}.get(name) if step else None
+
+        def judge(b: str) -> str:
+            if b not in behaviors:
+                return "taken"
+            if b in off:
+                return "off"
+            if found is None:  # not assessed (or not this step's object)
+                return "added" if b not in given else ""
+            if step.locked:
+                return "locked"
+            if found.status in StepStatus._OBJECT_BEHAVIOR_STATES:
+                return StepStatus._OBJECT_BEHAVIOR_STATES[found.status]
+            if b in found.unknown_behaviors:
+                return "unknown"
+            if b in found.conflict_behaviors:
+                return "conflict"
+            if b in found.broken_behaviors:
+                return "marker_missing" if b in marked else "missing"
+            if b in found.stale_behaviors:
+                return "stale"
+            if b not in given:
+                return "added"
+            if not step.built:
+                return "to_build" if step.animated else "no_shot"
+            return "marked" if b in marked else "built"
+
+        shown = behaviors + [b for b in dict.fromkeys(given) if b not in behaviors]
+        return [
+            (b, state, StepStatus.BEHAVIOR_STATES[state][1])
+            for b in shown
+            for state in (judge(b),)
+        ]
+
+    @property
+    def label(self) -> str:
+        """The step's cause in a few words (:attr:`LABELS`): its status's,
+        led by how many of its objects share it ("2 not in scene"); for a
+        step with nothing wrong, what a Build still changes on its shot;
+        ``""`` when nothing does."""
+        status = self.status
+        if status == "no_shot":
+            return ""  # nothing to do: a panel's frames cells say it (LABELS)
+        if status in ("valid", "no_objects"):
+            if self.dropped_behaviors:
+                return self.LABELS["dropped_behavior"]
+            if self.updates:
+                return self.LABELS["shot_update"]
+            return self.LABELS.get(status, "")
+        label = self.LABELS.get(status, "")
+        if status == "sheet":
+            return f"{self.sheet_errors} {label}s" if self.sheet_errors > 1 else label
+        count = sum(1 for o in self.objects if o.status == status)
+        return f"{count} {label}" if count > 1 else label
+
+    @staticmethod
+    def plan(results: Optional[List["StepStatus"]]) -> Dict[str, int]:
+        """What a Build of the assessed *results* does, counted by step,
+        before it is pressed: ``create`` (no shot yet), ``update`` (a built
+        step a Build changes; with ``create``, the steps :attr:`needs_build`
+        names), ``keep`` (edited by hand, left as it is), ``skip`` (locked),
+        ``needs_you`` (an object no Build resolves, :attr:`NEEDS_YOU`, or an
+        error of the sheet's own check, :attr:`sheet_errors`; such a
+        step may be created or updated too), ``in_sync`` (built, nothing to
+        do) and ``no_shot`` (plays no animation: no shot to make)."""
+        plan = dict.fromkeys(
+            ("create", "update", "keep", "skip", "needs_you", "in_sync", "no_shot"), 0
+        )
+        for r in results or ():
+            if r.locked:
+                plan["skip"] += 1
+                continue
+            if r.edited:
+                plan["keep"] += 1
+                continue
+            waiting = bool(r.sheet_errors) or any(o.status in StepStatus.NEEDS_YOU for o in r.objects)
+            if not r.built and not r.animated:
+                plan["no_shot"] += 1
+            elif not r.built:
+                plan["create"] += 1
+            elif r.needs_build:
+                plan["update"] += 1
+            elif not waiting:
+                plan["in_sync"] += 1
+            if waiting:
+                plan["needs_you"] += 1
+        return plan
+
+    @staticmethod
+    def plan_text(plan: Dict[str, int]) -> str:
+        """*plan* (:meth:`plan`) as one sentence: what Build does, what it
+        leaves alone, what waits on a person."""
+
+        def counted(pairs):
+            return [f"{plan[key]} {word}" for key, word in pairs if plan.get(key)]
+
+        does = counted((("create", "to create"), ("update", "to update")))
+        keeps = counted(
+            (("keep", "kept (edited by hand)"), ("skip", "locked"), ("no_shot", "with no shot"))
+        )
+        waiting = plan.get("needs_you", 0)
+        waits = [f"{waiting} need{'s' if waiting == 1 else ''} you"] if waiting else []
+        if not does:
+            rest = [f"{plan.get('in_sync', 0)} in sync", *keeps, *waits]
+            return "Nothing to build: " + ", ".join(rest) + "."
+        return "; ".join(", ".join(part) for part in (does, keeps, waits) if part) + "."
 
     @property
     def missing_count(self) -> int:
@@ -954,7 +1584,7 @@ class ShotPairing:
 
     Attributes:
         shots: ``{step_id: ShotBlock}`` for every paired step.
-        how: ``{step_id: "binding" | "name" | "order"}`` -- how it paired.
+        how: ``{step_id: "binding" | "name" | "take" | "order"}`` -- how it paired.
         orphans: Shots no step pairs with ("not in the doc"), timeline order.
         timeline: Every shot the pairing read, in timeline order.
         links: ``{shot_id: step_id}`` per orphan that belongs with a step
@@ -1130,6 +1760,74 @@ class ColumnMap(SchemaSpec):
         example={"priority": ["Priority"]},
         default_factory=dict,
     )
+    row_pass: Dict[str, Tuple[str, ...]] = SchemaSpec.spec_field(
+        help=(
+            "Columns read on every row, each row keeping its own cell "
+            "(`BuilderStep.rows`): {key: [header aliases]}."
+        ),
+        example={"clip": ["Animation Clip Names"]},
+        default_factory=dict,
+    )
+    actions: Dict[str, Dict[str, Any]] = SchemaSpec.spec_field(
+        help=(
+            "The words an Action cell (the `action` column of `row_pass`) may hold, "
+            "each declared: `{word: {family, cells, needs, needs_any, distinct, take, when, places, settings, says}}` "
+            "(`ManifestActions`): `needs_any` groups cells or settings of which one is filled; `distinct` lists "
+            "the cells no two rows of the word share in one step (two buttons of one Label); `places` says "
+            "what a word that places something places it for (`stand`, `point`, `view`, `hold`), its object "
+            "named by its `where` setting (type `object`). A template that declares them is in the cell format: a "
+            "row with an Action is read by its cells (Target, and the `with`, `clip`, "
+            "`members`, `label`, `to` and `settings` columns of `row_pass`), never by its "
+            "sentence. The empty word declares what a row with no Action is."
+        ),
+        example={"highlight": {"cells": ["target"], "says": "{target} is highlighted"}},
+        default_factory=dict,
+        validate=_ManifestModelInternal.validate_actions,
+    )
+    step_settings: Dict[str, Dict[str, Any]] = SchemaSpec.spec_field(
+        help=(
+            "The settings a step may have, written in its own row's Settings cell (a sheet in cells): "
+            "`{name: {type, choices, default, min, max}}`, as an action's."
+        ),
+        example={"dwell": {"type": "number", "min": 0}},
+        default_factory=dict,
+    )
+    cell_marks: Tuple[str, ...] = SchemaSpec.spec_field(
+        help=(
+            "The headers that say a sheet is written in cells: one of them in its header row, "
+            "and its rows are read by `actions`; none, and it is a sheet of sentences, its "
+            "Action cell the fallback it was. Empty: every sheet of this template is in cells."
+        ),
+        example=["Target", "With", "Label", "To", "Settings"],
+        default=(),
+    )
+    shots: str = SchemaSpec.spec_field(
+        help=(
+            "Which steps a build gives a shot: `every` step (a video, where a "
+            "step's narration needs its time), or only one of whose rows names "
+            "an animation clip in the `clip` column of `row_pass` (`clip`: an "
+            "interactive task, where a step that moves nothing is a page, not "
+            "a take; a sheet without that column names no clip). Either way a shot "
+            "is its step's, and holds the takes its rows play."
+        ),
+        choices=_ManifestModelInternal.SHOT_RULES,
+        example="clip",
+        default="every",
+    )
+    step_looks: str = SchemaSpec.spec_field(
+        help=(
+            "What a build does with a look (`highlight`, `fade_in`, `fade_out`) whose row names no "
+            "take in Clip, in a sheet written in cells: such a look belongs to its step. `key`: it "
+            "is keyed into the step's shot (a sheet played straight through: a video, a "
+            "click-through). `leave`: it is left to the tool that runs the steps (an interactive "
+            "task, whose takes wait on the user: keyed into one, a look meant for the step's start "
+            "would play only once its take does), and its Target is a member of the shot with "
+            "nothing keyed on it. A look that names a take is keyed into it either way."
+        ),
+        choices=_ManifestModelInternal.STEP_LOOKS,
+        example="leave",
+        default="key",
+    )
     step_pattern: Tuple[str, ...] = SchemaSpec.spec_field(
         help=(
             "Regexes a step-ID cell must match to start a step (first match "
@@ -1160,6 +1858,14 @@ class ColumnMap(SchemaSpec):
         example=[{}, {"step_pattern": [r"^([A-Z]+_?\d+)$"]}],
         default=(),
     )
+
+    def unmapped(self, header: List[str]) -> List[str]:
+        """The cells of *header* no field takes, in order (a blank cell aside):
+        a column the sheet calls by a name the template does not know."""
+        taken = {a.strip().lower() for a in self.step_id + self.description + self.assets + self.audio + self.behaviors}
+        for aliases in list(self.metadata_pass.values()) + list(self.row_pass.values()):
+            taken |= {a.strip().lower() for a in aliases}
+        return [c.strip() for c in header if c.strip() and c.strip().lower() not in taken]
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialise to a JSON-safe dict (tuples → lists)."""
@@ -1201,8 +1907,9 @@ class _ResolvedColumns:
     """Integer column indices resolved from a header row."""
 
     step_id: int
-    description: int
+    description: Optional[int]  # None: a sheet in cells with no notes column
     assets: int
     audio: Optional[int] = None
     behaviors: Optional[int] = None
     metadata_pass: Dict[str, int] = field(default_factory=dict)
+    row_pass: Dict[str, int] = field(default_factory=dict)

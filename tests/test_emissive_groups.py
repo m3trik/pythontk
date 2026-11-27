@@ -172,11 +172,46 @@ class _Host(PureEmissiveGroupsHost):
     def emission_keys(self, material):
         return list(self.mats[material]["keys"])
 
-    def key_emission(self, material, value, frame=None):
+    def key_emission(self, material, value, frame=None, stepped=False):
         frame = self.frame if frame is None else frame
         keys = [k for k in self.mats[material]["keys"] if k[0] != frame]
         self.mats[material]["keys"] = sorted(keys + [(frame, value)])
         self.mats[material]["emission"] = value
+        self.mats[material].setdefault("stepped", {})[frame] = stepped
+
+    def stepped_emission_frames(self, material):
+        return sorted(f for f, s in self.mats[material].get("stepped", {}).items() if s)
+
+    # tint: a uniform colour times the tint; a mapped one (colour None) refuses
+    def tint_refusal(self, material):
+        mat = self.mats[material]
+        if mat["emission"] is None:
+            return "it has no emission"
+        return "its emission colour is mapped" if mat["color"] is None else None
+
+    def emission_tint(self, material):
+        return list(self.mats[material].get("tint", [1.0, 1.0, 1.0]))
+
+    def set_emission_tint(self, material, tint):
+        self.mats[material]["tint"] = [float(c) for c in tint]
+
+    def key_emission_tint(self, material, tint, frame=None, stepped=False):
+        frame = self.frame if frame is None else frame
+        keys = [k for k in self.mats[material].get("tint_keys", []) if k[0] != frame]
+        self.mats[material]["tint_keys"] = sorted(keys + [(frame, [float(c) for c in tint], stepped)])
+        self.mats[material]["tint"] = [float(c) for c in tint]
+
+    def emission_tint_keys(self, material):
+        return [(f, list(t), s) for f, t, s in self.mats[material].get("tint_keys", [])]
+
+    def clear_emission_tint_keys(self, material):
+        self.mats[material]["tint_keys"] = []
+
+    def emission_states(self, material):
+        return json.loads(json.dumps(self.mats[material].get("states", {})))
+
+    def set_emission_states(self, material, states):
+        self.mats[material]["states"] = json.loads(json.dumps(states))
 
     def clear_emission_keys(self, material):
         self.mats[material]["keys"] = []
@@ -189,10 +224,16 @@ class _Host(PureEmissiveGroupsHost):
         self.copy_emission(material, material, factor)
 
     # export
-    def stage_emission_proxy(self, material, name, factor):
+    def emission_tint_channels(self, material):
+        return [] if self.tint_refusal(material) else [(material, i) for i in range(3)]
+
+    def stage_emission_proxy(self, material, name, factor, tint=None):
         if name in self.proxies:
             return None
-        self.proxies[name] = [(f, v * factor) for f, v in self.mats[material]["keys"]]
+        if tint is None:
+            self.proxies[name] = [(f, v * factor) for f, v in self.mats[material]["keys"]]
+        else:
+            self.proxies[name] = [(f, t[tint] * factor) for f, t, _s in self.mats[material].get("tint_keys", [])]
         return name
 
     def emission_proxies(self):
@@ -373,9 +414,261 @@ class TestWeights(_ModelCase):
             lambda: self.model.key_weight("nope"),
             lambda: self.model.remove_group("nope"),
             lambda: self.model.select_group("nope"),
+            lambda: self.model.set_weights({"nope": 1.0}),
+            lambda: self.model.key_weights(["nope"]),
         ):
             with self.assertRaises(ValueError):
                 call()
+
+    def test_several_groups_rest_in_one_undo_step_and_a_keyed_one_is_named_out(self):
+        """The panel's All On / All Off: one undo step for every group (a step
+        per group undid one of them), and a group whose curve plays is left
+        out of what it says it set."""
+        self.model.add_group("a", {"hull": [0]})
+        self.model.add_group("b", {"panel": [0]})
+        self.model.key_weight("b", 1.0, frame=4)
+        self.host.steps.clear()
+        rested = self.model.set_weights({"a": 0.0, "b": 0.0})
+        self.assertEqual(rested, {"a": 0.0})
+        self.assertEqual(self.host.steps, ["Emissive Groups: weights"])
+        self.assertAlmostEqual(self.host.emission("metal_a"), 0.0)
+        self.assertAlmostEqual(self.host.emission("glass_b"), 1.0, msg="keys own it")
+
+    def test_keying_several_groups_is_one_undo_step(self):
+        self.model.add_group("a", {"hull": [0]}, weight=0.5)
+        self.model.add_group("b", {"panel": [0]})
+        self.host.steps.clear()
+        self.assertEqual(sorted(self.model.key_weights(frame=7)), ["glass_b", "metal_a"])
+        self.assertEqual(self.host.steps, ["Emissive Groups: key weights"])
+        self.assertEqual(self.host.emission_keys("metal_a"), [(7, 1.0)])
+
+
+class TestStates(_ModelCase):
+    """A group's emission as named states: a tint (multiplying the base's
+    emission colour) and a weight, keyed stepped -- an indicator light's
+    off / green / blue / amber / red."""
+
+    def test_a_group_keys_its_states_stepped(self):
+        self.model.add_group("led", {"panel": [0]})
+        self.assertEqual(sorted(self.model.set_states("led")), ["amber", "blue", "green", "off", "red"])
+        self.model.key_state("led", "off", frame=1)
+        self.model.key_state("led", "green", frame=10)
+        self.model.key_state("led", "red", frame=20)
+        mat = self.host.mats["glass_led"]
+        self.assertEqual(mat["keys"], [(1, 0.0), (10, 1.0), (20, 1.0)])
+        self.assertEqual(
+            self.host.emission_tint_keys("glass_led"),
+            [(1, [1.0, 1.0, 1.0], True), (10, [0.0, 1.0, 0.0], True), (20, [1.0, 0.0, 0.0], True)],
+        )
+        self.assertTrue(all(mat["stepped"].values()), "a state switches, it never fades")
+        listed = self.model.list_groups()["led"]
+        self.assertEqual(listed["state"], "red")
+        self.assertTrue(listed["keyed"])
+
+    def test_resting_a_state_and_reading_it_back(self):
+        self.model.add_group("led", {"panel": [0]})
+        self.model.set_states("led", {"on": {"tint": [1, 0.5, 0]}, "dark": {"weight": 0}})
+        self.model.set_state("led", "on")
+        self.assertEqual(self.host.emission_tint("glass_led"), [1.0, 0.5, 0.0])
+        self.assertEqual(self.model.list_groups()["led"]["state"], "on")
+        self.model.set_state("led", "dark")
+        self.assertEqual(self.model.list_groups()["led"]["state"], "dark")
+        with self.assertRaises(ValueError):
+            self.model.set_state("led", "green")  # its own states replace the defaults
+
+    def test_a_copy_joining_takes_the_groups_states_and_tint(self):
+        self.model.add_group("led", {"panel": [0]})
+        self.model.set_states("led")
+        self.model.key_state("led", "blue", frame=5)
+        self.model.add_group("led", {"panel": [1]})  # same material: same copy
+        self.host.mats["glass2"] = dict(self.host.mats["glass"], keys=[], values={})
+        self.host.assign("glass2", {"panel": [2]})
+        self.model.add_group("led", {"panel": [2]})
+        self.assertEqual(sorted(self.host.emission_states("glass2_led")), sorted(self.model.DEFAULT_STATES))
+        self.assertEqual(self.host.emission_tint_keys("glass2_led"), [(5, [0.0, 0.0, 1.0], True)])
+
+    def test_a_mapped_colour_is_refused_a_tint_by_name(self):
+        self.model.add_group("lamp", {"hull": [0]})  # metal: a mapped emission colour
+        with self.assertRaises(ValueError) as raised:
+            self.model.set_tint("lamp", [1, 0, 0])
+        self.assertIn("mapped", str(raised.exception))
+        self.model.set_states("lamp", {"on": {}, "off": {"weight": 0}})  # weight-only states pass
+        self.model.key_state("lamp", "off", frame=1)
+        self.assertEqual(self.host.emission_tint_keys("metal_lamp"), [])
+        self.model.add_group("led", {"panel": [0]})
+        self.model.set_tint("led", [0, 1, 0])
+        with self.assertRaises(ValueError) as raised:
+            self.model.add_group("led", {"hull": [1]})
+        self.assertIn("tinted", str(raised.exception))
+
+    def test_a_group_that_cannot_be_tinted_takes_its_weights_states(self):
+        """Review (2026-11-24): the indicator defaults are coloured, so a group
+        over a mapped colour refused every state, off included. Its defaults
+        are its weight's: off and on."""
+        self.model.add_group("lamp", {"hull": [0]})  # metal: a mapped emission colour
+        self.assertEqual(self.model.default_states("lamp"), self.model.WEIGHT_STATES)
+        self.assertEqual(sorted(self.model.set_states("lamp")), ["off", "on"])
+        self.model.set_state("lamp", "on")
+        self.assertEqual(self.model.list_groups()["lamp"]["state"], "on")
+        self.model.add_group("led", {"panel": [0]})
+        self.assertEqual(self.model.default_states("led"), self.model.DEFAULT_STATES)
+
+    def test_a_group_with_no_states_lists_the_defaults_it_would_take(self):
+        """Review (2026-11-26): the panel asked ``default_states`` per row on
+        every refresh, each a full scan of the copies, for what the listing
+        had already read. It lists the names its State picks offer: its own,
+        else the defaults it takes on its first; the state it shows is one of
+        its own (none before it has any)."""
+        self.model.add_group("led", {"panel": [0]})
+        self.model.add_group("lamp", {"hull": [0]})  # metal: a mapped emission colour
+        listed = self.model.list_groups()
+        self.assertEqual(listed["led"]["states"], list(self.model.DEFAULT_STATES))
+        self.assertEqual(listed["lamp"]["states"], list(self.model.WEIGHT_STATES))
+        self.assertIsNone(listed["led"]["state"])
+        self.assertEqual(self.model.states("led"), {}, "listing stores nothing")
+
+    def test_a_state_put_on_a_group_with_none_stores_the_defaults_in_its_one_step(self):
+        """Review (2026-11-26): the panel stored the defaults (``set_states``)
+        and then rested the state, two undo steps for one pick. The state's
+        own step stores them, so the group ships the states it shows."""
+        self.model.add_group("led", {"panel": [0]})
+        self.host.steps.clear()
+        self.model.set_state("led", "green")
+        self.assertEqual(self.host.steps, ["Emissive Groups: led green"])
+        self.assertEqual(list(self.model.states("led")), list(self.model.DEFAULT_STATES))
+        self.assertEqual(self.model.list_groups()["led"]["state"], "green")
+        (entry,) = self.model.render_effect_materials()
+        self.assertEqual(len(entry["states"]), 5, "a runtime switches it by name")
+        self.model.add_group("lamp", {"hull": [0]})
+        self.host.steps.clear()
+        self.model.key_state("lamp", "on", frame=4)
+        self.assertEqual(self.host.steps, ["Emissive Groups: key lamp on"])
+        self.assertEqual(list(self.model.states("lamp")), ["off", "on"])
+
+    def test_the_groups_objects_wear_take_a_state_whole_or_not_at_all(self):
+        """A build's ``set`` row (``ShotManifest.set_states``) makes sure what its
+        Target wears has the state it names: the groups whose faces lie on the
+        Target's objects (:meth:`groups_on`), each with no states of its own
+        given its defaults, refused whole, before any change, where one lacks
+        the state. Review (2026-11-26): one host's build wrote this in its host
+        half and gave the first group its defaults before the second refused;
+        the other's had none, so every ``set`` row skipped there."""
+        self.model.add_group("led", {"panel": [0]})
+        self.model.add_group("lamp", {"hull": [0]})
+        self.assertEqual(self.model.groups_on(["panel"]), ["led"])
+        self.assertEqual(self.model.groups_on(["hull", "panel", "nothing"]), ["lamp", "led"])
+        self.assertEqual(self.model.groups_on(["nothing"]), [])
+        self.model.set_states("lamp", {"off": {"weight": 0}, "on": {}})
+        self.host.steps.clear()
+        outcome, why = self.model.ensure_state(["lamp", "led"], "green")
+        self.assertEqual(outcome, "skipped")
+        self.assertIn("'lamp' has no state 'green' (it has off, on)", why)
+        self.assertEqual((self.model.states("led"), self.host.steps), ({}, []), "refused whole: nothing given")
+        self.assertEqual(self.model.ensure_state(["led"], "green"), ("given", ""))
+        self.assertEqual(list(self.model.states("led")), list(self.model.DEFAULT_STATES))
+        self.assertEqual(len(self.host.steps), 1, "one undo step")
+        self.assertEqual(self.model.ensure_state(["lamp", "led"], "off"), ("kept", ""))
+        self.assertEqual(self.model.ensure_state([], "off")[0], "skipped")
+
+    def test_keying_several_groups_states_is_one_undo_step(self):
+        """The panel's Key States with no row highlighted: one step for every
+        group (a step per group undid one of them), refused whole before any
+        change when one state cannot be keyed."""
+        self.model.add_group("led", {"panel": [0]})
+        self.model.add_group("lamp", {"hull": [0]})
+        self.host.steps.clear()
+        keyed = self.model.key_states({"led": "amber", "lamp": "off"}, frame=6)
+        self.assertEqual(sorted(keyed), ["glass_led", "metal_lamp"])
+        self.assertEqual(self.host.steps, ["Emissive Groups: key states"])
+        self.assertEqual(self.host.emission_tint_keys("glass_led"), [(6, [1.0, 0.5, 0.0], True)])
+        self.assertEqual(self.host.emission_keys("metal_lamp"), [(6, 0.0)])
+        with self.assertRaises(ValueError):
+            self.model.key_states({"led": "off", "lamp": "green"}, frame=9)  # lamp: off and on
+        self.assertEqual(self.host.emission_keys("glass_led"), [(6, 1.0)], "refused whole")
+
+    def test_a_tint_keyed_alone_keeps_its_weight_unkeyed(self):
+        """Review (2026-11-26): ``keyed`` is the weight's keys or the tint's,
+        so a Weight edit on a group whose tint alone was keyed keyed its
+        weight. The listing says which is keyed."""
+        self.model.add_group("led", {"panel": [0]})
+        self.model.key_tint("led", [0, 1, 0], frame=3)
+        listed = self.model.list_groups()["led"]
+        self.assertTrue(listed["keyed"])
+        self.assertTrue(listed["tint_keyed"])
+        self.assertFalse(listed["weight_keyed"])
+        self.model.key_weight("led", 0.5, frame=3)
+        self.assertTrue(self.model.list_groups()["led"]["weight_keyed"])
+
+    def test_removing_keys_takes_the_tint_keys_too(self):
+        self.model.add_group("led", {"panel": [0]})
+        self.model.key_tint("led", [0, 1, 0], frame=3)
+        self.assertTrue(self.model.list_groups()["led"]["keyed"])
+        self.model.remove_keys("led")
+        self.assertEqual(self.host.emission_tint_keys("glass_led"), [])
+        self.assertEqual(self.host.emission_tint("glass_led"), [0.0, 1.0, 0.0], "its tint now stays")
+
+    def test_a_keyed_state_ships_its_tint_channels_its_states_and_the_tint_it_shows(self):
+        self.model.add_group("led", {"panel": [0]})
+        self.model.set_states("led")
+        self.model.key_state("led", "off", frame=1)
+        self.model.key_state("led", "amber", frame=10)
+        (entry,) = self.model.render_effect_materials()
+        self.assertEqual(entry["channels"], ["emission", "tint_r", "tint_g", "tint_b"])
+        self.assertEqual(entry["emission_color"], [0.2, 0.6, 1.0], "the base's colour: the tint multiplies it")
+        self.assertEqual(entry["tint"], [1.0, 0.5, 0.0], "the tint the delivered material shows")
+        self.assertEqual([s["name"] for s in entry["states"]], ["off", "green", "blue", "amber", "red"])
+        self.assertEqual(entry["states"][3], {"name": "amber", "tint": [1.0, 0.5, 0.0], "weight": 1.0})
+
+        staged = self.model.stage_export_proxies()
+        self.assertEqual(
+            staged, ["glass_led__emission", "glass_led__tint_r", "glass_led__tint_g", "glass_led__tint_b"]
+        )
+        self.assertEqual(self.host.proxies["glass_led__tint_g"], [(1, 1.0), (10, 0.5)])
+
+        colour = self.host.emission_color("glass_led")
+
+        def keys_of(channel):  # the host's channel in its colour's units
+            material, index = channel
+            return [[f, t[index] * colour[index], "step"] for f, t, _s in self.host.emission_tint_keys(material)]
+
+        curves = {c["channel"]: c["keys"] for c in self.model.tint_curves(keys_of)}
+        self.assertEqual(sorted(curves), ["tint_b", "tint_g", "tint_r"])
+        self.assertEqual([k[1] for k in curves["tint_g"]], [1.0, 0.5])
+        self.assertEqual(curves["tint_b"][1][2], "step")
+
+    def test_a_tint_keyed_alone_ships_no_weight_channel_and_a_rested_tint_no_tint_channel(self):
+        self.model.add_group("led", {"panel": [0]})
+        self.model.key_tint("led", [0, 1, 0], frame=3)
+        (entry,) = self.model.render_effect_materials()
+        self.assertEqual(entry["channels"], ["tint_r", "tint_g", "tint_b"])
+        self.assertEqual(self.model.stage_export_proxies(), [f"glass_led__tint_{c}" for c in "rgb"])
+
+        self.model.remove_keys("led")
+        self.model.key_weight("led", 0.5, frame=1)
+        (entry,) = self.model.render_effect_materials()
+        self.assertEqual(entry["channels"], ["emission"])
+        self.assertEqual(entry["tint"], [0.0, 1.0, 0.0], "resting green: stated, so a runtime reads the weight")
+        self.assertNotIn("states", entry)
+
+    def test_a_group_with_states_and_no_keys_ships_them_for_a_runtime_to_switch(self):
+        """An indicator a game drives (a task's step switches it): no keys,
+        so no curve and no proxy -- its entry carries the states and the tint
+        it rests at. Added: 2026-11-24"""
+        self.model.add_group("led", {"panel": [0]})
+        self.model.set_states("led")
+        self.model.set_state("led", "off")
+        (entry,) = self.model.render_effect_materials()
+        self.assertEqual(entry["channels"], [])
+        self.assertEqual(len(entry["states"]), 5)
+        self.assertEqual(self.model.stage_export_proxies(), [])
+        self.assertEqual(self.model.weight_curves(lambda copy: []), [])
+
+    def test_an_untinted_copy_states_no_tint(self):
+        self.model.add_group("led", {"panel": [0]})
+        self.model.key_weight("led", 0.5, frame=1)
+        (entry,) = self.model.render_effect_materials()
+        self.assertNotIn("tint", entry)
+        self.assertEqual(self.model.tint_curves(lambda channel: [[1, 1.0]]), [])
 
 
 class TestInStep(_ModelCase):
@@ -398,6 +691,24 @@ class TestInStep(_ModelCase):
         self.model.sync()
         self.assertEqual(self.host.emission_keys("metal_signal"), [(5, 4.0)])
         self.assertEqual(self.host.copies()["metal_signal"]["strength"], 4.0)
+
+    def test_a_check_leaves_no_undo_step(self):
+        """A host may push a step for every one opened: each export's check
+        added an empty one to the user's history."""
+        self.model.add_group("signal", {"hull": [0]})
+        self.host.steps.clear()
+        self.model.sync(check_only=True)
+        self.model.validate()
+        self.assertEqual(self.host.steps, [])
+
+    def test_a_base_that_stopped_glowing_is_reported_not_in_step(self):
+        """No weight scales a glow of 0: the copy keeps its own and says so
+        (Sync called it in step and the copy went on glowing)."""
+        self.model.add_group("signal", {"hull": [0]})
+        self.host.set_emission("metal", 0.0)
+        found = self.model.sync(check_only=True)
+        self.assertTrue(any("no longer glows" in f and "metal_signal" in f for f in found), found)
+        self.assertEqual(self.host.copies()["metal_signal"]["strength"], 2.0)
 
     def test_a_lost_base_is_reported_never_guessed(self):
         self.model.add_group("signal", {"hull": [0]})
@@ -648,6 +959,41 @@ class TestCrossings(_ModelCase):
         model.transfer_in(payload, ctx)
         self.assertEqual(far.copies()["metal_signal"]["group"], "signal")
         self.assertEqual(far.emission_keys("metal_signal"), [(4, 2.0)])
+
+    def test_a_crossing_carries_the_states_the_tint_and_the_steps(self):
+        """Review (2026-11-24): the payload carried the weight's keys alone and
+        landed them linear, so after a bridge round trip a state switch faded
+        and the states and tint keys were gone. They cross whole."""
+        self.model.add_group("led", {"panel": [0]})
+        self.model.set_states("led")
+        self.model.key_state("led", "off", frame=1)
+        self.model.key_state("led", "green", frame=10)
+        payload = self.model.transfer_out(ptk.TransferContext())
+        entry = payload["copies"]["glass_led"]
+        self.assertEqual(entry["stepped"], [1.0, 10.0])
+        self.assertEqual(entry["tint_keys"], [[1.0, [1.0, 1.0, 1.0], True], [10.0, [0.0, 1.0, 0.0], True]])
+        far = _Host()
+        far.mats["glass_led"] = dict(far.mats["glass"], keys=[], values={})
+        model = _bound(far)
+        model.transfer_in(json.loads(json.dumps(payload)), ptk.TransferContext())
+        self.assertEqual(far.stepped_emission_frames("glass_led"), [1.0, 10.0], "a switch, never a fade")
+        self.assertEqual(far.emission_tint_keys("glass_led"), self.host.emission_tint_keys("glass_led"))
+        self.assertEqual(far.emission_states("glass_led"), self.host.emission_states("glass_led"))
+
+    def test_a_material_the_far_side_renamed_is_found_under_its_name(self):
+        """The record does not respell on its own, so its codec spells each
+        name through the context: a host lands ``metal.001`` beside a
+        ``metal`` it had."""
+        self.model.add_group("signal", {"hull": [0]})
+        payload = self.model.transfer_out(ptk.TransferContext())
+        far = _Host()
+        far.mats["metal.001"] = dict(far.mats["metal"])
+        far.mats["metal_signal.001"] = dict(far.mats["metal"], keys=[])
+        model = _bound(far)
+        names = {"metal": "metal.001", "metal_signal": "metal_signal.001"}
+        ctx = ptk.TransferContext(rename=names.get)
+        model.transfer_in(payload, ctx)
+        self.assertEqual(far.copies()["metal_signal.001"]["base"], "metal.001")
 
 
 class TestPureHost(unittest.TestCase):

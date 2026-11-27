@@ -1,0 +1,313 @@
+{
+    "columns": {
+        "step_id": [
+            "Step",
+            "ID",
+            "Number"
+        ],
+        "description": [
+            "Step Contents",
+            "Description",
+            "Contents",
+            "Details",
+            "Notes"
+        ],
+        "assets": [
+            "Asset Names",
+            "Assets",
+            "Asset",
+            "Objects",
+            "Target",
+            "Targets"
+        ],
+        "audio": [
+            "Voice Support",
+            "Voice",
+            "VO",
+            "Narration"
+        ],
+        "behaviors": [
+            "Behaviors",
+            "Behavior"
+        ],
+        "object_source": "column",
+        "exclude_steps": [
+            "SETUP"
+        ],
+        "exclude_values": {
+            "assets": [
+                "N/A",
+                ""
+            ],
+            "clip": [
+                "N/A",
+                "-"
+            ]
+        },
+        "metadata_pass": {
+            "step_name": [
+                "Step Name"
+            ],
+            "audio_file": [
+                "Audio Files",
+                "Audio File",
+                "Audio"
+            ]
+        },
+        "step_pattern": [
+            "^([A-Z]+_?\\d+[A-Z]?(?:\\.\\d+)?)(?:\\.\\))?$"
+        ],
+        "section_pattern": [
+            "(?i)^SECTION\\s+([A-Z0-9]+)\\s*:\\s*(.*)",
+            "^(INTRO|OUTRO)$"
+        ],
+        "row_pass": {
+            "clip": [
+                "Animation Clip Names",
+                "Clip",
+                "Take"
+            ],
+            "action": [
+                "Action"
+            ],
+            "settings": [
+                "Settings"
+            ]
+        },
+        "actions": {
+            "": {
+                "cells": [
+                    "target"
+                ],
+                "needs": [
+                    "target"
+                ],
+                "when": "none",
+                "says": "{target} is in the shot"
+            },
+            "highlight": {
+                "family": "attention",
+                "cells": [
+                    "target"
+                ],
+                "needs": [
+                    "target"
+                ],
+                "when": "start",
+                "settings": {
+                    "style": {
+                        "choices": [
+                            "auto",
+                            "pulse",
+                            "steady"
+                        ],
+                        "default": "auto"
+                    },
+                    "color": {
+                        "type": "color"
+                    }
+                },
+                "says": "{target} is highlighted"
+            },
+            "fade_in": {
+                "family": "visibility",
+                "cells": [
+                    "target"
+                ],
+                "needs": [
+                    "target"
+                ],
+                "when": "start",
+                "settings": {
+                    "fade": {
+                        "type": "number",
+                        "min": 0
+                    }
+                },
+                "says": "{target} fades in"
+            },
+            "fade_out": {
+                "family": "visibility",
+                "cells": [
+                    "target"
+                ],
+                "needs": [
+                    "target"
+                ],
+                "when": "end",
+                "settings": {
+                    "fade": {
+                        "type": "number",
+                        "min": 0
+                    }
+                },
+                "says": "{target} fades out"
+            }
+        },
+        "cell_marks": [
+            "Target",
+            "Targets",
+            "With",
+            "Members",
+            "Label",
+            "To",
+            "Settings"
+        ]
+    },
+    "match": "name",
+    "options": {
+        "behaviors": {
+            "kind": "choice",
+            "section": "Sheet",
+            "label": "Behaviors",
+            "tooltip": "Where each row's behaviors come from.",
+            "default": "description",
+            "choices": {
+                "description": {
+                    "label": "From the description",
+                    "tooltip": "Phrases in the row's text that a behavior template detects (\"fades in\").",
+                    "set": {}
+                },
+                "column": {
+                    "label": "From the Behaviors column",
+                    "tooltip": "Names or phrases listed in the Behaviors column, one row at a time.",
+                    "set": {
+                        "columns": {
+                            "behavior_source": "column"
+                        }
+                    }
+                },
+                "column_else_description": {
+                    "label": "Column, else description",
+                    "tooltip": "The Behaviors column where a row fills it, else the row's text.",
+                    "set": {
+                        "columns": {
+                            "behavior_source": "column_else_description"
+                        }
+                    }
+                }
+            }
+        },
+        "match": {
+            "kind": "choice",
+            "section": "Shots",
+            "label": "Match Shots",
+            "tooltip": "How a step finds its shot in the scene. A build records the pairing on the shot, so later doc edits never shift it.",
+            "default": "name",
+            "choices": {
+                "name": {
+                    "label": "By name",
+                    "tooltip": "The shot named after the step (or already bound to it).",
+                    "set": {}
+                },
+                "name_then_order": {
+                    "label": "By name, then order",
+                    "tooltip": "Then the remaining steps and shots in timeline order -- for a scene whose shots were named before the doc.",
+                    "set": {
+                        "match": "name_then_order"
+                    }
+                }
+            }
+        },
+        "shots": {
+            "kind": "choice",
+            "section": "Shots",
+            "label": "Shots",
+            "tooltip": "Which steps get a shot.",
+            "default": "every",
+            "choices": {
+                "every": {
+                    "label": "Every step",
+                    "tooltip": "Each step gets a shot: a video, where a step's narration needs its time whether or not anything moves.",
+                    "set": {
+                        "columns": {
+                            "shots": "every"
+                        }
+                    }
+                },
+                "clip": {
+                    "label": "Steps with an animation clip",
+                    "tooltip": "Only a step one of whose rows names a clip in the Animation Clip Names column gets a shot: an interactive task, where a step that moves nothing is a page, not a take. Right-click a step to mark it either way.",
+                    "set": {
+                        "columns": {
+                            "shots": "clip"
+                        }
+                    }
+                }
+            }
+        },
+        "audio": {
+            "kind": "choice",
+            "section": "Sheet",
+            "label": "Audio",
+            "tooltip": "Whether each step's voice text names an audio clip to key.",
+            "default": "text",
+            "choices": {
+                "text": {
+                    "label": "Voice text only",
+                    "tooltip": "The voice column is narration text; no clip is keyed.",
+                    "set": {}
+                },
+                "derive": {
+                    "label": "Derive clip names",
+                    "tooltip": "Each step keys a clip named from its step ID and the first 3 words of its voice text.",
+                    "set": {
+                        "audio_resolve": {
+                            "method": "derive",
+                            "words": 3
+                        },
+                        "default_behaviors": {
+                            "audio": [
+                                "set_clip"
+                            ]
+                        }
+                    }
+                },
+                "narrate": {
+                    "label": "Recordings, else narration",
+                    "tooltip": "Each step keys the recording its Audio Files cell names (or one named by its step ID) in recordings/, else the narration narration.render made for its voice text in narration/ (both beside the project's settings).",
+                    "set": {
+                        "audio_resolve": [
+                            {
+                                "method": "cell",
+                                "directory": "recordings"
+                            },
+                            {
+                                "method": "prefix",
+                                "directory": "recordings"
+                            },
+                            {
+                                "method": "narrate",
+                                "directory": "narration",
+                                "pronounce": "pronounce.json"
+                            }
+                        ],
+                        "default_behaviors": {
+                            "audio": [
+                                "set_clip"
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "color_by": {
+            "kind": "choice",
+            "section": "Sheet",
+            "label": "Row Colors",
+            "tooltip": "Color the step rows automatically. A color you pick for a row (right-click a step) shows over it.",
+            "field": "color_by",
+            "default": "none",
+            "choices": {
+                "none": {
+                    "label": "Off",
+                    "tooltip": "Only the colors you pick."
+                },
+                "section": {
+                    "label": "By section",
+                    "tooltip": "Each section its own color, in sheet order."
+                }
+            }
+        }
+    }
+}

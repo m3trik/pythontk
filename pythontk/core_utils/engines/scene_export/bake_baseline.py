@@ -95,6 +95,10 @@ class BakeBaseline:
     - *role*: a :class:`Role` value.
     - *marker*: the object's lightmap marker as read (``{"map": name,
       "scaleOffset": [4]}``), or ``None``.
+    - *carriers* (optional, an isolated part's): the ids of the parts that
+      carry it (:meth:`carriers`), which render in its pass, read from the
+      scene now. A bake records the ones it rendered with, so a carrier
+      deleted since, or one that carries it anew, stales its map.
 
     Tolerances are class attributes, each a fraction of the object's own size
     unless named otherwise; the ``tol`` argument multiplies all of them.
@@ -123,7 +127,8 @@ class BakeBaseline:
         #: The Exclude set: renders (casts shadow and bounce), never baked.
         EXCLUDED = "excluded"
         #: The Isolate set: baked in a pass of its own, out of every other
-        #: pass's render -- so its changes reach no neighbour.
+        #: pass's render but those of the parts it carries (:meth:`carriers`)
+        #: -- so its changes reach those alone.
         ISOLATED = "isolated"
 
     #: How :class:`StaleReport` words each reason.
@@ -442,6 +447,71 @@ class BakeBaseline:
                     found.setdefault(ids[i], []).append(cause)
         return {k: found[k] for k in sorted(found)}
 
+    @staticmethod
+    def carriers(movers: Mapping[str, Iterable[str]]) -> Dict[str, List[str]]:
+        """The Isolate set's carrier rule: ``{part: [the parts that carry it]}``.
+
+        Part X carries part Y when something moves X and every transform that
+        moves X moves Y too: wherever Y goes, X is around it as it was when
+        both were baked, so X renders in Y's pass. A small door rides the
+        door it is set in (production, 2026-11-24: baked without its gray
+        door around it, a locker door read darker than the doors beside it);
+        the door does not ride the small door, so the small door stays out of
+        the door's pass -- what is seen behind it is seen only with it open.
+        Parts moved by the same transforms carry each other: they move as
+        one. A part nothing moves carries nothing.
+
+        Parameters:
+            movers: Part id -> the ids of the transforms that move it (its own
+                and its ancestors' driven ones, as each host reads them).
+
+        Returns:
+            Only the parts something carries, each with its carriers sorted.
+        """
+        sets = {str(k): frozenset(str(m) for m in v) for k, v in movers.items()}
+        found: Dict[str, List[str]] = {}
+        for part in sorted(sets):
+            carried_by = [
+                other
+                for other in sorted(sets)
+                if other != part and sets[other] and sets[other] <= sets[part]
+            ]
+            if carried_by:
+                found[part] = carried_by
+        return found
+
+    @classmethod
+    def group_carriers(
+        cls, groups: Sequence[Sequence[Any]], movers: Callable[[Any], Iterable[str]]
+    ) -> List[List[Any]]:
+        """:meth:`carriers` over groups of parts (an Isolate set's members,
+        each several meshes): a group moves by what moves every one of its
+        parts, and each group gets the parts of the groups that carry it.
+
+        Parameters:
+            groups: Lists of parts (a host's mesh names or objects).
+            movers: Part -> the ids of the transforms that move it.
+
+        Returns:
+            Aligned with *groups*: the parts of its carriers, in group order.
+        """
+        moved = {}
+        for index, group in enumerate(groups):
+            shared = None
+            for part in group:
+                own = {str(m) for m in movers(part)}
+                shared = own if shared is None else shared & own
+            moved[str(index)] = shared or set()
+        carried = cls.carriers(moved)
+        return [
+            [
+                part
+                for j in sorted(carried.get(str(i), []), key=int)  # group order
+                for part in groups[int(j)]
+            ]
+            for i in range(len(groups))
+        ]
+
     @classmethod
     def _reach(cls, own: Sequence[_Box], room_size: float, reach: float) -> float:
         """The D4 rule for one cause's boxes."""
@@ -473,7 +543,8 @@ class BakeBaseline:
         duplicate of a tracked object (it reads its source's cell). It is a
         neighbour when a participant within reach of it (:meth:`neighbours`)
         changed now, arrived, left, or changed at a commit later than its
-        bake. An isolated participant's changes reach no neighbour.
+        bake. An isolated participant's changes reach only the isolated parts
+        it carries (their ``carriers``: :meth:`carriers`), at any distance.
 
         With no record there is nothing to diff: every marked object is
         untracked, and only a missing map is stale -- as an untracked object's
@@ -606,6 +677,26 @@ class BakeBaseline:
             names = [a for a in names if a in now or then[a][1] > since(b)]
             if names:
                 named[b] = names
+        # An isolated part's carriers render in its pass: a change to one
+        # reaches it at any distance -- one that moved it, arrived or left
+        # now, or changed at a commit later than its bake. The carriers its
+        # bake rendered with are recorded: the scene lists no deleted one.
+        for b in candidates:
+            held = live[b]["carriers"] if b in live else None
+            was = {renames.get(a, a) for a in held or ()}
+            for a in sorted(set(current[b]["carriers"]) | was):
+                e = live.get(a)
+                if a not in current:  # left: it was baked around b
+                    reaches = a in was or a in objects
+                elif e is None or (held is not None and a not in was):
+                    reaches = True  # arrived, or carries b since its bake
+                else:
+                    reaches = bool(cls.CAUSES.intersection(changed.get(a) or ())) or (
+                        e["placed_at"] is not None and e["placed_at"] > since(b)
+                    )
+                if reaches and a not in named.get(b, []):
+                    named[b] = sorted(named.get(b, []) + [a])
+        named = {k: named[k] for k in sorted(named)}
 
         lit = set()
         if lighting is not None:
@@ -734,6 +825,7 @@ class BakeBaseline:
                     size=info.get("size"),
                     packing=info.get("packing"),
                     untracked=False,
+                    carriers=list(p["carriers"]),
                 )
             out[k] = entry
         for k, e in survey["objects"].items():
@@ -755,7 +847,13 @@ class BakeBaseline:
         )
 
     #: What :meth:`keep_baked` gives a re-packed object back from before.
-    KEPT_ON_REPACK: Tuple[str, ...] = ("baked_at", "lighting", "stale", "untracked")
+    KEPT_ON_REPACK: Tuple[str, ...] = (
+        "baked_at",
+        "lighting",
+        "stale",
+        "untracked",
+        "carriers",
+    )
 
     @classmethod
     def keep_baked(cls, record: Any, before: Any, objects: Iterable[str]) -> Dict[str, Any]:
@@ -1279,6 +1377,7 @@ class BakeBaseline:
         stale = entry.get("stale")
         name = entry.get("map")
         packing = entry.get("packing")
+        carriers = entry.get("carriers")
         return {
             "state": entry["state"],
             "role": cls._text(entry.get("role") or cls.Role.BAKED),
@@ -1297,6 +1396,11 @@ class BakeBaseline:
             "size": cls._int(entry.get("size")),
             "packing": cls._text(packing) if packing else None,
             "untracked": bool(entry.get("untracked")),
+            # The parts its bake rendered around it (:meth:`carriers`); None
+            # from a record made before they were kept.
+            "carriers": sorted(str(c) for c in carriers)
+            if isinstance(carriers, list)
+            else None,
         }
 
     @classmethod
@@ -1317,12 +1421,15 @@ class BakeBaseline:
     # ---------------------------------------------------------------- helpers
     @classmethod
     def _participant(cls, p: Mapping) -> Dict[str, Any]:
-        """A scene row with a plain state, a role value and a marker dict."""
+        """A scene row with a plain state, a role value, a marker dict and the
+        ids of the parts that carry it (:meth:`carriers`; none but an
+        isolated part's)."""
         marker = p.get("marker")
         return {
             "state": cls._copy(p.get("state") or {}),
             "role": cls._text(p.get("role") or cls.Role.BAKED),
             "marker": cls._copy(marker) if isinstance(marker, Mapping) else None,
+            "carriers": [str(c) for c in p.get("carriers") or ()],
         }
 
     @staticmethod

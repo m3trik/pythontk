@@ -14,7 +14,8 @@
             "placard_text": ["Text On Placard"],
             "export_name": ["FBX/GLB Names"],
             "audio_file": ["Audio Files"]
-        }
+        },
+        "row_pass": {"clip": ["Animation Clip Names", "Clip", "Take"]}
     },
     "match": "name",
     "options": {
@@ -132,6 +133,25 @@
                 }
             }
         },
+        "shots": {
+            "kind": "choice",
+            "section": "Shots",
+            "label": "Shots",
+            "tooltip": "Which steps get a shot.",
+            "default": "every",
+            "choices": {
+                "every": {
+                    "label": "Every step",
+                    "tooltip": "Each step gets a shot: a video, where a step's narration needs its time whether or not anything moves.",
+                    "set": {"columns": {"shots": "every"}}
+                },
+                "clip": {
+                    "label": "Steps with an animation clip",
+                    "tooltip": "Only a step one of whose rows names a clip in the Animation Clip Names column gets a shot: an interactive task, where a step that moves nothing is a page, not a take. Right-click a step to mark it either way.",
+                    "set": {"columns": {"shots": "clip"}}
+                }
+            }
+        },
         "audio": {
             "kind": "choice",
             "section": "Sheet",
@@ -150,6 +170,32 @@
                     "set": {
                         "audio_resolve": {"method": "derive", "words": 3},
                         "default_behaviors": {"audio": ["set_clip"]}
+                    }
+                },
+                "narrate": {
+                    "label": "Recordings, else narration",
+                    "tooltip": "Each step keys the recording its Audio Files cell names (or one named by its step ID) in recordings/, else the narration narration.render made for its voice text in narration/ (both beside the project's settings).",
+                    "set": {
+                        "audio_resolve": [
+                            {
+                                "method": "cell",
+                                "directory": "recordings"
+                            },
+                            {
+                                "method": "prefix",
+                                "directory": "recordings"
+                            },
+                            {
+                                "method": "narrate",
+                                "directory": "narration",
+                                "pronounce": "pronounce.json"
+                            }
+                        ],
+                        "default_behaviors": {
+                            "audio": [
+                                "set_clip"
+                            ]
+                        }
                     }
                 }
             }

@@ -1530,7 +1530,7 @@ class ShotSequencer(_ShotSequencerHooks):
         retimed into its new width, and a width of 0 is refused -- that would
         cut or stack the animator's keys -- so a seam closed flush over a
         keyed gap left the keys where they were, and the shot after played
-        them: SOL_REPLACE_ASSEMBLY pulled into Blender with its stepped keys,
+        them: a production scene pulled into Blender with its stepped keys,
         a respace to 0 played A04 0.0012 off.  One frame apart, the keys keep
         a gap to be retimed into (a slide's: :meth:`_retime_closed_gap`).
         """
@@ -1826,6 +1826,7 @@ class ShotSequencer(_ShotSequencerHooks):
             )
             shot.start = new_start
             shot.end = new_end
+            self.store.rebase_takes(shot, old_start, old_end)  # its content stayed
             # A GROWING edge ripples from the NEW bound: everything beyond
             # what the shot now covers moves, and the keys it grew over stay
             # where they are -- enclosed, which is the whole point of an
@@ -2028,6 +2029,7 @@ class ShotSequencer(_ShotSequencerHooks):
         if grown_end > shot.end:
             shot.end = grown_end
             end_expanded = True
+        self.store.rebase_takes(shot, prior_start, prior_end)  # its content stayed
 
         # Ripple upstream by however much the shot head grew
         if start_expanded:
@@ -2760,6 +2762,8 @@ class ShotSequencer(_ShotSequencerHooks):
         self.scale_object_keys(obj, old_start, old_end, new_start, new_end)
         shot.start = grown_start
         shot.end = grown_end
+        # One object retimed: the takes keep their frames.
+        self.store.rebase_takes(shot, prior_start, prior_end)
         self.reconcile_system_edits()
         self.store.mark_dirty()
 
@@ -2793,6 +2797,8 @@ class ShotSequencer(_ShotSequencerHooks):
             if delta < 0:
                 self.ripple_downstream(shot_id, old_end, delta)
         shot.end = new_end
+        # Retimed with the keys.
+        self.store.rebase_takes(shot, shot.start, old_end, scaled=True)
         self.reconcile_system_edits()
         self.store.mark_dirty()
 
@@ -2875,6 +2881,8 @@ class ShotSequencer(_ShotSequencerHooks):
                 self.ripple_upstream(shot_id, old_start, head_delta)
         shot.start = new_start
         shot.end = new_end
+        # Retimed with the keys.
+        self.store.rebase_takes(shot, old_start, old_end, scaled=True)
 
         if _enforce:
             # reconcile, not just enforce: this moved a shot BOUND, which
@@ -3172,6 +3180,7 @@ class ShotSequencer(_ShotSequencerHooks):
 
         shot.start = new_start
         shot.end = new_end
+        self.store.rebase_takes(shot, old_start, old_end)  # its content stayed
 
         if _enforce:
             # reconcile, not just enforce: this moved a shot BOUND, which
@@ -3318,10 +3327,16 @@ class ShotSequencer(_ShotSequencerHooks):
         elif ne < old_e - _EPS:
             handed.append((shot, after, ne, old_e))
         shot.start, shot.end = ns, ne
+        self.store.rebase_takes(shot, old_s, old_e, scaled=scale)
+        # A neighbour giving way moves a bound, never its keys: its takes keep their frames.
         if prev_end is not None:
+            old_prev = (prev.start, prev.end)
             prev.end = prev_end
+            self.store.rebase_takes(prev, *old_prev)
         if nxt_start is not None:
+            old_next = (nxt.start, nxt.end)
             nxt.start = nxt_start
+            self.store.rebase_takes(nxt, *old_next)
         if not scale:
             self._hand_over_members(handed)
         self.store.mark_dirty()
@@ -3489,7 +3504,9 @@ class ShotSequencer(_ShotSequencerHooks):
         animation trades places under names that stay in order.  Retained
         ``metadata`` -- the manifest step a place pairs with -- keeps that
         place's members its shot holds no keys for there too, the keyed
-        ones travelling with their keys (:meth:`_exchange_place_members`).
+        ones travelling with their keys (:meth:`_exchange_place_members`),
+        and its take names, over the spans of the animation that lands there
+        (``ShotStore.takes_over``: the spans are the keys').
 
         Parameters:
             shot_id: One shot.
@@ -3529,7 +3546,8 @@ class ShotSequencer(_ShotSequencerHooks):
         the source's animator keys are copied in at the same offsets from
         its start (:meth:`copy_attribute_keys`: the animator's own tangents,
         no claims).  The destination keeps its record -- name, description,
-        lock, metadata -- and the members it held no keys for; the keyed
+        lock, metadata, its take names over the source's take spans
+        (``ShotStore.takes_over``) -- and the members it held no keys for; the keyed
         ones give way to what it animates now (pins and locks kept,
         :meth:`_recompute_shot_objects`).  The source is
         untouched.  Audio is not copied: a clip is one placement of its track.
@@ -3556,6 +3574,12 @@ class ShotSequencer(_ShotSequencerHooks):
             replaced = self._keyed_members(dest_id)
             self._cut_owned_content(dest_id)
             src, dest = self.shot_by_id(source_id), self.shot_by_id(dest_id)
+            # Its take names over the copied animation's spans: the spans are the keys'.
+            takes = store.takes_over(dest, src)
+            if takes is not None:
+                store.update_shot(
+                    dest_id, metadata=dict(dest.metadata, **{store.TAKES: takes})
+                )
             grow = src.duration - dest.duration
             if abs(grow) > _EPS:
                 old_end = dest.end
@@ -3590,6 +3614,15 @@ class ShotSequencer(_ShotSequencerHooks):
         }
         if "metadata" in fields:
             self._exchange_place_members(a, b, edits)
+            # The take spans are the keys' and travel with them; the names stay with the place.
+            for shot, place in ((a, b), (b, a)):
+                meta = dict(edits[shot.shot_id]["metadata"] or {})
+                takes = store.takes_over(place, shot)
+                if takes is None:
+                    meta.pop(store.TAKES, None)
+                else:
+                    meta[store.TAKES] = takes
+                edits[shot.shot_id]["metadata"] = meta
         if "name" in fields:
             # Names are unique: park one on a free name while the other moves.
             store.update_shot(shot_id, name=store.unique_name(a.name + "_swap"))
@@ -3985,6 +4018,12 @@ class ShotSequencer(_ShotSequencerHooks):
         being seams and are released by :meth:`reconcile_system_edits`, which
         is exactly right: there is no longer a cut there.
 
+        Every clip the merged shots exported is kept: each take of each shot
+        is carried at its frames under its name (``ShotStore.TAKES``), and a
+        shot that declares none -- its own clip -- is one take of its own
+        name.  A name another clip has is numbered and said.  Where none of
+        them declares takes, the merged shot is its own clip, as each was.
+
         Parameters:
             shot_ids: Two or more ids.  Unknown ids are ignored; order does
                 not matter (the earliest START wins).
@@ -4010,6 +4049,7 @@ class ShotSequencer(_ShotSequencerHooks):
                 if obj not in objects:
                     objects.append(obj)
         notes = [s.description for s in shots if s.description]
+        takes = self._merged_takes(shots)
 
         with self.store.batch_update():
             for s in shots[1:]:
@@ -4033,10 +4073,45 @@ class ShotSequencer(_ShotSequencerHooks):
                 objects=objects,
                 description=" / ".join(notes),
             )
+            if takes is not None:
+                self.store.set_takes(keeper.shot_id, takes)
 
         self.reconcile_system_edits()
         self.store.mark_dirty()
         return self.shot_by_id(keeper.shot_id)
+
+    def _merged_takes(self, shots) -> Optional[List[Tuple[str, float, float]]]:
+        """The takes :meth:`merge_shots` leaves on the one shot *shots* (in
+        timeline order) become: each one's takes at their frames, a shot that
+        declares none being one take of its own name; ``None`` where none
+        declares any.  A name another clip outside them has, or one carried
+        before it (ignoring case), is numbered (``ShotStore.unique_among``)
+        and said."""
+        store = self.store
+        held = [store.takes_of(s) for s in shots]
+        if all(takes is None for takes in held):
+            return None
+        merged = {s.shot_id for s in shots}
+        outside = [s for s in store.shots if s.shot_id not in merged]
+        taken = [s.name for s in outside]
+        taken += [t["name"] for s in outside for t in store.take_records(s) or ()]
+        out: List[Tuple[str, float, float]] = []
+        for shot, takes in zip(shots, held):
+            clips = [(shot.name, shot.start, shot.end)] if takes is None else takes
+            for name, start, end in clips:
+                if end - start <= _EPS:
+                    continue  # a shot of no length plays no frame
+                kept = store.unique_among(name, taken)
+                if kept != name:
+                    _log.warning(
+                        "Merging into %r: the take %r is named %r (its name is another clip's).",
+                        shots[0].name,
+                        name,
+                        kept,
+                    )
+                taken.append(kept)
+                out.append((kept, start, end))
+        return out
 
     def split_shot(
         self,
@@ -4057,7 +4132,12 @@ class ShotSequencer(_ShotSequencerHooks):
         the halves rather than an invisible division.
 
         Membership is recomputed per side from the keys actually there, so
-        neither half claims objects that only animate in the other.
+        neither half claims objects that only animate in the other.  So are
+        its takes (``ShotStore.TAKES``), on the frames they play: one wholly
+        before the cut stays, one wholly after it moves to the tail, and one
+        across it stays in the head up to the cut while its rest becomes a
+        take of the tail, named as ``ShotStore.unique_name`` derives (and
+        said) -- every frame a take played is still exported.
 
         Parameters:
             shot_id: The shot to split.
@@ -4094,6 +4174,9 @@ class ShotSequencer(_ShotSequencerHooks):
     ) -> ShotBlock:
         """The validated half of :meth:`split_shot`: trim, define, ripple."""
         shot_id = shot.shot_id
+        head_takes, tail_takes = self._split_takes(shot, at, tail_name)
+        if head_takes is not None:
+            self.store.set_takes(shot_id, head_takes)  # first: the trim then drops none of them
         self.store.update_shot(shot_id, end=at)
         # The tail INHERITS the shot's object list and is then narrowed to
         # what actually animates in it.  Seeding it empty instead makes
@@ -4111,6 +4194,8 @@ class ShotSequencer(_ShotSequencerHooks):
             description=shot.description,
             metadata={self.store.STEP_LINK: step} if step else None,
         )
+        if tail_takes:
+            self.store.set_takes(tail.shot_id, tail_takes)  # before a gap ripples it: they ride it
         self._recompute_shot_objects(shot_id)
         self._recompute_shot_objects(tail.shot_id)
 
@@ -4123,6 +4208,40 @@ class ShotSequencer(_ShotSequencerHooks):
         self.reconcile_system_edits()
         self.store.mark_dirty()
         return self.shot_by_id(tail.shot_id)
+
+    def _split_takes(self, shot, at: float, tail_name: str):
+        """``(head, tail)``: the takes *shot* keeps and its tail gets when it
+        is cut at *at* (:meth:`split_shot`), each ``(name, start, end)`` in the
+        timeline's frames (a take of the whole shot: ``None``, ``None``);
+        ``(None, [])`` where the shot declares none.  A take across the cut is
+        cut there, its rest a tail take of a name no clip has
+        (``ShotStore.unique_among`` over every clip, *tail_name* and the names
+        derived before it), said in a warning."""
+        records = self.store.take_records(shot)
+        if records is None:
+            return None, []
+        taken = [s.name for s in self.store.shots] + [tail_name]
+        taken += [t["name"] for s in self.store.shots for t in self.store.take_records(s) or ()]
+        head, tail = [], []
+        for record in records:
+            name, whole = record["name"], record.get("start") is None or record.get("end") is None
+            lo = shot.start if whole else shot.start + float(record["start"])
+            hi = shot.end if whole else shot.start + float(record["end"])
+            if hi <= at + _EPS:
+                head.append((name, None, None) if whole else (name, lo, hi))
+            elif lo >= at - _EPS:
+                tail.append((name, lo, hi))
+            else:
+                rest = ShotStore.unique_among(name, taken)
+                taken.append(rest)
+                head.append((name, None, None) if whole else (name, lo, at))
+                tail.append((rest, None, None) if whole else (rest, at, hi))
+                _log.warning(
+                    "Shot %r split at %g: its take %r ran across the cut, so the head keeps it "
+                    "up to %g and the tail %r plays the rest (%g-%g) as the take %r.",
+                    shot.name, at, name, at, tail_name, at, hi, rest,
+                )
+        return head, tail
 
     # ---- padding / spacing ----------------------------------------------------
 
@@ -4220,7 +4339,10 @@ class ShotSequencer(_ShotSequencerHooks):
                 self._rename_seam_claims(
                     shot.start, (shot_id, "start"), (shot_id, "start"), stays=True
                 )
+                slid = shot.start
                 shot.start = old_start
+                # The start went back; its content stayed.
+                self.store.rebase_takes(shot, slid, shot.end)
             if abs(tail) > _EPS:
                 pre_tail_end = shot.end
                 new_end = self.store.snap(pre_tail_end + tail)
@@ -4243,6 +4365,8 @@ class ShotSequencer(_ShotSequencerHooks):
                     shot.end = new_end
                 else:
                     shot.end = new_end
+                    # Room taken off the end: a take past it is cut, or dropped and said.
+                    self.store.rebase_takes(shot, shot.start, pre_tail_end)
                     self.ripple_downstream(
                         shot_id, pre_tail_end, shot.end - pre_tail_end
                     )

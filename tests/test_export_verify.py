@@ -1348,6 +1348,118 @@ class TestFbxTakeLayout(_FixtureCase):
         self.assertEqual(spans.take_layout(), decoded.take_layout())
 
 
+class TestFbxTakeSetupJumps(_FixtureCase):
+    """``take_setup_jumps``: a take that ends on the NEXT take's setup.  Played
+    alone (a clip per take, an interactive step), it shows the next step's
+    first pose before its own step is over.
+
+    Measured on a real course delivery (2026-11-22): the takes were ten
+    frames apart, and a part held, then jumped onto the next take's first
+    pose 11 and 21 frames before its take ended, or on its last frame --
+    the jump keyed in the earlier take's tail, so no gap at the cut helps.
+    Added: 2026-11-22
+    """
+
+    K = ("keys", "Lcl Translation", "d|Y")
+
+    def _jumps(self, first, second, windows=None, **kwargs):
+        from test_fbx_media import build_curve_fbx
+
+        takes = {"A01_1": {self.K: first}, "A01_2": {self.K: second}}
+        path = build_curve_fbx(self.path("takes.fbx"), takes, windows=windows)
+        return FbxFile.load(path).take_setup_jumps(**kwargs)
+
+    @staticmethod
+    def _frames(*args, **kwargs):
+        from test_fbx_media import frames
+
+        return frames(*args, **kwargs)
+
+    def _held_then(self, at, value=5.0):
+        """Frames 0-110: 0 until *at*, *value* from it on."""
+        return self._frames(0, 110, lambda f: value if f >= at else 0.0)
+
+    def _onward(self, start=5.0):
+        """Frames 120-230, from *start*, moving."""
+        return self._frames(120, 230, lambda f: start + (f - 120) * 0.1)
+
+    def test_a_take_whose_last_change_jumps_onto_the_next_takes_first_pose(self):
+        (found,) = self._jumps(self._held_then(100), self._onward())
+        self.assertEqual(
+            found,
+            {
+                "take": "A01_1",
+                "next": "A01_2",
+                "target": "keys",
+                "frame": 100,
+                "shown": 10,
+                "properties": ["Lcl Translation"],
+            },
+        )
+
+    def test_a_jump_on_the_takes_last_frame(self):
+        (found,) = self._jumps(self._held_then(110), self._onward())
+        self.assertEqual((found["frame"], found["shown"]), (110, 0))
+
+    def test_a_smooth_move_that_ends_where_the_next_take_begins_is_no_jump(self):
+        ramp = self._frames(0, 110, lambda f: f * 5.0 / 110)
+        self.assertEqual(self._jumps(ramp, self._onward()), [])
+
+    def test_a_jump_that_lands_elsewhere_is_the_takes_own(self):
+        self.assertEqual(self._jumps(self._held_then(100), self._onward(start=9.0)), [])
+
+    def test_a_pose_shown_long_enough_is_an_action_of_its_own(self):
+        early = self._held_then(40)  # shown 70 frames: over two seconds at 30 fps
+        self.assertEqual(self._jumps(early, self._onward()), [])
+        (found,) = self._jumps(early, self._onward(), hold=3.0)
+        self.assertEqual(found["shown"], 70)
+
+    def test_a_jump_the_take_moves_on_from_is_not_its_last_change(self):
+        moved_on = self._frames(
+            0, 110, lambda f: 0.0 if f < 100 else 5.0 if f < 105 else 5.0 + (f - 104)
+        )
+        self.assertEqual(self._jumps(moved_on, self._onward(start=11.0)), [])
+
+    def test_the_takes_are_judged_in_timeline_order_by_their_windows(self):
+        from test_fbx_media import build_curve_fbx
+
+        takes = {"A01_2": {self.K: self._onward()}, "A01_1": {self.K: self._held_then(100)}}
+        path = build_curve_fbx(self.path("takes.fbx"), takes)
+        (found,) = FbxFile.load(path).take_setup_jumps()
+        self.assertEqual((found["take"], found["next"]), ("A01_1", "A01_2"))
+
+    def test_a_take_covering_the_others_is_no_step_between_them(self):
+        """A whole-timeline take beside its slices sorted between them and
+        hid the jump from A01_1 to A01_2."""
+        from test_fbx_media import build_curve_fbx
+
+        first, second = self._held_then(100), self._onward()
+        takes = {
+            "A01_1": {self.K: first},
+            "A01_2": {self.K: second},
+            "Take 001": {self.K: first + second},
+        }
+        path = build_curve_fbx(self.path("takes.fbx"), takes)
+        (found,) = FbxFile.load(path).take_setup_jumps()
+        self.assertEqual((found["take"], found["next"]), ("A01_1", "A01_2"))
+
+    def test_fewer_than_two_takes_have_no_next(self):
+        from test_fbx_media import build_curve_fbx
+
+        path = build_curve_fbx(self.path("one.fbx"), {"A01_1": {self.K: self._held_then(100)}})
+        self.assertEqual(FbxFile.load(path).take_setup_jumps(), [])
+
+    def test_a_change_below_the_tolerance_is_no_change(self):
+        small = self._held_then(100, value=5.0)
+        self.assertEqual(len(self._jumps(small, self._onward())), 1)
+        # The jump is 5: a tolerance above it reads the take as held throughout.
+        self.assertEqual(self._jumps(small, self._onward(), tolerance=6.0), [])
+
+    def test_a_negative_hold_is_refused(self):
+        with self.assertRaises(ValueError):
+            self._jumps(self._held_then(100), self._onward(), hold=-1)
+
+
 class TestFbxTakeChannels(_FixtureCase):
     """``check_fbx_take_channels``: a declared take that lost a channel to the
     split, or stops short of its window, is a shot Unity plays wrong."""
@@ -1455,17 +1567,6 @@ class TestExportVerifier(_FixtureCase):
         statuses = {row.check: row.status for row in report.rows}
         self.assertEqual(statuses["clips_vs_takes"], PASS)
         self.assertEqual(statuses["fbx_takes"], PASS)
-
-    def test_the_retired_envelope_gate_answers_through_the_handoff_gate(self):
-        """``check_glb_envelope`` (0.16.1; retired 2026-10-20, removed in
-        0.18.0) warns and answers as ``check_glb_handoff`` -- and is no gate
-        of its own, so a run states the handoff once. Added: 2026-10-20"""
-        glb, fbx = self._good_pair()
-        verifier = ExportVerifier(glb=glb, fbx=fbx)
-        with self.assertWarns(DeprecationWarning):
-            retired = verifier.check_glb_envelope()
-        self.assertEqual(retired, verifier.check_glb_handoff())
-        self.assertNotIn("check_glb_envelope", verifier.gate_names())
 
     # ---- one take per shot (2026-11-05) -----------------------------------
 

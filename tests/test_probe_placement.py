@@ -267,6 +267,70 @@ class TestProbeRays(unittest.TestCase):
         self.assertIsNone(rays.cast((0, 0, 0), (0, 1, 0)))
         self.assertFalse(ProbeRays())
 
+    def test_a_cast_passes_over_the_owners_it_is_told_to_skip(self):
+        rays = _Boxes(
+            {
+                "near": _box((1, 1, 1), (4, 0, 0)),
+                "far": _box((1, 1, 1), (10, 0, 0)),
+            }
+        )
+        hit = rays.cast((0, 0, 0), (1, 0, 0), skip={"near"})
+        self.assertEqual(rays.owners[hit.mesh], "far")
+        self.assertIsNone(rays.cast((0, 0, 0), (1, 0, 0), skip={"near", "far"}))
+
+    def test_room_for_a_sphere_and_a_capsule_is_read_by_rays(self):
+        rays = _Boxes({"wall": _box((1, 4, 4), (1, 0, 0))})  # its face at x 0.5
+        self.assertTrue(rays.occupied_sphere((0.2, 0, 0), 0.35))
+        self.assertFalse(rays.occupied_sphere((-0.2, 0, 0), 0.35))
+        self.assertTrue(rays.occupied_capsule((0.2, -1, 0), (0.2, 1, 0), 0.35))
+        self.assertFalse(rays.occupied_capsule((-0.2, -1, 0), (-0.2, 1, 0), 0.35))
+
+    def test_a_slab_thinner_than_a_capsule_reaching_into_its_side_is_room_taken(self):
+        """REGRESSION: a capsule was read at its ends and middle alone, so a shelf
+        between those heights reaching into its side was missed: a viewpoint
+        stood with a table through its body. Read as the boxes read it."""
+        from pythontk.geo_utils.spot_placement import BoxRays
+
+        shelf = ((-1.0, 1.0, 0.2), (1.0, 1.03, 2.0))  # 3 cm thick, 0.2 from the axis
+        rays = _Boxes({"shelf": (shelf[0], shelf[1], False)})
+        boxes = BoxRays()
+        boxes.add("shelf", *shelf)
+        a, b = (0.0, 0.65, 0.0), (0.0, 1.6, 0.0)
+        self.assertTrue(boxes.occupied_capsule(a, b, 0.35))
+        self.assertTrue(rays.occupied_capsule(a, b, 0.35))
+        self.assertFalse(rays.occupied_capsule((0.0, 1.1, 0.0), (0.0, 1.6, 0.0), 0.05))
+
+    def test_the_golden_scenes_place_through_probe_rays_as_through_the_boxes(self):
+        """A host's rays (two-sided, room read by rays) place a viewpoint where
+        the golden cases' boxes do: under a shelf it has no room under, and on the
+        floor under a ceiling (whose inside a host's ray meets)."""
+        from pythontk.geo_utils.spot_placement import (
+            SpotPlacement,
+            SpotPlacementConformance,
+        )
+
+        cases = {c["name"]: c for c in SpotPlacementConformance.scenes()}
+        for name in (
+            "a viewpoint never stands under a shelf it has no room under",
+            "a viewpoint stands on the floor under a ceiling, never on it",
+        ):
+            case = cases[name]
+            rays = _Boxes(
+                {b["owner"]: (b["low"], b["high"], False) for b in case["boxes"]}
+            )
+            target = (tuple(case["target"]["low"]), tuple(case["target"]["high"]))
+            feet, aim = SpotPlacement(rays=rays).stand(
+                target, owners=case["owners"], side=case.get("side")
+            )
+            want = SpotPlacementConformance.answer(case)
+            with self.subTest(name):
+                self.assertNear(feet, want["position"])
+                self.assertNear(aim, want["aim"])
+
+    def assertNear(self, got, want, delta=1e-6):
+        for g, w in zip(got, want):
+            self.assertAlmostEqual(g, w, delta=delta, msg=(got, want))
+
 
 if __name__ == "__main__":
     unittest.main()

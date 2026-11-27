@@ -73,6 +73,12 @@ POINTER = "/materials/{index}/pbrMetallicRoughness/baseColorFactor"
 #: cut at any playback rate, large enough to survive float32 times in a clip
 #: of tens of minutes.
 STEP_SECONDS = 1e-3
+#: How finely a tinted emission's weight x tint is sampled where both ramp
+#: (a product of two lines is a curve): about a frame at 30 fps.
+PRODUCT_SECONDS = 1.0 / 30.0
+#: A material's tint channels: they play on its emission's factor, with its
+#: weight (emission is colour x strength x tint x weight).
+TINT_CHANNELS = SceneRecords.TRANSPORT.tint_channels
 
 Rgb = Sequence[float]
 #: One resolved ``(r, g, b)`` per stop, in ``ColorStops.keys`` order.
@@ -134,14 +140,16 @@ def _highlight_values(
 
 def _emission_values(
     base: List[float],
-    sample: float,
+    sample: Any,
     stops: Stops,
     _material: Optional[Dict[str, Any]] = None,
 ) -> List[float]:
     """The weight scales the emission colour, already divided by the strength
-    the material is given (``stops`` here is ``(colour x strength / given,)``)."""
+    the material is given (``stops`` here is ``(colour x strength / given,)``);
+    a tinted material's *sample* is the weight times its tint, per channel."""
     colour = stops[0]
-    return [min(1.0, max(0.0, colour[i] * sample)) for i in range(3)]
+    scale = list(sample) if isinstance(sample, (list, tuple)) else [sample] * 3
+    return [min(1.0, max(0.0, colour[i] * float(scale[i]))) for i in range(3)]
 
 
 def _opacity_rest(sample: float, _stops: Stops, _material: Dict[str, Any]) -> bool:
@@ -227,8 +235,10 @@ class PointerChannel:
 
 #: The channel table, in write order: ``opacity`` the fade, ``highlight`` a
 #: glow with a per-node colour ramp, ``emission`` a material's animated
-#: emission weight. ``visibility``, the one stepped channel, plays as the
-#: presence gate (a ``scale`` channel), not here.
+#: emission weight -- its ``tint_r/g/b`` joined to it on one time line, the
+#: factor weight x tint per channel (:data:`TINT_CHANNELS`, no rows of their
+#: own: glTF animates the factor whole). ``visibility``, the one stepped
+#: channel, plays as the presence gate (a ``scale`` channel), not here.
 CHANNELS: Dict[str, PointerChannel] = {
     "opacity": PointerChannel(
         name="opacity",
@@ -600,12 +610,90 @@ class _GlbFadesInternal:
         return found
 
     @staticmethod
-    def _held(values: Sequence[float]) -> Optional[float]:
-        """The one value *values* hold, or ``None`` when they move."""
+    def _held(values: Sequence[Any]) -> Optional[Any]:
+        """The one value *values* hold (a number, or a tinted emission's
+        ``(r, g, b)``), or ``None`` when they move."""
         if not values:
             return None
-        first = round(float(values[0]), 6)
-        return first if all(round(float(v), 6) == first for v in values) else None
+
+        def rounded(value):
+            if isinstance(value, (list, tuple)):
+                return tuple(round(float(c), 6) for c in value)
+            return round(float(value), 6)
+
+        first = rounded(values[0])
+        return first if all(rounded(v) == first for v in values) else None
+
+    # ------------------------------------------------------ a tinted emission
+    @classmethod
+    def _at(cls, keys: Sequence[Tuple[float, float]], time: float, default: float) -> float:
+        """Linear keys *keys* (:meth:`_linearized`) at *time*, held at their
+        ends; *default* where there are none."""
+        if not keys:
+            return default
+        if time <= keys[0][0]:
+            return keys[0][1]
+        for (t0, v0), (t1, v1) in zip(keys, keys[1:]):
+            if time <= t1:
+                return v0 if t1 <= t0 else v0 + (v1 - v0) * (time - t0) / (t1 - t0)
+        return keys[-1][1]
+
+    @classmethod
+    def _tinted(
+        cls, weight: Optional[Curve], tints: Sequence[Optional[Curve]], rest_weight: float, rest_tint: Rgb
+    ) -> List[Tuple[float, Tuple[float, float, float]]]:
+        """A tinted emission's ``(seconds, weight x tint per channel)``: the
+        weight's and the tint channels' keys on one time line (each held
+        at its ends, a step kept as :meth:`_linearized` states it); a curve
+        the file lacks holds its rest."""
+        lines = [cls._linearized(weight) if weight else []]
+        lines += [cls._linearized(curve) if curve else [] for curve in tints]
+        keys = sorted({t for line in lines for t, _v in line})
+
+        def moves(line, a, b):
+            return bool(line) and abs(cls._at(line, a, 0.0) - cls._at(line, (a + b) / 2.0, 0.0)) > 1e-9
+
+        # Where the weight and a tint channel both ramp, their product is no
+        # line: sampled between the keys, as a reader interpolates linearly.
+        times = []
+        for a, b in zip(keys, keys[1:] + [None]):
+            times.append(a)
+            if b is None or b - a <= 2 * STEP_SECONDS:
+                continue
+            if moves(lines[0], a, b) and any(moves(line, a, b) for line in lines[1:]):
+                steps = int((b - a) / PRODUCT_SECONDS)
+                times.extend(a + (b - a) * i / (steps + 1) for i in range(1, steps + 1))
+        out = []
+        for time in times:
+            w = cls._at(lines[0], time, rest_weight)
+            out.append((time, tuple(w * cls._at(lines[1 + c], time, float(rest_tint[c])) for c in range(3))))
+        return out
+
+    @classmethod
+    def _scaled_colour(
+        cls, material: Dict[str, Any], entry: Dict[str, Any], with_tint: bool = False
+    ) -> List[float]:
+        """A material entry's colour x strength (the entry's, else the
+        material's own) -- with *with_tint*, times the tint it states (white
+        when it states none): what a weight keyed alone scales, its tint held."""
+        colour = entry.get("emission_color")
+        if not (isinstance(colour, (list, tuple)) and len(colour) >= 3):
+            colour = material.get("emissiveFactor") or (0.0, 0.0, 0.0)
+        strength = entry.get("emission_strength")
+        if not isinstance(strength, (int, float)):
+            strength = cls._emission_strength(material)
+        tint = entry.get("tint") if with_tint else None
+        if not (isinstance(tint, (list, tuple)) and len(tint) >= 3):
+            tint = (1.0, 1.0, 1.0)
+        return [float(c) * float(strength) * float(t) for c, t in zip(list(colour)[:3], tint)]
+
+    @classmethod
+    def _rest_weight(cls, material: Dict[str, Any], scaled: Rgb, tint: Rgb) -> float:
+        """The weight at which *scaled* (colour x strength) x *tint* is
+        *material*'s own emission -- what a tint keyed alone plays over."""
+        own = [float(c) * cls._emission_strength(material) for c in material.get("emissiveFactor") or (0.0,) * 3]
+        full = max(float(s) * float(t) for s, t in zip(scaled, tint))
+        return min(1.0, max(own) / full) if full > 0.0 else 0.0
 
     # ----------------------------------------------------- the emission entry
     @staticmethod
@@ -723,7 +811,12 @@ class GlbFades(_GlbFadesInternal):
                     wanted.append(("node", str(track["node"]), {**track, "channel": channel}))
         for entry in record.get("materials") or ():
             if isinstance(entry, dict) and entry.get("material"):
-                for channel in entry.get("channels") or ():
+                # A tint plays on the emission's one factor, with its weight.
+                named = list(entry.get("channels") or ())
+                channels = [c for c in named if c not in TINT_CHANNELS]
+                if "emission" not in channels and any(c in TINT_CHANNELS for c in named):
+                    channels.append("emission")
+                for channel in channels:
                     wanted.append(("material", str(entry["material"]), {**entry, "channel": channel}))
         for kind, target, entry in wanted:
             spec = CHANNELS.get(entry["channel"])
@@ -733,14 +826,35 @@ class GlbFades(_GlbFadesInternal):
             # the host (a node) does; a curve is keyed by the transport's
             # name for it, as its proxy is named.
             joined = SceneRecords.TRANSPORT.target_name(target)
-            per_clip = {
-                clip: keys
-                for clip, keys in (
-                    (clip, (by_target or {}).get((joined, spec.name)))
-                    for clip, by_target in curves.items()
-                )
-                if keys and clip in clips
-            }
+            tinted = (
+                kind == "material"
+                and spec.name == "emission"
+                and any(c in (entry.get("channels") or ()) for c in TINT_CHANNELS)
+            )
+            if tinted:
+                per_clip = {
+                    clip: found
+                    for clip, found in (
+                        (
+                            clip,
+                            (
+                                (by_target or {}).get((joined, "emission")),
+                                [(by_target or {}).get((joined, c)) for c in TINT_CHANNELS],
+                            ),
+                        )
+                        for clip, by_target in curves.items()
+                    )
+                    if clip in clips and (found[0] or any(found[1]))
+                }
+            else:
+                per_clip = {
+                    clip: keys
+                    for clip, keys in (
+                        (clip, (by_target or {}).get((joined, spec.name)))
+                        for clip, by_target in curves.items()
+                    )
+                    if keys and clip in clips
+                }
             if not per_clip:
                 continue
             roots: List[int] = []
@@ -752,13 +866,31 @@ class GlbFades(_GlbFadesInternal):
             if kind == "material" and not cls._named(gltf, target):
                 missing.append(f"{target}.{spec.name}")
                 continue
+            if tinted:
+                # One curve of weight x tint per clip, on the factor's VEC3.
+                material = gltf["materials"][cls._named(gltf, target)[0]]
+                rest_tint = entry.get("tint")
+                if not (isinstance(rest_tint, (list, tuple)) and len(rest_tint) >= 3):
+                    rest_tint = (1.0, 1.0, 1.0)
+                scaled = cls._scaled_colour(material, entry)
+                rest_weight = cls._rest_weight(material, scaled, rest_tint)
+                per_clip = {
+                    clip: cls._tinted(weight, tints, rest_weight, rest_tint)
+                    for clip, (weight, tints) in per_clip.items()
+                }
             stops = (
                 spec.color_stops.resolve([entry.get(k) for k in spec.color_stops.keys])
                 if spec.color_stops is not None
                 else ()
             )
             planned.append(
-                (kind, target, spec, {"curves": per_clip, "entry": entry, "roots": roots}, stops)
+                (
+                    kind,
+                    target,
+                    spec,
+                    {"curves": per_clip, "entry": entry, "roots": roots, "tinted": tinted},
+                    stops,
+                )
             )
         if tied:
             logger.warning(
@@ -803,11 +935,12 @@ class GlbFades(_GlbFadesInternal):
                         # one property is undefined -- the file's own stands.
                         doubled.add(f"{target}.{spec.name}")
                         continue
-                    shaped = (
-                        cls._with_boundaries(curve)
-                        if spec.active and _mapped(material_def)
-                        else cls._linearized(curve)
-                    )
+                    if plan.get("tinted"):
+                        shaped = list(curve)  # already linear: weight x tint
+                    elif spec.active and _mapped(material_def):
+                        shaped = cls._with_boundaries(curve)
+                    else:
+                        shaped = cls._linearized(curve)
                     held = cls._held([v for _t, v in shaped])
                     if held is not None and (
                         (spec.rest is not None and spec.rest(held, given, material_def))
@@ -968,18 +1101,18 @@ class GlbFades(_GlbFadesInternal):
         entry: the entry's colour and strength, else the material's own, over
         the strength the material is given for the curve's peak."""
         material = gltf["materials"][index]
-        entry = plan["entry"]
-        colour = entry.get("emission_color")
-        if not (isinstance(colour, (list, tuple)) and len(colour) >= 3):
-            colour = material.get("emissiveFactor") or (0.0, 0.0, 0.0)
-        strength = entry.get("emission_strength")
-        if not isinstance(strength, (int, float)):
-            strength = cls._emission_strength(material)
-        scaled = [float(c) * float(strength) for c in list(colour)[:3]]
-        weights = [
-            value for curve in plan["curves"].values() for _t, value in cls._linearized(curve)
-        ]
-        peak = max(scaled) * max([0.0, *weights])
+        # A keyed tint rides the samples; a held one multiplies the colour.
+        scaled = cls._scaled_colour(material, plan["entry"], with_tint=not plan.get("tinted"))
+        if plan.get("tinted"):  # weight x tint per channel
+            peak = max(
+                [0.0]
+                + [scaled[c] * float(m[c]) for curve in plan["curves"].values() for _t, m in curve for c in range(3)]
+            )
+        else:
+            weights = [
+                value for curve in plan["curves"].values() for _t, value in cls._linearized(curve)
+            ]
+            peak = max(scaled) * max([0.0, *weights])
         given = plan.setdefault("given", {}).get(index)
         if given is None:
             given = plan["given"][index] = cls._give_strength(gltf, index, peak)

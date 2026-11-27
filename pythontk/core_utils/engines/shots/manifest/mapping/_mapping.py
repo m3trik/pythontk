@@ -36,6 +36,19 @@ Supported ``audio_resolve`` methods:
 - ``"map"``: Explicit ``step_id → clip_stem`` lookup table.
 - ``"derive"``: Build clip name from ``step_id`` + first N words
   of the audio text (PascalCase).
+- ``"cell"``: The file the step's own cell names (``field``, default
+  ``audio_file``: the Audio Files column), in ``directory``.
+- ``"narrate"``: The narration :class:`pythontk.Narrator` rendered for the
+  step's audio text into ``directory``, found by its words (looked up only:
+  a sheet is never spoken while it is read); the clip named as ``"derive"``
+  names it.
+
+``audio_resolve`` may be a list of methods: the first to find a file wins,
+else the first clip with no file stands, so a recording (a cell, a prefix)
+replaces narration with no bookkeeping. A step that already holds an audio
+file is left as it is. A relative ``directory`` (or ``pronounce`` file)
+resolves against the *base* :func:`resolve` is given -- the project's
+settings folder -- else stays as written.
 
 API
 ---
@@ -46,12 +59,14 @@ API
 
 from __future__ import annotations
 
+import dataclasses as _dataclasses
 import functools
 import json
 import logging
+import os
 import re as _re
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 from pythontk import TemplateSet
 
@@ -93,15 +108,17 @@ class _MappingInternal(object):
     @staticmethod
     def _build_pipeline(
         mapping: Dict[str, Any],
+        base: Optional[str] = None,
     ) -> tuple:
-        """Convert a mapping dict into ``(ColumnMap, post_process)``."""
+        """Convert a mapping dict into ``(ColumnMap, post_process)``; relative audio
+        folders resolve against *base* (none: as written)."""
         col_map = _MappingInternal._build_column_map(mapping.get("columns", {}))
 
         processors: List[Callable[[BuilderStep], None]] = []
 
         audio_cfg = mapping.get("audio_resolve")
         if audio_cfg:
-            processors.append(_MappingInternal._build_audio_resolver(audio_cfg))
+            processors.append(_MappingInternal._build_audio_resolver(audio_cfg, base))
 
         behav_cfg = mapping.get("default_behaviors")
         if behav_cfg:
@@ -118,14 +135,90 @@ class _MappingInternal(object):
         return ColumnMap.from_dict(columns)
 
     @staticmethod
-    def _build_audio_resolver(cfg: Dict[str, Any]) -> Callable[[BuilderStep], None]:
-        """Dispatch to the resolver builder for ``cfg["method"]`` (default ``prefix``)."""
+    def _build_audio_resolver(
+        cfg: Union[Dict[str, Any], List[Dict[str, Any]]], base: Optional[str] = None
+    ) -> Callable[[BuilderStep], None]:
+        """Dispatch to the resolver builder for ``cfg["method"]`` (default ``prefix``); a
+        list of methods is tried in order, the first to find a file winning
+        (:meth:`_audio_chain`)."""
+        if isinstance(cfg, (list, tuple)):
+            return _MappingInternal._audio_chain(
+                [_MappingInternal._build_audio_resolver(each, base) for each in cfg]
+            )
         method = cfg.get("method", "prefix")
         try:
             builder = _AUDIO_BUILDERS[method]
         except KeyError:
             raise ValueError(f"Unknown audio_resolve method: {method!r}") from None
-        return builder(cfg)
+        return builder(_MappingInternal._based(cfg, base))
+
+    @staticmethod
+    def _based(cfg: Dict[str, Any], base: Optional[str]) -> Dict[str, Any]:
+        """*cfg* with its relative ``directory`` -- and a ``pronounce`` given as a file -- under
+        *base* (none: as written); a ``pronounce`` file is read into its word map."""
+        cfg = dict(cfg)
+        for key in ("directory", "pronounce"):
+            value = cfg.get(key)
+            if base and isinstance(value, str) and value and not os.path.isabs(value):
+                cfg[key] = os.path.join(base, value)
+        if isinstance(cfg.get("pronounce"), str):
+            # A project's list, where it keeps one: none written yet says every word as written.
+            path = cfg["pronounce"]
+            if os.path.isfile(path):
+                with open(path, encoding="utf-8") as fh:
+                    cfg["pronounce"] = json.load(fh)
+            else:
+                cfg["pronounce"] = {}
+        return cfg
+
+    @staticmethod
+    def _audio_chain(resolvers: List[Callable[[BuilderStep], None]]) -> Callable[[BuilderStep], None]:
+        """Try each resolver on the step in turn: the first whose clip has a file wins; when
+        none finds one, the first clip without a file stands (so the step still gets its
+        clip, placeholder length and all). A step that already holds an audio file is left."""
+
+        def _resolve(step: BuilderStep) -> None:
+            if any(o.kind == "audio" and o.source_path for o in step.objects):
+                return
+            fallback = None
+            for each in resolvers:
+                trial = _dataclasses.replace(step, objects=[])
+                each(trial)
+                clips = [o for o in trial.objects if o.kind == "audio"]
+                found = [o for o in clips if o.source_path]
+                if found:
+                    step.objects.append(found[0])
+                    return
+                if fallback is None and clips:
+                    fallback = clips[0]
+            if fallback is not None:
+                step.objects.append(fallback)
+
+        return _resolve
+
+    @staticmethod
+    def _audio_cell(cfg: Dict[str, Any]) -> Callable[[BuilderStep], None]:
+        """The file the step's own cell names (``field``, default ``audio_file``: the Audio
+        Files column carried by ``metadata_pass``), in ``directory`` where it is not absolute;
+        a named file that is missing is a clip with no file, so it shows as missing."""
+        field_name = cfg.get("field", "audio_file")
+        directory = cfg.get("directory", "")
+
+        def _resolve(step: BuilderStep) -> None:
+            cell = (step.pass_through.get(field_name) or "").strip()
+            named = next((line.strip() for line in cell.splitlines() if line.strip()), "")
+            if not named or named.upper() == "N/A":
+                return
+            path = named if os.path.isabs(named) or not directory else os.path.join(directory, named)
+            step.objects.append(
+                BuilderObject(
+                    name=Path(named).stem,
+                    kind="audio",
+                    source_path=path if os.path.isfile(path) else "",
+                )
+            )
+
+        return _resolve
 
     @staticmethod
     def _audio_prefix(
@@ -219,17 +312,11 @@ class _MappingInternal(object):
         """
         audio_dir = Path(directory) if directory else None
         ext_set = {e.lower() for e in extensions}
-        # Strip non-alphanumeric except underscores for safe file names
-        _clean_re = _re.compile(r"[^\w]+")
 
         def _resolve(step: BuilderStep) -> None:
-            if not step.audio or step.audio.upper() == "N/A":
+            clip_name = _MappingInternal._clip_name(step, words, separator)
+            if not clip_name:
                 return
-            tokens = step.audio.split(None, words)[:words]
-            if not tokens:
-                return
-            clean = [_clean_re.sub("", w).capitalize() for w in tokens]
-            clip_name = step.step_id + separator + "".join(clean)
             source = ""
 
             # If a directory is configured, try to find the actual file
@@ -242,6 +329,41 @@ class _MappingInternal(object):
 
             step.objects.append(
                 BuilderObject(name=clip_name, kind="audio", source_path=source)
+            )
+
+        return _resolve
+
+    @staticmethod
+    def _clip_name(step: BuilderStep, words: int = 3, separator: str = "_") -> str:
+        """The clip a step's voice text names: ``step_id`` + its first *words* words in PascalCase
+        (``A01_WelcomeToThe``); empty where the step has nothing to say."""
+        if not step.audio or step.audio.upper() == "N/A":
+            return ""
+        tokens = step.audio.split(None, words)[:words]
+        if not tokens:
+            return ""
+        return step.step_id + separator + "".join(_re.sub(r"[^\w]+", "", w).capitalize() for w in tokens)
+
+    @staticmethod
+    def _audio_narrate(cfg: Dict[str, Any]) -> Callable[[BuilderStep], None]:
+        """The narration of each step's voice text in ``cfg["directory"]``, found by its words
+        (:meth:`pythontk.Narrator.key`, with the ``voice``, ``lang``, ``speed`` and ``pronounce``
+        the render used); its clip named as :meth:`_audio_derive` names it (``words``,
+        ``separator``). Looked up only: a line not rendered yet is a clip with no file, never
+        spoken here (``narration.render`` speaks them, asked).
+        """
+        from pythontk.audio_utils.narrator import Narrator
+
+        narrator = Narrator.from_settings(cfg)
+        words, separator, directory = cfg.get("words", 3), cfg.get("separator", "_"), cfg["directory"]
+
+        def _resolve(step: BuilderStep) -> None:
+            clip_name = _MappingInternal._clip_name(step, words, separator)
+            if not clip_name:
+                return
+            path = os.path.join(directory, narrator.key(step.audio) + ".wav")
+            step.objects.append(
+                BuilderObject(name=clip_name, kind="audio", source_path=path if os.path.isfile(path) else "")
             )
 
         return _resolve
@@ -540,6 +662,7 @@ class Mapping(_MappingInternal):
         name: Optional[str] = None,
         directory: Optional[str] = None,
         options: Optional[Dict[str, Any]] = None,
+        base: Optional[str] = None,
     ) -> List[BuilderStep]:
         """Parse a CSV through a mapping and return fully resolved steps.
 
@@ -553,13 +676,220 @@ class Mapping(_MappingInternal):
             directory: Search directory for :func:`load_mapping`.
             options: Values for the template's options (:meth:`apply_options`);
                 an option left out takes its default.
+            base: The folder a relative ``audio_resolve`` folder is read against (the
+                project's settings folder; a sheet's own folder moves with each export);
+                ``None`` leaves it as written.
         """
         if mapping is None and name is not None:
             mapping = Mapping.load_mapping(name, directory)
 
         mapping = Mapping.apply_options(mapping, options)
-        col_map, post = _MappingInternal._build_pipeline(mapping)
+        col_map, post = _MappingInternal._build_pipeline(mapping, base)
         return ManifestModel.parse_csv(csv_path, columns=col_map, post_process=post)
+
+    @staticmethod
+    def audio_method(
+        mapping: Optional[Dict[str, Any]], method: str, base: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """The settings of *mapping*'s audio method named *method* (``"narrate"``),
+        as its resolver reads them: a relative ``directory`` and a ``pronounce``
+        file under *base*. ``None`` when the mapping, its options applied
+        (:meth:`apply_options`), uses no such method."""
+        methods = (mapping or {}).get("audio_resolve") or []
+        methods = methods if isinstance(methods, list) else [methods]
+        found = next((m for m in methods if m.get("method") == method), None)
+        return None if found is None else _MappingInternal._based(found, base)
+
+    @staticmethod
+    def narrate(
+        sheet: str,
+        mapping: str = "default",
+        options: Optional[Dict[str, Any]] = None,
+        base: Optional[str] = None,
+        accept: Optional[List[str]] = None,
+        prune: bool = False,
+        workers: int = 0,
+        prompt: bool = True,
+        confirm: Optional[Callable[[str], bool]] = None,
+        ctx=None,
+    ) -> Dict[str, Any]:
+        """Narrate a sheet's voice lines (``narration.render``): every step's voice text that no
+        recording covers, into the folder its mapping's ``narrate`` method names, so reading the
+        sheet finds them. The sheet is never written; a step whose voice text is ``N/A`` says nothing.
+
+        Parameters:
+            sheet: The sheet (a CSV path).
+            mapping: Its template's name (``default``, ``linear``, ``interactive``), or a mapping file's path.
+            options: Values for the template's options (``{"audio": "narrate"}``).
+            base: The project folder relative audio folders are read against (where its settings live).
+            accept: Step IDs whose recordings are accepted for their current lines.
+            prune: Remove narration files no line uses (asked; a person's file never).
+            workers: Engine runs at once (0: chosen from the cores).
+            prompt: Ask before the narration engine's first install (about 170 MB); False installs
+                it unasked (the caller consents). Where nobody can be asked (no console, no
+                *confirm*), nothing is downloaded and the run stops.
+            confirm: What asks, ``(question) -> bool`` (a panel's dialog); none: the console.
+            ctx: The run's context (an ``OpContext``).
+
+        Returns:
+            ``Narrator.render``'s result, plus ``"steps"`` (the voiced steps counted) and ``"directory"``.
+
+        Raises:
+            ValueError: The mapping, with these options, has no ``narrate`` method.
+            FileNotFoundError: The engine is not installed and may not be: declined, or nobody
+                to ask (no console: pass ``prompt=False`` to install it).
+        """
+        from pythontk.audio_utils.narrator import Narrator
+
+        loaded = Mapping.apply_options(Mapping.load_mapping(mapping), options)
+        settings = Mapping.audio_method(loaded, "narrate", base)
+        if settings is None:
+            raise ValueError(f"the {mapping!r} mapping, with options {options or {}}, does not narrate: "
+                             "choose its narration option (e.g. options={'audio': 'narrate'})")
+        consent = (confirm if confirm is not None else True) if prompt else False
+        narrator = Narrator.from_settings(settings, prompt=consent)
+        directory = settings["directory"]
+        steps = Mapping.resolve(sheet, mapping=loaded, base=base)
+        lines, recordings = {}, {}
+        inside = os.path.normcase(os.path.abspath(directory))
+
+        def narrated(path: str) -> bool:
+            """Whether *path* is in the narration folder (``narration_takes/`` is not in ``narration/``)."""
+            path = os.path.normcase(os.path.abspath(path))
+            try:
+                return os.path.commonpath([path, inside]) == inside
+            except ValueError:  # another drive
+                return False
+
+        for step in steps:
+            if not step.audio or step.audio.strip().upper() == "N/A":
+                continue
+            lines[step.step_id] = step.audio
+            for clip in step.objects:
+                if clip.kind == "audio" and clip.source_path and not narrated(clip.source_path):
+                    recordings[step.step_id] = clip.source_path
+        result = narrator.render(lines, directory, recordings=recordings, accept=accept or (), prune=prune,
+                                 workers=workers, ctx=ctx)
+        result.update(steps=len(lines), directory=directory)
+        return result
+
+    @staticmethod
+    def starter_sheet(name: str) -> Optional[Path]:
+        """The built-in starter sheet of template *name*: a small task in its
+        columns and phrasing to copy and fill (``starters/<name>.csv``), or None
+        for a template that ships none.
+
+        Parameters:
+            name: A built-in template's name (``linear``, ``interactive``).
+        """
+        path = Path(__file__).parent / "starters" / f"{name}.csv"
+        return path if path.is_file() else None
+
+    @staticmethod
+    def template_for(csv_path: str, directory: Optional[str] = None) -> Optional[str]:
+        """The template a sheet written in cells is written for, or None for a sheet of
+        sentences (any template may read one: a person's choice).
+
+        A template in the cell format declares its actions and the columns that mark a
+        sheet as its own (``cell_marks``). Of those whose marks the sheet's header carries,
+        the one is chosen that leaves the fewest of its columns unread, then the fewest of
+        its Action words undeclared, then declares the fewest words: a Linear sheet reads as
+        ``linear`` though ``interactive`` holds its words too, and a sheet with a mistyped
+        word still reads as the template the rest of it is written for.
+
+        Parameters:
+            csv_path: Path to the CSV file, or an ``http(s)`` URL.
+            directory: A folder of templates in place of the built-in and user ones.
+        """
+        from pythontk.core_utils.engines.shots.manifest.manifest_actions import ManifestActions
+
+        rows = ManifestModel._read_csv_rows(csv_path)
+        best: Optional[Tuple[Tuple[int, int, int], str]] = None
+        for name in Mapping.discover(directory):
+            try:
+                col_map, _ = _MappingInternal._build_pipeline(Mapping.load_mapping(name, directory))
+            except Exception as exc:  # a broken template of a user's reads no sheet
+                log.debug("template %r not read: %s", name, exc)
+                continue
+            marks = {m.strip().lower() for m in col_map.cell_marks}
+            if not col_map.actions or not marks:
+                continue
+            aliases = {a.strip().lower() for a in col_map.step_id}
+            header = next((r for r in rows if any(c.strip().lower() in aliases for c in r)), None)
+            if header is None or not any(c.strip().lower() in marks for c in header):
+                continue
+            titles = [c.strip().lower() for c in header]
+            at = next((titles.index(a.lower()) for a in col_map.row_pass.get("action", ()) if a.lower() in titles), None)
+            words = {ManifestActions.word(r[at]) for r in rows if r is not header and at is not None and len(r) > at}
+            score = (len(col_map.unmapped(header)), len(words - set(col_map.actions) - {""}), len(col_map.actions))
+            if best is None or score < best[0]:
+                best = (score, name)
+        return best[1] if best else None
+
+    @staticmethod
+    def new_sheet(out: str, template: str = "interactive", ctx=None) -> Dict[str, Any]:
+        """Start a new sheet (``sheet.new``): *template*'s starter sheet written to *out*, to
+        rename and fill. A starter is a small task that uses every word its template declares
+        and reads with nothing to report, so a sheet made from it starts correct.
+
+        Parameters:
+            out: The CSV to write. A file that exists is never replaced.
+            template: A template that ships a starter (``interactive``, ``linear``).
+            ctx: The run's context (an ``OpContext``), asked before the file is written.
+
+        Returns:
+            ``{"sheet": the file, "template": its template, "columns": its header}``.
+
+        Raises:
+            ValueError: *template* ships no starter (the tolerant ``default`` reads any sheet).
+            FileExistsError: *out* exists.
+        """
+        import csv
+        import shutil
+
+        source = Mapping.starter_sheet(template)
+        if source is None:
+            shipped = ", ".join(sorted(p.stem for p in (Path(__file__).parent / "starters").glob("*.csv")))
+            raise ValueError(f"the {template!r} template ships no starter sheet: name one of {shipped}")
+        target = Path(out)
+        if target.exists():
+            raise FileExistsError(f"{target} exists, and a new sheet never replaces a file: name another")
+        if ctx is None or ctx.should_write(str(target), f"write the {template} starter sheet"):
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, target)
+        with open(source, encoding="utf-8-sig", newline="") as handle:
+            columns = next(csv.reader(handle))
+        return {"sheet": str(target), "template": template, "columns": columns}
+
+    @staticmethod
+    def unmapped_columns(
+        csv_path: str,
+        mapping: Optional[Dict[str, Any]] = None,
+        *,
+        options: Optional[Dict[str, Any]] = None,
+    ) -> List[str]:
+        """The columns of the sheet's header rows no field of *mapping* takes, in
+        first-seen order: a column the sheet calls by a name the template does not
+        know, read off every header row (a sheet repeating its header per section
+        may differ between them).
+
+        Parameters:
+            csv_path: Path to the CSV file, or an ``http(s)`` URL.
+            mapping: Pre-loaded mapping dict (the default ``ColumnMap`` if None).
+            options: Values for the template's options (:meth:`apply_options`).
+        """
+        col_map, _ = _MappingInternal._build_pipeline(Mapping.apply_options(mapping or {}, options))
+        step_aliases = {a.strip().lower() for a in col_map.step_id}
+        found: Dict[str, None] = {}
+        for row in ManifestModel._read_csv_rows(csv_path):
+            if not any(c.strip().lower() in step_aliases for c in row):
+                continue
+            try:  # a header only where the parser would read one (a data cell may hold an alias)
+                ManifestModel._resolve_columns(row, col_map)
+            except ValueError:
+                continue
+            found.update(dict.fromkeys(col_map.unmapped(row)))
+        return list(found)
 
     @staticmethod
     def infer_options(
@@ -573,7 +903,7 @@ class Mapping(_MappingInternal):
         For a scene that read the sheet before its options were kept with it
         (``ManifestEdits.sheet_options``): its shots recorded what each step
         listed (``csv_objects``), so the options are the ones that read that
-        back.  SOL_REPLACE_ASSEMBLY was built with Object Case = upper: read
+        back.  A production scene was built with Object Case = upper: read
         As written, 1 of its 20 built steps lists what the build recorded;
         upper reads 16.  A coordinate search from *values*: each option tries
         each of its values and keeps one that reads more of *built*, until a
@@ -683,6 +1013,8 @@ _AUDIO_BUILDERS: Dict[
         cfg.get("directory", ""),
         cfg.get("extensions", (".wav", ".mp3")),
     ),
+    "cell": lambda cfg: _MappingInternal._audio_cell(cfg),
+    "narrate": lambda cfg: _MappingInternal._audio_narrate(cfg),
 }
 
 

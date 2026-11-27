@@ -17,7 +17,7 @@ class TestConformance(unittest.TestCase):
     def test_the_ported_models_are_registered(self):
         self.assertEqual(
             Conformance.names(),
-            ["articulation", "shadow_projection", "shadow_horizon", "record_names"],
+            ["articulation", "shadow_projection", "shadow_horizon", "record_names", "spot_placement"],
         )
 
     def test_every_provider_writes_one_document_shape(self):

@@ -1374,6 +1374,13 @@
   {
     "kind": "function",
     "module": "pythontk.img_utils._img_utils",
+    "name": "pack_atlas_shapes",
+    "qualname": "ImgUtils.pack_atlas_shapes",
+    "tier": "bare"
+  },
+  {
+    "kind": "function",
+    "module": "pythontk.img_utils._img_utils",
     "name": "pack_channel_into_alpha",
     "qualname": "ImgUtils.pack_channel_into_alpha",
     "tier": "bare"
@@ -2108,34 +2115,6 @@
   },
   {
     "kind": "class",
-    "module": "pythontk.geo_utils.articulation._retired",
-    "name": "ArticulationWeb",
-    "qualname": "ArticulationWeb",
-    "tier": "root"
-  },
-  {
-    "kind": "class",
-    "module": "pythontk.geo_utils.articulation._retired",
-    "name": "ArticulationWebGrab",
-    "qualname": "ArticulationWebGrab",
-    "tier": "root"
-  },
-  {
-    "kind": "class",
-    "module": "pythontk.geo_utils.articulation._retired",
-    "name": "ArticulationWebJoint",
-    "qualname": "ArticulationWebJoint",
-    "tier": "root"
-  },
-  {
-    "kind": "class",
-    "module": "pythontk.geo_utils.articulation._retired",
-    "name": "ArticulationWebRig",
-    "qualname": "ArticulationWebRig",
-    "tier": "root"
-  },
-  {
-    "kind": "class",
     "module": "pythontk.core_utils.engines.instancing.assembly_sorter",
     "name": "AssemblySorter",
     "qualname": "AssemblySorter",
@@ -2195,6 +2174,13 @@
     "module": "pythontk.core_utils.engines.textures.map_compositor",
     "name": "BatchResult",
     "qualname": "BatchResult",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.geo_utils.spot_placement",
+    "name": "BoxRays",
+    "qualname": "BoxRays",
     "tier": "root"
   },
   {
@@ -2591,6 +2577,20 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.file_utils.mesh_convert._fbx_writer",
+    "name": "FbxNode",
+    "qualname": "FbxNode",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.file_utils.mesh_convert._fbx_writer",
+    "name": "FbxWriter",
+    "qualname": "FbxWriter",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.core_utils.schema_spec",
     "name": "FieldDoc",
     "qualname": "FieldDoc",
@@ -2671,13 +2671,6 @@
     "module": "pythontk.core_utils.qc_log",
     "name": "GateError",
     "qualname": "GateError",
-    "tier": "root"
-  },
-  {
-    "kind": "class",
-    "module": "pythontk.core_utils.engines.scene_export._retired",
-    "name": "GlbBlock",
-    "qualname": "GlbBlock",
     "tier": "root"
   },
   {
@@ -3172,6 +3165,13 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.core_utils.engines.shots.manifest.manifest_actions",
+    "name": "ManifestActions",
+    "qualname": "ManifestActions",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.core_utils.engines.shots.manifest.manifest_edits",
     "name": "ManifestEdits",
     "qualname": "ManifestEdits",
@@ -3189,6 +3189,13 @@
     "module": "pythontk.core_utils.engines.shots.manifest.manifest_model",
     "name": "ManifestModel",
     "qualname": "ManifestModel",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.shots.manifest.manifest_placement",
+    "name": "ManifestPlacement",
+    "qualname": "ManifestPlacement",
     "tier": "root"
   },
   {
@@ -3340,6 +3347,20 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.audio_utils.narrator",
+    "name": "NarrationEngine",
+    "qualname": "NarrationEngine",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.audio_utils.narrator",
+    "name": "Narrator",
+    "qualname": "Narrator",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.core_utils.engines.shots.shot_model",
     "name": "NativeStepFollowed",
     "qualname": "NativeStepFollowed",
@@ -3350,6 +3371,13 @@
     "module": "pythontk.net_utils._net_utils",
     "name": "NetUtils",
     "qualname": "NetUtils",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.core_utils.engines.scene_export.scene_records",
+    "name": "NodeNames",
+    "qualname": "NodeNames",
     "tier": "root"
   },
   {
@@ -3893,13 +3921,6 @@
   },
   {
     "kind": "class",
-    "module": "pythontk.core_utils.engines.textures.region_masks",
-    "name": "RegionMaskManifest",
-    "qualname": "RegionMaskManifest",
-    "tier": "root"
-  },
-  {
-    "kind": "class",
     "module": "pythontk.core_utils.engines.lighting.look_match.target",
     "name": "RegionShape",
     "qualname": "RegionShape",
@@ -4355,6 +4376,13 @@
   },
   {
     "kind": "class",
+    "module": "pythontk.audio_utils.narrator",
+    "name": "SherpaKokoro",
+    "qualname": "SherpaKokoro",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
     "module": "pythontk.core_utils.engines.shots.shot_model",
     "name": "ShotBlock",
     "qualname": "ShotBlock",
@@ -4491,6 +4519,27 @@
     "module": "pythontk.core_utils.singleton_mixin",
     "name": "SingletonMixin",
     "qualname": "SingletonMixin",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.geo_utils.spot_placement",
+    "name": "SpotPlacement",
+    "qualname": "SpotPlacement",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.geo_utils.spot_placement",
+    "name": "SpotPlacementConformance",
+    "qualname": "SpotPlacementConformance",
+    "tier": "root"
+  },
+  {
+    "kind": "class",
+    "module": "pythontk.geo_utils.spot_placement",
+    "name": "SpotRays",
+    "qualname": "SpotRays",
     "tier": "root"
   },
   {
@@ -4778,13 +4827,6 @@
     "module": "pythontk.file_utils.workspace",
     "name": "WORKSPACE_MARKER",
     "qualname": null,
-    "tier": "root"
-  },
-  {
-    "kind": "class",
-    "module": "pythontk.core_utils.engines.scene_export._retired",
-    "name": "WebProjection",
-    "qualname": "WebProjection",
     "tier": "root"
   },
   {

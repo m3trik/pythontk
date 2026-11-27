@@ -80,6 +80,87 @@ class TestCompare(unittest.TestCase):
         self.assertEqual(missing, sorted(A))
 
 
+class TestLevels(unittest.TestCase):
+    """What each level of the check lets through (the Scene Exporter's row)."""
+
+    def blocking(self, level, current):
+        _, missing, extra, _ = HB.compare(A, current)
+        return HB.blocking(level, missing, extra, current)
+
+    def test_strict_fails_any_change(self):
+        added = A | {"assetA_grp|helper"}
+        self.assertEqual(self.blocking("strict", added), ([], ["assetA_grp|helper"]))
+
+    def test_new_nodes_pass_where_nothing_shipped_is_touched(self):
+        # Helpers added to a module a project already built on: what it imported is all still there.
+        added = A | {"helpers", "helpers|view", "assetA_grp|slot"}
+        self.assertEqual(self.blocking("additions", added), ([], []))
+
+    def test_a_node_gone_renamed_or_moved_fails_at_every_level(self):
+        # An engine holds each imported node by its path: one that went away or moved breaks what was built on it.
+        renamed = (A - {"assetA_grp|meshA2"}) | {"assetA_grp|meshA2_v2"}
+        self.assertEqual(self.blocking("additions", renamed), (["assetA_grp|meshA2"], []))
+        wrapped = {"Wrapper", "Wrapper|assetA_grp", "Wrapper|assetA_grp|meshA1", "Wrapper|assetA_grp|meshA2"}
+        missing, _ = self.blocking("additions", wrapped)
+        self.assertEqual(sorted(missing), sorted(A))
+
+    def test_a_new_node_taking_a_shipped_name_fails(self):
+        # The shipped node's name, which a reader finds it by, would find two.
+        twin = A | {"assetA_grp|meshA1_grp", "assetA_grp|meshA1_grp|meshA1"}
+        self.assertEqual(self.blocking("additions", twin), ([], ["assetA_grp|meshA1_grp|meshA1"]))
+
+    def test_a_name_two_shipped_nodes_share_takes_a_third(self):
+        """No reader found either shipped node by a name they share (a tie is
+        never guessed), so a third node of that name breaks nothing.
+        Added: 2026-11-26"""
+        shipped = {"mod", "mod|view1", "mod|view1|cam", "mod|view2", "mod|view2|cam"}
+        current = shipped | {"mod|view3", "mod|view3|cam"}
+        _, missing, extra, _ = HB.compare(shipped, current)
+        self.assertEqual(HB.blocking("additions", missing, extra, current), ([], []))
+
+    def test_a_moved_node_fails_as_missing_alone(self):
+        """``|a|x`` moved to ``|b|x``: the old path is missing, which fails;
+        the new one takes no name a shipped node still holds, since the one
+        that held it is gone. Added: 2026-11-26"""
+        shipped = {"mod", "mod|a", "mod|a|x", "mod|b"}
+        current = {"mod", "mod|a", "mod|b", "mod|b|x"}
+        _, missing, extra, _ = HB.compare(shipped, current)
+        self.assertEqual(
+            HB.blocking("additions", missing, extra, current), (["mod|a|x"], [])
+        )
+        # Said as a move, the old path paired with the new one.
+        self.assertEqual(HB.moved(missing, extra), [("mod|a|x", "mod|b|x")])
+
+    def test_a_move_is_paired_only_where_one_name_says_which(self):
+        """Two missing or two new nodes of one name: which went where is a
+        guess, so neither is paired. Added: 2026-11-26"""
+        self.assertEqual(HB.moved(["a|x", "b|x"], ["c|x"]), [])
+        self.assertEqual(HB.moved(["a|x"], ["b|x", "c|x"]), [])
+        self.assertEqual(HB.moved(["a|x", "a|y"], ["b|y"]), [("a|y", "b|y")])
+
+    def test_an_unknown_level_is_refused(self):
+        with self.assertRaises(ValueError):
+            HB.blocking("loose", [], [], A)
+
+    def test_the_rows_options_keep_a_saved_checkbox_meaning_strict(self):
+        """The row was a checkbox: what it saved still means what it meant.
+        A preset keeps the checkbox's bool under the row's objectName, and its
+        load sets the combo to that bool as an index (``True`` is 1), so Strict
+        sits at 1 and OFF at 0; the panel's own saved state moves through
+        ``RETYPED_ROWS`` to the same positions (the panel's own test restores
+        both into the built combo)."""
+        from pythontk.core_utils.engines.scene_export.export_profile import ExportProfile
+
+        levels = list(ExportProfile.HIERARCHY_CHECK_OPTIONS.values())
+        old, new, moved = ExportProfile.RETYPED_ROWS["check_hierarchy_vs_existing_fbx"]
+        self.assertEqual((old, new), ("toggled", "currentIndexChanged"))
+        for saved, level in ((True, "strict"), (False, None)):
+            with self.subTest(saved=saved):
+                self.assertEqual(levels[int(saved)], level, "a preset's load")
+                self.assertEqual(levels[moved[saved]], level, "the saved state's move")
+        self.assertEqual(set(levels[1:]), set(HB.LEVELS))
+
+
 class TestMerge(unittest.TestCase):
     def test_merge_leaves_other_scopes_alone(self):
         merged = HB.merge(A | B, A - {"assetA_grp|meshA2"})

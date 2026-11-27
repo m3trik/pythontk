@@ -460,16 +460,10 @@ class TestContracts(SceneRecordsCase):
         self.assertEqual(
             pythontk.MOVED_NAMES["RecordSpec.glb"], ("pythontk.RecordSpec.glb_verbatim", "0.21.0")
         )
-        # The names v0.20.0 noticed for 0.18.0 stay, deprecated, until their
-        # window closes (TestRetiredUntil022): held, then moved at 0.22.0.
-        for name in ("GlbBlock", "WebProjection", "RecordSpec.web"):
-            with self.subTest(held=name):
-                self.assertNotIn(name, pythontk.MOVED_NAMES)
-                home, version = pythontk.HELD_UNTIL_0_22[name]
-                self.assertEqual((home, version), ("pythontk.RecordSpec.glb_verbatim", "0.22.0"))
-        self.assertEqual(
-            pythontk.HELD_UNTIL_0_22["SceneRecords.web_shape"][0], "pythontk.SceneRecords.shape"
-        )
+        # The names v0.20.0 noticed for 0.18.0 went when their window closed
+        # (2026-11-26): no attribute is left, each a moved name.
+        self.assertFalse(hasattr(RecordSpec, "web"))
+        self.assertFalse(hasattr(SR, "web_shape"))
         with self.assertRaises(TypeError):
             RecordSpec("x", Scope.DELIVERABLE, 1, "t", "d", glb=object())
         self.assertFalse(SR.MATERIALS.glb_verbatim, "a deliverable a GLB does not carry")
@@ -483,7 +477,7 @@ class TestContracts(SceneRecordsCase):
         # whose spec's version a block's version is).
         import importlib
 
-        moved = {**pythontk.MOVED_NAMES, **pythontk.HELD_UNTIL_0_22}
+        moved = pythontk.MOVED_NAMES
         for name in ("GlbBlock", "WebProjection", "RecordSpec.glb", "RecordSpec.web") + tuple(
             f"SceneRecords.{n}" for n in ("glb_shape", "glb_version", "block_problems", "web_shape")
         ):
@@ -625,19 +619,6 @@ class TestContracts(SceneRecordsCase):
         self.assertEqual(older["version"], spec.version - 1)
         self.assertIsNone(SR.glb_block(gltf, spec))
 
-    def test_the_retired_web_names_still_serve(self):
-        """``SceneRecords.web_projected`` and ``SceneRecords.FBX_TAKES``
-        (retired 2026-10-20, removed in 0.18.0) warn, and serve what replaced
-        them; the block names beside them retired whole with the GLB block
-        machinery (2026-11-08, ``test_the_glb_block_machinery_is_retired_whole``)."""
-        with self.assertWarns(DeprecationWarning):
-            self.assertEqual(SR.web_projected(), SR.glb_records())
-        with self.assertWarns(DeprecationWarning):
-            takes = SR.FBX_TAKES
-        self.assertIsInstance(takes, RecordSpec)
-        self.assertIn(takes.key, SR.RETIRED)
-        self.assertNotIn(takes, SR.all(), "no record of the registry's")
-
     def test_every_declared_shape_resolves_to_a_typed_schema(self):
         from pythontk import SchemaSpec
 
@@ -776,12 +757,6 @@ class TestCodec(SceneRecordsCase):
             "pythontk.core_utils.engines.scene_export", level="WARNING"
         ):
             self.assertIsNone(effects.decode(newer))
-
-    def test_the_retired_version_key_is_version(self):
-        """``RecordSpec.version_key`` (retired 2026-10-20, removed in 0.18.0)
-        warns, and answers the one key every record versions under."""
-        with self.assertWarns(DeprecationWarning):
-            self.assertEqual(SR.VISIBILITY.version_key, "version")
 
     def test_a_record_without_an_envelope_is_stored_as_given(self):
         rec = SR.SHOT_STORE.make([{"name": "a", "start": 1, "end": 2}])
@@ -1260,29 +1235,6 @@ class TestHandoff(SceneRecordsCase):
         lights_alone = SR.LIGHTMAPS.assembly_for({"lights": [{"type": "point"}]})
         self.assertIn("a delivery with no probe", lights_alone)
 
-    def test_the_retired_handoff_names_still_serve_the_handoffs(self):
-        """``rendering_policy``, ``HANDOFF_INSTRUCTIONS``, ``HANDOFF_ASSEMBLY``
-        and ``handoff_block`` (retired 2026-10-20 for ``HandoffRecord``,
-        removed in 0.18.0) warn, and answer with what ``HandoffRecord``
-        states now."""
-        with self.assertWarns(DeprecationWarning):
-            self.assertEqual(SR.rendering_policy(), HandoffRecord.rendering_policy())
-        with self.assertWarns(DeprecationWarning):
-            self.assertEqual(SR.HANDOFF_INSTRUCTIONS, HandoffRecord.instructions("fbx"))
-        with self.assertWarns(DeprecationWarning):
-            self.assertEqual(SR.HANDOFF_ASSEMBLY, HandoffRecord.CARRIERS["fbx"].own)
-        channels = {SR.LIGHTMAPS.key: "{}", "emissiveGroup_Neon": 0.5}
-        with self.assertWarns(DeprecationWarning):
-            block = SR.handoff_block(channels, source={"application": "maya"})
-        self.assertEqual(
-            block, HandoffRecord.block("fbx", channels, {"application": "maya"})
-        )
-        with self.assertWarns(DeprecationWarning):
-            self.assertEqual(
-                SR.handoff_block({"emissiveGroup_Neon": 1.0}),
-                {},
-                "a carrier holding no record has nothing to describe",
-            )
 
 
 # -- the context + snapshot ---------------------------------------------------------
@@ -3615,94 +3567,6 @@ class TestGlbMedia(unittest.TestCase):
 
 
 
-class TestRetiredUntil022(unittest.TestCase):
-    """The nine names v0.20.0 noticed for removal in 0.18.0 (2026-10-24),
-    whose window closes 2026-11-23, after 0.21.0 ships: each still works and
-    warns until then (CODE_STANDARD section 5). Delete with the aliases at
-    0.22.0 (``pythontk/__init__.py``, "Held until 0.22.0").
-    Restored: 2026-11-08"""
-
-    def test_the_scene_records_names_warn_and_answer(self):
-        import pythontk as ptk
-
-        with self.assertWarns(DeprecationWarning):
-            old = ptk.WebProjection("crate", version=3)
-        self.assertIsInstance(old, ptk.GlbBlock)
-        self.assertEqual(old.version, 3)
-        with self.assertWarns(DeprecationWarning):
-            self.assertEqual(old.key, "crate")
-        with self.assertWarns(DeprecationWarning):
-            self.assertEqual(ptk.GlbBlock(version=2).key, "")
-        with self.assertWarns(DeprecationWarning):
-            block = SR.SHOTS.web
-        self.assertEqual(block.version, SR.SHOTS.version)
-        with self.assertWarns(DeprecationWarning):
-            self.assertEqual(block.key, SR.SHOTS.key)
-        with self.assertWarns(DeprecationWarning):
-            self.assertIsNone(SR.MATERIALS.web)
-        with self.assertWarns(DeprecationWarning):
-            shape = SR.web_shape(SR.ARTICULATION)
-        self.assertIs(shape, SR.shape(SR.ARTICULATION))
-
-    def test_the_articulation_block_names_warn_and_validate_a_block(self):
-        import pythontk as ptk
-
-        block = {
-            "version": 1,
-            "rigs": [
-                {
-                    "name": "door",
-                    "joints": [
-                        {
-                            "parent": None,
-                            "t": [0.0, 0.0, 0.0],
-                            "q": [0.0, 0.0, 0.0, 1.0],
-                            "rotate_order": "xyz",
-                            "channels": [],
-                            "node": 3,
-                        }
-                    ],
-                    "grab": [{"node": 4, "joint": 0}],
-                }
-            ],
-        }
-        self.assertTrue(ptk.ArticulationWeb.validate(block).ok)
-        with self.assertWarns(DeprecationWarning):
-            ptk.ArticulationWeb(version=1, rigs=[])
-        with self.assertWarns(DeprecationWarning):
-            ptk.ArticulationWebRig(name="door", joints=[], grab=[])
-        with self.assertWarns(DeprecationWarning):
-            ptk.ArticulationWebJoint(
-                parent=None, t=(0, 0, 0), q=(0, 0, 0, 1), rotate_order="xyz", node=3
-            )
-        with self.assertWarns(DeprecationWarning):
-            ptk.ArticulationWebGrab(node=4, joint=0)
-
-    def test_the_mesh_convert_block_attributes_warn_and_answer(self):
-        """A GLB carries each record as it stands: its version is the
-        record's, and no field of it binds by node index."""
-        import pythontk as ptk
-
-        with self.assertWarns(DeprecationWarning):
-            self.assertEqual(ptk.MeshConvert.ANIMATION_WEB_VERSION, SR.SHOTS.version)
-        with self.assertWarns(DeprecationWarning):
-            self.assertEqual(ptk.MeshConvert.SHADOW_WEB_NODE_FIELDS, ())
-        with self.assertWarns(DeprecationWarning):
-            self.assertEqual(ptk.MeshConvert.ARTICULATION_WEB_NODE_FIELDS, ())
-
-    def test_the_region_mask_manifest_states_its_version_under_schema(self):
-        import pythontk as ptk
-
-        manifest = ptk.RegionMaskManifest.vertex_color([{"name": "sign", "slot": 0}])
-        with self.assertWarns(DeprecationWarning):
-            self.assertEqual(manifest.schema, manifest.version)
-        with self.assertWarns(DeprecationWarning):
-            self.assertEqual(ptk.RegionMaskManifest.SCHEMA_VERSION, ptk.RegionMaskManifest.VERSION)
-        self.assertEqual(manifest.to_dict()["groups"], [{"name": "sign", "slot": 0, "default": 1.0}])
-
-
-
-
 class TestNamedNodes(unittest.TestCase):
     """``named_nodes``: the scene names a record holds -- a task regrouping or
     renaming one would leave the record naming nothing (2026-11-10: the Scene
@@ -3735,6 +3599,23 @@ class TestNamedNodes(unittest.TestCase):
         skipped = SR.named_nodes(dump, skip=(k for k in (SR.LODS.key, SR.SHADOWS.key)))
         self.assertNotIn("rock", skipped, "a generator is read once, not spent on the first record")
         self.assertNotIn("plane", skipped)
+
+
+
+class TestNodeNames(unittest.TestCase):
+    """The names a reader binds a node by: a name, a namespace's leaf, a path's tail."""
+
+    def test_a_paths_tail_names_the_node_whose_trailing_names_it_is(self):
+        from pythontk.core_utils.engines.scene_export.scene_records import NodeNames
+
+        lineage = ["ROOM", "RACK", "AC:SOLENOID_LOC", "PCB_LIGHTS_GRP"]
+        self.assertTrue(NodeNames.ends("SOLENOID_LOC|PCB_LIGHTS_GRP", lineage), "namespace-blind, as a record binds")
+        self.assertTrue(NodeNames.ends("PCB_LIGHTS_GRP", lineage), "a name is a tail of one")
+        self.assertTrue(NodeNames.ends("|ROOM|RACK|SOLENOID_LOC|PCB_LIGHTS_GRP", lineage), "a whole path too")
+        self.assertFalse(NodeNames.ends("RACK|PCB_LIGHTS_GRP", lineage), "none of its names skipped")
+        self.assertFalse(NodeNames.ends("SPARE|ROOM|RACK|SOLENOID_LOC|PCB_LIGHTS_GRP", lineage), "longer than the path")
+        self.assertFalse(NodeNames.ends("", lineage))
+        self.assertEqual(NodeNames.hierarchy_score(["X", "SOLENOID_LOC", "PCB_LIGHTS_GRP"], lineage), 2)
 
 
 if __name__ == "__main__":

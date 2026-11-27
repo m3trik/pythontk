@@ -14,6 +14,7 @@ import { emit } from './api.js';
 import { closeDialog } from './dialog.js';
 import { environmentLoaded } from './environment.js';
 import { formatBytes } from './format.js';
+import { clearIndicators, setupIndicators } from './indicators.js';
 import {
   applyLighting, applyLightmaps, bindLightmaps, copyReaders, resetLightmaps,
 } from './lightmaps.js';
@@ -25,7 +26,7 @@ import { composite, setParts } from './parts.js';
 import { disposeProbe, loadProbe, releaseProbe, useProbe } from './probe.js';
 import { staleBlocks } from './extras.js';
 import { BLOCKS, HANDOFF } from './records.js';
-import { readExtras, readRenderingPolicy } from './scene.js';
+import { readExtras, readRenderingPolicy, scene } from './scene.js';
 import { glbJsonBytes, measureModel, setSpecs, showSpecs } from './specs.js';
 import { findStart, homeView } from './start.js';
 import { setStatus } from './status.js';
@@ -136,6 +137,9 @@ export async function load(sources, version) {
     for (const part of loaded) root.add(part.gltf.scene);
   }
   setModel(root);
+  // The old model's glow cards go with it: the passes below await, and a
+  // card left on a disposed light shows meanwhile (and stays if one throws).
+  clearIndicators();
   setParts(loaded, root);
 
   // A lightmapped material already contains its DIFFUSE lighting, so the viewer's own
@@ -181,6 +185,8 @@ export async function load(sources, version) {
   // clips of every part in one picker, the model measured across the parts.
   const whole = composite(loaded, root);
   const clipCount = setupAnimation(whole.gltf, whole.shots);
+  // Each part's indicator lights, by its own record (indicators.js).
+  setupIndicators(loaded, scene);
 
   measureBounds();
 

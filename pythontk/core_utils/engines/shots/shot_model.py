@@ -44,7 +44,7 @@ from contextlib import contextmanager
 from pythontk.core_utils.engines.shots.effect_recipe import EffectRecipe
 from pythontk.core_utils.engines.shots.shot_ledger import ShotEditLedger
 from pythontk.core_utils.engines.scene_export.export_snapshot import ExportContext
-from pythontk.core_utils.engines.scene_export.scene_records import Record, SceneRecords
+from pythontk.core_utils.engines.scene_export.scene_records import NodeNames, Record, SceneRecords
 from pythontk.str_utils._str_utils import StrUtils
 
 _log = logging.getLogger(__name__)
@@ -216,6 +216,13 @@ class ShotsHost(Protocol):
     def member_nodes(self, name: str) -> List[str]:
         """Every scene node answering to doc object *name*."""
 
+    def member_lineage(self, member: str) -> List[str]:
+        """The names of the node a shot's *member* (as the store keeps it) is,
+        from its top level down: what a doc name's path tail is compared with
+        (:meth:`ShotStore.names_member`).  A member kept as its path reads it
+        (Maya's long name); one kept as a bare name has its path in its
+        parents (Blender's object)."""
+
     def existing_objects(self, store: "ShotStore", names: Iterable[str]) -> set:
         """Which of *names* the scene still holds -- by name, or the node a
         rename the store was not told of left them naming
@@ -370,6 +377,9 @@ class PureShotsHost:
     def member_nodes(self, name: str) -> List[str]:
         return [str(name)]
 
+    def member_lineage(self, member: str) -> List[str]:
+        return str(member).split("|")
+
     def existing_objects(self, store: "ShotStore", names: Iterable[str]) -> set:
         return set(names)
 
@@ -424,7 +434,7 @@ class PureShotsHost:
 # ---------------------------------------------------------------------------
 
 #: The severity each shot status is shown at -- a level of
-#: ``Palette.status()`` (valid, locked, info, warn, error) -- so a UI can
+#: ``Palette.status()`` (valid, locked, success, info, warn, error) -- so a UI can
 #: mark it by shape as well as colour.  ``SHOT_PALETTE`` colours by it.
 SHOT_STATUS_LEVELS: Dict[str, str] = {
     "csv_object": "valid",  # expected — no color
@@ -442,7 +452,14 @@ SHOT_STATUS_LEVELS: Dict[str, str] = {
     "unknown_behavior": "warn",  # no behavior template by that name
     "not_in_doc": "info",  # a shot no doc step pairs with
     "no_objects": "info",  # the doc lists no objects for the step
-    "edited": "locked",  # edited by hand since its build: Build keeps it
+    # Edited by hand since its build: Build keeps it. A tier of its own, so a
+    # panel marks it apart from a locked shot (one glyph each).
+    "edited": "success",
+    "dropped_behavior": "warn",  # keys of a behavior the doc dropped
+    "shot_update": "info",  # the step changed since its shot was built
+    "no_shot": "valid",  # plays no animation: no shot, nothing to do
+    "sheet": "error",  # the sheet's own check found a problem in the step's rows
+    "sheet_warning": "warn",  # the same check's warning: read anyway
 }
 
 try:
@@ -507,16 +524,17 @@ class ShotBlock:
         csv_objs = set((e["name"] if isinstance(e, dict) else e) for e in raw_csv)
         # Metadata holds the doc's names; shot.objects hold resolved (long,
         # possibly namespaced) nodes -- compare through the one identity rule.
-        key = ShotStore.member_key
-        status_by_key = {key(k): v for k, v in statuses.items()}
-        csv_keys = {key(n) for n in csv_objs}
+        named: Dict[str, str] = {}
+        for name, obj in ShotStore.name_pairs(statuses, self.objects):
+            named.setdefault(obj, statuses[name])
+        listed = {obj for _name, obj in ShotStore.name_pairs(csv_objs, self.objects)}
         result: Dict[str, str] = {}
         for obj in self.objects:
             if obj in statuses:
                 result[obj] = statuses[obj]
-            elif key(obj) in status_by_key:
-                result[obj] = status_by_key[key(obj)]
-            elif csv_objs and key(obj) not in csv_keys:
+            elif obj in named:
+                result[obj] = named[obj]
+            elif csv_objs and obj not in listed:
                 result[obj] = "scene_discovered"
             else:
                 result[obj] = "valid"
@@ -2525,6 +2543,16 @@ class ShotStore(_ShotStoreInternal):
                 f"{name!r}: another shot is named {other} -- clip names must "
                 "differ by more than case."
             )
+        # A take is a clip too: another shot's take of the name is the same collision.
+        for shot in self.shots:
+            if shot.shot_id == shot_id:
+                continue  # its own take may carry its name (a step with one take)
+            for take in self.take_records(shot) or ():
+                if self._clip_key(take["name"]) == key:
+                    return (
+                        f"{name!r}: a take of shot {shot.name!r} is named "
+                        f"{take['name']!r} -- clip names must differ by more than case."
+                    )
         # Legacy case twins export de-duplicated (``Intro`` / ``intro`` ship as
         # ``Intro`` / ``intro_1``), so a name can also collide with a SUFFIXED
         # clip no shot is named.
@@ -2575,12 +2603,15 @@ class ShotStore(_ShotStoreInternal):
 
     def unique_name(self, base: str = "Shot", first: Optional[int] = None) -> str:
         """A name :meth:`name_error` accepts, derived from *base* by
-        :meth:`unique_among` against this store's shots.
+        :meth:`unique_among` against this store's clip names: every shot's,
+        and every take's (a take is a clip too, :attr:`TAKES`).
 
         Returns:
             The derived name.
         """
-        return self.unique_among(base, (s.name for s in self.shots), first)
+        taken = [s.name for s in self.shots]
+        taken += [t["name"] for s in self.shots for t in self.take_records(s) or ()]
+        return self.unique_among(base, taken, first)
 
     def default_name(self, wanted: Optional[str] = None) -> str:
         """*wanted* when :meth:`name_error` accepts it, else the store's next
@@ -2672,6 +2703,7 @@ class ShotStore(_ShotStoreInternal):
             return None
         if name is not None and name != shot.name:
             self._check_name(name, shot_id)
+        was = (shot.start, shot.end)
         if start is not None:
             shot.start = self.snap(start)
         if end is not None:
@@ -2695,6 +2727,11 @@ class ShotStore(_ShotStoreInternal):
             shot.locked = locked
         if metadata is not None:
             shot.metadata = dict(metadata)
+        if (shot.start, shot.end) != was:
+            # A bounds write moves no key, so the takes keep their frames (a
+            # move of the shot with its content is the sequencer's, which
+            # writes the bounds itself and lets them ride).
+            self.rebase_takes(shot, *was)
         if objects is not None:
             self._prune_system_members(shot)
         self._notify(ShotUpdated(shot=shot))
@@ -2980,6 +3017,27 @@ class ShotStore(_ShotStoreInternal):
 
     # ---- serialisation ---------------------------------------------------
 
+    @staticmethod
+    def _options_record(rec: Any) -> Optional[Dict[str, Any]]:
+        """One ``manifest_options`` record as it is saved and read: its
+        ``template`` and ``values`` where it keeps a sheet's options, its
+        ``behaviors`` modes (``ManifestEdits.set_behavior_modes``) where it
+        keeps those, each read tolerantly; ``None`` for no dict."""
+        if not isinstance(rec, dict):
+            return None
+        out: Dict[str, Any] = {}
+        if "template" in rec or "values" in rec:
+            template = rec.get("template")
+            out["template"] = template if isinstance(template, str) else None
+            values = rec.get("values")
+            out["values"] = dict(values) if isinstance(values, dict) else {}
+        modes = rec.get("behaviors")
+        if isinstance(modes, dict):
+            lists = [modes.get(k, []) for k in ("key", "marker")]
+            if all(isinstance(v, list) and all(isinstance(b, str) for b in v) for v in lists):
+                out["behaviors"] = {"key": list(lists[0]), "marker": list(lists[1])}
+        return out
+
     def to_dict(self) -> Dict[str, Any]:
         """Serialise shots and settings to a plain dict."""
         return {
@@ -3013,11 +3071,12 @@ class ShotStore(_ShotStoreInternal):
             "manifest_edits": dict(self.manifest_edits),
             "manifest_tags": {k: dict(v) for k, v in self.manifest_tags.items()},
             "manifest_options": {
-                k: {
-                    "template": v.get("template"),
-                    "values": dict(v.get("values") or {}),
-                }
-                for k, v in self.manifest_options.items()
+                k: rec
+                for k, rec in (
+                    (k, self._options_record(v))
+                    for k, v in self.manifest_options.items()
+                )
+                if rec is not None
             },
             "auto_publish_export": self.auto_publish_export,
             "clip_name_strategy": self.clip_name_strategy,
@@ -3284,7 +3343,7 @@ class ShotStore(_ShotStoreInternal):
         bound to links it there, one ``_<n>`` stripped at a time (a tail
         split again, ``A01_2_2``, finds ``A01``).  Derived on every read,
         never stamped on the scene, so opening a scene changes nothing
-        (maintainer 2026-10-11; SOL_REPLACE_ASSEMBLY's 8 tails, A01_2 ...
+        (maintainer 2026-10-11; a production scene's 8 tails, A01_2 ...
         E02_2, carry no link).
 
         Returns:
@@ -3337,7 +3396,7 @@ class ShotStore(_ShotStoreInternal):
         respelled = [
             f"{want!r} -> {clip!r}"
             for want, (clip, _s, _e), shot in zip(wanted, specs, sorted_s)
-            if clip != want and shot.shot_id not in leave_out
+            if clip != want and shot.shot_id not in leave_out and ShotStore.takes_of(shot) is None
         ]
         if respelled:
             _log.warning(
@@ -3348,7 +3407,9 @@ class ShotStore(_ShotStoreInternal):
                 self.NAME_RULE,
             )
         shots_meta = []
-        for (clip, _start, _end), shot in zip(specs, sorted_s):
+        # One entry a take (a shot that declares none is its own): each ships
+        # its shot's words, joined by its clip.
+        for clip, _start, _end, shot in ShotStore.resolve_take_specs(sorted_s, strategy=strategy):
             if shot.shot_id in leave_out:
                 continue
             entry: Dict[str, Any] = {"clip": clip}
@@ -3737,16 +3798,12 @@ class ShotStore(_ShotStoreInternal):
         }
         options = data.get("manifest_options")
         store.manifest_options = {
-            str(source): {
-                "template": rec.get("template")
-                if isinstance(rec.get("template"), str)
-                else None,
-                "values": dict(rec["values"])
-                if isinstance(rec.get("values"), dict)
-                else {},
-            }
-            for source, rec in (options.items() if isinstance(options, dict) else ())
-            if isinstance(rec, dict)
+            str(source): rec
+            for source, rec in (
+                (source, cls._options_record(raw))
+                for source, raw in (options.items() if isinstance(options, dict) else ())
+            )
+            if rec is not None
         }
         ids = data.get("member_ids")
         store.member_ids = {
@@ -3786,7 +3843,7 @@ class ShotStore(_ShotStoreInternal):
         """Scale all shot timings from the current ``scene_fps`` to *new_fps*.
 
         Called automatically when the scene framerate changes.  Updates
-        ``scene_fps``, rescales shot boundaries, gap, markers and the edit
+        ``scene_fps``, rescales shot boundaries and their takes, gap, markers and the edit
         ledger's claims (the keys they name moved with the clock), then
         fires a :class:`BatchComplete` so the UI repaints.
 
@@ -3811,8 +3868,15 @@ class ShotStore(_ShotStoreInternal):
         # change when snap_whole_frames is off (bare round() quantized
         # them unconditionally).
         for shot in self.shots:
+            old_start = shot.start
             shot.start = self.snap(shot.start * ratio)
             shot.end = self.snap(shot.end * ratio)
+            # A take's frames are its keys', which kept their time: each is
+            # scaled as the bounds are, snapped alike, from the shot's start.
+            for record in self.take_records(shot) or ():
+                for edge in ("start", "end"):
+                    if record.get(edge) is not None:
+                        record[edge] = self.snap((old_start + float(record[edge])) * ratio) - shot.start
         self.gap = round(self.gap * ratio, 2)
         for marker in self.markers:
             if "time" in marker:
@@ -3930,14 +3994,89 @@ class ShotStore(_ShotStoreInternal):
 
     @staticmethod
     def member_key(node) -> str:
-        """The identity a doc name and a shot member are compared by: the leaf
-        with its namespace dropped (``"|set|AC:door_geo"`` -> ``"door_geo"``).
-
-        The one rule every consumer uses -- the manifest's planner and Assess,
-        the sequencer's classification -- so a doc that writes ``door_geo``
-        matches the member a build stored as a long, referenced path.
+        """A member's leaf with its namespace dropped (``"|set|AC:door_geo"``
+        -> ``"door_geo"``): the key a member's records keep (the shot
+        system's own additions, a build's record of its members) and a scene
+        discovery leaves out what a shot holds by.  A doc name is compared with
+        a member by :meth:`names_member`, which reads a path's tail whole.
         """
         return ShotStore.leaf_name(node).rsplit(":", 1)[-1]
+
+    @staticmethod
+    def member_names(members: Iterable[str]) -> Dict[str, str]:
+        """``{member: its name}``: each of *members* by the name a doc writes
+        it with -- its :meth:`member_key` where no other of *members* shares
+        that, else the fewest trailing names of its path no other's path ends
+        with (``PANEL|LATCH`` beside ``DOOR|LATCH``), each namespace-blind, as
+        :meth:`names_member` reads it.  What a build records a shot's members
+        by and an auto-fill names them by: two members sharing a leaf stay two.
+        """
+        by_leaf: Dict[str, Dict[str, List[str]]] = {}
+        for m in members:
+            parts = [p.rsplit(":", 1)[-1] for p in str(m).split("|") if p] or [str(m)]
+            by_leaf.setdefault(parts[-1], {})[str(m)] = parts
+        out: Dict[str, str] = {}
+        for leaf, paths in by_leaf.items():  # only members sharing a leaf can share a tail
+            for member, parts in paths.items():
+                others = [p for m, p in paths.items() if m != member]
+                count = 1
+                while count < len(parts) and any(p[-count:] == parts[-count:] for p in others):
+                    count += 1
+                out[member] = "|".join(parts[-count:])
+        return out
+
+    @staticmethod
+    def names_member(name, member, host: Optional[ShotsHost] = None) -> bool:
+        """Whether the doc object *name* names *member*: a shot's member as
+        stored (a long, referenced path), or a doc name a build recorded.
+
+        The one rule the manifest's planner and Assess and the sequencer's
+        classification compare by: *member*'s path ends with *name*'s, each
+        name namespace-blind (``ptk.NodeNames.ends``).  So ``door_geo`` names
+        ``|set|AC:door_geo``, and ``PANEL|LATCH`` names ``|rig|PANEL|LATCH``
+        but not ``|rig|DOOR|LATCH``: two nodes sharing a leaf stay two.  A
+        path's tail is compared with the member's lineage as its *host* reads
+        it (:meth:`ShotsHost.member_lineage`; default the running host): a
+        member a host keeps as a bare name (Blender's ``LATCH``) has its path
+        in its parents.  A bare name is compared with the member as stored.
+        """
+        name = str(name)
+        if "|" not in name.strip("|"):
+            return NodeNames.ends(name, str(member).split("|"))
+        host = host if host is not None else ShotStore.running_host()
+        return NodeNames.ends(name, host.member_lineage(str(member)))
+
+    @staticmethod
+    def name_pairs(
+        names: Iterable[str], members: Iterable[str], host: Optional[ShotsHost] = None
+    ) -> List[Tuple[str, str]]:
+        """Every ``(name, member)`` where the doc *name* names the *member*
+        (:meth:`names_member`, through *host*), found through their leaves (a
+        name names only a member of its :meth:`member_key`, or one whose
+        lineage ends in that key), so a shot of hundreds of members is compared
+        in one pass, not name by member."""
+        names = [str(n) for n in names]
+        members = list(members)
+        lines: Dict[str, List[str]] = {}
+        if any("|" in n.strip("|") for n in names):  # a path's tail reads the members' lineage
+            host = host if host is not None else ShotStore.running_host()
+            lines = {str(m): host.member_lineage(str(m)) for m in members}
+        by_key: Dict[str, List[str]] = {}
+        for member in members:
+            keys = {ShotStore.member_key(member)}
+            line = lines.get(str(member))
+            if line:
+                keys.add(ShotStore.member_key(line[-1]))
+            for key in keys:
+                by_key.setdefault(key, []).append(member)
+        pairs = []
+        for name in names:
+            pathed = "|" in name.strip("|")
+            for member in by_key.get(ShotStore.member_key(name), ()):
+                line = lines[str(member)] if pathed else str(member).split("|")
+                if NodeNames.ends(name, line):
+                    pairs.append((name, member))
+        return pairs
 
     def member_nodes(self, name: str) -> List[str]:
         """Every scene node answering to a doc object *name* (host hook).
@@ -3955,12 +4094,290 @@ class ShotStore(_ShotStoreInternal):
         Returns ``(node, reason)`` -- *reason* ``"found"`` (*node* is the
         scene's name for it), ``"missing"`` or ``"ambiguous"`` (*node* is
         *name* unchanged): several nodes answering to it (:meth:`member_nodes`)
-        is a finding, never a silent pick.
+        is a finding, never a silent pick. A node and the nodes of its name
+        inside it are one object, the outermost (a group whose mesh carries
+        its name), as a delivery's reader reads such a chain.
         """
         hits = self.member_nodes(name)
-        if len(hits) == 1:
-            return hits[0], "found"
+        outer = [h for h in hits if not any(o != h and h.startswith(o + "|") for o in hits)]
+        if len(outer) == 1:
+            return outer[0], "found"
         return str(name), ("ambiguous" if hits else "missing")
+
+    # ---- takes (what a shot's step plays) ----------------------------------
+
+    #: Shot metadata: the takes the shot holds, ``[{"name", "start", "end"}]``.
+    #: A take is what one trigger plays and an export's clip: a named span
+    #: inside the shot, counted from the shot's start, so it rides every move
+    #: of it; one with no span is the whole shot.  Absent, the shot is its own
+    #: take (a scene whose takes were cut as shots, a linear production);
+    #: empty, the shot plays nothing (a step that only speaks).
+    TAKES = "takes"
+
+    @classmethod
+    def take_records(cls, shot: "ShotBlock") -> Optional[List[Dict[str, Any]]]:
+        """*shot*'s take records as kept (:attr:`TAKES`): ``{"name"}`` with a
+        ``start`` and ``end`` counted from the shot's start where it has a
+        span (one placed), none where it is the whole shot; ``None`` where it
+        declares none.  Anything that is no list of named records reads as
+        none declared, never as an error at export time.  The records are the
+        store's own: edit them through :meth:`set_takes`."""
+        kept = (shot.metadata or {}).get(cls.TAKES)
+        if not isinstance(kept, list):
+            return None
+        return [t for t in kept if isinstance(t, dict) and isinstance(t.get("name"), str) and t["name"]]
+
+    @classmethod
+    def takes_of(cls, shot: "ShotBlock") -> Optional[List[Tuple[str, float, float]]]:
+        """The takes *shot* holds, as ``(name, start, end)`` in the timeline's
+        frames, in the order they run; ``None`` where it declares none (the
+        shot is its own take), empty where it plays nothing.
+
+        A take with no span is the whole shot; one reaching past the shot (its
+        shot was shortened since) is cut to it, and one the shot leaves no
+        frames of is none (:meth:`rebase_takes` drops it, and says so, where
+        the bounds change): never a clip of no length.
+        """
+        records = cls.take_records(shot)
+        if records is None:
+            return None
+        takes = []
+        for record in records:
+            start, end = record.get("start"), record.get("end")
+            if start is None or end is None:
+                takes.append((record["name"], shot.start, shot.end))
+                continue
+            lo = min(max(shot.start + float(start), shot.start), shot.end)
+            hi = min(max(shot.start + float(end), shot.start), shot.end)
+            if hi - lo > 1e-6:
+                takes.append((record["name"], lo, hi))
+        return sorted(takes, key=lambda take: (take[1], take[2]))
+
+    def take_error(
+        self,
+        shot_id: int,
+        takes: Iterable[Tuple[str, Optional[float], Optional[float]]],
+    ) -> Optional[str]:
+        """Why *takes* cannot be the takes of shot *shot_id*, or ``None``.
+
+        A take is a clip: named as a shot is (:attr:`NAME_PATTERN`), unlike
+        every other take and every other shot ignoring case (its own shot's
+        name is its to use), and, where it has a span, inside its shot with
+        some length.
+        """
+        shot = self.shot_by_id(shot_id)
+        if shot is None:
+            return f"No shot with id {shot_id}."
+        seen: set = set()
+        for name, start, end in takes:
+            if not isinstance(name, str) or not name:
+                return "A take needs a name."
+            illegal = StrUtils.name_error(
+                name, subject="take names", reason="because the name is the exported clip name"
+            )
+            if illegal:
+                return illegal
+            key = self._clip_key(name)
+            if key in seen:
+                return f"{name!r} is named twice in shot {shot.name!r}: a take is one clip."
+            seen.add(key)
+            for other in self.shots:
+                if other.shot_id == shot_id:
+                    continue
+                if self._clip_key(other.name) == key:
+                    return f"{name!r}: a shot is named {other.name!r} -- clip names must differ by more than case."
+                for theirs in self.take_records(other) or ():
+                    if self._clip_key(theirs["name"]) == key:
+                        return (
+                            f"{name!r}: a take of shot {other.name!r} is named "
+                            f"{theirs['name']!r} -- clip names must differ by more than case."
+                        )
+            if (start is None) != (end is None):
+                return f"{name!r}: give a take its start and its end, or neither (the whole shot)."
+            if start is None:
+                continue
+            if not (shot.start - 1e-6 <= start < end <= shot.end + 1e-6):
+                return (
+                    f"{name!r} ({start:g}-{end:g}) is not a span inside shot "
+                    f"{shot.name!r} ({shot.start:g}-{shot.end:g})."
+                )
+        return None
+
+    def set_takes(
+        self,
+        shot_id: int,
+        takes: Optional[Iterable[Tuple[str, Optional[float], Optional[float]]]],
+    ) -> bool:
+        """Make *takes* the takes shot *shot_id* holds (:attr:`TAKES`).
+
+        Parameters:
+            shot_id: The shot.
+            takes: ``(name, start, end)`` each, in the timeline's frames; a
+                take with no span (``None``, ``None``) is the whole shot.
+                Empty: the shot plays nothing.  ``None``: it declares none
+                again (the shot is its own take).
+
+        Returns:
+            Whether the store changed.
+
+        Raises:
+            ValueError: What :meth:`take_error` says of *takes*.
+        """
+        shot = self.shot_by_id(shot_id)
+        if shot is None:
+            raise ValueError(f"No shot with id {shot_id}.")
+        meta = dict(shot.metadata or {})
+        if takes is None:
+            if self.TAKES not in meta:
+                return False
+            del meta[self.TAKES]
+        else:
+            takes = [tuple(take) for take in takes]
+            error = self.take_error(shot_id, takes)
+            if error:
+                raise ValueError(error)
+            records = []
+            for name, start, end in takes:
+                record: Dict[str, Any] = {"name": name}
+                if start is not None:
+                    record["start"] = self.snap(start) - shot.start
+                    record["end"] = self.snap(end) - shot.start
+                records.append(record)
+            if meta.get(self.TAKES) == records:
+                return False
+            meta[self.TAKES] = records
+        self.update_shot(shot_id, metadata=meta)
+        return True
+
+    def rebase_takes(self, shot: "ShotBlock", old_start: float, old_end: float, scaled: bool = False) -> List[str]:
+        """Keep *shot*'s takes on their content after its bounds changed
+        without its content moving with them, from ``[old_start, old_end]``.
+
+        A take is counted from its shot's start, so a move of the whole shot
+        (the sequencer's, which writes the bounds itself) needs nothing.  This
+        is for the edits that do: bounds written while the keys stayed
+        (:meth:`update_shot`, an edge drag: each take keeps its frames), and a
+        retime (*scaled*: each take is scaled with the keys).  A take the new
+        bounds cut is cut to them; one they leave no frames of is dropped and
+        said, never kept as a clip of no length.
+
+        Returns:
+            The names of the takes dropped.
+        """
+        records = self.take_records(shot)
+        if not records:
+            return []
+        old, new = float(old_end - old_start), float(shot.end - shot.start)
+        changed = False
+        dropped: List[Dict[str, Any]] = []
+        for record in records:
+            if record.get("start") is None or record.get("end") is None:
+                continue
+            start, end = float(record["start"]), float(record["end"])
+            if scaled:
+                ratio = new / old if old > 1e-9 else 1.0
+                start, end = start * ratio, end * ratio
+            else:
+                shift = old_start - shot.start
+                start, end = start + shift, end + shift
+            start, end = min(max(start, 0.0), new), min(max(end, 0.0), new)
+            if end - start <= 1e-6:
+                dropped.append(record)
+            elif (start, end) != (record["start"], record["end"]):
+                record["start"], record["end"] = start, end
+                changed = True
+        names = [record["name"] for record in dropped]
+        if dropped:
+            meta = dict(shot.metadata)
+            meta[self.TAKES] = [r for r in meta[self.TAKES] if all(r is not d for d in dropped)]
+            shot.metadata = meta
+            changed = True
+            _log.warning(
+                "Shot %r (%g-%g) holds no frames of its take(s) %s now: dropped, so no "
+                "clip of no length is exported. Give the shot those frames back and set "
+                "the take again.",
+                shot.name,
+                shot.start,
+                shot.end,
+                ", ".join(repr(n) for n in names),
+            )
+        if changed:
+            self.mark_dirty()
+        return names
+
+    @classmethod
+    def takes_over(cls, place: "ShotBlock", content: "ShotBlock") -> Optional[List[Dict[str, Any]]]:
+        """The take records of a shot that keeps *place*'s record over
+        *content*'s animation (a swap that keeps its records, a copy over a
+        shot): *place*'s take names, in the order they ran, over *content*'s
+        spans, in theirs.  The spans are the keys' (counted from the shot's
+        start, they travel with the animation); the names are the step's.
+
+        *content* that declares no takes is one span, the whole shot.  Where
+        the names and the spans do not pair one to one, no name is given a
+        span: each is the whole shot, so every frame still exports, for a
+        build or a person to place -- and it is said.
+
+        Returns:
+            The records (:attr:`TAKES`); ``None`` where *place* declares none.
+        """
+        names = cls.take_records(place)
+        if names is None:
+            return None
+
+        def run(record: Dict[str, Any]) -> Tuple[float, float]:
+            start, end = record.get("start"), record.get("end")
+            return (0.0, float("inf")) if start is None or end is None else (float(start), float(end))
+
+        held = cls.take_records(content)
+        spans = [run(r) for r in sorted(held, key=run)] if held is not None else [(0.0, float("inf"))]
+        names = [r["name"] for r in sorted(names, key=run)]
+        if len(names) != len(spans):
+            if names:
+                _log.warning(
+                    "Shot %r: its take(s) %s do not pair with the %d span(s) of the animation "
+                    "it holds now, so each is the whole shot. Place them again (set the takes, "
+                    "or build the sheet).",
+                    place.name,
+                    ", ".join(repr(n) for n in names),
+                    len(spans),
+                )
+            return [{"name": name} for name in names]
+        return [
+            {"name": name} if end == float("inf") else {"name": name, "start": start, "end": end}
+            for name, (start, end) in zip(names, spans)
+        ]
+
+    @staticmethod
+    def resolve_take_specs(
+        shots: List["ShotBlock"], strategy: str = "name"
+    ) -> List[Tuple[str, int, int, "ShotBlock"]]:
+        """``[(clip, start, end, shot)]``: every take *shots* declare, in the
+        given order -- a shot's own takes (:meth:`takes_of`) in the order they
+        run, else the shot itself -- each named by :meth:`resolve_clip_specs`'
+        rule, in one pass over them all.  A shot that plays nothing gives none.
+        """
+        fn = CLIP_NAME_STRATEGIES.get(strategy, CLIP_NAME_STRATEGIES["name"])
+        seen: set = set()
+        specs: List[Tuple[str, int, int, "ShotBlock"]] = []
+        index = 0
+        for shot in shots:
+            takes = ShotStore.takes_of(shot)
+            if takes is None:
+                takes = [(shot.name, shot.start, shot.end)]
+            for name, start, end in takes:
+                # A strategy names a clip from what carries its name: a shot, or a take of one.
+                named = shot if name == shot.name else ShotBlock(shot.shot_id, name, start, end)
+                clip = _ShotStoreInternal._sanitize_clip_name(fn(index, named))
+                index += 1
+                if clip.casefold() in seen:
+                    n = 1
+                    while f"{clip}_{n}".casefold() in seen:
+                        n += 1
+                    clip = f"{clip}_{n}"
+                seen.add(clip.casefold())
+                specs.append((clip, int(round(start)), int(round(end)), shot))
+        return specs
 
     @staticmethod
     def resolve_clip_specs(
@@ -4011,14 +4428,13 @@ class ShotStore(_ShotStoreInternal):
         store = cls.active()
         if store is None:
             return []
-        shots = store.sorted_shots()
         dropped = store._dropped_shot_ids()
-        specs = cls.resolve_clip_specs(
-            shots, strategy=strategy or store.clip_name_strategy
+        specs = cls.resolve_take_specs(
+            store.sorted_shots(), strategy=strategy or store.clip_name_strategy
         )
         return [
             {"name": name, "start": start, "end": end}
-            for (name, start, end), shot in zip(specs, shots)
+            for name, start, end, shot in specs
             if shot.shot_id not in dropped
         ]
 
@@ -4047,16 +4463,15 @@ class ShotStore(_ShotStoreInternal):
         store = cls.active()
         if store is None:
             return None
-        shots = store.sorted_shots()
         dropped = store._dropped_shot_ids()
         specs = [
             spec
-            for spec, shot in zip(cls.resolve_clip_specs(shots, strategy), shots)
-            if shot.shot_id not in dropped
+            for spec in cls.resolve_take_specs(store.sorted_shots(), strategy)
+            if spec[3].shot_id not in dropped
         ]
         if not specs:
             return None
-        return min(s for _, s, _ in specs), max(e for _, _, e in specs)
+        return min(s for _, s, _, _ in specs), max(e for _, _, e, _ in specs)
 
     # ---- hand-off transfer (the manifest's ``shots`` section) ---------------
     #

@@ -421,6 +421,33 @@ class TestExportRun(unittest.TestCase):
         self.assertTrue(run.animation_write_back)
         self.assertTrue(run.verify_deliverables)
         self.assertTrue(run.drop_rig_apparatus)
+        self.assertTrue(run.exclude_audio)
+
+    def test_the_audio_row_is_a_mode_that_excludes_the_audio_record(self):
+        """Exclude Audio leaves the ``audio`` record out of every deliverable,
+        and so the sounds the FBX's dependency pass embeds from its cues: a
+        mode, popped, off for a caller that never names it, its exclusion
+        stated once for the publish (``excluded_records``, the snapshot's
+        ``ExportContext.excluded``) on every format, and said by no note -- a
+        mode that is on says nothing. Added: 2026-11-25"""
+        from pythontk.core_utils.engines.scene_export.scene_records import (
+            SceneRecords,
+        )
+
+        run, _tasks, notes = ExportRun.from_tasks({})
+        self.assertFalse(run.exclude_audio)
+        self.assertEqual(run.excluded_records, frozenset())
+        for output_format in ExportRun.OUTPUT_FORMATS:
+            with self.subTest(output_format=output_format):
+                run, remaining, notes = ExportRun.from_tasks(
+                    {"exclude_audio": True, "output_format": output_format}
+                )
+                self.assertTrue(run.exclude_audio)
+                self.assertEqual(
+                    run.excluded_records, frozenset({SceneRecords.AUDIO.key})
+                )
+                self.assertNotIn("exclude_audio", remaining)
+                self.assertEqual(notes, [])
 
     def test_the_rig_helper_row_is_an_fbx_mode(self):
         """Exclude Rig Helpers edits the written FBX after the write, so it is a
@@ -495,8 +522,12 @@ class TestExportRun(unittest.TestCase):
     def test_prepare_lods_filters_the_export_set_before_any_check_reads_it(self):
         order = ExportProfile.TASK_ORDER
         # After the name hygiene (its plan holds paths a rename would leave
-        # stale), before the generation that reads it.
-        self.assertEqual(order.index("prepare_lods"), order.index("conform_shape_names") + 1)
+        # stale), before the generation that reads it. Between them only the
+        # orig-shape repair, which renames nothing.
+        self.assertEqual(
+            order[order.index("conform_shape_names") + 1 : order.index("prepare_lods")],
+            ["repair_orig_shapes"],
+        )
         self.assertLess(order.index("prepare_lods"), order.index("generate_lods"))
         self.assertIn("prepare_lods", ExportProfile.OBJECT_SET_TASKS)
         self.assertNotIn("check_geometry_lod_suffix", ExportProfile.CHECK_DEPENDENCIES)
@@ -1015,13 +1046,15 @@ class TestGlbOnlyProducer(unittest.TestCase):
 
 
 class TestBakedReflections(unittest.TestCase):
-    """The Baked Reflections row, retired 2026-10-19 (removed in 0.17.0).
+    """The Baked Reflections row, retired 2026-10-19; its public aliases went
+    on 2026-11-26.
 
     It set how strongly a lightmapped material reflects the viewer's studio.
     Its default, the lighting recipe's own level, was already the right answer
     (each texel's reflection is scaled by its own bake, and a deliverable that
     carries its reflection probe reflects that whole), so no panel offers it:
-    the deliverable publishes the recipe unchanged. Added: 2026-09-21
+    the deliverable publishes the recipe unchanged. A saved preset outlives
+    the row, so its value is still read. Added: 2026-09-21
     """
 
     def test_no_row_decides_the_lighting_any_more(self):
@@ -1030,108 +1063,45 @@ class TestBakedReflections(unittest.TestCase):
         self.assertNotIn("baked_reflections", ExportProfile.glb_options())
         self.assertNotIn("baked_reflections", ExportProfile.glb_defaults())
 
-    def test_an_older_panels_row_is_dropped_with_a_note(self):
-        """A DCC package from before the retirement still sends its row; the
-        deliverable publishes the recipe whatever it says, and the log says so."""
+    def test_a_saved_preset_still_carrying_the_row_loads_into_the_recipe(self):
+        """Saved data is published: a preset (or a template) saved while the
+        row lived still loads after its aliases went (the maintainer's call,
+        2026-11-26). Each value it may hold -- the label the row persisted, or
+        the token -- reads as the level it published, said where that differs
+        from the recipe's; the run publishes the recipe, and the key never
+        reaches the dispatcher. Added: 2026-11-26"""
         from pythontk.core_utils.engines.scene_export.handoff_record import (
             HandoffRecord,
         )
 
-        for value in ("off", "half", 0.4):
-            with self.subTest(value=value):
-                run, tasks, notes = ExportRun.from_tasks({"baked_reflections": value})
-                self.assertIsNone(run.baked_reflections)
+        recipe = HandoffRecord.RENDERING_POLICY["lightmappedMaterials"]
+        for stored, level in (
+            ("Off (Pure Bake)", 0.0),
+            ("Quarter", 0.25),
+            ("half", 0.5),
+            ("Full", 1.0),
+            (0.4, None),  # a hand-edited number: no level the row had
+        ):
+            with self.subTest(stored=stored):
+                notes = ExportProfile.retired_row_notes(
+                    {"baked_reflections": stored}, {}, {}
+                )
+                self.assertEqual(bool(notes), level != recipe["envMapIntensity"])
+                run, tasks, parsed = ExportRun.from_tasks({"baked_reflections": stored})
                 self.assertEqual(run.rendering, {})
                 self.assertEqual(
                     HandoffRecord.rendering_policy(run.rendering),
                     HandoffRecord.RENDERING_POLICY,
                 )
                 self.assertNotIn("baked_reflections", tasks)
-                self.assertEqual([level for level, _ in notes], ["info"])
-                self.assertIn("Baked Reflections", notes[0][1])
-        _run, _tasks, notes = ExportRun.from_tasks({})
-        self.assertEqual(notes, [])
-
-    def test_a_caller_setting_the_level_is_told_and_still_published(self):
-        """The field warns until its removal and, until then, still reaches both
-        carriers: the GLB's handoff block and the FBX's handoff record."""
-        from pythontk.core_utils.engines.scene_export.handoff_record import (
-            HandoffRecord,
-        )
-        from pythontk.core_utils.engines.scene_export.scene_records import SceneRecords
-
-        with self.assertWarns(DeprecationWarning) as retired:
-            run = ExportRun(baked_reflections=0.5)
-        self.assertIn("baked_reflections", str(retired.warning))
-        self.assertIn("0.17.0", str(retired.warning))
-        # Published where the file uses it: a lightmapped material's level,
-        # in a file that carries lightmaps.
-        glb = HandoffRecord.block(
-            "glb",
-            [SceneRecords.LIGHTMAPS.key],
-            {"application": "test"},
-            rendering=run.rendering,
-        )
-        block = HandoffRecord.block(
-            "fbx",
-            HandoffRecord.carried([SceneRecords.LIGHTMAPS.key]),
-            rendering=run.rendering,
-        )
-        for recipe in (glb["rendering"], block["rendering"]):
-            self.assertEqual(recipe["lightmappedMaterials"]["envMapIntensity"], 0.5)
-            self.assertEqual(recipe["lightmappedMaterials"]["envMapTerms"], "specular")
-
-    def test_the_retired_tables_still_answer_an_older_panel(self):
-        """An older mayatk / blendertk builds the row from these at import."""
-        from pythontk.core_utils.engines.scene_export.handoff_record import (
-            HandoffRecord,
-        )
-
-        with self.assertWarns(DeprecationWarning):
-            options = ExportProfile.BAKED_REFLECTIONS_OPTIONS
-        with self.assertWarns(DeprecationWarning):
-            levels = ExportRun.BAKED_REFLECTION_LEVELS
-        self.assertEqual(list(options.values()), list(levels))
-        with self.assertWarns(DeprecationWarning):
-            default = ExportProfile.baked_reflections_default()
-        self.assertEqual(
-            levels[default],
-            HandoffRecord.RENDERING_POLICY["lightmappedMaterials"]["envMapIntensity"],
-        )
-        with self.assertWarns(DeprecationWarning):
-            self.assertEqual(ExportRun.baked_reflection_level("half"), 0.5)
-
-    def test_reading_a_retired_table_warns_and_returns_it_unchanged(self):
-        """REGRESSION (2026-10-19): both tables said "removed in 0.17.0" in a
-        comment and warned no one who read them, from the class or an
-        instance."""
-        tables = {
-            "BAKED_REFLECTIONS_OPTIONS": (
-                ExportProfile,
-                {
-                    "Off (Pure Bake)": "off",
-                    "Quarter": "quarter",
-                    "Half": "half",
-                    "Full": "full",
-                },
-            ),
-            "BAKED_REFLECTION_LEVELS": (
-                ExportRun,
-                {"off": 0.0, "quarter": 0.25, "half": 0.5, "full": 1.0},
-            ),
-        }
-        for name, (owner, value) in tables.items():
-            for reader in (owner, owner()):
-                with self.subTest(name=name, reader=reader):
-                    with self.assertWarns(DeprecationWarning) as caught:
-                        read = getattr(reader, name)
-                    self.assertEqual(read, value)
-                    self.assertIn(f"{owner.__name__}.{name}", str(caught.warning))
-                    self.assertIn("0.17.0", str(caught.warning))
+                self.assertEqual([lvl for lvl, _ in parsed], ["info"])
+                self.assertIn("Baked Reflections", parsed[0][1])
+        _run, _tasks, parsed = ExportRun.from_tasks({})
+        self.assertEqual(parsed, [])
 
     def test_the_rules_that_still_read_the_tables_do_not_warn(self):
-        """The retired-row note reads them for an older preset; a notice the
-        caller cannot act on is noise."""
+        """The retired-row note reads the row's levels for an older preset; a
+        notice the caller cannot act on is noise."""
         import warnings
 
         with warnings.catch_warnings(record=True) as caught:
@@ -1337,8 +1307,14 @@ class TestRunTables(unittest.TestCase):
     def test_unimplemented_names_the_gap_in_table_order(self):
         gaps = ExportProfile.unimplemented(self._Partial)
         self.assertEqual(
-            gaps["tasks"][:4],
-            ["set_workspace", "exclude_hdr", "conform_shape_names", "prepare_lods"],
+            gaps["tasks"][:5],
+            [
+                "set_workspace",
+                "exclude_hdr",
+                "conform_shape_names",
+                "repair_orig_shapes",
+                "prepare_lods",
+            ],
         )
         self.assertNotIn("smart_bake", gaps["tasks"])
         self.assertIn("check_output_writable", gaps["checks"])
