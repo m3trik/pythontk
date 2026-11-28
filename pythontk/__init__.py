@@ -5,7 +5,7 @@ import os as _os
 from pythontk.core_utils.module_resolver import bootstrap_package
 
 __package__ = "pythontk"
-__version__ = "0.26.0"
+__version__ = "0.27.0"
 
 """Expose toolkit utilities with explicit resolver include maps for clarity."""
 
