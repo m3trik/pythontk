@@ -74,6 +74,24 @@
                 "Settings"
             ]
         },
+        "settings": {
+            "color": {
+                "type": "color",
+                "primitive": "look",
+                "help": "the colour it is shown in"
+            },
+            "style": {
+                "type": "choice",
+                "primitive": "look",
+                "help": "how it is drawn"
+            },
+            "fade": {
+                "type": "number",
+                "min": 0,
+                "primitive": "look",
+                "help": "seconds it takes to appear or go (0: at once)"
+            }
+        },
         "actions": {
             "": {
                 "cells": [
@@ -88,7 +106,8 @@
             "highlight": {
                 "family": "attention",
                 "cells": [
-                    "target"
+                    "target",
+                    "clip"
                 ],
                 "needs": [
                     "target"
@@ -103,45 +122,39 @@
                         ],
                         "default": "auto"
                     },
-                    "color": {
-                        "type": "color"
-                    }
+                    "color": {}
                 },
                 "says": "{target} is highlighted"
             },
-            "fade_in": {
+            "show": {
                 "family": "visibility",
                 "cells": [
-                    "target"
+                    "target",
+                    "clip"
                 ],
                 "needs": [
                     "target"
                 ],
                 "when": "start",
                 "settings": {
-                    "fade": {
-                        "type": "number",
-                        "min": 0
-                    }
+                    "fade": {}
                 },
-                "says": "{target} fades in"
+                "says": "{target} appears"
             },
-            "fade_out": {
+            "hide": {
                 "family": "visibility",
                 "cells": [
-                    "target"
+                    "target",
+                    "clip"
                 ],
                 "needs": [
                     "target"
                 ],
                 "when": "end",
                 "settings": {
-                    "fade": {
-                        "type": "number",
-                        "min": 0
-                    }
+                    "fade": {}
                 },
-                "says": "{target} fades out"
+                "says": "{target} disappears"
             }
         },
         "cell_marks": [

@@ -1,10 +1,10 @@
 {
-  "description": "Fade objects in at shot start -- the scene's effect recipe (Render Effects) sets the length.",
+  "description": "Show objects at shot start, fading in -- the scene's effect recipe (Render Effects) sets the length.",
   "kind": [
     "scene"
   ],
-  "family": "fade",
-  "variant": "in",
+  "family": "visibility",
+  "variant": "show",
   "effect": "fade_in",
   "place": "start",
   "verify": {

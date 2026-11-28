@@ -731,8 +731,8 @@ class TestAuthoredClaims(unittest.TestCase):
         store = ShotStore()
         store.define_shot("Intro", 0.0, 48.0, objects=["|grp|pCube1"])
         led = store.edit_ledger
-        led.record_authored("pCube1_opacity", 0.0, 0, "fade_in", "Cube", "a1b2")
-        led.record_authored("pCube1_opacity", 15.0, 0, "fade_in", "Cube", "a1b2")
+        led.record_authored("pCube1_opacity", 0.0, 0, "show", "Cube", "a1b2")
+        led.record_authored("pCube1_opacity", 15.0, 0, "show", "Cube", "a1b2")
         return store.to_dict()
 
     def _section(self):
@@ -744,7 +744,7 @@ class TestAuthoredClaims(unittest.TestCase):
         ledger = self._section()["ledger"]
         self.assertEqual(
             ledger["authored"]["pCube1"]["opacity"],
-            [[0.0, 0, "fade_in", "Cube", "a1b2"], [15.0, 0, "fade_in", "Cube", "a1b2"]],
+            [[0.0, 0, "show", "Cube", "a1b2"], [15.0, 0, "show", "Cube", "a1b2"]],
         )
 
     def test_decoded_claims_are_owned_with_their_stamp(self):
@@ -758,10 +758,10 @@ class TestAuthoredClaims(unittest.TestCase):
         led = ShotStore.from_dict(decoded).edit_ledger
         curve = 'pCube1|["opacity"]|-1'
         self.assertEqual(
-            led.authored(owner=0, obj="Cube", behavior="fade_in"),
+            led.authored(owner=0, obj="Cube", behavior="show"),
             [(curve, 1.0), (curve, 16.0)],
         )
-        self.assertEqual(led.authored_stamps(0, "Cube", "fade_in"), {"a1b2"})
+        self.assertEqual(led.authored_stamps(0, "Cube", "show"), {"a1b2"})
 
     def test_merge_renumbers_a_claims_owner_with_its_shot(self):
         existing = ShotStore()
@@ -784,7 +784,7 @@ class TestAuthoredClaims(unittest.TestCase):
         existing.define_shot("Mine", 100.0, 200.0)
         incoming = ShotStore()
         incoming.define_shot("In", 0.0, 48.0)
-        tag = {"owner": "shot_manifest", "behavior": "fade_in", "objects": ["lid"]}
+        tag = {"owner": "shot_manifest", "behavior": "show", "objects": ["lid"]}
         incoming.markers = [
             {"time": 0.0, "note": "Fade In: lid", "data": dict(tag, shot_id=0)},
             {"time": 5.0, "note": "gone", "data": dict(tag, shot_id=9)},
@@ -812,7 +812,7 @@ class TestAuthoredClaims(unittest.TestCase):
             existing.define_shot(name, i * 100.0, i * 100.0 + 50.0)
         incoming = ShotStore()
         incoming.define_shot("In", 0.0, 48.0)
-        incoming.edit_ledger.record_authored("lid.v", 5.0, 2, "fade_in", "lid")
+        incoming.edit_ledger.record_authored("lid.v", 5.0, 2, "show", "lid")
         incoming.edit_ledger.record_key("lid.tx", 48.0, 2, "end")
         merged = ShotTransfer.merge(existing.to_dict(), incoming.to_dict())
         led = ShotEditLedger.from_dict(merged["edit_ledger"])

@@ -272,7 +272,7 @@ class MappingSpec(SchemaSpec, _MappingSpecInternal):
     default_behaviors: Optional[Dict[str, List[str]]] = SchemaSpec.spec_field(
         help='Default behaviors per object kind, e.g. {"audio": ["set_clip"]} (optional).',
         validate=_MappingSpecInternal.validate_default_behaviors,
-        example={"audio": ["set_clip"], "scene": ["fade_in"]},
+        example={"audio": ["set_clip"], "scene": ["show"]},
         default=None,
     )
     match: str = SchemaSpec.spec_field(

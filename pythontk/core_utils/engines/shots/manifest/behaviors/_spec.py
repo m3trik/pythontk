@@ -184,10 +184,10 @@ class BehaviorSpec(SchemaSpec, _BehaviorSpecInternal):
     family: str = SchemaSpec.spec_field(
         help=(
             "The behavior this template is a way of setting, when several "
-            "are: `fade_in` and `fade_out` are both `fade`. A panel reads a "
+            "are: `show` and `hide` are both `visibility`. A panel reads a "
             "family as one behavior -- one Key / Marker / Off choice, its "
             "name led by the family's and followed by the `variant` "
-            "(*Fade · in*) -- while each template keeps its own name in "
+            "(*Visibility · show*) -- while each template keeps its own name in "
             "saved data and deliveries."
         ),
         validate=_BehaviorSpecInternal.validate_word,

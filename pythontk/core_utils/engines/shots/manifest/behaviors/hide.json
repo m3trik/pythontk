@@ -1,10 +1,10 @@
 {
-  "description": "Fade objects out at shot end -- the scene's effect recipe (Render Effects) sets the length.",
+  "description": "Hide objects at shot end, fading out -- the scene's effect recipe (Render Effects) sets the length.",
   "kind": [
     "scene"
   ],
-  "family": "fade",
-  "variant": "out",
+  "family": "visibility",
+  "variant": "hide",
   "effect": "fade_out",
   "place": "end",
   "verify": {

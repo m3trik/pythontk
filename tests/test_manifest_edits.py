@@ -31,7 +31,7 @@ def _sheet():
             "Access",
             "Open the door",
             [
-                BuilderObject("door", behaviors=["fade_in"]),
+                BuilderObject("door", behaviors=["show"]),
                 BuilderObject("bolt01"),
             ],
         ),
@@ -82,7 +82,7 @@ class TestApply(unittest.TestCase):
         edits.set_object("A01", "bolt01", "name", "door")
         step = edits.apply(_sheet())[0]
         self.assertEqual([o.name for o in step.objects], ["bolt01", "door"])
-        self.assertEqual(step.objects[0].behaviors, ["fade_in"])
+        self.assertEqual(step.objects[0].behaviors, ["show"])
 
     def test_hide_and_move_objects(self):
         edits = ManifestEdits()
@@ -94,7 +94,7 @@ class TestApply(unittest.TestCase):
         )
         moved = out[2].objects[1]
         self.assertEqual(moved.sheet, {"step": "A01"})
-        self.assertEqual(moved.behaviors, ["fade_in"])  # moves whole
+        self.assertEqual(moved.behaviors, ["show"])  # moves whole
         self.assertEqual(ManifestEdits.anchor(out[2], moved), ("A01", "door"))
         self.assertEqual(edits.hidden_objects("A01"), [("A01", "bolt01")])
 
@@ -118,10 +118,10 @@ class TestApply(unittest.TestCase):
 
     def test_behaviors_edit_records_the_sheets(self):
         edits = ManifestEdits()
-        edits.set_object("A01", "door", "behaviors", ["fade_out"], sheet=["fade_in"])
+        edits.set_object("A01", "door", "behaviors", ["hide"], sheet=["show"])
         obj = edits.apply(_sheet())[0].objects[0]
-        self.assertEqual(obj.behaviors, ["fade_out"])
-        self.assertEqual(obj.sheet, {"behaviors": ["fade_in"]})
+        self.assertEqual(obj.behaviors, ["hide"])
+        self.assertEqual(obj.sheet, {"behaviors": ["show"]})
 
     def test_hidden_steps_are_left_out(self):
         edits = ManifestEdits()
@@ -274,7 +274,7 @@ class TestEditing(unittest.TestCase):
             "added": [{"after": "A01"}, "bad"],
         }
         junk["steps"]["A03"] = {"name": " ", "hidden": "yes", "description": 7}
-        junk["objects"]["B01"] = {"x": {"behaviors": "fade_in", "step": ""}}
+        junk["objects"]["B01"] = {"x": {"behaviors": "show", "step": ""}}
         read = ManifestEdits.from_dict(junk)  # wrong types are left out too
         self.assertEqual(read.steps, {"A01": {"name": "X"}})
         self.assertEqual((read.objects, read.added), ({}, []))
@@ -350,9 +350,9 @@ class TestTheScenesLayers(unittest.TestCase):
         kept with the scene (whoever builds it builds the same); a sheet the
         scene keeps none for has ``None`` (the user's choices seed it)."""
         self.assertIsNone(ManifestEdits.behavior_modes(self.store, self.OLD))
-        self.assertTrue(ManifestEdits.set_behavior_modes(self.store, self.OLD, ["highlight"], ["fade_in", "highlight"]))
-        self.assertFalse(ManifestEdits.set_behavior_modes(self.store, self.OLD, ["highlight"], ["fade_in"]), "unchanged")
-        modes = {"key": ["highlight"], "marker": ["fade_in"]}
+        self.assertTrue(ManifestEdits.set_behavior_modes(self.store, self.OLD, ["highlight"], ["show", "highlight"]))
+        self.assertFalse(ManifestEdits.set_behavior_modes(self.store, self.OLD, ["highlight"], ["show"]), "unchanged")
+        modes = {"key": ["highlight"], "marker": ["show"]}
         self.assertEqual(ManifestEdits.behavior_modes(self.store, self.OLD), modes, "a type in both is keyed")
         self.assertIsNone(
             ManifestEdits.sheet_options(self.store, self.OLD),
@@ -421,7 +421,7 @@ class TestDefaultModes(unittest.TestCase):
     Fixed: 2026-11-26 -- ``ManifestEdits.default_modes`` / ``modes_in_force``,
     the one rule every builder reads (maintainer 2026-11-25)."""
 
-    TYPES = ("fade_in", "fade_out", "highlight", "set_clip")
+    TYPES = ("show", "hide", "highlight", "set_clip")
 
     @staticmethod
     def _celled(sid, *rows, objects=()):
@@ -431,11 +431,11 @@ class TestDefaultModes(unittest.TestCase):
         return step
 
     def test_a_cell_rows_word_starts_at_key_with_its_family(self):
-        steps = [self._celled("A01", {"cells": True, "word": "fade_in"}, {"cells": True, "word": "use"})]
+        steps = [self._celled("A01", {"cells": True, "word": "show"}, {"cells": True, "word": "use"})]
         self.assertEqual(
             ManifestEdits.default_modes(steps, self.TYPES),
-            {"key": ["fade_in", "fade_out"], "marker": []},
-            "fade_in asks for its family; a word no behavior is (use) asks for nothing",
+            {"key": ["hide", "show"], "marker": []},
+            "show asks for its family; a word no behavior is (use) asks for nothing",
         )
 
     def test_a_celled_steps_audio_asks_for_its_behaviors_and_a_sentence_for_none(self):
@@ -448,9 +448,9 @@ class TestDefaultModes(unittest.TestCase):
         self.assertEqual(ManifestEdits.default_modes([loose, sentence], self.TYPES)["key"], [], "an uncelled step asks nothing")
 
     def test_the_users_own_marker_wins_and_their_own_key_is_kept(self):
-        steps = [self._celled("A01", {"cells": True, "word": "highlight"}, {"cells": True, "word": "fade_out"})]
+        steps = [self._celled("A01", {"cells": True, "word": "highlight"}, {"cells": True, "word": "hide"})]
         modes = ManifestEdits.default_modes(steps, self.TYPES, keyed=["set_clip"], marked=["highlight"])
-        self.assertEqual(modes, {"key": ["fade_in", "fade_out", "set_clip"], "marker": ["highlight"]})
+        self.assertEqual(modes, {"key": ["hide", "set_clip", "show"], "marker": ["highlight"]})
 
     def test_the_scenes_modes_are_in_force_and_none_kept_starts_the_default(self):
         store = ShotStore()
@@ -458,10 +458,10 @@ class TestDefaultModes(unittest.TestCase):
         default = {"key": ["highlight"], "marker": []}
         self.assertEqual(ManifestEdits.modes_in_force(store, "C:/s/x.csv", steps, self.TYPES), default)
         self.assertEqual(ManifestEdits.modes_in_force(None, "C:/s/x.csv", steps, self.TYPES), default, "no store")
-        ManifestEdits.set_behavior_modes(store, "C:/s/x.csv", ["fade_in"], ["set_clip"])
+        ManifestEdits.set_behavior_modes(store, "C:/s/x.csv", ["show"], ["set_clip"])
         self.assertEqual(
             ManifestEdits.modes_in_force(store, "C:/s/x.csv", steps, self.TYPES, keyed=["highlight"]),
-            {"key": ["fade_in"], "marker": ["set_clip"]},
+            {"key": ["show"], "marker": ["set_clip"]},
             "the scene's own, whatever the user's",
         )
         self.assertEqual(ManifestEdits.modes_in_force(store, "", steps, self.TYPES), default, "no sheet: no scene modes")

@@ -99,6 +99,82 @@
                 "To"
             ]
         },
+        "settings": {
+            "when": {
+                "type": "choice",
+                "primitive": "trigger",
+                "help": "the moment it happens at: as its step starts or as it ends"
+            },
+            "trigger": {
+                "type": "choice",
+                "primitive": "trigger",
+                "help": "what sets it off"
+            },
+            "hold": {
+                "type": "number",
+                "min": 0,
+                "primitive": "trigger",
+                "help": "seconds a press is held"
+            },
+            "after": {
+                "type": "clip",
+                "primitive": "requirement",
+                "help": "a take of the step that finishes first"
+            },
+            "until": {
+                "type": "span",
+                "primitive": "effect",
+                "help": "how long a shown thing lasts"
+            },
+            "ring": {
+                "type": "span",
+                "primitive": "effect",
+                "help": "how long the ring where the user stands is shown"
+            },
+            "state": {
+                "type": "state",
+                "primitive": "effect",
+                "help": "the state its targets' indicator light turns to"
+            },
+            "speed": {
+                "type": "number",
+                "min": 0,
+                "primitive": "effect",
+                "help": "how fast a take plays: 1 as animated"
+            },
+            "reply": {
+                "type": "text",
+                "primitive": "effect",
+                "help": "what a wrong answer says"
+            },
+            "color": {
+                "type": "color",
+                "primitive": "look",
+                "help": "the colour it is shown in"
+            },
+            "size": {
+                "type": "number",
+                "min": 0,
+                "primitive": "look",
+                "help": "how large it is drawn, in metres"
+            },
+            "style": {
+                "type": "choice",
+                "primitive": "look",
+                "help": "how it is drawn"
+            },
+            "fade": {
+                "type": "number",
+                "min": 0,
+                "primitive": "look",
+                "help": "seconds it takes to appear or go (0: at once)"
+            },
+            "where": {
+                "type": "object",
+                "primitive": "place",
+                "help": "the object it happens at, used as it stands"
+            }
+        },
         "actions": {
             "highlight": {
                 "family": "attention",
@@ -119,9 +195,7 @@
                         ],
                         "default": "auto"
                     },
-                    "color": {
-                        "type": "color"
-                    }
+                    "color": {}
                 },
                 "says": "{target} is highlighted"
             },
@@ -135,21 +209,21 @@
                 ],
                 "when": "start",
                 "settings": {
-                    "size": {
-                        "type": "number",
-                        "min": 0
+                    "style": {
+                        "choices": [
+                            "flat",
+                            "solid"
+                        ],
+                        "default": "flat"
                     },
-                    "color": {
-                        "type": "color"
-                    },
-                    "where": {
-                        "type": "object"
-                    }
+                    "size": {},
+                    "color": {},
+                    "where": {}
                 },
-                "says": "An arrow points at {target}",
+                "says": "{target} is pointed out",
                 "places": "point"
             },
-            "fade_in": {
+            "show": {
                 "family": "visibility",
                 "cells": [
                     "target",
@@ -160,14 +234,11 @@
                 ],
                 "when": "start",
                 "settings": {
-                    "fade": {
-                        "type": "number",
-                        "min": 0
-                    }
+                    "fade": {}
                 },
-                "says": "{target} fades in"
+                "says": "{target} appears"
             },
-            "fade_out": {
+            "hide": {
                 "family": "visibility",
                 "cells": [
                     "target",
@@ -178,12 +249,9 @@
                 ],
                 "when": "end",
                 "settings": {
-                    "fade": {
-                        "type": "number",
-                        "min": 0
-                    }
+                    "fade": {}
                 },
-                "says": "{target} fades out"
+                "says": "{target} disappears"
             },
             "set": {
                 "family": "state",
@@ -196,7 +264,6 @@
                 "when": "start",
                 "settings": {
                     "state": {
-                        "type": "state",
                         "required": true
                     }
                 },
@@ -247,10 +314,7 @@
                         ],
                         "default": "select"
                     },
-                    "hold": {
-                        "type": "number",
-                        "min": 0
-                    }
+                    "hold": {}
                 },
                 "says": {
                     "": "Selecting {target}[ with {with} in hand] plays {clip}",
@@ -271,13 +335,8 @@
                 "take": true,
                 "when": "start",
                 "settings": {
-                    "after": {
-                        "type": "clip"
-                    },
-                    "speed": {
-                        "type": "number",
-                        "min": 0
-                    }
+                    "after": {},
+                    "speed": {}
                 },
                 "says": "{clip} plays by itself[ after {after}]"
             },
@@ -303,9 +362,7 @@
                         ],
                         "default": "end"
                     },
-                    "reply": {
-                        "type": "text"
-                    }
+                    "reply": {}
                 },
                 "says": {
                     "": "Selecting '{label}' goes to step {to}",
@@ -346,7 +403,7 @@
                     "label=*": "Entering anything else goes to step {to}"
                 }
             },
-            "teleport": {
+            "travel": {
                 "family": "movement",
                 "cells": [
                     "target"
@@ -366,12 +423,8 @@
                         ],
                         "default": "start"
                     },
-                    "ring": {
-                        "type": "span"
-                    },
-                    "where": {
-                        "type": "object"
-                    }
+                    "ring": {},
+                    "where": {}
                 },
                 "says": {
                     "": "The user is brought to {where}[, its ring shown until {ring}]",
@@ -379,7 +432,7 @@
                 },
                 "places": "stand"
             },
-            "pip": {
+            "picture": {
                 "family": "screen",
                 "cells": [
                     "target",
@@ -390,30 +443,24 @@
                 ],
                 "when": "start",
                 "settings": {
-                    "until": {
-                        "type": "span"
-                    },
-                    "where": {
-                        "type": "object"
-                    }
+                    "until": {},
+                    "where": {}
                 },
                 "says": "A picture shows {target}[, captioned '{label}'][, until {until}]",
                 "places": "view"
             },
-            "checklist": {
+            "list": {
                 "family": "screen",
                 "cells": [
                     "label"
                 ],
                 "when": "start",
                 "settings": {
-                    "until": {
-                        "type": "span"
-                    }
+                    "until": {}
                 },
-                "says": "A checklist is shown[: {label}][, until {until}]"
+                "says": "A list is shown[: {label}][, until {until}]"
             },
-            "check": {
+            "tick": {
                 "family": "screen",
                 "cells": [
                     "label"
@@ -422,7 +469,7 @@
                     "label"
                 ],
                 "when": "end",
-                "says": "'{label}' is ticked on the checklist"
+                "says": "'{label}' is ticked on the list"
             },
             "note": {
                 "family": "note",

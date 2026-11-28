@@ -68,7 +68,7 @@ def _issues(steps):
 
 class TestWordsAndSettings(unittest.TestCase):
     def test_a_word_is_read_without_regard_to_case_or_spacing(self):
-        self.assertEqual(ManifestActions.word(" Fade In "), "fade_in")
+        self.assertEqual(ManifestActions.word(" Pick Up "), "pick_up")
         self.assertEqual(ManifestActions.word("USE"), "use")
 
     def test_a_settings_cell_is_pairs_and_says_what_is_no_pair(self):
@@ -110,6 +110,30 @@ class TestWordsAndSettings(unittest.TestCase):
         with self.assertRaises(SchemaError):
             ColumnMap.validate({"actions": bad}).raise_or_warn()
 
+    def test_a_setting_is_declared_once_and_a_word_gives_only_its_own(self):
+        """A setting's type and primitive are the template's ``settings``, once for every word: a word
+        restating one otherwise, taking one the template does not declare, or leaving a choice without
+        choices is refused, and a word read from the template carries its setting declared whole."""
+        settings = {"fade": {"type": "number", "min": 0, "primitive": "look"},
+                    "where": {"type": "text", "primitive": "place"}}
+        actions = {"show": {"cells": ["target"], "settings": {"fade": {"type": "text"}, "blink": {}}},
+                   "go": {"cells": ["target"], "places": "stand", "settings": {"where": {}}}}
+        text = " ".join(ManifestActions.check_declared(actions, settings))
+        for said in ("restates 'fade''s type", "'blink'", "of type object"):
+            self.assertIn(said, text)
+        self.assertIn("primitive", " ".join(ManifestActions.validate_settings({"x": {"type": "number"}})))
+        declared = Mapping.load_mapping("interactive")["columns"]["actions"]["button"]["settings"]["when"]
+        self.assertEqual((declared["type"], declared["primitive"], declared["default"]), ("choice", "trigger", "end"))
+        with self.assertRaises(SchemaError):
+            ColumnMap.validate({"settings": settings, "actions": actions}).raise_or_warn()
+
+    def test_every_word_of_a_built_in_template_takes_settings_its_template_declares(self):
+        for name in ("interactive", "linear"):
+            columns = Mapping.load_mapping(name)["columns"]
+            self.assertEqual(ManifestActions.check_declared(columns["actions"], columns["settings"]), [], name)
+            used = {s for word in columns["actions"].values() for s in word.get("settings") or {}}
+            self.assertEqual(used, set(columns["settings"]), "%s declares only the settings its words take" % name)
+
     def test_the_words_a_build_keys_are_declared_and_linear_declares_no_other(self):
         from pythontk.core_utils.engines.shots.manifest.behaviors import Behaviors
 
@@ -119,7 +143,7 @@ class TestWordsAndSettings(unittest.TestCase):
             linear, keyed, "a Linear sheet's every word is one the Shot Manifest keys"
         )
         self.assertLessEqual(
-            {"fade_in", "fade_out", "highlight"},
+            {"show", "hide", "highlight"},
             set(Mapping.load_mapping("interactive")["columns"]["actions"]),
         )
 
@@ -128,7 +152,7 @@ class TestWordsAndSettings(unittest.TestCase):
         self.assertEqual(len(interactive), 17)
         self.assertEqual(ManifestActions.validate_actions(interactive), [])
         linear = Mapping.load_mapping("linear")["columns"]["actions"]
-        self.assertEqual(sorted(linear), ["", "fade_in", "fade_out", "highlight"])
+        self.assertEqual(sorted(linear), ["", "hide", "highlight", "show"])
 
 
 class TestTheDeclarationIsRestatedAlike(unittest.TestCase):
@@ -288,18 +312,18 @@ class TestTheDeclarationIsRestatedAlike(unittest.TestCase):
     def test_the_guide_files_each_setting_under_its_one_part(self):
         import re
 
-        filed = []
-        for _part, said in self._table("Part", "Its settings"):
-            filed += re.findall(r"`(\w+)`", re.sub(r"\([^)]*\)", "", said))
+        filed = {}
+        for part, said in self._table("Part", "Its settings"):
+            for name in re.findall(r"`(\w+)`", re.sub(r"\([^)]*\)", "", said)):
+                filed[name] = part.lower()
         declared = {
-            name
-            for d in Mapping.load_mapping("interactive")["columns"]["actions"].values()
-            for name in d.get("settings") or ()
+            name: setting["primitive"]
+            for name, setting in Mapping.load_mapping("interactive")["columns"]["settings"].items()
         }
         self.assertEqual(
-            sorted(filed),
-            sorted(declared),
-            "each declared setting under one part, and no other",
+            filed,
+            declared,
+            "each declared setting under the part its template declares, and no other",
         )
 
 
@@ -349,9 +373,9 @@ class TestRowsReadByCells(unittest.TestCase):
         steps = _read(
             "A01,Open,Open it.,,,use,DOOR,,A01,,,,hold=long,",
             ",,,,,highlight,DOOR,,,,,,color=bluish,",
-            ",,,,,fade_out,DOOR,,,,,,fade=-1,",
-            ",,,,,pip,DOOR,,,,,,until=Z99,",
-            ",,,,,pip,LID,,,,,,until=step,",
+            ",,,,,hide,DOOR,,,,,,fade=-1,",
+            ",,,,,picture,DOOR,,,,,,until=Z99,",
+            ",,,,,picture,LID,,,,,,until=step,",
             ",,,,,highlight,LID,,,,,,color=#3399FF; style=steady,",
         )
         texts = [text for _, text in _issues(steps)]
@@ -381,7 +405,7 @@ class TestRowsReadByCells(unittest.TestCase):
         steps = _read(
             "A01,Unlock,Unlock both.,,,use,LATCH_UPPER,KEY,A01_1,,,,,",
             ",,,,,use,LATCH_LOWER,KEY,A01_1,,,,,",
-            ",,,,,fade_out,BOLT,,A01_9,,,,,",
+            ",,,,,hide,BOLT,,A01_9,,,,,",
             ",,,,,play,,,B07,LID,,,after=A01_7,",
         )
         texts = [text.split(":")[0] for _, text in _issues(steps)]
@@ -474,14 +498,14 @@ class TestRowsReadByCells(unittest.TestCase):
     def test_a_step_going_to_no_step_and_a_teleport_naming_nothing_are_said(self):
         steps = _read(
             "A01,Go,Step up.,,,,,,,,,Z99,,",
-            ",,,,,teleport,,,,,,,,",
-            ",,,,,teleport,,,,,,,where=VIEW_FRONT,",
+            ",,,,,travel,,,,,,,,",
+            ",,,,,travel,,,,,,,where=VIEW_FRONT,",
             as_written=True,
         )
         self.assertEqual([header for header, _ in steps[0].issues], ["To"])
         self.assertEqual(
             [i for row in steps[0].rows for i in row["issues"]],
-            [("Target", "teleport needs its Target or its where: fill one of them")],
+            [("Target", "travel needs its Target or its where: fill one of them")],
         )
 
     def test_where_names_the_object_a_placing_row_happens_at_and_with_is_the_tool_alone(
@@ -491,10 +515,10 @@ class TestRowsReadByCells(unittest.TestCase):
         # Target is what a row is about for every word; `where` is the object where it happens; With, the tool.
         steps = _read(
             "A01,Go,Step up.,,,,,,,,,,,",
-            ",,,,,teleport,CABINET,,,,,,where=VIEW_FRONT,",
-            ",,,,,indicate,KEY,,,,,,where=KEY_ARROW,",
-            ",,,,,teleport,CABINET,VIEW_BACK,,,,,,",
-            ",,,,,pip,LAMP,,,,,,where=two words,",
+            ",,,,,travel,CABINET,,,,,,where=VIEW_FRONT,",
+            ",,,,,indicate,KEY,,,,,,where=KEY_POINT,",
+            ",,,,,travel,CABINET,VIEW_BACK,,,,,,",
+            ",,,,,picture,LAMP,,,,,,where=two words,",
             as_written=True,
         )
         issues = [row["issues"] for row in steps[0].rows]
@@ -503,7 +527,7 @@ class TestRowsReadByCells(unittest.TestCase):
         )
         self.assertEqual(
             issues[2],
-            [("With", "teleport takes no With: clear it")],
+            [("With", "travel takes no With: clear it")],
             "With is no place",
         )
         self.assertEqual(
@@ -520,7 +544,7 @@ class TestRowsReadByCells(unittest.TestCase):
         actions = Mapping.load_mapping("interactive")["columns"]["actions"]
         self.assertEqual(
             {w: d.get("places") for w, d in actions.items() if d.get("places")},
-            {"teleport": "stand", "indicate": "point", "pip": "view"},
+            {"travel": "stand", "indicate": "point", "picture": "view"},
         )
 
     def test_every_issue_ends_in_its_fix_after_its_one_last_colon(self):
@@ -532,10 +556,10 @@ class TestRowsReadByCells(unittest.TestCase):
             ",,,,,button,,,,,,,,",
             ",,,,,play,,,,,,,after=A01_7,",
             ",,,,,highlight,DOOR,,,,Look,,color=red; fade,",
-            ",,,,,fade_out,DOOR,,,,,,fade=fast,",
-            ",,,,,fade_in,DOOR,,,,,,fade=-2,",
-            ",,,,,pip,DOOR,,,,,,until=Z99; where=two words,",
-            ",,,,,teleport,,,,,,,,",
+            ",,,,,hide,DOOR,,,,,,fade=fast,",
+            ",,,,,show,DOOR,,,,,,fade=-2,",
+            ",,,,,picture,DOOR,,,,,,until=Z99; where=two words,",
+            ",,,,,travel,,,,,,,,",
             ",,,,,set,LAMP,,,,,,,",
             ",,,,,button,,,,,Go,Next,,",
             "A02,Close,Close it.,,,,,,,,,Z98,dwell=3,",
@@ -610,10 +634,10 @@ class TestRowsReadByCells(unittest.TestCase):
     def test_a_span_that_names_a_step_the_sheet_is_past_is_a_warning(self):
         """``until=A01`` on a row of B03 read with nothing said: the picture then never left. Added: 2026-11-25"""
         steps = _read(
-            "A01,Open,Open it.,,,pip,DOOR,,,,,,until=A02,",
-            "A02,Look,Look at it.,,,pip,DOOR,,,,,,until=A01,",
-            ",,,,,pip,LID,,,,,,until=A02,",
-            ",,,,,pip,LAMP,,,,,,until=step,",
+            "A01,Open,Open it.,,,picture,DOOR,,,,,,until=A02,",
+            "A02,Look,Look at it.,,,picture,DOOR,,,,,,until=A01,",
+            ",,,,,picture,LID,,,,,,until=A02,",
+            ",,,,,picture,LAMP,,,,,,until=step,",
         )
         self.assertEqual(_issues(steps), [])
         warned = [
@@ -635,25 +659,25 @@ class TestRowsReadByCells(unittest.TestCase):
         bring it to its slot. A look with no Clip happens at its step's moment, which in an
         interactive sheet is the task's to run; one that names its take rides it. Added: 2026-11-25"""
         rows = (
-            "B02,Fit,Fit the new filter.,,,fade_in,NEW_FILTER,,,,,,,",
+            "B02,Fit,Fit the new filter.,,,show,NEW_FILTER,,,,,,,",
             ",,,,,use,SLOT,NEW_FILTER,B02,,,,,",
-            ",,,,,fade_out,OLD_FILTER,,B02,,,,,",
+            ",,,,,hide,OLD_FILTER,,B02,,,,,",
             ",,,,,highlight,SLOT,,,,,,,",
         )
         held = {o.name: o.behaviors for o in _read(*rows)[0].objects}
         self.assertEqual(
             held,
-            {"NEW_FILTER": [], "SLOT": [], "OLD_FILTER": ["fade_out"]},
+            {"NEW_FILTER": [], "SLOT": [], "OLD_FILTER": ["hide"]},
             "interactive: the look that names its take is keyed; the step's own are members, nothing keyed",
         )
         linear = _read(
-            "B02,Fit,Fit the new filter.,,,fade_in,NEW_FILTER,,,,,,,",
+            "B02,Fit,Fit the new filter.,,,show,NEW_FILTER,,,,,,,",
             ",,,,,highlight,SLOT,,,,,,,",
             template="linear",
         )
         self.assertEqual(
             {o.name: o.behaviors for o in linear[0].objects},
-            {"NEW_FILTER": ["fade_in"], "SLOT": ["highlight"]},
+            {"NEW_FILTER": ["show"], "SLOT": ["highlight"]},
             "linear: the step is its shot, played through",
         )
         self.assertEqual(
@@ -669,7 +693,7 @@ class TestRowsReadByCells(unittest.TestCase):
         steps = _read("A01,Open,Open it.,,,,DOOR,,,,,,,The door fades in")
         self.assertNotIn("cells", steps[0].rows[0])
         self.assertEqual(
-            [(o.name, o.behaviors) for o in steps[0].objects], [("DOOR", ["fade_in"])]
+            [(o.name, o.behaviors) for o in steps[0].objects], [("DOOR", ["show"])]
         )
 
 
@@ -815,17 +839,17 @@ class TestSentences(unittest.TestCase):
             "Entering anything else goes to step C10.5",
         )
         self.assertEqual(
-            self._say(word="pip", assets=["LAMP"], settings={"until": "B07"}),
+            self._say(word="picture", assets=["LAMP"], settings={"until": "B07"}),
             "A picture shows LAMP, until B07",
         )
         self.assertEqual(
             self._say(
-                word="teleport", assets=["CABINET"], settings={"where": "VIEW_FRONT"}
+                word="travel", assets=["CABINET"], settings={"where": "VIEW_FRONT"}
             ),
             "The user is brought to VIEW_FRONT",
         )
         self.assertEqual(
-            self._say(word="teleport", assets=["CABINET"]),
+            self._say(word="travel", assets=["CABINET"]),
             "The user is brought to face CABINET",
         )
         self.assertEqual(self._say(word="note"), "")
@@ -841,7 +865,7 @@ class TestShots(unittest.TestCase):
         "A02,Open,Open the door.,,,highlight,DOOR,,,,,,,",
         ",,,,,use,HANDLE,,A02,HANDLE\nDOOR,,,,",
         "B01,Remove,Remove the bolt.,,,use,BOLT,WRENCH,B01_1,,,,,",
-        ",,,,,fade_out,BOLT,,B01_1,,,,,",
+        ",,,,,hide,BOLT,,B01_1,,,,,",
         ",,,,,play,,,B01_2,LID,,,after=B01_1,",
         "B02,Ask,Ready?,,,button,,,,,Next,next,,",
     )
@@ -881,7 +905,7 @@ class TestShots(unittest.TestCase):
         )
         self.assertEqual(
             [(o.name, o.behaviors) for o in by_id["B01"].objects],
-            [("BOLT", ["fade_out"]), ("WRENCH", []), ("LID", [])],
+            [("BOLT", ["hide"]), ("WRENCH", []), ("LID", [])],
         )
 
     def test_a_steps_narration_is_its_own_whether_or_not_it_plays_a_take(self):
@@ -907,7 +931,7 @@ class TestShots(unittest.TestCase):
 
     def test_a_linear_sheet_makes_every_step_a_shot_of_its_rows_targets(self):
         steps = _read(
-            "A01,Open,The cover comes off.,,,fade_out,COVER_BOLT,,,,,,,",
+            "A01,Open,The cover comes off.,,,hide,COVER_BOLT,,,,,,,",
             ",,,,,,ACCESS_COVER,,,,,,,",
             ",,,,,highlight,FILTER,,,,,,style=steady,",
             template="linear",
@@ -917,7 +941,7 @@ class TestShots(unittest.TestCase):
         self.assertEqual(
             [(o.name, o.behaviors) for o in steps[0].objects],
             [
-                ("COVER_BOLT", ["fade_out"]),
+                ("COVER_BOLT", ["hide"]),
                 ("ACCESS_COVER", []),
                 ("FILTER", ["highlight"]),
             ],
@@ -940,7 +964,7 @@ class TestShots(unittest.TestCase):
             os.remove(path)
         self.assertEqual(
             [(o.name, o.behaviors) for o in steps[0].objects],
-            [("COVER_BOLT", ["fade_out"])],
+            [("COVER_BOLT", ["hide"])],
         )
         self.assertNotIn("cells", steps[0].rows[0])
         self.assertIsNone(steps[0].takes)

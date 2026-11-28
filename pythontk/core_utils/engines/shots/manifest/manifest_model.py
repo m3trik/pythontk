@@ -640,6 +640,13 @@ class _ManifestModelInternal(object):
 
         return ManifestActions.validate_actions(value)
 
+    @staticmethod
+    def validate_settings(value: Any) -> List[str]:
+        """What is wrong with a template's ``settings`` (``ManifestActions.validate_settings``)."""
+        from pythontk.core_utils.engines.shots.manifest.manifest_actions import ManifestActions
+
+        return ManifestActions.validate_settings(value)
+
     #: Values ``ColumnMap.behavior_source`` accepts.
     BEHAVIOR_SOURCES = ("description", "column", "column_else_description")
     #: Values ``ColumnMap.object_source`` accepts.
@@ -788,7 +795,7 @@ class ManifestModel(_ManifestModelInternal):
         """Return behavior names inferred from descriptive *text*.
 
         Each pattern is tested independently so text mentioning both
-        "fades in" and "fades out" yields ``["fade_in", "fade_out"]``.
+        "fades in" and "fades out" yields ``["show", "hide"]``.
         """
         from pythontk.core_utils.engines.shots.manifest.behaviors import Behaviors
 
@@ -838,7 +845,7 @@ class BuilderObject:
     """One asset within a step."""
 
     name: str
-    behaviors: List[str] = field(default_factory=list)  # e.g. ["fade_in", "fade_out"]
+    behaviors: List[str] = field(default_factory=list)  # e.g. ["show", "hide"]
     kind: str = "scene"  # "scene" | "audio"
     source_path: str = ""  # file path for audio creation (transient)
     # Where the name came from: "column" (the sheet's asset cell),
@@ -1768,6 +1775,18 @@ class ColumnMap(SchemaSpec):
         example={"clip": ["Animation Clip Names"]},
         default_factory=dict,
     )
+    settings: Dict[str, Dict[str, Any]] = SchemaSpec.spec_field(
+        help=(
+            "The settings the words may take, each declared once for every word: "
+            "`{name: {type, primitive, min, max, help}}` (`ManifestActions.SETTING_TYPES`; the primitive "
+            "it belongs to, one of `trigger`, `requirement`, `effect`, `look`, `place`), so a name means "
+            "one thing in every word. A word lists the ones it takes, each with only its own "
+            "`choices`, `default` and `required`."
+        ),
+        example={"color": {"type": "color", "primitive": "look"}},
+        default_factory=dict,
+        validate=_ManifestModelInternal.validate_settings,
+    )
     actions: Dict[str, Dict[str, Any]] = SchemaSpec.spec_field(
         help=(
             "The words an Action cell (the `action` column of `row_pass`) may hold, "
@@ -1778,7 +1797,8 @@ class ColumnMap(SchemaSpec):
             "named by its `where` setting (type `object`). A template that declares them is in the cell format: a "
             "row with an Action is read by its cells (Target, and the `with`, `clip`, "
             "`members`, `label`, `to` and `settings` columns of `row_pass`), never by its "
-            "sentence. The empty word declares what a row with no Action is."
+            "sentence. A word's `settings` name the template's `settings` it takes, each with "
+            "its own `choices`, `default` and `required`. The empty word declares what a row with no Action is."
         ),
         example={"highlight": {"cells": ["target"], "says": "{target} is highlighted"}},
         default_factory=dict,
@@ -1816,7 +1836,7 @@ class ColumnMap(SchemaSpec):
     )
     step_looks: str = SchemaSpec.spec_field(
         help=(
-            "What a build does with a look (`highlight`, `fade_in`, `fade_out`) whose row names no "
+            "What a build does with a look (`highlight`, `show`, `hide`) whose row names no "
             "take in Clip, in a sheet written in cells: such a look belongs to its step. `key`: it "
             "is keyed into the step's shot (a sheet played straight through: a video, a "
             "click-through). `leave`: it is left to the tool that runs the steps (an interactive "
@@ -1883,8 +1903,25 @@ class ColumnMap(SchemaSpec):
         return result
 
     @classmethod
+    def validate(cls, data: Any):
+        """:meth:`SchemaSpec.validate`, then the words held to the settings they take
+        (``ManifestActions.check_declared``)."""
+        from pythontk.core_utils.engines.shots.manifest.manifest_actions import ManifestActions
+
+        res = super().validate(data)
+        if isinstance(data, dict):
+            res.errors.extend(
+                "actions: %s" % e
+                for e in ManifestActions.check_declared(data.get("actions") or {}, data.get("settings") or {})
+            )
+        return res
+
+    @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ColumnMap":
-        """Reconstruct from a dict produced by :meth:`to_dict`."""
+        """Reconstruct from a dict produced by :meth:`to_dict`, each word's settings declared
+        whole (``ManifestActions.resolve``)."""
+        from pythontk.core_utils.engines.shots.manifest.manifest_actions import ManifestActions
+
         known = {f.name for f in fields(cls)}
         kwargs: Dict[str, Any] = {}
         for k, v in data.items():
@@ -1899,6 +1936,8 @@ class ColumnMap(SchemaSpec):
                 kwargs[k] = tuple(v)
             else:
                 kwargs[k] = v
+        if kwargs.get("actions"):
+            kwargs["actions"] = ManifestActions.resolve(kwargs["actions"], kwargs.get("settings") or {})
         return cls(**kwargs)
 
 

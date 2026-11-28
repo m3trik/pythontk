@@ -1220,7 +1220,7 @@ class ShotManifest(_ShotManifestInternal):
         from pythontk.core_utils.engines.shots.manifest.behaviors import Behaviors
 
         effect = Behaviors.effect_of(behavior)
-        if effect not in ("fade_in", "fade_out", "pulse"):
+        if not self.recipe.is_ramp(effect):
             return False
         stamps = self.store.edit_ledger.authored_stamps(shot_id, obj, behavior)
         current = self.recipe.fingerprint(effect)
@@ -1399,13 +1399,13 @@ class ShotManifest(_ShotManifestInternal):
         """Make the helper each placing row of *steps* names, where the scene has none.
 
         A row of a word that places something (its ``places``: a viewpoint the
-        user stands on, an arrow's tip, a picture's camera) happens at the
+        user stands on, a pointer's tip, a picture's camera) happens at the
         object its ``where`` names, else at its own helper
         (:meth:`ManifestPlacement.helper_name`: ``CAM_<step>_<target>``, the
         name every reader of the sheet gives it).  One the scene has is the truth: it is
         used as it stands and never moved.  One it lacks is made under that
         name (:meth:`_make_helper`: a camera for a picture, a locator for a
-        viewpoint or an arrow), riding what :attr:`ManifestPlacement.RIDES`
+        viewpoint or a pointer's tip), riding what :attr:`ManifestPlacement.RIDES`
         says, with a plain first pose (:meth:`ManifestPlacement.first_pose`)
         as the scene stands at its step's shot's first frame -- there to be
         moved.  A row whose word is turned off (:attr:`disabled_behaviors`)

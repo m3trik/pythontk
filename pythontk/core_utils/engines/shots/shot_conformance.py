@@ -53,7 +53,7 @@ class ShotStoreConformance:
         '"edit_ledger": {"version": 2, '
         '"steps": {"crv_tx": [[48.0, "linear", "step", 1.5]]}, '
         '"keys": {"crv_tx": [[58.0, 1, "start"]]}, '
-        '"authored": {"crv_ty": [[20.0, 0, "fade_in", "pin_cube", ""]]}}, '
+        '"authored": {"crv_ty": [[20.0, 0, "show", "pin_cube", ""]]}}, '
         '"effect_recipe": {"fade_frames": 12.0, "pulse_period": 2.86, '
         '"pulse_duty": 0.59, "pulse_ramp": 0.25, "pulse_lead_in": 0.72, '
         '"pulse_lead_out": 0.72, "pulse_bright": [0.0, 0.088656, 0.723055], '
@@ -103,7 +103,7 @@ class ShotStoreConformance:
         store.shipped_metadata = frozenset({"step"})
         store.edit_ledger.record_step("crv_tx", 48.0, "linear", "step", value=1.5)
         store.edit_ledger.record_key("crv_tx", 58.0, owner=s2.shot_id, edge="start")
-        store.edit_ledger.record_authored("crv_ty", 20.0, s1.shot_id, "fade_in", a)
+        store.edit_ledger.record_authored("crv_ty", 20.0, s1.shot_id, "show", a)
         store.effect_recipe = store.effect_recipe.replace(fade_frames=12.0)
         return store
 

@@ -5,11 +5,11 @@ A01,Find the panel,Locate the access panel on the side of the unit.,,,,,
 A02,Remove the screws,Remove both screws.,,,,,
 ,,,,highlight,"SCREW_UPPER
 SCREW_LOWER",,
-,,,,fade_out,"SCREW_UPPER
+,,,,hide,"SCREW_UPPER
 SCREW_LOWER",,
 A03,Remove the panel,Lift the panel away.,,,,,
-,,,,fade_out,ACCESS_PANEL,,
+,,,,hide,ACCESS_PANEL,,
 ,,,,,UNIT_BODY,,"In the shot, with nothing keyed on it"
 SECTION B: Fit the new filter,,,,,,,
 B01,Fit the filter,Slide the new filter into place.,,,,,
-,,,,fade_in,NEW_FILTER,,
+,,,,show,NEW_FILTER,,

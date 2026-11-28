@@ -925,6 +925,9 @@ MOVED_NAMES = {
     "MeshConvert.SHADOW_WEB_NODE_FIELDS": ("pythontk.SceneRecords.SHADOWS.nodes", "0.26.0"),
     "MeshConvert.ARTICULATION_WEB_NODE_FIELDS": ("pythontk.SceneRecords.ARTICULATION.nodes", "0.26.0"),
     "HELD_UNTIL_0_22": ("pythontk.MOVED_NAMES (its rows moved there)", "0.26.0"),
+    # The build sheet's words named for their family at its most general: a
+    # placing row's pointer is a pointer, whatever is drawn at it.
+    "ManifestPlacement.ARROW": ("pythontk.ManifestPlacement.POINTER", "0.27.0"),
 }
 
 bootstrap_package(globals(), include=DEFAULT_INCLUDE, moved=MOVED_NAMES)

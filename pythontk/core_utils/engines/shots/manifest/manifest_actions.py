@@ -30,6 +30,14 @@ every problem said as an issue at its cell with its fix.
 
 The empty word (``""``) declares what a row with no Action is, where a template gives it a
 meaning (a row that only lists a shot's members); a template that declares none refuses it.
+
+A setting is declared once, for every word, in the template's ``settings``: its type, the
+primitive it belongs to (:attr:`ManifestActions.PRIMITIVES`) and its bounds, so a name means
+one thing in every word. A word lists the settings it takes and adds only what is its own:
+its ``choices``, its ``default`` and whether it is ``required`` (:meth:`resolve` joins the two)::
+
+    "settings": {"when": {"type": "choice", "primitive": "trigger"}},
+    "actions": {"button": {..., "settings": {"when": {"choices": ["end", "start"], "default": "end"}}}}
 """
 
 from __future__ import annotations
@@ -178,8 +186,15 @@ class ManifestActions(_ManifestActionsInternal):
         "object",
         "state",
     )
+    #: The parts a word is made of, each setting belonging to one: what starts it, what must be
+    #: true first, what it does, what a shown thing looks like and where a placed thing sits.
+    PRIMITIVES = ("trigger", "requirement", "effect", "look", "place")
+    #: What a template's ``settings`` declares of each setting, once for every word.
+    SETTING_KEYS = ("type", "primitive", "min", "max", "help")
+    #: What a word adds of its own to a setting it takes.
+    WORD_SETTING_KEYS = ("choices", "default", "required")
     #: What a word that places something places it for (its ``places``), read by Placement: where
-    #: the user stands, where an arrow points from, where a picture is taken from, where a
+    #: the user stands, where a pointer points from, where a picture is taken from, where a
     #: held part is brought. Its object is its ``where`` setting, else the helper made for it.
     PURPOSES = ("stand", "point", "view", "hold")
     #: The setting a word that places something names its object in.
@@ -228,13 +243,10 @@ class ManifestActions(_ManifestActionsInternal):
                         "%r: places one of %s, not %r"
                         % (word, list(ManifestActions.PURPOSES), places)
                     )
-                where = (declared.get("settings") or {}).get(
-                    ManifestActions.WHERE
-                ) or {}
-                if where.get("type") != "object":
+                if ManifestActions.WHERE not in (declared.get("settings") or {}):
                     errors.append(
-                        "%r: a word that places something declares a 'where' setting of type object"
-                        % word
+                        "%r: a word that places something takes a '%s' setting"
+                        % (word, ManifestActions.WHERE)
                     )
             for key in ("needs", "distinct"):
                 missing = [
@@ -251,14 +263,17 @@ class ManifestActions(_ManifestActionsInternal):
                     "%r: when is one of %s" % (word, list(ManifestActions.WHEN))
                 )
             for name, setting in (declared.get("settings") or {}).items():
-                kind = (setting or {}).get("type") if isinstance(setting, dict) else "?"
+                keys = ManifestActions.WORD_SETTING_KEYS + ManifestActions.SETTING_KEYS
+                kind = setting.get("type") if isinstance(setting, dict) else None
                 if (
                     not isinstance(setting, dict)
+                    or set(setting) - set(keys)
                     or kind not in (None,) + ManifestActions.SETTING_TYPES
                 ):
                     errors.append(
-                        "%r: setting %r is {type, choices, default, min, max, required}, its type one of %s"
-                        % (word, name, list(ManifestActions.SETTING_TYPES))
+                        "%r: setting %r is {%s}: its type (one of %s), primitive and bounds are the "
+                        "template's settings'"
+                        % (word, name, ", ".join(ManifestActions.WORD_SETTING_KEYS), list(ManifestActions.SETTING_TYPES))
                     )
             says = declared.get("says")
             if says is not None and not isinstance(says, (str, dict)):
@@ -266,9 +281,101 @@ class ManifestActions(_ManifestActionsInternal):
         return errors
 
     @staticmethod
+    def validate_settings(value: Any) -> List[str]:
+        """What is wrong with a template's ``settings`` (``ColumnMap``'s field validator): each
+        declared once, ``{type, primitive, min, max, help}``, its type one of
+        :attr:`SETTING_TYPES` and its primitive one of :attr:`PRIMITIVES`."""
+        if not isinstance(value, dict):
+            return ["expected {setting: declaration}"]
+        errors: List[str] = []
+        for name, declared in value.items():
+            if name != ManifestActions.word(name):
+                errors.append(
+                    "%r: a setting is lower case with underscores (%r)"
+                    % (name, ManifestActions.word(name))
+                )
+            if not isinstance(declared, dict):
+                errors.append("%r: expected a declaration (a mapping)" % name)
+                continue
+            unknown = set(declared) - set(ManifestActions.SETTING_KEYS)
+            if unknown:
+                errors.append(
+                    "%r: declares %s, not one of %s: a word gives its own %s"
+                    % (
+                        name,
+                        sorted(unknown),
+                        list(ManifestActions.SETTING_KEYS),
+                        ", ".join(ManifestActions.WORD_SETTING_KEYS),
+                    )
+                )
+            if declared.get("type") not in ManifestActions.SETTING_TYPES:
+                errors.append(
+                    "%r: its type is one of %s" % (name, list(ManifestActions.SETTING_TYPES))
+                )
+            if declared.get("primitive") not in ManifestActions.PRIMITIVES:
+                errors.append(
+                    "%r: it belongs to one of %s (its primitive)"
+                    % (name, list(ManifestActions.PRIMITIVES))
+                )
+        return errors
+
+    @staticmethod
+    def check_declared(actions: Mapping[str, Any], settings: Mapping[str, Any]) -> List[str]:
+        """What is wrong between a template's words and its ``settings``: a setting a word takes
+        that the template does not declare, a word restating a declared type, primitive or bound
+        otherwise, a choice no word gives its choices, and a placing word whose ``where`` is no
+        object. Empty where they agree."""
+        errors: List[str] = []
+        if not isinstance(actions, dict) or not isinstance(settings, dict):
+            return errors
+        for word, declared in actions.items():
+            if not isinstance(declared, dict):
+                continue
+            for name, own in (declared.get("settings") or {}).items():
+                table = settings.get(name)
+                if not isinstance(table, dict):
+                    errors.append(
+                        "%r: takes the setting %r, which the template's settings do not declare: "
+                        "declare it there once (type and primitive)" % (word, name)
+                    )
+                    continue
+                for key in ManifestActions.SETTING_KEYS:
+                    if isinstance(own, dict) and key in own and own[key] != table.get(key):
+                        errors.append(
+                            "%r: restates %r's %s as %r, which the template's settings declare %r: "
+                            "a setting means one thing in every word" % (word, name, key, own[key], table.get(key))
+                        )
+                if table.get("type") == "choice" and not (own or {}).get("choices"):
+                    errors.append("%r: gives the choice %r no choices" % (word, name))
+            if declared.get("places") is not None and (settings.get(ManifestActions.WHERE) or {}).get("type") != "object":
+                errors.append(
+                    "%r: a word that places something takes '%s' declared of type object"
+                    % (word, ManifestActions.WHERE)
+                )
+        return errors
+
+    @staticmethod
+    def resolve(actions: Mapping[str, Any], settings: Mapping[str, Any]) -> Dict[str, Any]:
+        """*actions* with each setting a word takes declared whole: the template's declaration
+        (*settings*) under what the word gives of its own (its choices, default, required), so
+        every reader of a word reads one declaration. A word's own key wins; a name the template
+        does not declare is left as the word gives it (:meth:`check_declared` says so)."""
+        out: Dict[str, Any] = {}
+        for word, declared in (actions or {}).items():
+            if not isinstance(declared, dict) or not declared.get("settings"):
+                out[word] = declared
+                continue
+            joined = {
+                name: dict(settings.get(name) or {}, **(own or {}))
+                for name, own in declared["settings"].items()
+            }
+            out[word] = dict(declared, settings=joined)
+        return out
+
+    @staticmethod
     def word(cell: str) -> str:
         """An Action cell as its word: lower case, anything but letters and digits an underscore
-        (``"Fade In"`` -> ``fade_in``). Nothing else about a cell is normalised."""
+        (``"Pick Up"`` -> ``pick_up``). Nothing else about a cell is normalised."""
         return re.sub(r"[^0-9a-z]+", "_", (cell or "").strip().lower()).strip("_")
 
     @staticmethod

@@ -118,21 +118,55 @@ class EffectRecipe(_EffectRecipeInternal):
     #: Round audio key times to whole frames.
     audio_snap: bool = True
 
-    #: The fields each effect is keyed from -- what its :meth:`fingerprint`
-    #: covers. The pulse's colours are not among them: a Build writes them only
-    #: when it creates the channel, so a revised object's colours survive a
-    #: rebuild, and a changed colour is no reason to re-key.
-    EFFECTS: ClassVar[Dict[str, Tuple[str, ...]]] = {
-        "fade_in": ("fade_frames",),
-        "fade_out": ("fade_frames",),
-        "pulse": (
-            "pulse_period",
-            "pulse_duty",
-            "pulse_ramp",
-            "pulse_lead_in",
-            "pulse_lead_out",
-        ),
-        "clip": ("audio_snap",),
+    #: Each effect, declared once, for every reader: the fields it is keyed
+    #: from (what its :meth:`fingerprint` covers), the Render Effects channel a
+    #: host keys it on (``audio``: the Audio Clips track), the template
+    #: attribute its envelope is stated on (:meth:`envelope`), the ramp it keys
+    #: there and its phase (a ``fade`` ``in`` or ``out``, a ``pulse``; none
+    #: for the clip, whose source sets it), and where it goes in a shot when its
+    #: behavior template says nowhere. The pulse's colours are not among its
+    #: fields: a Build writes them only when it creates the channel, so a
+    #: revised object's colours survive a rebuild, and a changed colour is no
+    #: reason to re-key.
+    EFFECTS: ClassVar[Dict[str, Dict[str, Any]]] = {
+        "fade_in": {
+            "fields": ("fade_frames",),
+            "channel": "opacity",
+            "attribute": "visibility",
+            "ramp": "fade",
+            "phase": "in",
+            "place": "start",
+        },
+        "fade_out": {
+            "fields": ("fade_frames",),
+            "channel": "opacity",
+            "attribute": "visibility",
+            "ramp": "fade",
+            "phase": "out",
+            "place": "end",
+        },
+        "pulse": {
+            "fields": (
+                "pulse_period",
+                "pulse_duty",
+                "pulse_ramp",
+                "pulse_lead_in",
+                "pulse_lead_out",
+            ),
+            "channel": "highlight",
+            "attribute": "highlight",
+            "ramp": "pulse",
+            "phase": "",
+            "place": "start",
+        },
+        "clip": {
+            "fields": ("audio_snap",),
+            "channel": "audio",
+            "attribute": "",
+            "ramp": "",
+            "phase": "",
+            "place": "start",
+        },
     }
     #: Where a behavior template may place an effect in its shot: at the
     #: ``start``, at the ``end``, across it (``span``), or a fraction 0-1 of
@@ -226,13 +260,49 @@ class EffectRecipe(_EffectRecipeInternal):
         return hashlib.sha1(f"{effect}:{payload}".encode("utf-8")).hexdigest()[:10]
 
     @classmethod
-    def _fields_of(cls, effect: str) -> Tuple[str, ...]:
+    def declared(cls, effect: str) -> Dict[str, Any]:
+        """*effect*'s declaration (:attr:`EFFECTS`).
+
+        Raises:
+            ValueError: An effect the recipe does not know.
+        """
         try:
             return cls.EFFECTS[effect]
         except KeyError:
             raise ValueError(
                 f"Unknown effect {effect!r}; known: {', '.join(cls.EFFECTS)}."
             ) from None
+
+    @classmethod
+    def channel_of(cls, effect: str) -> str:
+        """The Render Effects channel *effect* is keyed on (``opacity``,
+        ``highlight``; ``audio`` for the clip): the one table every host's
+        writer and every panel's page reads.
+
+        Raises:
+            ValueError: An effect the recipe does not know.
+        """
+        return cls.declared(effect)["channel"]
+
+    @classmethod
+    def place_of(cls, effect: str) -> str:
+        """Where *effect* goes in a shot when its template says nowhere: a fade
+        out at the end, every other at the start.
+
+        Raises:
+            ValueError: An effect the recipe does not know.
+        """
+        return cls.declared(effect)["place"]
+
+    @classmethod
+    def is_ramp(cls, effect: str) -> bool:
+        """Whether *effect* keys a ramp of its own (a fade, the pulse), whose
+        keys an older recipe can have made; the clip's are its source's."""
+        return bool((cls.EFFECTS.get(effect) or {}).get("ramp"))
+
+    @classmethod
+    def _fields_of(cls, effect: str) -> Tuple[str, ...]:
+        return cls.declared(effect)["fields"]
 
     # ---- keying ----------------------------------------------------------
 
@@ -278,15 +348,13 @@ class EffectRecipe(_EffectRecipeInternal):
             ValueError: For an effect with no key plan (``"clip"`` keys an
                 audio track, not a ramp).
         """
-        if effect in ("fade_in", "fade_out"):
-            return RampKeys.fade(
-                start, end, "in" if effect == "fade_in" else "out", whole_frames
-            )
-        if effect == "pulse":
+        declared = self.declared(effect)
+        if declared["ramp"] == "fade":
+            return RampKeys.fade(start, end, declared["phase"], whole_frames)
+        if declared["ramp"] == "pulse":
             return RampKeys.pulse(
                 start, end, whole_frames=whole_frames, **self.pulse_cadence(fps)
             )
-        self._fields_of(effect)  # an unknown name says so
         raise ValueError(f"The {effect!r} effect keys no ramp.")
 
     def window(
@@ -307,8 +375,7 @@ class EffectRecipe(_EffectRecipeInternal):
         end; the audio writer measures it).
         """
         start, end = float(start), float(end)
-        if effect not in ("fade_in", "fade_out"):
-            self._fields_of(effect)
+        if self.declared(effect)["ramp"] != "fade":
             return start, end
         length = self.fade_frames
         at: Place = anchor if anchor is not None else place
@@ -343,12 +410,11 @@ class EffectRecipe(_EffectRecipeInternal):
             fps: The scene's rate, for the pulse's lengths. Only a reader of
                 the SHAPE may leave it to :attr:`REFERENCE_FPS`.
         """
-        self._fields_of(effect)
+        declared = self.declared(effect)
         fps = float(fps or self.REFERENCE_FPS)
-        if effect in ("fade_in", "fade_out"):
-            phase, values = (
-                ("in", [0.0, 1.0]) if effect == "fade_in" else ("out", [1.0, 0.0])
-            )
+        if declared["ramp"] == "fade":
+            phase = declared["phase"]
+            values = [0.0, 1.0] if phase == "in" else [1.0, 0.0]
             numeric = isinstance(place, (int, float)) and not isinstance(place, bool)
             anchor = (
                 place
@@ -362,10 +428,10 @@ class EffectRecipe(_EffectRecipeInternal):
                 "values": values,
                 "tangent": "linear",
             }
-            return {"visibility": {phase: block}}
-        if effect == "pulse":
+            return {declared["attribute"]: {phase: block}}
+        if declared["ramp"] == "pulse":
             return {
-                "highlight": {
+                declared["attribute"]: {
                     "in": {
                         "anchor": "start",
                         "offset": 0,

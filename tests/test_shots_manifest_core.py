@@ -260,7 +260,7 @@ A02,Auto Advance,,,
     def test_behaviors_detected_from_description(self):
         steps = ManifestModel.parse_csv(self.path)
         a01 = steps[0]
-        self.assertEqual(a01.objects[0].behaviors, ["fade_in", "fade_out"])
+        self.assertEqual(a01.objects[0].behaviors, ["show", "hide"])
 
     def test_audio_column_captured(self):
         steps = ManifestModel.parse_csv(self.path)
@@ -283,7 +283,7 @@ A01.),Aileron fades in then fades out,aileron_geo,vo
         try:
             objs = ManifestModel.parse_csv(path)[0].objects
             self.assertEqual([o.name for o in objs], ["aileron_geo", "bracket_geo"])
-            self.assertEqual(objs[0].behaviors, ["fade_in", "fade_out"])
+            self.assertEqual(objs[0].behaviors, ["show", "hide"])
             self.assertEqual(objs[1].behaviors, [])
         finally:
             os.remove(path)
@@ -299,7 +299,7 @@ A01.),The table fades in,table_geo,vo
         try:
             objs = ManifestModel.parse_csv(path)[0].objects
             self.assertEqual(objs[1].name, "unit_geo")
-            self.assertEqual(objs[1].behaviors, ["fade_in"])
+            self.assertEqual(objs[1].behaviors, ["show"])
         finally:
             os.remove(path)
 
@@ -322,7 +322,7 @@ A01.),Static setup with no motion,obj_a,vo
             objs = ManifestModel.parse_csv(path)[0].objects
             self.assertEqual([o.name for o in objs], ["obj_a", "obj_b", "obj_c"])
             self.assertEqual(objs[0].behaviors, [])
-            self.assertEqual(objs[1].behaviors, ["fade_in"])
+            self.assertEqual(objs[1].behaviors, ["show"])
             self.assertEqual(objs[2].behaviors, [])
         finally:
             os.remove(path)
@@ -347,8 +347,8 @@ A01.),Static setup with no motion,obj_a,vo
         self.assertEqual(
             [(o.name, o.behaviors) for o in step.objects],
             [
-                ("door", ["fade_in", "fade_out", "fade_in"]),
-                ("lid", ["fade_in", "fade_out"]),
+                ("door", ["show", "hide", "show"]),
+                ("lid", ["show", "hide"]),
             ],
         )
 
@@ -384,20 +384,20 @@ class TestColumnMap(unittest.TestCase):
 
 
 class TestDetectBehaviors(unittest.TestCase):
-    def test_fade_in(self):
+    def test_show(self):
         self.assertEqual(
-            ManifestModel.detect_behaviors("the panel fades in slowly"), ["fade_in"]
+            ManifestModel.detect_behaviors("the panel fades in slowly"), ["show"]
         )
 
-    def test_fade_out(self):
+    def test_hide(self):
         self.assertEqual(
-            ManifestModel.detect_behaviors("then it fades out"), ["fade_out"]
+            ManifestModel.detect_behaviors("then it fades out"), ["hide"]
         )
 
     def test_both_independent(self):
         self.assertEqual(
             ManifestModel.detect_behaviors("fades in then fades out"),
-            ["fade_in", "fade_out"],
+            ["show", "hide"],
         )
 
     def test_none(self):
@@ -411,36 +411,36 @@ class TestBehaviorsFromText(unittest.TestCase):
 
     def test_phrases_live_in_the_templates(self):
         detect = beh.Behaviors.detect
-        self.assertEqual(detect("Keys fade away from hand"), ["fade_out"])
+        self.assertEqual(detect("Keys fade away from hand"), ["hide"])
         self.assertEqual(detect("Highlight Red Door Locks"), ["highlight"])
-        self.assertEqual(detect("Destination circle fades in"), ["fade_in"])
+        self.assertEqual(detect("Destination circle fades in"), ["show"])
         self.assertEqual(detect("User is teleported"), [])
 
     def test_a_column_cell_takes_names_or_phrases_and_keeps_unknowns(self):
         cell = beh.Behaviors.from_cell
-        self.assertEqual(cell("Fade In, Fade Out"), ["fade_in", "fade_out"])
-        self.assertEqual(cell("fades away\nhighlight"), ["fade_out", "highlight"])
+        self.assertEqual(cell("Fade In, Fade Out"), ["show", "hide"])
+        self.assertEqual(cell("fades away\nhighlight"), ["hide", "highlight"])
         # Unknown items stay (spelled as a name) so Assess can flag them.
-        self.assertEqual(cell("Wobble; fade_in"), ["wobble", "fade_in"])
+        self.assertEqual(cell("Wobble; show"), ["wobble", "show"])
         self.assertEqual(cell("  "), [])
 
     def test_a_family_reads_as_one_behavior_with_a_suffix(self):
         """User 2026-11-23: consolidate the manifest's behaviors, a suffix
         saying how one is set. Added: 2026-11-24 -- a template's ``family``
-        and ``variant``: fade_in and fade_out read as one Fade, each keeping
+        and ``variant``: show and hide read as one Fade, each keeping
         its own name in saved data and deliveries."""
         B = beh.Behaviors
-        self.assertEqual(B.label("fade_in"), "Fade · in")
-        self.assertEqual(B.label("fade_out"), "Fade · out")
+        self.assertEqual(B.label("show"), "Visibility · show")
+        self.assertEqual(B.label("hide"), "Visibility · hide")
         self.assertEqual(B.label("set_clip"), "Set Clip", "no family: its own name")
         self.assertEqual(B.label("wobble"), "Wobble", "no template: its own name")
-        self.assertEqual(B.family_of("fade_out"), "fade")
+        self.assertEqual(B.family_of("hide"), "visibility")
         self.assertEqual(B.family_of("highlight"), "highlight")
         self.assertEqual(
-            B.families(["highlight", "fade_out", "wobble", "fade_in"]),
-            {"highlight": ["highlight"], "fade": ["fade_out", "fade_in"], "wobble": ["wobble"]},
+            B.families(["highlight", "hide", "wobble", "show"]),
+            {"highlight": ["highlight"], "visibility": ["hide", "show"], "wobble": ["wobble"]},
         )
-        self.assertEqual(B.from_cell("Fade · out, Fade In"), ["fade_out", "fade_in"], "its label reads back")
+        self.assertEqual(B.from_cell("Visibility · hide, Show"), ["hide", "show"], "its label reads back")
 
     def test_shipped_templates_validate_with_their_phrases(self):
         for name in beh.Behaviors.list_behaviors():
@@ -473,7 +473,7 @@ class TestBehaviorSource(unittest.TestCase):
     def test_description(self):
         self.assertEqual(
             self._objects("description"),
-            [("door", ["fade_in"]), ("lid", ["fade_out"])],
+            [("door", ["show"]), ("lid", ["hide"])],
         )
 
     def test_column(self):
@@ -486,7 +486,7 @@ class TestBehaviorSource(unittest.TestCase):
     def test_column_else_description(self):
         self.assertEqual(
             self._objects("column_else_description"),
-            [("door", ["highlight"]), ("lid", ["fade_out"])],
+            [("door", ["highlight"]), ("lid", ["hide"])],
         )
 
     def test_a_bad_source_is_a_schema_error(self):
@@ -506,7 +506,7 @@ class TestProseObjects(unittest.TestCase):
     CSV = (
         "INTRO,,,\n"
         "Step,Voice Support,Step Contents,Asset Names\n"
-        "IN_01,Hi,Destination circle fades in at the teleport spot,\n"
+        "IN_01,Hi,Destination circle fades in at the travel spot,\n"
         ",,Highlight the 2 phillips screws,\n"
         ",,Destination circle fades away,\n"
         ",,Selecting the highlighted area triggers the latch animation,\n"
@@ -545,7 +545,7 @@ class TestProseObjects(unittest.TestCase):
         )
         self.assertEqual(
             beh.Behaviors.subjects("Pip screen fades away"),
-            [("Pip screen", "fade_out")],
+            [("Pip screen", "hide")],
         )
         # Detected, but no object named: nothing to list.
         self.assertEqual(beh.Behaviors.subjects("Selecting the highlighted area"), [])
@@ -558,7 +558,7 @@ class TestProseObjects(unittest.TestCase):
         self.assertEqual(
             steps["IN_01"],
             [
-                ("Destination_circle", ["fade_in", "fade_out"], "description"),
+                ("Destination_circle", ["show", "hide"], "description"),
                 ("phillips_screws", ["highlight"], "description"),
             ],
         )
@@ -598,7 +598,7 @@ class TestProseObjects(unittest.TestCase):
             os.remove(path)
         self.assertEqual(
             [(o.name, o.behaviors) for o in step.objects],
-            [("Socket_Wrench", ["highlight", "fade_out"])],
+            [("Socket_Wrench", ["highlight", "hide"])],
         )
 
     def test_the_default_template_reads_prose_and_offers_strutils_cases(self):
@@ -990,14 +990,14 @@ class TestSequenceDocMapping(unittest.TestCase):
         )
 
     def test_contents_voice_name_and_objects(self):
-        intro, teleport, _b03, branch = self._resolve()
+        intro, travel, _b03, branch = self._resolve()
         self.assertEqual(intro.description, "User starts in the room. Auto Advance")
         self.assertEqual(intro.audio, "Welcome to the task.")
-        self.assertEqual(teleport.audio, "Open the machine.\n\nSelect 'Next'.")
+        self.assertEqual(travel.audio, "Open the machine.\n\nSelect 'Next'.")
         self.assertEqual(intro._pass_through.get("step_name"), "Welcome")
         self.assertEqual(
             [(o.name, o.behaviors) for o in branch.objects],
-            [("solenoid_geo", ["fade_out"])],
+            [("solenoid_geo", ["hide"])],
         )
 
     def test_the_quiz_block_adds_no_steps_or_text(self):
@@ -1315,7 +1315,7 @@ class TestAutoFillAssets(unittest.TestCase):
             os.remove(path)
         self.assertEqual(
             [(o.name, o.behaviors) for o in step.objects],
-            [("arm_geo", ["fade_in"]), ("hand_geo", ["fade_in"])],
+            [("arm_geo", ["show"]), ("hand_geo", ["show"])],
         )
 
     def test_a_paired_shot_fills_from_its_members_and_its_animation(self):
@@ -1392,19 +1392,19 @@ class TestRowPatterns(unittest.TestCase):
         self.assertFalse(res.ok)
         self.assertTrue(any("step_pattern" in e for e in res.errors), res.errors)
 
-    def test_fade_away_reads_as_fade_out(self):
-        self.assertEqual(ManifestModel.detect_behaviors("Keys fade away"), ["fade_out"])
+    def test_fade_away_reads_as_hide(self):
+        self.assertEqual(ManifestModel.detect_behaviors("Keys fade away"), ["hide"])
 
 
 class TestBehaviors(unittest.TestCase):
     def test_list_builtins(self):
         self.assertEqual(
             sorted(beh.Behaviors.list_behaviors()),
-            ["fade_in", "fade_out", "highlight", "set_clip"],
+            ["hide", "highlight", "set_clip", "show"],
         )
 
     def test_load_behavior(self):
-        fi = beh.Behaviors.load_behavior("fade_in")
+        fi = beh.Behaviors.load_behavior("show")
         self.assertEqual((fi["effect"], fi["place"]), ("fade_in", "start"))
         self.assertNotIn("attributes", fi)  # the recipe keys it
         self.assertIn("visibility", beh.Behaviors.keyed(fi)["attributes"])
@@ -1417,34 +1417,34 @@ class TestBehaviors(unittest.TestCase):
         """
         import copy
 
-        base = copy.deepcopy(beh.Behaviors.load_behavior("fade_in"))  # cached
+        base = copy.deepcopy(beh.Behaviors.load_behavior("show"))  # cached
         store = beh.Behaviors.templates().store
         with (
             tempfile.TemporaryDirectory() as tmp,
             patch.object(store, "_user_dir", Path(tmp)),
         ):
-            path = Path(tmp) / "fade_in.json"
+            path = Path(tmp) / "show.json"
 
             def place_after_writing(place, stamp):
                 base["place"] = place
                 path.write_text(json.dumps(base), encoding="utf-8")
                 os.utime(path, (stamp, stamp))
-                return beh.Behaviors.load_behavior("fade_in")["place"]
+                return beh.Behaviors.load_behavior("show")["place"]
 
             self.assertEqual(place_after_writing("end", 1_000_000_000), "end")
             self.assertEqual(place_after_writing(0.5, 1_000_000_100), 0.5)
         # Out of the override again: the built-in, not the last user copy.
-        self.assertEqual(beh.Behaviors.load_behavior("fade_in")["place"], "start")
+        self.assertEqual(beh.Behaviors.load_behavior("show")["place"], "start")
 
     def test_resolve_keys_start_anchored_block(self):
-        block = beh.Behaviors.keyed("fade_in")["attributes"]["visibility"]["in"]
+        block = beh.Behaviors.keyed("show")["attributes"]["visibility"]["in"]
         keys = beh.Behaviors.resolve_keys(block, 10, 60)
         # anchor=start, offset=0, duration=15, values=[0,1] -> keys at 10 and 25
         self.assertEqual([k["time"] for k in keys], [10.0, 25.0])
         self.assertEqual([k["value"] for k in keys], [0.0, 1.0])
 
     def test_resolve_keys_end_anchored_block(self):
-        out = beh.Behaviors.keyed("fade_out")["attributes"]["visibility"]["out"]
+        out = beh.Behaviors.keyed("hide")["attributes"]["visibility"]["out"]
         keys = beh.Behaviors.resolve_keys(out, 10, 60)
         # end-anchored: keys land near the range end (60), ascending times
         self.assertTrue(keys)
@@ -1474,29 +1474,29 @@ class TestBehaviors(unittest.TestCase):
         """Bug: one anchor per behavior, spread over ALL of an object's
         behaviors, was forced onto every block of a highlight beside any other
         behavior -- its in and out ramps collapsed onto the same frames, and the
-        fades beside it were pushed off their ends (fade_in keyed mid-shot).
+        fades beside it were pushed off their ends (show keyed mid-shot).
         Points spread in doc order; a span keeps its own anchors.
         Fixed: 2026-10-03
         """
         overrides = beh.Behaviors.anchor_overrides
-        self.assertEqual(overrides(["fade_in"]), [None])
-        self.assertEqual(overrides(["fade_in", "fade_out"]), [0.0, 1.0])
-        self.assertEqual(overrides(["fade_in", "fade_out", "fade_in"]), [0.0, 0.5, 1.0])
-        self.assertEqual(overrides(["highlight", "fade_out"]), [None, None])
+        self.assertEqual(overrides(["show"]), [None])
+        self.assertEqual(overrides(["show", "hide"]), [0.0, 1.0])
+        self.assertEqual(overrides(["show", "hide", "show"]), [0.0, 0.5, 1.0])
+        self.assertEqual(overrides(["highlight", "hide"]), [None, None])
         self.assertEqual(
-            overrides(["highlight", "fade_in", "fade_out"]), [None, 0.0, 1.0]
+            overrides(["highlight", "show", "hide"]), [None, 0.0, 1.0]
         )
         # A name no template answers keeps its own (its apply records the failure).
-        self.assertEqual(overrides(["no_such_behavior", "fade_out"]), [None, None])
+        self.assertEqual(overrides(["no_such_behavior", "hide"]), [None, None])
 
     def test_entry_anchors_place_a_shots_entries_as_the_build_does(self):
         """Audio clips start the shot; each object's other behaviors spread
         over its own non-audio list, whatever lies between them."""
         entries = [
-            {"name": "door", "behavior": "fade_in"},
+            {"name": "door", "behavior": "show"},
             {"name": "vo", "behavior": "set_clip", "kind": "audio"},
-            {"name": "door", "behavior": "fade_out"},
-            {"name": "lamp", "behavior": "fade_in"},
+            {"name": "door", "behavior": "hide"},
+            {"name": "lamp", "behavior": "show"},
             {"name": "vo2", "behavior": "set_clip", "source_path": "a.wav"},
         ]
         self.assertEqual(
@@ -1524,10 +1524,10 @@ class TestBehaviors(unittest.TestCase):
         clip at the start, a template's own blocks by their anchors."""
         recipe = EffectRecipe(fade_frames=10.0)
         window = beh.Behaviors.key_window
-        self.assertEqual(window("fade_in", 100, 300, recipe=recipe), (100.0, 110.0))
-        self.assertEqual(window("fade_out", 100, 300, recipe=recipe), (290.0, 300.0))
+        self.assertEqual(window("show", 100, 300, recipe=recipe), (100.0, 110.0))
+        self.assertEqual(window("hide", 100, 300, recipe=recipe), (290.0, 300.0))
         self.assertEqual(
-            window("fade_in", 100, 300, anchor_override=0.5, recipe=recipe),
+            window("show", 100, 300, anchor_override=0.5, recipe=recipe),
             recipe.window("fade_in", 100, 300, "start", 0.5),
         )
         self.assertEqual(window("highlight", 100, 300, recipe=recipe), (100.0, 300.0))
@@ -1551,7 +1551,7 @@ class TestBehaviors(unittest.TestCase):
         before the shot."""
         recipe = EffectRecipe()
         tmpl = beh.Behaviors.load_behavior("highlight")
-        anchor = beh.Behaviors.anchor_overrides(["highlight", "fade_out"])[0]
+        anchor = beh.Behaviors.anchor_overrides(["highlight", "hide"])[0]
         self.assertIsNone(anchor)
         window = recipe.window("pulse", 100, 300, tmpl["place"], anchor)
         self.assertEqual(window, (100.0, 300.0))
@@ -1561,10 +1561,10 @@ class TestBehaviors(unittest.TestCase):
 
     def test_compute_duration_dict_and_object_forms_agree(self):
         dict_form = beh.Behaviors.compute_duration(
-            [{"name": "g", "behavior": "fade_in"}]
+            [{"name": "g", "behavior": "show"}]
         )
         obj_form = beh.Behaviors.compute_duration(
-            [BuilderObject(name="g", behaviors=["fade_in"])]
+            [BuilderObject(name="g", behaviors=["show"])]
         )
         self.assertEqual(dict_form, obj_form)
 
@@ -2139,7 +2139,7 @@ class TestManifestEngine(unittest.TestCase):
         # and the measured clip length.
         objs = [
             BuilderObject(
-                "vo", kind="audio", source_path="x.wav", behaviors=["fade_in"]
+                "vo", kind="audio", source_path="x.wav", behaviors=["show"]
             )
         ]
 
@@ -2164,7 +2164,7 @@ class TestManifestEngine(unittest.TestCase):
 
     def test_resolve_duration_pure_behavior_summation(self):
         step = BuilderStep(
-            "A01", "A", "t", "", [BuilderObject("g", behaviors=["fade_in"])]
+            "A01", "A", "t", "", [BuilderObject("g", behaviors=["show"])]
         )
         dur, beh_span, aud = ShotManifest.resolve_duration(
             step, initial_shot_length=200, fit_mode="extend_only", fps=24.0
@@ -2770,22 +2770,22 @@ class TestReconcileStatuses(_EngineCase):
         self.assertEqual(st.objects[0].unknown_behaviors, ["wobble"], "named, per behavior")
 
     def test_a_broken_behavior_over_animator_keys_is_a_conflict(self):
-        step = self._step("A01", "door", behaviors={"door": ["fade_in"]})
+        step = self._step("A01", "door", behaviors={"door": ["show"]})
         mani = self._built(step)
         mani._verify_behavior = lambda *a, **k: False
         mani._key_samples = lambda obj, behavior, s, e: [("door_opacity", 5.0)]
         (st,) = mani.assess([step])
         self.assertEqual(st.objects[0].status, "behavior_conflict")
-        self.assertEqual(st.objects[0].conflict_behaviors, ["fade_in"], "named, per behavior")
+        self.assertEqual(st.objects[0].conflict_behaviors, ["show"], "named, per behavior")
         self.assertEqual(
-            [s for _b, s, _w in StepStatus.behavior_states(st, "door", ["fade_in"])], ["conflict"]
+            [s for _b, s, _w in StepStatus.behavior_states(st, "door", ["show"])], ["conflict"]
         )
         # The same keys, claimed by the ledger, are the manifest's own: fixable.
         self.store.edit_ledger.record_authored(
             "door_opacity",
             5.0,
             self.store.shot_by_name("A01").shot_id,
-            "fade_in",
+            "show",
             "door",
         )
         (st,) = mani.assess([step])
@@ -2849,7 +2849,7 @@ class TestBehaviorOwnership(_EngineCase):
 
     def test_sync_records_what_the_applier_wrote(self):
         mani = ShotManifest(self.store)
-        step = self._step("A01", "door", behaviors={"door": ["fade_in"]})
+        step = self._step("A01", "door", behaviors={"door": ["show"]})
         shot_holder = {}
 
         def apply_behaviors():
@@ -2859,7 +2859,7 @@ class TestBehaviorOwnership(_EngineCase):
                 "applied": [
                     {
                         "object": "door",
-                        "behavior": "fade_in",
+                        "behavior": "show",
                         "shot": "A01",
                         "shot_id": shot.shot_id,
                         "keys": [("door_opacity", 1.0), ("door_opacity", 16.0)],
@@ -2878,11 +2878,11 @@ class TestBehaviorOwnership(_EngineCase):
     def test_release_takes_out_only_the_manifests_own_keys(self):
         mani = ShotManifest(self.store)
         led = self.store.edit_ledger
-        led.record_authored("door_opacity", 1.0, 7, "fade_in", "door")
-        led.record_authored("door_opacity", 90.0, 7, "fade_out", "door")
+        led.record_authored("door_opacity", 1.0, 7, "show", "door")
+        led.record_authored("door_opacity", 90.0, 7, "hide", "door")
         deleted = []
         mani._delete_keys = lambda curve, times: deleted.append((curve, list(times)))
-        self.assertEqual(mani.release_authored(7, "door", "fade_in"), 1)
+        self.assertEqual(mani.release_authored(7, "door", "show"), 1)
         self.assertEqual(deleted, [("door_opacity", [1.0])])
         self.assertEqual(led.authored(owner=7), [("door_opacity", 90.0)])
 
@@ -3051,7 +3051,7 @@ class TestEditedShotsAreKept(_EngineCase):
         names = [s.name for s in ShotManifest(self.store)._behavior_shots()]
         self.assertEqual(names, ["B01"])
         self.store.edit_ledger.record_authored(
-            "door_op", 2.0, shot.shot_id, "fade_in", "door"
+            "door_op", 2.0, shot.shot_id, "show", "door"
         )
         self.assertEqual(ShotManifest(self.store)._dropped_pairs([step]), [])
 
@@ -3330,7 +3330,7 @@ class TestDisabledBehaviors(_EngineCase):
     disable/enable certain behaviors")."""
 
     def _built_step(self):
-        step = self._step("A01", "door", behaviors={"door": ["fade_in", "fade_out"]})
+        step = self._step("A01", "door", behaviors={"door": ["show", "hide"]})
         ShotManifest(self.store).update([step], initial_shot_length=50)
         return step, self.store.shot_by_name("A01")
 
@@ -3338,14 +3338,14 @@ class TestDisabledBehaviors(_EngineCase):
         step, _shot = self._built_step()
 
         def verify(node, behavior, start, end, anchor_override=None):
-            return behavior != "fade_in"
+            return behavior != "show"
 
         (status,) = ShotManifest(self.store, disabled_behaviors=()).assess([step], verify_fn=verify)
         self.assertEqual(status.objects[0].status, "missing_behavior")
-        mani = ShotManifest(self.store, disabled_behaviors={"fade_in"})
+        mani = ShotManifest(self.store, disabled_behaviors={"show"})
         (status,) = mani.assess([step], verify_fn=verify)
         self.assertEqual(status.objects[0].status, "valid")
-        self.assertEqual(status.objects[0].behaviors, ["fade_in", "fade_out"])
+        self.assertEqual(status.objects[0].behaviors, ["show", "hide"])
 
     def test_each_behavior_entry_ships_how_its_build_made_it(self):
         """Each object's behavior in a shot's metadata says how the build made
@@ -3353,16 +3353,16 @@ class TestDisabledBehaviors(_EngineCase):
         same sheet knows per object what the delivery carries (2026-11-23:
         "behaviors work hand-in-hand when both manifests are used in the same
         pipeline, and work independently when not")."""
-        step = self._step("A01", "door", behaviors={"door": ["fade_in", "fade_out"]})
+        step = self._step("A01", "door", behaviors={"door": ["show", "hide"]})
         ShotManifest(self.store, disabled_behaviors=()).update([step], initial_shot_length=50)
         def modes():
             return {e["behavior"]: e.get(ShotManifest.MODE) for e in self.store.shot_by_name("A01").metadata["behaviors"]}
 
-        self.assertEqual(modes(), {"fade_in": "key", "fade_out": "key"})
-        ShotManifest(self.store, disabled_behaviors={"fade_in"}, marked_behaviors={"fade_out"}).update(
+        self.assertEqual(modes(), {"show": "key", "hide": "key"})
+        ShotManifest(self.store, disabled_behaviors={"show"}, marked_behaviors={"hide"}).update(
             [step], remove_missing=False
         )
-        self.assertEqual(modes(), {"fade_in": None, "fade_out": "marker"}, "off says nothing; the old mode goes")
+        self.assertEqual(modes(), {"show": None, "hide": "marker"}, "off says nothing; the old mode goes")
 
     def test_the_build_loop_skips_it_and_keeps_the_others_anchors(self):
         _step, shot = self._built_step()
@@ -3380,20 +3380,20 @@ class TestDisabledBehaviors(_EngineCase):
             return calls
 
         both = run(())
-        self.assertEqual([b for b, _a in both], ["fade_in", "fade_out"])
-        self.assertEqual(run({"fade_in"}), [both[1]], "fade_out lands where it did")
+        self.assertEqual([b for b, _a in both], ["show", "hide"])
+        self.assertEqual(run({"show"}), [both[1]], "hide lands where it did")
 
     def test_reapply_leaves_a_disabled_behavior_and_its_keys(self):
         step, shot = self._built_step()
         led = self.store.edit_ledger
-        led.record_authored("door_op", 2.0, shot.shot_id, "fade_in", "door")
-        mani = ShotManifest(self.store, disabled_behaviors={"fade_in"})
+        led.record_authored("door_op", 2.0, shot.shot_id, "show", "door")
+        mani = ShotManifest(self.store, disabled_behaviors={"show"})
         released, applied = [], []
         mani._delete_keys = lambda curve, times: released.append(curve)
         mani._apply_one = lambda node, b, s, e, **kw: applied.append(b) or []
         self.assertTrue(mani.reapply_object(shot, step.objects[0]))
-        self.assertEqual(applied, ["fade_out"])
-        self.assertEqual(released, [], "fade_in's keys stay")
+        self.assertEqual(applied, ["hide"])
+        self.assertEqual(released, [], "show's keys stay")
         self.assertEqual(led.authored(owner=shot.shot_id), [("door_op", 2.0)])
 
 
@@ -3404,7 +3404,7 @@ class TestMarkedBehaviors(_EngineCase):
     instead of keying or simply ignoring all together")."""
 
     def _built_step(self, behaviors=None):
-        behaviors = behaviors or {"door": ["fade_in", "fade_out"], "lamp": ["fade_in"]}
+        behaviors = behaviors or {"door": ["show", "hide"], "lamp": ["show"]}
         step = self._step("A01", *behaviors, behaviors=behaviors)
         ShotManifest(self.store).update([step], initial_shot_length=50)
         return step, self.store.shot_by_name("A01")
@@ -3418,26 +3418,26 @@ class TestMarkedBehaviors(_EngineCase):
 
     def test_a_marked_behavior_is_not_keyed(self):
         mani = ShotManifest(
-            self.store, disabled_behaviors={"highlight"}, marked_behaviors={"fade_in"}
+            self.store, disabled_behaviors={"highlight"}, marked_behaviors={"show"}
         )
-        self.assertEqual(mani.unkeyed_behaviors, {"fade_in", "highlight"})
+        self.assertEqual(mani.unkeyed_behaviors, {"show", "highlight"})
         both = ShotManifest(
-            self.store, disabled_behaviors={"fade_in"}, marked_behaviors={"fade_in"}
+            self.store, disabled_behaviors={"show"}, marked_behaviors={"show"}
         )
         self.assertEqual(both.marked_behaviors, frozenset(), "off wins")
 
     def test_build_marks_one_frame_per_behavior_naming_its_objects(self):
         _step, shot = self._built_step()
         records = ShotManifest(
-            self.store, marked_behaviors={"fade_in", "fade_out"}
+            self.store, marked_behaviors={"show", "hide"}
         ).place_markers()
         fade = self.store.effect_recipe.fade_frames
         got = [(m["time"], m["note"], m["data"]["objects"]) for m in self._marks()]
         self.assertEqual(
             got,
             [
-                (shot.start, "Fade · in: door, lamp", ["door", "lamp"]),
-                (shot.end - fade, "Fade · out: door", ["door"]),
+                (shot.start, "Visibility · show: door, lamp", ["door", "lamp"]),
+                (shot.end - fade, "Visibility · hide: door", ["door"]),
             ],
         )
         (first, _second) = self._marks()
@@ -3445,15 +3445,15 @@ class TestMarkedBehaviors(_EngineCase):
         self.assertFalse(first["draggable"], "the next build would put it back")
         self.assertEqual(
             sorted((r["object"], r["behavior"]) for r in records),
-            [("door", "fade_in"), ("door", "fade_out"), ("lamp", "fade_in")],
+            [("door", "hide"), ("door", "show"), ("lamp", "show")],
         )
 
     def test_a_rebuild_moves_its_markers_and_never_a_hands(self):
         _step, shot = self._built_step()
         self.store.markers.append({"time": 3.0, "note": "the animator's"})
-        ShotManifest(self.store, marked_behaviors={"fade_in"}).place_markers()
+        ShotManifest(self.store, marked_behaviors={"show"}).place_markers()
         self.store.update_shot(shot.shot_id, start=101, end=151)
-        ShotManifest(self.store, marked_behaviors={"fade_in"}).place_markers()
+        ShotManifest(self.store, marked_behaviors={"show"}).place_markers()
         self.assertEqual([m["time"] for m in self._marks()], [101.0])
         # Keyed again: its marker goes.
         ShotManifest(self.store, disabled_behaviors=()).place_markers()
@@ -3462,20 +3462,20 @@ class TestMarkedBehaviors(_EngineCase):
 
     def test_a_turned_off_behavior_keeps_its_marker(self):
         self._built_step()
-        ShotManifest(self.store, marked_behaviors={"fade_in"}).place_markers()
-        ShotManifest(self.store, disabled_behaviors={"fade_in"}).place_markers()
+        ShotManifest(self.store, marked_behaviors={"show"}).place_markers()
+        ShotManifest(self.store, disabled_behaviors={"show"}).place_markers()
         self.assertEqual(len(self._marks()), 1)
 
     def test_a_kept_shot_keeps_its_markers(self):
         _step, shot = self._built_step()
-        ShotManifest(self.store, marked_behaviors={"fade_in"}).place_markers()
+        ShotManifest(self.store, marked_behaviors={"show"}).place_markers()
         self.store.update_shot(shot.shot_id, description="the artist's note")
         ShotManifest(self.store).place_markers()
         self.assertEqual(len(self._marks()), 1, "a build leaves a kept shot alone")
 
     def test_assess_checks_the_marker_not_the_keys(self):
         step, shot = self._built_step()
-        mani = ShotManifest(self.store, marked_behaviors={"fade_in", "fade_out"})
+        mani = ShotManifest(self.store, marked_behaviors={"show", "hide"})
 
         def no_keys(*_args, **_kwargs):
             return False
@@ -3490,11 +3490,11 @@ class TestMarkedBehaviors(_EngineCase):
         # A marker the shot moved away from is missing where the build puts it.
         self.store.update_shot(shot.shot_id, start=101, end=151)
         (status,) = mani.assess([step], verify_fn=no_keys)
-        self.assertEqual(status.objects[1].broken_behaviors, ["fade_in"])
+        self.assertEqual(status.objects[1].broken_behaviors, ["show"])
 
     def test_sync_reports_what_it_marked(self):
-        step = self._step("A01", "door", behaviors={"door": ["fade_in"]})
-        mani = ShotManifest(self.store, marked_behaviors={"fade_in"})
+        step = self._step("A01", "door", behaviors={"door": ["show"]})
+        mani = ShotManifest(self.store, marked_behaviors={"show"})
         _actions, result, _assessment = mani.sync([step], initial_shot_length=50)
         self.assertEqual([r["object"] for r in result["marked"]], ["door"])
         self.assertEqual(len(self._marks()), 1)
@@ -3529,7 +3529,7 @@ class TestModesInForce(_EngineCase):
             "the build records what it built with, as the panel's Build does",
         )
         self.assertNotIn("highlight", mani.unkeyed_behaviors)
-        self.assertIn("fade_in", mani.disabled_behaviors, "every other behavior Off until chosen")
+        self.assertIn("show", mani.disabled_behaviors, "every other behavior Off until chosen")
         sentence_store = ShotStore(host=_ScenicHost())
         path, _steps = self._sheet("Step,Step Contents,Asset Names\nA01.),Highlight the door,DOOR\n", "default")
         mani, steps = ShotManifest.from_csv(path, store=sentence_store)
@@ -3730,14 +3730,14 @@ class TestFindObjectStatus(unittest.TestCase):
                 True,
                 [
                     ObjectStatus(
-                        "door", True, "missing_behavior", ["fade_out"], ["fade_out"]
+                        "door", True, "missing_behavior", ["hide"], ["hide"]
                     )
                 ],
             ),
         ]
         self.assertEqual(StepStatus.find_object(results, "door").status, "valid")
         found = StepStatus.find_object(results, "door", "A05")
-        self.assertEqual(found.broken_behaviors, ["fade_out"])
+        self.assertEqual(found.broken_behaviors, ["hide"])
         self.assertIsNone(StepStatus.find_object(results, "door", "A09"))
         self.assertIsNone(StepStatus.find_object(results, "wall"))
         self.assertIsNone(StepStatus.find_object([], "door"))
@@ -3754,7 +3754,7 @@ class TestBehaviorStates(unittest.TestCase):
     """
 
     @staticmethod
-    def _states(step, behaviors=("fade_in",), **kwargs):
+    def _states(step, behaviors=("show",), **kwargs):
         return {
             b: state
             for b, state, _words in StepStatus.behavior_states(
@@ -3764,11 +3764,11 @@ class TestBehaviorStates(unittest.TestCase):
 
     @staticmethod
     def _step(status="valid", built=True, **fields):
-        door = ObjectStatus("door", status != "missing_object", status, ["fade_in"], **fields)
+        door = ObjectStatus("door", status != "missing_object", status, ["show"], **fields)
         return StepStatus("A01", built, [door])
 
     def test_an_unbuilt_steps_behavior_is_to_build_never_built(self):
-        self.assertEqual(self._states(self._step(built=False)), {"fade_in": "to_build"})
+        self.assertEqual(self._states(self._step(built=False)), {"show": "to_build"})
         status, words = StepStatus.BEHAVIOR_STATES["to_build"]
         self.assertEqual(status, "missing_shot", "a note, as the step's own row says")
         self.assertNotIn("built", words.split(":")[0])
@@ -3777,32 +3777,32 @@ class TestBehaviorStates(unittest.TestCase):
         cases = {
             # state: (step, behavior_states' keywords)
             "built": (self._step(), {}),
-            "marked": (self._step(), {"marked": {"fade_in"}}),
-            "off": (self._step(), {"off": {"fade_in"}}),
-            "taken": (self._step(), {"sheet": ["fade_in"], "behaviors": []}),
+            "marked": (self._step(), {"marked": {"show"}}),
+            "off": (self._step(), {"off": {"show"}}),
+            "taken": (self._step(), {"sheet": ["show"], "behaviors": []}),
             "added": (self._step(), {"sheet": []}),
             "object_missing": (self._step("missing_object"), {}),
             "object_ambiguous": (self._step("ambiguous_object"), {}),
             "not_in_shot": (self._step("not_in_shot"), {}),
-            "missing": (self._step("missing_behavior", broken_behaviors=["fade_in"]), {}),
+            "missing": (self._step("missing_behavior", broken_behaviors=["show"]), {}),
             "marker_missing": (
-                self._step("missing_behavior", broken_behaviors=["fade_in"]),
-                {"marked": {"fade_in"}},
+                self._step("missing_behavior", broken_behaviors=["show"]),
+                {"marked": {"show"}},
             ),
-            "stale": (self._step("stale_behavior", stale_behaviors=["fade_in"]), {}),
+            "stale": (self._step("stale_behavior", stale_behaviors=["show"]), {}),
             "unknown": (
                 self._step(
                     "unknown_behavior",
-                    broken_behaviors=["fade_in"],
-                    unknown_behaviors=["fade_in"],
+                    broken_behaviors=["show"],
+                    unknown_behaviors=["show"],
                 ),
                 {},
             ),
             "conflict": (
                 self._step(
                     "behavior_conflict",
-                    broken_behaviors=["fade_in"],
-                    conflict_behaviors=["fade_in"],
+                    broken_behaviors=["show"],
+                    conflict_behaviors=["show"],
                 ),
                 {},
             ),
@@ -3814,8 +3814,8 @@ class TestBehaviorStates(unittest.TestCase):
         self.assertEqual(set(cases), set(StepStatus.BEHAVIOR_STATES), "every state is covered")
         for state, (step, kwargs) in cases.items():
             with self.subTest(state=state):
-                behaviors = kwargs.pop("behaviors", ["fade_in"])
-                self.assertEqual(self._states(step, behaviors, **kwargs), {"fade_in": state})
+                behaviors = kwargs.pop("behaviors", ["show"])
+                self.assertEqual(self._states(step, behaviors, **kwargs), {"show": state})
 
     def test_every_state_says_itself_at_a_status_a_panel_colours(self):
         from pythontk.core_utils.engines.shots.shot_model import SHOT_PALETTE
@@ -3829,17 +3829,17 @@ class TestBehaviorStates(unittest.TestCase):
         """The sheet's behaviors a Local Edit took away close the list, after
         the object's own, each once."""
         got = StepStatus.behavior_states(
-            self._step(), "door", ["highlight", "fade_out"], sheet=["fade_in", "highlight"]
+            self._step(), "door", ["highlight", "hide"], sheet=["show", "highlight"]
         )
         self.assertEqual(
             [(b, s) for b, s, _w in got],
-            [("highlight", "built"), ("fade_out", "added"), ("fade_in", "taken")],
+            [("highlight", "built"), ("hide", "added"), ("show", "taken")],
         )
 
     def test_an_object_this_step_did_not_assess_is_not_judged(self):
         """A step judged, its object not (renamed since): no state but an edit's."""
-        self.assertEqual(self._states(StepStatus("A01", True, [])), {"fade_in": ""})
-        self.assertEqual(self._states(StepStatus("A01", True, []), sheet=[]), {"fade_in": "added"})
+        self.assertEqual(self._states(StepStatus("A01", True, [])), {"show": ""})
+        self.assertEqual(self._states(StepStatus("A01", True, []), sheet=[]), {"show": "added"})
 
     def test_a_quiet_step_has_nothing_to_report(self):
         """``StepStatus.quiet``: what a view of the steps that need something
@@ -3875,7 +3875,7 @@ class TestStepsFromShots(unittest.TestCase):
             section_title="AILERON RIGGING",
             description="Aileron fades in",
             objects=[
-                BuilderObject(name="aileron_geo", behaviors=["fade_in"]),
+                BuilderObject(name="aileron_geo", behaviors=["show"]),
                 BuilderObject(name="wing_geo"),
                 BuilderObject(name="vo_A01", kind="audio", behaviors=["set_clip"]),
             ],
@@ -3902,7 +3902,7 @@ class TestStepsFromShots(unittest.TestCase):
         self.assertEqual(
             [(o.name, o.kind, o.behaviors) for o in got.objects],
             [
-                ("aileron_geo", "scene", ["fade_in"]),
+                ("aileron_geo", "scene", ["show"]),
                 ("wing_geo", "scene", []),
                 ("vo_A01", "audio", ["set_clip"]),
             ],
@@ -3921,8 +3921,8 @@ class TestStepsFromShots(unittest.TestCase):
             section_title="",
             description="",
             objects=[
-                BuilderObject(name="door", behaviors=["fade_in", "fade_out"]),
-                BuilderObject(name="door", behaviors=["fade_in"]),
+                BuilderObject(name="door", behaviors=["show", "hide"]),
+                BuilderObject(name="door", behaviors=["show"]),
             ],
         )
         shot = ShotBlock(
@@ -3931,7 +3931,7 @@ class TestStepsFromShots(unittest.TestCase):
         (got,), _ranges = BuilderStep.from_shots([shot])
         self.assertEqual(
             [(o.name, o.behaviors) for o in got.objects],
-            [("door", ["fade_in", "fade_out", "fade_in"])],
+            [("door", ["show", "hide", "show"])],
         )
 
     def test_a_manifest_step_with_no_assets_keeps_its_members_additional(self):
@@ -4064,8 +4064,8 @@ class TestReapplyObject(unittest.TestCase):
         self.host = self._Host(self.store)
 
     def test_places_each_behavior_where_a_build_does(self):
-        obj = BuilderObject(name="Obj", behaviors=["highlight", "fade_out"])
-        self.host.plan = {"highlight": 100, "fade_out": 285}
+        obj = BuilderObject(name="Obj", behaviors=["highlight", "hide"])
+        self.host.plan = {"highlight": 100, "hide": 285}
         self.host.reapply_object(self.shot, obj)
         self.assertEqual(self.host.anchors, [None, None])
 
@@ -4076,13 +4076,13 @@ class TestReapplyObject(unittest.TestCase):
         releasing everything first.
         Fixed: 2026-10-03
         """
-        obj = BuilderObject(name="Obj", behaviors=["fade_in", "fade_out"])
-        self.host.plan = {"fade_in": 100, "fade_out": 200}
+        obj = BuilderObject(name="Obj", behaviors=["show", "hide"])
+        self.host.plan = {"show": 100, "hide": 200}
         self.host.reapply_object(self.shot, obj)
-        self.host.plan = {"fade_in": 200, "fade_out": 300}  # the shot moved
+        self.host.plan = {"show": 200, "hide": 300}  # the shot moved
         self.host.reapply_object(self.shot, obj)
         self.assertEqual(
-            sorted(self.host.curve.items()), [(200, "fade_in"), (300, "fade_out")]
+            sorted(self.host.curve.items()), [(200, "show"), (300, "hide")]
         )
 
     def test_an_audio_row_is_keyed_by_its_track_name(self):
@@ -4113,7 +4113,7 @@ class TestReapplyObject(unittest.TestCase):
         )
         # A scene object nothing resolves is still left alone.
         self.assertFalse(
-            host.reapply_object(self.shot, BuilderObject("door", ["fade_in"]))
+            host.reapply_object(self.shot, BuilderObject("door", ["show"]))
         )
         self.assertEqual(len(calls), 1)
 
@@ -4159,7 +4159,7 @@ class TestReapplyObject(unittest.TestCase):
         host = Host(self.store)
         host.sync([step], ranges={"A01": (100.0, 300.0)})
         built = dict(host.curve)
-        self.assertEqual(built, {100.0: "fade_in", 200.0: "fade_out", 300.0: "fade_in"})
+        self.assertEqual(built, {100.0: "show", 200.0: "hide", 300.0: "show"})
         host.anchors.clear()
         (door,) = step.objects
         host.reapply_object(host.pair([step]).shots["A01"], door)
@@ -4191,7 +4191,7 @@ class TestRecipeOwnership(unittest.TestCase):
 
         def _key(self, node, behavior, start, end, **_kwargs):
             curve = f"{node}.{behavior}"
-            t = end if behavior == "fade_out" else start
+            t = end if behavior == "hide" else start
             self.curves.setdefault(curve, {})[t] = behavior
             return [(curve, t)]
 
@@ -4219,19 +4219,19 @@ class TestRecipeOwnership(unittest.TestCase):
         return status, status.objects[0]
 
     def test_a_build_stamps_its_keys_with_the_recipe(self):
-        shot = self._build(self._steps("fade_in", "highlight"))
+        shot = self._build(self._steps("show", "highlight"))
         led, recipe = self.store.edit_ledger, self.store.effect_recipe
         self.assertEqual(
             led.authored_stamps(shot.shot_id, "Door", "highlight"),
             {recipe.fingerprint("pulse")},
         )
         self.assertEqual(
-            led.authored_stamps(shot.shot_id, "Door", "fade_in"),
+            led.authored_stamps(shot.shot_id, "Door", "show"),
             {recipe.fingerprint("fade_in")},
         )
 
     def test_a_changed_recipe_flags_its_keys_until_a_build(self):
-        steps = self._steps("fade_in", "highlight")
+        steps = self._steps("show", "highlight")
         self._build(steps)
         step, door = self._door(steps)
         self.assertEqual(door.status, "valid")
@@ -4268,10 +4268,10 @@ class TestRecipeOwnership(unittest.TestCase):
         its keys in the scene for good, still claimed as the manifest's.
         Fixed: 2026-10-03
         """
-        shot = self._build(self._steps("fade_in", "highlight"))
+        shot = self._build(self._steps("show", "highlight"))
         self.assertEqual(self.host.curves["Door.highlight"], {100.0: "highlight"})
 
-        steps = self._steps("fade_in")
+        steps = self._steps("show")
         step, _door = self._door(steps)
         self.assertEqual(step.dropped_behaviors, [["Door", "highlight"]])
         self.assertTrue(step.needs_build)
@@ -4280,7 +4280,7 @@ class TestRecipeOwnership(unittest.TestCase):
         self.assertEqual(self.host.curves["Door.highlight"], {})
         led = self.store.edit_ledger
         self.assertEqual(led.authored(owner=shot.shot_id, behavior="highlight"), [])
-        self.assertEqual(len(led.authored(owner=shot.shot_id, behavior="fade_in")), 1)
+        self.assertEqual(len(led.authored(owner=shot.shot_id, behavior="show")), 1)
         self.assertFalse(self._door(steps)[0].needs_build)
 
     def test_an_object_dropped_from_its_step_releases_too(self):
@@ -4309,20 +4309,20 @@ class TestRecipeOwnership(unittest.TestCase):
                 sid, "A", "", "", objects=[BuilderObject(name, [behavior])]
             )
 
-        door, lid = step("A01", "Door", "fade_in"), step("A02", "Lid", "fade_out")
+        door, lid = step("A01", "Door", "show"), step("A02", "Lid", "hide")
         self.host.sync(
             [door, lid], ranges={"A01": (100.0, 300.0), "A02": (300.0, 500.0)}
         )
         removed = self.store.shot_by_name("A02")
-        self.assertEqual(self.host.curves["Lid.fade_out"], {500.0: "fade_out"})
+        self.assertEqual(self.host.curves["Lid.hide"], {500.0: "hide"})
         self.store.remove_shot(removed.shot_id)  # the doc dropped A02; keys stay
 
-        gate = step("A03", "Gate", "fade_in")
+        gate = step("A03", "Gate", "show")
         self.host.sync([door, gate], remove_missing=False)
         self.assertEqual(self.store.shot_by_name("A03").shot_id, removed.shot_id)
-        self.assertEqual(self.host.curves["Lid.fade_out"], {500.0: "fade_out"})
+        self.assertEqual(self.host.curves["Lid.hide"], {500.0: "hide"})
         self.assertEqual(
-            self.store.edit_ledger.authored(owner=NO_OWNER), [("Lid.fade_out", 500.0)]
+            self.store.edit_ledger.authored(owner=NO_OWNER), [("Lid.hide", 500.0)]
         )
         self.assertEqual(self.host.assess([door, gate])[1].dropped_behaviors, [])
 
@@ -4355,16 +4355,16 @@ class TestRecipeOwnership(unittest.TestCase):
                 return [(curve, t) for t in times if start <= t <= end]
 
         self.host = Host(self.store)
-        steps = self._steps("fade_in")
+        steps = self._steps("show")
         self._build(steps)
         self.store.update_effect_recipe(fade_frames=30)
         self.assertEqual(self._door(steps)[1].status, "stale_behavior")
 
-        self.host.curves["Door.fade_in"][200.0] = "animator"
+        self.host.curves["Door.show"][200.0] = "animator"
         step, door = self._door(steps)
         self.assertEqual(door.status, "behavior_conflict")
         self.assertEqual(door.stale_behaviors, [])
-        self.assertEqual(door.conflict_behaviors, ["fade_in"], "a stale one in conflict is named too")
+        self.assertEqual(door.conflict_behaviors, ["show"], "a stale one in conflict is named too")
         self.assertFalse(step.needs_build)
         # Build agrees: it leaves the fade and the animator's key alone.
         _actions, result, _status = self.host.sync(
@@ -4372,17 +4372,17 @@ class TestRecipeOwnership(unittest.TestCase):
         )
         self.assertEqual(
             [(r["object"], r["behavior"]) for r in result["skipped"]],
-            [("Door", "fade_in")],
+            [("Door", "show")],
         )
         self.assertEqual(
-            self.host.curves["Door.fade_in"], {100.0: "fade_in", 200.0: "animator"}
+            self.host.curves["Door.show"], {100.0: "show", 200.0: "animator"}
         )
 
     def test_apply_releases_what_the_doc_dropped_for_the_object(self):
-        shot = self._build(self._steps("fade_in", "highlight"))
-        self.host.reapply_object(shot, BuilderObject("Door", ["fade_in"]))
+        shot = self._build(self._steps("show", "highlight"))
+        self.host.reapply_object(shot, BuilderObject("Door", ["show"]))
         self.assertEqual(self.host.curves["Door.highlight"], {})
-        self.assertEqual(self.host.curves["Door.fade_in"], {100.0: "fade_in"})
+        self.assertEqual(self.host.curves["Door.show"], {100.0: "show"})
 
     def test_a_placed_clip_nobody_claimed_is_adopted(self):
         """A build no longer clears a whole track before placing a clip, so a
@@ -4447,7 +4447,7 @@ class TestRecipeOwnership(unittest.TestCase):
         """
         shot = self.store.define_shot("A01", 100.0, 300.0)
         entries = [
-            {"name": name, "behavior": "fade_in", "kind": "scene"}
+            {"name": name, "behavior": "show", "kind": "scene"}
             for name in ("door", "lid")
         ]
         self.store.update_shot(shot.shot_id, metadata={"behaviors": entries})
@@ -4464,7 +4464,7 @@ class TestRecipeOwnership(unittest.TestCase):
             )
         self.assertEqual(
             [(r["object"], r["behavior"]) for r in result["failed"]],
-            [("door", "fade_in")],
+            [("door", "show")],
         )
         self.assertEqual([r["object"] for r in result["applied"]], ["lid"])
 
@@ -4506,7 +4506,7 @@ class TestContentEndPlacesLikeTheBuild(unittest.TestCase):
     def test_a_spread_point_behavior_ends_the_content_where_it_is_keyed(self):
         from types import SimpleNamespace
 
-        names = ["fade_in", "fade_in"]
+        names = ["show", "show"]
         step = BuilderStep("A01", "A", "t", "", [BuilderObject("g", behaviors=names)])
         status = [ObjectStatus("g", True, "valid", behaviors=list(names))]
         scene = SimpleNamespace(start=0.0, end=100.0)
@@ -4529,7 +4529,7 @@ class TestContentEndPlacesLikeTheBuild(unittest.TestCase):
         store = ShotStore()
         store.define_shot("A02", 0, 200, objects=["pan"])
         step = BuilderStep(
-            "A02", "A", "t", "", [BuilderObject("pan", behaviors=["fade_in"])]
+            "A02", "A", "t", "", [BuilderObject("pan", behaviors=["show"])]
         )
         [status] = ShotManifest(store).assess(
             [step],
@@ -4557,7 +4557,7 @@ class TestContentEndPlacesLikeTheBuild(unittest.TestCase):
         store = ShotStore()
         store.define_shot("A02", 0, 200, objects=["pan"])
         step = BuilderStep(
-            "A02", "A", "t", "", [BuilderObject("pan", behaviors=["fade_in"])]
+            "A02", "A", "t", "", [BuilderObject("pan", behaviors=["show"])]
         )
         [status] = _Hosted(store).assess(
             [step],
@@ -5022,7 +5022,7 @@ class TestManifestPlacement(unittest.TestCase):
     def test_a_rows_own_helper_is_named_by_its_purpose_step_and_target_alike_in_every_tool(self):
         self.assertEqual(self.P.helper_name("view", "B02", "ROOT|CABINET|DOOR_GRP"), "CAM_B02_DOOR_GRP")
         self.assertEqual(self.P.helper_name("stand", "C05A", "SCREWS_GRP"), "VIEW_C05A_SCREWS_GRP")
-        self.assertEqual(self.P.helper_name("point", "B03.5", "panel light #2"), "ARROW_B03_5_panel_light_2", "a legal name")
+        self.assertEqual(self.P.helper_name("point", "B03.5", "panel light #2"), "POINT_B03_5_panel_light_2", "a legal name")
         self.assertNotEqual(self.P.helper_name("view", "C09", "DIALS"), self.P.helper_name("view", "C09", "LIGHT"),
                             "two pictures in a step: two names")
         # Bug: only the leaf was kept, so two targets sharing it in a step named one helper. The name keeps the
@@ -5071,16 +5071,16 @@ class TestThePlacingRowsHelpers(_EngineCase):
         starter = Path(pythontk.__file__).parent / "core_utils/engines/shots/manifest/mapping/starters/interactive.csv"
         steps = mapping_mod.Mapping.resolve(str(starter), name="interactive")
         placing = {r["word"]: r["places"] for s in steps for r in s.rows if r.get("places")}
-        self.assertEqual(placing, {"teleport": "stand", "indicate": "point", "pip": "view"},
+        self.assertEqual(placing, {"travel": "stand", "indicate": "point", "picture": "view"},
                          "as the template declares each word (its 'places'), and nothing else places")
 
     def test_two_rows_of_one_placing_word_and_target_in_a_step_are_told_apart_only_by_a_where(self):
         from pythontk.core_utils.engines.shots.manifest.manifest_actions import ManifestActions
 
-        actions = {"pip": {"places": "view", "settings": {"where": {"type": "object"}}}, "highlight": {}}
-        rows = [{"word": "pip", "assets": ["DIALS"], "settings": {}},
-                {"word": "pip", "assets": ["DIALS"], "settings": {}},
-                {"word": "pip", "assets": ["DIALS"], "settings": {"where": "CAM_WIDE"}},
+        actions = {"picture": {"places": "view", "settings": {"where": {"type": "object"}}}, "highlight": {}}
+        rows = [{"word": "picture", "assets": ["DIALS"], "settings": {}},
+                {"word": "picture", "assets": ["DIALS"], "settings": {}},
+                {"word": "picture", "assets": ["DIALS"], "settings": {"where": "CAM_WIDE"}},
                 {"word": "highlight", "assets": ["DIALS"], "settings": {}},
                 {"word": "highlight", "assets": ["DIALS"], "settings": {}}]
         found = [(n, issue[1]) for n, issue, warn in ManifestActions.check_step(rows, actions, {}, "A01", ["A01"]) if not warn]
@@ -5089,39 +5089,39 @@ class TestThePlacingRowsHelpers(_EngineCase):
 
     def test_the_check_keys_on_the_helpers_name_so_two_rows_sharing_one_are_said(self):
         """Bug: the check keyed on the Target as written while the helper kept
-        only its leaf, so ``pip PANEL|LATCH`` and ``pip DOOR|LATCH`` passed and
+        only its leaf, so ``picture PANEL|LATCH`` and ``picture DOOR|LATCH`` passed and
         a build made one camera for both, silent of the other.
         Fixed: 2026-11-26"""
         from pythontk.core_utils.engines.shots.manifest.manifest_actions import ManifestActions
 
-        actions = {"pip": {"places": "view"}, "snap": {"places": "view"}}
-        told = [{"word": "pip", "assets": ["PANEL|LATCH"], "settings": {}},
-                {"word": "pip", "assets": ["DOOR|LATCH"], "settings": {}}]
+        actions = {"picture": {"places": "view"}, "snap": {"places": "view"}}
+        told = [{"word": "picture", "assets": ["PANEL|LATCH"], "settings": {}},
+                {"word": "picture", "assets": ["DOOR|LATCH"], "settings": {}}]
         self.assertEqual(ManifestActions.check_step(told, actions, {}, "A01", ["A01"]), [], "two targets, two helpers")
-        shared = [{"word": "pip", "assets": ["LATCH"], "settings": {}},
+        shared = [{"word": "picture", "assets": ["LATCH"], "settings": {}},
                   {"word": "snap", "assets": ["LATCH"], "settings": {}}]
         found = [(n, issue[1]) for n, issue, _ in ManifestActions.check_step(shared, actions, {}, "A01", ["A01"])]
         self.assertEqual([n for n, _ in found], [1], "two words of one purpose would be one helper")
         self.assertIn("CAM_A01_LATCH", found[0][1])
 
     def test_a_row_that_names_no_helper_gets_its_own_by_the_derived_name(self):
-        steps = [self._rows("A01", {"word": "pip", "places": "view", "assets": ["PANEL|LATCH"], "settings": {}},
-                            {"word": "pip", "places": "view", "assets": ["DIALS"], "settings": {}},
-                            {"word": "teleport", "places": "stand", "assets": ["DOOR"], "settings": {"where": "VIEW_FRONT"}})]
+        steps = [self._rows("A01", {"word": "picture", "places": "view", "assets": ["PANEL|LATCH"], "settings": {}},
+                            {"word": "picture", "places": "view", "assets": ["DIALS"], "settings": {}},
+                            {"word": "travel", "places": "stand", "assets": ["DOOR"], "settings": {"where": "VIEW_FRONT"}})]
         mani = self._Manifest(self.store)
         self.assertEqual(mani.place_helpers(steps)["made"], ["CAM_A01_LATCH", "CAM_A01_DIALS", "VIEW_FRONT"],
                          "two pictures in one step: two cameras; a named one keeps its name")
 
     def test_two_targets_sharing_a_leaf_get_a_helper_each_and_a_name_two_rows_share_is_said(self):
         """Bug: ``place_helpers`` skipped a helper name it had seen, unsaid:
-        ``pip PANEL|LATCH`` and ``pip DOOR|LATCH`` were one camera.
+        ``picture PANEL|LATCH`` and ``picture DOOR|LATCH`` were one camera.
         Fixed: 2026-11-26"""
-        steps = [self._rows("A01", {"word": "pip", "places": "view", "assets": ["PANEL|LATCH"], "settings": {}},
-                            {"word": "pip", "places": "view", "assets": ["DOOR|LATCH"], "settings": {}},
-                            {"word": "pip", "places": "view", "assets": ["DIALS"], "settings": {}},
-                            {"word": "pip", "places": "view", "assets": ["DIALS"], "settings": {}},
-                            {"word": "teleport", "places": "stand", "assets": ["DOOR"], "settings": {"where": "VIEW_FRONT"}},
-                            {"word": "teleport", "places": "stand", "assets": ["LID"], "settings": {"where": "VIEW_FRONT"}})]
+        steps = [self._rows("A01", {"word": "picture", "places": "view", "assets": ["PANEL|LATCH"], "settings": {}},
+                            {"word": "picture", "places": "view", "assets": ["DOOR|LATCH"], "settings": {}},
+                            {"word": "picture", "places": "view", "assets": ["DIALS"], "settings": {}},
+                            {"word": "picture", "places": "view", "assets": ["DIALS"], "settings": {}},
+                            {"word": "travel", "places": "stand", "assets": ["DOOR"], "settings": {"where": "VIEW_FRONT"}},
+                            {"word": "travel", "places": "stand", "assets": ["LID"], "settings": {"where": "VIEW_FRONT"}})]
         placed = self._Manifest(self.store).place_helpers(steps)
         self.assertEqual(placed["made"], ["CAM_A01_PANEL_LATCH", "CAM_A01_DOOR_LATCH", "CAM_A01_DIALS", "VIEW_FRONT"])
         self.assertEqual([n for n, _ in placed["skipped"]], ["CAM_A01_DIALS"], "a name two rows derive is said; one written twice is one object")
@@ -5130,32 +5130,32 @@ class TestThePlacingRowsHelpers(_EngineCase):
     def test_a_build_makes_the_helper_a_placing_row_names_and_keeps_one_the_scene_has(self):
         steps = [
             self._rows("A01",
-                       {"word": "teleport", "places": "stand", "assets": ["DOOR"], "settings": {"where": "VIEW_A01"}},
-                       {"word": "pip", "places": "view", "assets": ["LATCH"], "settings": {"where": "CAM_A01", "until": "A02"}},
-                       {"word": "indicate", "places": "point", "assets": ["LATCH"], "settings": {}},  # names none: its own, ARROW_A01_LATCH
+                       {"word": "travel", "places": "stand", "assets": ["DOOR"], "settings": {"where": "VIEW_A01"}},
+                       {"word": "picture", "places": "view", "assets": ["LATCH"], "settings": {"where": "CAM_A01", "until": "A02"}},
+                       {"word": "indicate", "places": "point", "assets": ["LATCH"], "settings": {}},  # names none: its own, POINT_A01_LATCH
                        {"word": "highlight", "places": "", "assets": ["LATCH"], "settings": {}}),
             self._rows("A02",
-                       {"word": "teleport", "places": "stand", "assets": ["DOOR"], "settings": {"where": "VIEW_A01"}},  # the same viewpoint again
-                       {"word": "indicate", "places": "point", "assets": ["BOLT"], "settings": {"where": "ARROW_BOLT"}},
-                       {"word": "pip", "places": "view", "assets": ["GONE"], "settings": {"where": "CAM_A02"}},
-                       {"word": "pip", "places": "view", "assets": [], "settings": {"where": "CAM_NONE"}}),
+                       {"word": "travel", "places": "stand", "assets": ["DOOR"], "settings": {"where": "VIEW_A01"}},  # the same viewpoint again
+                       {"word": "indicate", "places": "point", "assets": ["BOLT"], "settings": {"where": "POINT_BOLT"}},
+                       {"word": "picture", "places": "view", "assets": ["GONE"], "settings": {"where": "CAM_A02"}},
+                       {"word": "picture", "places": "view", "assets": [], "settings": {"where": "CAM_NONE"}}),
         ]
-        mani = self._Manifest(self.store, have={"ARROW_BOLT"})
+        mani = self._Manifest(self.store, have={"POINT_BOLT"})
         placed = mani.place_helpers(steps)
-        self.assertEqual(placed["made"], ["VIEW_A01", "CAM_A01", "ARROW_A01_LATCH"], "each made once, under the name its row gives")
+        self.assertEqual(placed["made"], ["VIEW_A01", "CAM_A01", "POINT_A01_LATCH"], "each made once, under the name its row gives")
         self.assertEqual([(n, p, t) for n, p, t, _ in mani.made][:2], [("VIEW_A01", "stand", "DOOR"), ("CAM_A01", "view", "LATCH")])
-        self.assertEqual(placed["kept"], ["ARROW_BOLT"], "one the scene has is the truth: never made again, never moved")
+        self.assertEqual(placed["kept"], ["POINT_BOLT"], "one the scene has is the truth: never made again, never moved")
         self.assertEqual([name for name, _ in placed["skipped"]], ["CAM_A02", "CAM_NONE"], "what could not be made is said, with why")
 
         mani.have.update(placed["made"])
         again = mani.place_helpers(steps)
-        self.assertEqual((again["made"], sorted(again["kept"])), ([], ["ARROW_A01_LATCH", "ARROW_BOLT", "CAM_A01", "VIEW_A01"]),
+        self.assertEqual((again["made"], sorted(again["kept"])), ([], ["CAM_A01", "POINT_A01_LATCH", "POINT_BOLT", "VIEW_A01"]),
                          "a second build makes nothing")
 
     def test_a_word_turned_off_places_nothing_and_a_sync_reports_what_it_placed(self):
-        steps = [self._rows("A01", {"word": "pip", "places": "view", "assets": ["LATCH"], "settings": {"where": "CAM_A01"}},
-                            {"word": "teleport", "places": "stand", "assets": ["DOOR"], "settings": {"where": "VIEW_A01"}})]
-        off = self._Manifest(self.store, disabled_behaviors=["pip"])
+        steps = [self._rows("A01", {"word": "picture", "places": "view", "assets": ["LATCH"], "settings": {"where": "CAM_A01"}},
+                            {"word": "travel", "places": "stand", "assets": ["DOOR"], "settings": {"where": "VIEW_A01"}})]
+        off = self._Manifest(self.store, disabled_behaviors=["picture"])
         self.assertEqual(off.place_helpers(steps)["made"], ["VIEW_A01"], "the picture's word is off: its camera is left to the tool that runs the steps")
         _, result, _ = self._Manifest(self.store).sync(steps)
         self.assertEqual(result["placed"]["made"], ["CAM_A01", "VIEW_A01"], "in the order its rows name them")

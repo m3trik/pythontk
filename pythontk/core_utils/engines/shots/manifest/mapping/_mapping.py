@@ -24,7 +24,7 @@ Example ``my_project.json``::
         },
         "default_behaviors": {
             "audio": ["set_clip"],
-            "scene": ["fade_in"]
+            "scene": ["show"]
         }
     }
 
@@ -126,6 +126,18 @@ class _MappingInternal(object):
 
         post = _MappingInternal._chain(processors) if processors else None
         return col_map, post
+
+    @staticmethod
+    def _resolved(data: Dict[str, Any]) -> Dict[str, Any]:
+        """*data* with each word's settings declared whole (``ManifestActions.resolve``), so
+        a reader of the parsed mapping reads one declaration per setting; *data* is not changed."""
+        from pythontk.core_utils.engines.shots.manifest.manifest_actions import ManifestActions
+
+        columns = (data or {}).get("columns") or {}
+        if not columns.get("actions"):
+            return data
+        resolved = ManifestActions.resolve(columns["actions"], columns.get("settings") or {})
+        return dict(data, columns=dict(columns, actions=resolved))
 
     @staticmethod
     def _build_column_map(columns: Dict[str, Any]) -> ColumnMap:
@@ -376,7 +388,7 @@ class _MappingInternal(object):
 
         ``cfg`` maps object kinds to behavior name lists::
 
-            {"audio": ["set_clip"], "scene": ["fade_in", "fade_out"]}
+            {"audio": ["set_clip"], "scene": ["show", "hide"]}
 
         Only behaviors not already present on the object are added.
         """
@@ -534,7 +546,7 @@ class Mapping(_MappingInternal):
         MappingSpec.validate(data).raise_or_warn(
             prefix=f"mapping {name!r}: ", logger=log
         )
-        return data
+        return _MappingInternal._resolved(data)
 
     @staticmethod
     def option_specs(mapping: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:

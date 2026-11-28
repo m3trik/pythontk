@@ -113,11 +113,11 @@ class _ManifestEditsInternal(object):
     @staticmethod
     def _asked_behaviors(steps: Iterable[BuilderStep], types: Iterable[str]) -> frozenset:
         """The behavior types of *types* the sheet's *steps* ask for by name:
-        the word of each row written in cells (``highlight``, ``fade_out``) and,
+        the word of each row written in cells (``highlight``, ``hide``) and,
         in a step written in cells, each audio object's behaviors (its
         template's Audio option gives the clip: a person chose it for the
         sheet) -- each with the rest of its family (``Behaviors.families``:
-        ``fade_in`` asks for ``fade_out`` too, one choice).  A behavior a
+        ``show`` asks for ``hide`` too, one choice).  A behavior a
         sentence only implies is no ask.
         """
         from pythontk.core_utils.engines.shots.manifest.behaviors import Behaviors

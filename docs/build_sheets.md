@@ -44,7 +44,7 @@ A sheet is one table with two kinds of row.
 | Step | Step Name | Voice | Action | Target | With | Clip | Label | To | Settings |
 |:---|:---|:---|:---|:---|:---|:---|:---|:---|:---|
 | `A01` | Unlock the latches | Unlock both latches with the key. | | | | | | | |
-| | | | `teleport` | `UNIT` | | | | | `where=VIEW_FRONT` |
+| | | | `travel` | `UNIT` | | | | | `where=VIEW_FRONT` |
 | | | | `highlight` | `LATCHES` | | | | | |
 | | | | `take` | `KEY` | | | | | |
 | | | | `use` | `LATCH_UPPER` | `KEY` | `A01_1` | | | |
@@ -67,12 +67,12 @@ issue (*a step's row holds no action: write this one on the row below it*).
 | Voice | step | The narration, as spoken |
 | Placard | step | (Interactive) what the user reads; empty: nothing shown |
 | Audio | step | The narration's clip file, where one exists |
-| Action | action | One word from the template's list (`use`, `highlight`, `button`); `Fade In` reads as `fade_in` |
+| Action | action | One word from the template's list (`use`, `highlight`, `button`); `Pick Up` reads as `pick_up` |
 | Target | action | The parts the action is about, by scene name, one per line |
 | With | action | What it is done with: the tool in hand |
 | Clip | action | The take the row belongs to: the one a `use` or `play` row plays, or the one a look is keyed into |
 | Members | action | What the take animates; empty: the row's Target and With |
-| Label | action | The words it shows: a button's, a typed answer, a checklist item, a caption |
+| Label | action | The words it shows: a button's, a typed answer, a list item, a caption |
 | To | both | Where it goes: `next`, a step's ID, `restart`, `exit`, `retry`. On a step row: where the step goes by itself once done (empty: the next step) |
 | Settings | both | `name=value; name=value`, over the word's defaults. On a step row: the step's own, where its template declares any (`step_settings`) |
 | Notes | both | Comments for people. Never read; a sheet may leave the column out |
@@ -91,16 +91,18 @@ To, Settings: a template's `cell_marks`); any other is [a sheet of sentences](#a
 A template declares its words (its `actions`): for each, the cells it takes and needs, its settings,
 the moment it happens at and the sentence a row of it reads as (`ManifestActions`; the declaration's
 reference is `MAPPING_FORMAT.md`, written beside a user's templates). Nothing in code knows a word: a
-project's own template adds its own.
+project's own template adds its own. A word is named for what its family does at its most general
+(`indicate`, `show`, `travel`, `picture`); one form of it (an arrow, a fade, a teleport) is a setting's
+value or the reader's to build, never a word of its own.
 
 The Interactive template's seventeen:
 
 | Family | Word | Happens | Cells (needed in bold) | Settings |
 |:---|:---|:---|:---|:---|
 | Attention | `highlight` | as the step starts | **Target**, Clip | `style` (auto, pulse, steady), `color` |
-| | `indicate` | start | **Target** | `size`, `color`, `where` (the arrow) |
-| Visibility | `fade_in` | start | **Target**, Clip | `fade` (seconds) |
-| | `fade_out` | as the step ends | **Target**, Clip | `fade` |
+| | `indicate` | start | **Target** | `style` (flat, solid), `size`, `color`, `where` (where its tip rests) |
+| Visibility | `show` | start | **Target**, Clip | `fade` (seconds; 0: at once) |
+| | `hide` | as the step ends | **Target**, Clip | `fade` |
 | State | `set` | start | **Target** | `state` (required) |
 | Hand | `take` | the user | **Target** | |
 | | `return` | end | **Target** | |
@@ -109,13 +111,13 @@ The Interactive template's seventeen:
 | Flow | `button` | the user | **Label**, **To** | `when` (end, start), `reply` |
 | | `select` | the user | **Target**, To | |
 | | `answer` | the user | **Label** (`*`: any other), **To** | |
-| Movement | `teleport` | start | Target, what the user is brought to face; or `where` alone | `when` (start, end), `ring` (a span), `where` (the viewpoint) |
-| Screen | `pip` | start | **Target**, Label | `until` (a span), `where` (the camera) |
-| | `checklist` | start | Label, an item a line | `until` (a span: the step it leaves the placard at) |
-| | `check` | end | **Label** | |
+| Movement | `travel` | start | Target, what the user is brought to face; or `where` alone | `when` (start, end), `ring` (a span), `where` (the viewpoint) |
+| Screen | `picture` | start | **Target**, Label | `until` (a span), `where` (the camera) |
+| | `list` | start | Label, an item a line | `until` (a span: the step it leaves the placard at) |
+| | `tick` | end | **Label** | |
 | Note | `note` | never | | |
 
-The Linear template declares the three the Shot Manifest keys (`highlight`, `fade_in`, `fade_out`), and
+The Linear template declares the three the Shot Manifest keys (`highlight`, `show`, `hide`), and
 a row with a Target and no Action lists a member of the step's shot that nothing is keyed on. A word a
 reader does not build is left alone: the Shot Manifest keys the three and reads the rest as the step's
 script.
@@ -129,7 +131,9 @@ person reads the procedure without anyone having written it twice.
 A word is a combination of five parts: what starts it (a trigger), what must be true first (a
 requirement: its tool in hand, a take finished), what it does (an effect), what a shown thing looks like
 (a look) and where a placed thing sits (a place). A setting belongs to its part, so a name means one
-thing in every word:
+thing in every word. A template declares each setting once, in its `settings`: its type, its part (its
+`primitive`) and its bounds; a word lists the ones it takes, each with only its own choices, default
+and whether it is required, and the template refuses a word that restates a setting otherwise:
 
 | Part | Its settings |
 |:---|:---|
@@ -137,7 +141,7 @@ thing in every word:
 | Requirement | `after` (a take of the step that must finish first); the tool in hand is the row's With |
 | Effect | `until` and `ring` (how long a shown thing lasts), `state`, `speed`, `reply` |
 | Look | `color`, `size`, `style`, `fade` (seconds) |
-| Place | `where`: the object a placing word happens at (a viewpoint, an arrow, a camera), used exactly as it stands; empty, the row's own helper, made once. Never a position or a hint. Empty, the row's own helper is named from what the step says, alike in every tool (the Shot Manifest makes it under that name; a reader that runs the steps takes the delivered one, else makes its own under it): `CAM_<step>_<target>` for a picture, `VIEW_<step>_<target>` for a viewpoint, `ARROW_<step>_<target>` for an arrow, the target by its node's own name, or, where another target of the step ends with that name, by the fewest names of its path no other ends with (`PANEL\|LATCH` beside `DOOR\|LATCH`: `CAM_A01_PANEL_LATCH`). Two rows of one purpose about one target in a step must name theirs. A name the scene does not have yet is made by the Shot Manifest's build under that name: a camera for a picture, a locator for a viewpoint or an arrow's tip, at a plain first pose (beside what the row is about, read from its bounds alone), there to be moved; one the scene has is never moved by a build |
+| Place | `where`: the object a placing word happens at (a viewpoint, the spot a pointer's tip rests at, a camera), used exactly as it stands; empty, the row's own helper, made once. Never a position or a hint. Empty, the row's own helper is named from what the step says, alike in every tool (the Shot Manifest makes it under that name; a reader that runs the steps takes the delivered one, else makes its own under it): `CAM_<step>_<target>` for a picture, `VIEW_<step>_<target>` for a viewpoint, `POINT_<step>_<target>` for a pointer's tip, the target by its node's own name, or, where another target of the step ends with that name, by the fewest names of its path no other ends with (`PANEL\|LATCH` beside `DOOR\|LATCH`: `CAM_A01_PANEL_LATCH`). Two rows of one purpose about one target in a step must name theirs. A name the scene does not have yet is made by the Shot Manifest's build under that name: a camera for a picture, a locator for a viewpoint or a pointer's tip, at a plain first pose (beside what the row is about, read from its bounds alone), there to be moved; one the scene has is never moved by a build |
 
 A value is held to its setting's type: text, number, flag (`on`, `off`), choice, color (`#rgb` or
 `#rrggbb`), clip (a take its step plays), step (a step's ID), span, object (one object's exact name, or
@@ -161,7 +165,7 @@ a step whose buttons go `next` (right) or `retry` (wrong: the step stays and say
 ## Order within a step
 
 A step has three moments: as it starts, while the user acts, as it ends. Each word belongs to one
-(the table's *Happens*; `when=` moves a button or a teleport).
+(the table's *Happens*; `when=` moves a button or a travel).
 
 - **Order lives between steps.** Inside a step the user's rows are all open at once and the step
   waits for all of them (two latches, either order). To force an order between two actions, make them
@@ -188,7 +192,7 @@ and, once used, never changes: a take added beside `A05` is `A05_2`. Another too
 own take names: the check warns, never refuses.
 
 **Clip says which take a row belongs to.** A `use` or `play` row plays it. A look (`highlight`,
-`fade_in`, `fade_out`) with a Clip is keyed into that take; with none it belongs to its step. A row
+`show`, `hide`) with a Clip is keyed into that take; with none it belongs to its step. A row
 that moves nothing leaves the cell empty.
 
 A look that belongs to its step happens at the step's own moment. In a sheet played straight through
@@ -226,7 +230,7 @@ header, with its fix.
 - A take two rows play; a look or an `after` naming a take its step does not play; and, as a warning, a
   take not named for its step (its ID, or its ID and `_<n>`), and a span (`until`, `ring`) naming a step the sheet is past by then
   (what the row shows would stay).
-- A step row holding an action; a `teleport` naming neither a Target nor a `where`.
+- A step row holding an action; a `travel` naming neither a Target nor a `where`.
 - A row no step reads, said with its row in the sheet: a second step of one ID, a Step cell that is
   neither a step's ID nor a section (`a02`, `A 02`, `Section C - Close`), an action row above its
   section's first step. Such a row and the rows under it are left out, never read into the step above.
@@ -247,19 +251,19 @@ sheets took before the cells, still read so that one can be rewritten in its own
 | Text On Placard | (Interactive) what the user reads during the step |
 | Hint | (Interactive) guidance, one line each: `-Bouncing arrow pointing at ...` |
 
-The phrases the Shot Manifest knows are the behavior templates' (highlight, fade in, fade out): their
-`detect` patterns find a behavior anywhere in a row.
+The phrases the Shot Manifest knows are the behavior templates' (`highlight`, `show`, `hide`): their
+`detect` patterns find a behavior anywhere in a row, in the order the row says them.
 
 | Phrase | Keys |
 |:---|:---|
 | `Highlight <objects>` | A highlight across the step |
-| `<object> fades in` | A fade in at the step's start |
-| `<object> fades out` | A fade out at the step's end |
+| `<object> fades in` | `show`: a fade in at the step's start |
+| `<object> fades out` | `hide`: a fade out at the step's end |
 
 Names here are matched, not exact: scene names are `UPPER_CASE` with underscores (`RED_DOOR_LOCKS`), the
 build suffixes `_GRP`, `_GEO`, `_LOC` and the like are ignored (`KEYS` names the chain
 `KEYS_GRP > KEYS > KEYS_GEO`), and a row's words are matched only against the names that row lists. The
-inline-name pattern, the build suffixes, the viewpoint pattern and the arrow pattern are each reader's
+inline-name pattern, the build suffixes, the viewpoint pattern and the pointer pattern are each reader's
 own name rules, data beside the reader. A reader's own phrases (a task kit's: taking a tool,
 playing a take, branching) are that reader's, in its own documentation.
 

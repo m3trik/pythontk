@@ -2,9 +2,9 @@
 # coding=utf-8
 """ManifestPlacement -- the first pose of a helper a placing row is given where the scene has none.
 
-A word that places something (a build sheet's ``teleport``, ``indicate``, ``pip``: its ``places``)
-happens at an object, named in the row's ``where``: a viewpoint the user stands on, an arrow's
-tip, a picture's camera. That object is the truth, and a person moves it; where a scene has none
+A word that places something (a build sheet's ``travel``, ``indicate``, ``picture``: its ``places``)
+happens at an object, named in the row's ``where``: a viewpoint the user stands on, the spot a
+pointer's tip rests at, a picture's camera. That object is the truth, and a person moves it; where a scene has none
 yet, a tool makes it once and this says where: a plain first pose, read from bounds alone, with
 no line of sight and no guess at what a part is. Declared once here, host-free; each host answers
 one question (an object's bounds) and makes the object.
@@ -24,14 +24,14 @@ class ManifestPlacement:
     """The plain first pose of a placing row's helper, by what it is placed for."""
 
     #: What a helper is, by the purpose it is placed for (``ManifestActions.PURPOSES``): a
-    #: picture is taken from a camera; a viewpoint and an arrow's tip are plain locators.
+    #: picture is taken from a camera; a viewpoint and a pointer's tip are plain locators.
     #: A held part's place (``hold``) is its own pose in its take, so none is made for it.
     KINDS: Dict[str, str] = {"stand": "locator", "point": "locator", "view": "camera"}
-    #: What a helper rides, by its purpose: an arrow and a camera are children of what
+    #: What a helper rides, by its purpose: a pointer and a camera are children of what
     #: they are for (a door swung open carries them); a viewpoint stands under the delivery.
     RIDES: Dict[str, str] = {"stand": "delivery", "point": "target", "view": "target"}
     #: The first word of a helper's own name, by its purpose (:meth:`helper_name`).
-    PREFIXES: Dict[str, str] = {"stand": "VIEW", "point": "ARROW", "view": "CAM"}
+    PREFIXES: Dict[str, str] = {"stand": "VIEW", "point": "POINT", "view": "CAM"}
 
     @staticmethod
     def _parts(name: Any) -> list:
@@ -140,7 +140,7 @@ class ManifestPlacement:
     #: The placement's own measures (``ptk.SpotPlacement``), named here for what a helper is made with.
     STAND_OFF = SpotPlacement.STAND_OFF
     GAP = SpotPlacement.GAP
-    ARROW = SpotPlacement.ARROW
+    POINTER = SpotPlacement.ARROW
     VIEW_ANGLE = SpotPlacement.VIEW_ANGLE
     MARGIN = SpotPlacement.MARGIN
     LEAST_FRAMED = SpotPlacement.LEAST_FRAMED
@@ -163,8 +163,8 @@ class ManifestPlacement:
         owners: Sequence[Any] = (),
     ) -> Tuple[Vector, Vector]:
         """Where a helper placed for *purpose* first stands, and what it faces: ``ptk.SpotPlacement``, the one
-        placement every tool uses (``stand``: on the floor outside the target, facing it level; ``point``: an
-        arrow's tip by it, above where free; ``view``: a camera that frames it, seeing the most of it).
+        placement every tool uses (``stand``: on the floor outside the target, facing it level; ``point``: a
+        pointer's tip by it, above where free; ``view``: a camera that frames it, seeing the most of it).
 
         Parameters:
             purpose: ``stand``, ``point`` or ``view``.

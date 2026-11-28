@@ -143,7 +143,7 @@ class Behaviors(_BehaviorsInternal):
         build) avoid redundant disk I/O and JSON parsing.
 
         Parameters:
-            name: Template name without extension (e.g. ``"fade_in"``).
+            name: Template name without extension (e.g. ``"show"``).
             search_path: Directory to search. When given, only that directory is
                 used (back-compat / tests). When omitted, the two-tier set is used:
                 a user template shadows a built-in of the same name.
@@ -233,36 +233,51 @@ class Behaviors(_BehaviorsInternal):
     def detect(text: str, table: Optional[Dict[str, List[Any]]] = None) -> List[str]:
         """Behaviors whose template ``detect`` phrases occur in *text*.
 
-        Each template is tested independently, in name order, so text naming
-        both "fades in" and "fades out" yields ``["fade_in", "fade_out"]``.
-        A user template brings its own phrases.  *table* is a
-        :meth:`phrase_table` to reuse (built here when omitted).
+        Each template is tested independently, and they come back in the
+        order the text names them (where its first phrase ends, so a phrase
+        led by its object reads where its verb is; a tie by name),
+        so text naming "fades in", then "fades out" yields ``["show", "hide"]``
+        -- the doc order an object's point behaviors are spread in.  A user
+        template brings its own phrases.  *table* is a :meth:`phrase_table`
+        to reuse (built here when omitted).
         """
         if not text:
             return []
         table = Behaviors.phrase_table() if table is None else table
-        return [name for name, rxs in table.items() if any(r.search(text) for r in rxs)]
+        found = []
+        for name, rxs in table.items():
+            at = [m.end() for m in (r.search(text) for r in rxs) if m]
+            if at:
+                found.append((min(at), name))
+        return [name for _, name in sorted(found)]
 
     @staticmethod
     def from_cell(cell: str, table: Optional[Dict[str, List[Any]]] = None) -> List[str]:
         """Behaviors listed in one behaviors-column cell, in order.
 
         Items split on commas, semicolons and lines.  Each is a template name
-        (``"Fade In"`` -> ``fade_in``) or, failing that, phrases a template
-        detects (``"fades away"`` -> ``fade_out``).  An item matching neither
+        (``"Show"`` -> ``show``), a template's label as a panel writes it
+        (:meth:`label`: ``"Visibility · hide"`` -> ``hide``) or, failing
+        those, phrases a template detects (``"fades away"`` -> ``hide``).  An item matching none
         is kept, spelled as a name, so Assess can report it rather than lose
         it.
         """
         import re
 
         table = Behaviors.phrase_table() if table is None else table
+        labels = {Behaviors.label(n).lower(): n for n in table}
         out: List[str] = []
         for item in re.split(r"[,;\n]", cell or ""):
             item = item.strip()
             if not item:
                 continue
             name = re.sub(r"[^0-9a-z]+", "_", item.lower()).strip("_")
-            names = [name] if name in table else Behaviors.detect(item, table) or [name]
+            if name in table:
+                names = [name]
+            elif item.lower() in labels:
+                names = [labels[item.lower()]]
+            else:
+                names = Behaviors.detect(item, table) or [name]
             out.extend(n for n in names if n not in out)
         return out
 
@@ -396,7 +411,7 @@ class Behaviors(_BehaviorsInternal):
     def label(name: str) -> str:
         """A behavior's name as people read it: ``"highlight"`` ->
         ``"Highlight"``; a template of a family (:meth:`family_of`) its
-        family's, then how it sets it -- ``"fade_in"`` -> ``"Fade · in"``."""
+        family's, then how it sets it -- ``"show"`` -> ``"Visibility · show"``."""
         if not name:
             return ""
         family, variant = Behaviors._family_variant(name)
@@ -407,7 +422,7 @@ class Behaviors(_BehaviorsInternal):
     @staticmethod
     def family_of(name: str) -> str:
         """The behavior *name* is a way of setting (its template's ``family``:
-        ``"fade_in"`` -> ``"fade"``), else *name* itself -- what a panel offers
+        ``"show"`` -> ``"visibility"``), else *name* itself -- what a panel offers
         one Key / Marker / Off choice for."""
         return Behaviors._family_variant(name)[0]
 
@@ -578,7 +593,8 @@ class Behaviors(_BehaviorsInternal):
         start)."""
         place = (tmpl or {}).get("place")
         if place is None:
-            place = "end" if tmpl.get("effect") == "fade_out" else "start"
+            effect = (tmpl or {}).get("effect")
+            place = EffectRecipe.place_of(effect) if effect in EffectRecipe.EFFECTS else "start"
         return place
 
     @staticmethod
@@ -616,7 +632,7 @@ class Behaviors(_BehaviorsInternal):
     def anchor_overrides(behaviors: List[str]) -> List[Optional[float]]:
         """The ``anchor_override`` each of one object's *behaviors* is keyed at.
 
-        A **point** behavior (blocks in one phase: ``fade_in``, ``fade_out``)
+        A **point** behavior (blocks in one phase: ``show``, ``hide``)
         is placed by its order among the object's points, spread ``0.0 .. 1.0``
         over the range, so "fades in, out, then in again" reads in order. A
         **span** (an ``in`` AND an ``out`` block: ``highlight``) covers the
@@ -990,7 +1006,7 @@ class Behaviors(_BehaviorsInternal):
             # Every guard is settled BEFORE anything is keyed: a behavior just
             # applied keys the object, and a check made after it would read
             # those fresh keys as the animator's and skip the object's other
-            # behaviors (a "fade_in, fade_out" object only ever got its fade_in).
+            # behaviors (a "show, hide" object only ever got its show).
             # Turned-off behaviors still took their place in the anchors.
             keyed = [e for e in non_audio if e["behavior"] not in skip_behaviors]
             nodes: Dict[str, str] = {}

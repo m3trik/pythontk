@@ -1104,7 +1104,7 @@ class TestShotStoreCrud(_ShotTest):
         s.define_shot("A", 0, 10)
         b = s.define_shot("B", 20, 30)
         s.edit_ledger.record_key("c", 30.0, b.shot_id, "end")
-        s.edit_ledger.record_authored("d", 20.0, b.shot_id, "fade_in", "door", "x")
+        s.edit_ledger.record_authored("d", 20.0, b.shot_id, "show", "door", "x")
         s.push_boundary_snapshot()
         s.remove_shot(b.shot_id)
         self.assertEqual(s.edit_ledger.key_records("c"), [(30.0, NO_OWNER, "")])
@@ -1133,7 +1133,7 @@ class TestShotStoreCrud(_ShotTest):
         a = s.define_shot("A", 0, 10)
         s.edit_ledger.record_key("c", 10.0, a.shot_id, "end")
         s.edit_ledger.record_key("c", 30.0, 7, "end")  # shot 7 was removed
-        s.edit_ledger.record_authored("d", 20.0, 7, "fade_in", "door", "x")
+        s.edit_ledger.record_authored("d", 20.0, 7, "show", "door", "x")
 
         loaded = ShotStore.from_dict(s.to_dict())
         self.assertEqual(
@@ -1331,7 +1331,7 @@ class TestShotStoreDerived(_ShotTest):
         s.scene_fps = 30.0
         shot = s.define_shot("A", 100, 300)
         led = s.edit_ledger
-        led.record_authored("door.v", 100.0, shot.shot_id, "fade_in", "door", "s")
+        led.record_authored("door.v", 100.0, shot.shot_id, "show", "door", "s")
         led.record_key("door.tx", 300.0, shot.shot_id, "end")
         led.record_step("door.tx", 290.0, "auto", "auto")
         s.rescale_to_fps(24.0)
@@ -1442,9 +1442,9 @@ class TestShotStoreSerialisation(_ShotTest):
             "x.csv": {
                 "template": "default",
                 "values": {},
-                "behaviors": {"key": ["highlight"], "marker": ["fade_in"]},
+                "behaviors": {"key": ["highlight"], "marker": ["show"]},
             },
-            "y.csv": {"behaviors": {"key": [], "marker": ["fade_out"]}},
+            "y.csv": {"behaviors": {"key": [], "marker": ["hide"]}},
         }
         data = json.loads(json.dumps(store.to_dict()))
         self.assertEqual(
@@ -2718,9 +2718,9 @@ class TestReleaseReplaced(_ShotTest):
         led = store.edit_ledger
         led.record_step("crv", 20.0, "auto", "auto")
         led.record_key("crv", 20.0, 0, "end")
-        led.record_authored("crv", 20.0, 0, "fade_in", "door")
-        led.record_authored("crv", 30.0, 0, "fade_in", "door")
-        led.record_authored("other", 20.0, 0, "fade_in", "lamp")
+        led.record_authored("crv", 20.0, 0, "show", "door")
+        led.record_authored("crv", 30.0, 0, "show", "door")
+        led.record_authored("other", 20.0, 0, "show", "lamp")
 
         released = store.release_replaced()("crv", [20.0])
 
@@ -2741,7 +2741,7 @@ class TestReleaseReplaced(_ShotTest):
 
         store = ShotStore(host=TwoOwners())
         for owner in "ab":
-            store.edit_ledger.record_authored(f"{owner}|x", 20.0, 0, "fade_in", owner)
+            store.edit_ledger.record_authored(f"{owner}|x", 20.0, 0, "show", owner)
 
         released = store.release_replaced()("x", (t for t in [20.0]))
 
@@ -2756,8 +2756,8 @@ class TestReleaseReplaced(_ShotTest):
         led = store.edit_ledger
         led.record_step("crv", 20.0, "auto", "auto")
         led.record_key("crv", 5.0, 0, "start")
-        led.record_authored("crv", 30.0, 0, "fade_in", "door")
-        led.record_authored("other", 20.0, 0, "fade_in", "lamp")
+        led.record_authored("crv", 30.0, 0, "show", "door")
+        led.record_authored("other", 20.0, 0, "show", "lamp")
 
         released = store.release_replaced()("crv", None)
 
@@ -2771,7 +2771,7 @@ class TestReleaseReplaced(_ShotTest):
         backend = self._Backend()
         ShotStore.set_persistence(backend)
         store = ShotStore()
-        store.edit_ledger.record_authored("crv", 20.0, 0, "fade_in", "door")
+        store.edit_ledger.record_authored("crv", 20.0, 0, "show", "door")
         on_replace = store.release_replaced()
 
         self.assertEqual(on_replace("crv", [10.0]), 0)
@@ -2790,7 +2790,7 @@ class TestReleaseReplaced(_ShotTest):
         store = ShotStore(host=OwnerKeyed())
         led = store.edit_ledger
         for key in ("a|x", "b|x", "a|y"):
-            led.record_authored(key, 20.0, 0, "fade_in", key[0])
+            led.record_authored(key, 20.0, 0, "show", key[0])
 
         self.assertEqual(store.release_replaced(["a", "b"])("x", [20.0]), 2)
         self.assertEqual(led.authored(), [("a|y", 20.0)])
@@ -2802,7 +2802,7 @@ class TestReleaseReplaced(_ShotTest):
         store = ShotStore()
         on_replace = store.release_replaced()
         store.push_boundary_snapshot()
-        store.edit_ledger.record_authored("crv", 20.0, 0, "fade_in", "door")
+        store.edit_ledger.record_authored("crv", 20.0, 0, "show", "door")
         store.restore_boundary_snapshot()
         store.redo_boundary_snapshot()
         self.assertTrue(store.edit_ledger.owns_authored("crv", 20.0))
@@ -2833,9 +2833,9 @@ class TestRemapMoved(_ShotTest):
     def test_a_moved_key_carries_every_claim_to_its_new_frame(self):
         store = ShotStore()
         led = store.edit_ledger
-        led.record_authored("crv", 15.0, 0, "fade_in", "door")
+        led.record_authored("crv", 15.0, 0, "show", "door")
         led.record_step("crv", 15.0, "auto", "auto")
-        led.record_authored("crv", 30.0, 0, "fade_out", "door")
+        led.record_authored("crv", 30.0, 0, "hide", "door")
 
         # The in-place Invert of {10, 15, 25, 30}: 15 and 25 trade frames.
         moved = store.remap_moved()(
@@ -2851,8 +2851,8 @@ class TestRemapMoved(_ShotTest):
         after the other, the second move took the first one's claim back."""
         store = ShotStore()
         led = store.edit_ledger
-        led.record_authored("crv", 15.0, 0, "fade_in", "door")
-        led.record_authored("crv", 25.0, 1, "fade_out", "lamp")
+        led.record_authored("crv", 15.0, 0, "show", "door")
+        led.record_authored("crv", 25.0, 1, "hide", "lamp")
 
         store.remap_moved()("crv", [(15.0, 25.0), (25.0, 15.0)])
 
@@ -2863,7 +2863,7 @@ class TestRemapMoved(_ShotTest):
         backend = self._Backend()
         ShotStore.set_persistence(backend)
         store = ShotStore()
-        store.edit_ledger.record_authored("crv", 15.0, 0, "fade_in", "door")
+        store.edit_ledger.record_authored("crv", 15.0, 0, "show", "door")
         on_move = store.remap_moved()
 
         self.assertEqual(on_move("crv", [(40.0, 50.0)]), 0)
@@ -2877,8 +2877,8 @@ class TestRemapMoved(_ShotTest):
                 return lambda curve: [f"{obj}|{curve}" for obj in objects]
 
         store = ShotStore(host=OwnerKeyed())
-        store.edit_ledger.record_authored("a|x", 15.0, 0, "fade_in", "a")
-        store.edit_ledger.record_authored("b|x", 15.0, 0, "fade_in", "b")
+        store.edit_ledger.record_authored("a|x", 15.0, 0, "show", "a")
+        store.edit_ledger.record_authored("b|x", 15.0, 0, "show", "b")
 
         self.assertEqual(store.remap_moved(["a", "b"])("x", [(15.0, 25.0)]), 2)
         self.assertEqual(store.edit_ledger.authored(), [("a|x", 25.0), ("b|x", 25.0)])
@@ -2904,7 +2904,7 @@ class TestKeyEdit(_ShotTest):
 
     def test_a_store_with_claims_runs_the_edit_as_a_scene_edit(self):
         store = ShotStore(host=self._Recording())
-        store.edit_ledger.record_authored("crv", 20.0, 0, "fade_in", "door")
+        store.edit_ledger.record_authored("crv", 20.0, 0, "show", "door")
 
         with store.key_edit("Align Keys") as (on_replace, on_move):
             on_replace("crv", [20.0])
@@ -2929,7 +2929,7 @@ class TestKeyEdit(_ShotTest):
         """The restore point is taken BEFORE the edit, so the restore the
         DCC's undo triggers brings the released claim back."""
         store = ShotStore()
-        store.edit_ledger.record_authored("crv", 20.0, 0, "fade_in", "door")
+        store.edit_ledger.record_authored("crv", 20.0, 0, "show", "door")
 
         with store.key_edit("Align Keys") as (on_replace, _on_move):
             on_replace("crv", [20.0])
@@ -2951,7 +2951,7 @@ class TestKeyEdit(_ShotTest):
                 return super().curve_ledger_keys(store, objects)
 
         store = ShotStore(host=Counting())
-        store.edit_ledger.record_authored("crv", 20.0, 0, "fade_in", "door")
+        store.edit_ledger.record_authored("crv", 20.0, 0, "show", "door")
 
         on_replace, on_move = store.claim_hooks(["door"])
         self.assertEqual(Counting.resolutions, 1)
@@ -3529,8 +3529,8 @@ class TestStaleShots(_ShotTest):
             held={"x"},
         )
         ledger = store.edit_ledger
-        ledger.record_authored("lostOpacity", 0.0, 0, "fade_in", "lost")
-        ledger.record_authored("xOpacity", 20.0, 1, "fade_in", "x")
+        ledger.record_authored("lostOpacity", 0.0, 0, "show", "lost")
+        ledger.record_authored("xOpacity", 20.0, 1, "show", "x")
         store.remove_stale_shots()
         self.assertEqual(ledger.authored(), [("xOpacity", 20.0)])
 
@@ -4100,10 +4100,10 @@ class TestEditLedgerAuthored(unittest.TestCase):
         from pythontk.core_utils.engines.shots.shot_ledger import ShotEditLedger
 
         led = ShotEditLedger()
-        led.record_authored("door.opacity", 10.0, 3, "fade_in", "door")
-        led.record_authored("door.opacity", 25.0, 3, "fade_in", "door")
-        led.record_authored("door.opacity", 90.0, 3, "fade_out", "door")
-        led.record_authored("lid.opacity", 10.0, 4, "fade_in", "lid")
+        led.record_authored("door.opacity", 10.0, 3, "show", "door")
+        led.record_authored("door.opacity", 25.0, 3, "show", "door")
+        led.record_authored("door.opacity", 90.0, 3, "hide", "door")
+        led.record_authored("lid.opacity", 10.0, 4, "show", "lid")
         return led
 
     def test_recorded_keys_are_owned_and_queryable(self):
@@ -4111,12 +4111,12 @@ class TestEditLedgerAuthored(unittest.TestCase):
         self.assertTrue(led.owns_authored("door.opacity", 25.0))
         self.assertFalse(led.owns_authored("door.opacity", 26.0))
         self.assertEqual(
-            led.authored(owner=3, obj="door", behavior="fade_in"),
+            led.authored(owner=3, obj="door", behavior="show"),
             [("door.opacity", 10.0), ("door.opacity", 25.0)],
         )
         self.assertEqual(led.authored(owner=4), [("lid.opacity", 10.0)])
         self.assertFalse(
-            led.record_authored("door.opacity", 25.0, 3, "fade_in", "door")
+            led.record_authored("door.opacity", 25.0, 3, "show", "door")
         )
 
     def test_owns_any_covers_every_system_write_but_steps(self):
@@ -4133,13 +4133,13 @@ class TestEditLedgerAuthored(unittest.TestCase):
         led = self._led()
         led.shift("door.opacity", 0.0, 30.0, 100.0)
         self.assertEqual(
-            led.authored(owner=3, behavior="fade_in"),
+            led.authored(owner=3, behavior="show"),
             [("door.opacity", 110.0), ("door.opacity", 125.0)],
         )
         led.remap("lid.opacity", [(10.0, 12.0)])
         self.assertTrue(led.owns_authored("lid.opacity", 12.0))
         self.assertEqual(led.release("door.opacity", 90.0), 1)
-        self.assertEqual(led.authored(owner=3, behavior="fade_out"), [])
+        self.assertEqual(led.authored(owner=3, behavior="hide"), [])
 
     def test_release_authored_and_disown(self):
         led = self._led()
@@ -4161,13 +4161,13 @@ class TestEditLedgerAuthored(unittest.TestCase):
         led = self._led()
         led.disown_shot(3)
         self.assertTrue(
-            led.record_authored("door.opacity", 10.0, 7, "fade_in", "door", "new")
+            led.record_authored("door.opacity", 10.0, 7, "show", "door", "new")
         )
         self.assertEqual(led.authored(owner=7), [("door.opacity", 10.0)])
-        self.assertEqual(led.authored_stamps(7, "door", "fade_in"), {"new"})
+        self.assertEqual(led.authored_stamps(7, "door", "show"), {"new"})
         self.assertEqual(len(led.authored(owner=NO_OWNER)), 2)
         # A claim a shot still owns stays its own.
-        self.assertFalse(led.record_authored("lid.opacity", 10.0, 7, "fade_in", "lid"))
+        self.assertFalse(led.record_authored("lid.opacity", 10.0, 7, "show", "lid"))
         self.assertEqual(led.authored(owner=4), [("lid.opacity", 10.0)])
 
     def test_round_trips_and_tolerates_old_payloads(self):
@@ -5677,13 +5677,13 @@ class TestLedgerRecipeStamps(unittest.TestCase):
         led = ShotEditLedger()
         led.record_authored("door.highlight", 10.0, 3, "highlight", "door", "abc")
         led.record_authored("door.highlight", 50.0, 3, "highlight", "door", "abc")
-        led.record_authored("door.opacity", 10.0, 3, "fade_in", "door")
-        led.record_authored("lid.opacity", 10.0, 4, "fade_in", "lid", "x")
+        led.record_authored("door.opacity", 10.0, 3, "show", "door")
+        led.record_authored("lid.opacity", 10.0, 4, "show", "lid", "x")
         self.assertEqual(led.authored_stamps(3, "door", "highlight"), {"abc"})
-        self.assertEqual(led.authored_stamps(3, "door", "fade_in"), {""})
-        self.assertEqual(led.authored_stamps(3, "door", "fade_out"), set())
+        self.assertEqual(led.authored_stamps(3, "door", "show"), {""})
+        self.assertEqual(led.authored_stamps(3, "door", "hide"), set())
         self.assertEqual(
-            led.authored_pairs(3), {("door", "highlight"), ("door", "fade_in")}
+            led.authored_pairs(3), {("door", "highlight"), ("door", "show")}
         )
         again = ShotEditLedger.from_dict(led.to_dict())
         self.assertEqual(again.authored_stamps(3, "door", "highlight"), {"abc"})
@@ -5692,9 +5692,9 @@ class TestLedgerRecipeStamps(unittest.TestCase):
         from pythontk.core_utils.engines.shots.shot_ledger import ShotEditLedger
 
         led = ShotEditLedger.from_dict(
-            {"authored": {"c": [[10.0, 3, "fade_in", "door"]]}}
+            {"authored": {"c": [[10.0, 3, "show", "door"]]}}
         )
-        self.assertEqual(led.authored_stamps(3, "door", "fade_in"), {""})
+        self.assertEqual(led.authored_stamps(3, "door", "show"), {""})
 
 
 if __name__ == "__main__":

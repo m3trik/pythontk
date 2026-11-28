@@ -45,8 +45,8 @@ class _Rows(unittest.TestCase):
         store = ShotStore()
         self.a01 = _step(
             "A01",
-            ("door", ["fade_in"]),
-            ("handle", ["highlight", "fade_out"]),
+            ("door", ["show"]),
+            ("handle", ["highlight", "hide"]),
             description="Door opens",
             name="Door_Open",
         )
@@ -80,10 +80,10 @@ class TestRecords(_Rows):
         self.assertEqual(
             rec["objects"],
             [
-                {"name": "door", "behaviors": ["fade_in"], "kind": "scene"},
+                {"name": "door", "behaviors": ["show"], "kind": "scene"},
                 {
                     "name": "handle",
-                    "behaviors": ["highlight", "fade_out"],
+                    "behaviors": ["highlight", "hide"],
                     "kind": "scene",
                 },
             ],
@@ -139,8 +139,8 @@ class TestTable(_Rows):
             table,
             [
                 ["Step", "Objects", "Behaviors", "Start"],
-                ["A01", "door", "fade_in", "1"],
-                ["", "handle", "highlight, fade_out", ""],
+                ["A01", "door", "show", "1"],
+                ["", "handle", "highlight, hide", ""],
             ],
         )
 
@@ -152,7 +152,7 @@ class TestTable(_Rows):
         table = ManifestExport.table(
             self._records()[:1], ["objects", "behaviors"], objects="cell"
         )
-        self.assertEqual(table[1], ["door\nhandle", "fade_in\nhighlight, fade_out"])
+        self.assertEqual(table[1], ["door\nhandle", "show\nhighlight, hide"])
 
     def test_columns_come_in_table_order_and_unknown_ones_are_left_out(self):
         table = ManifestExport.table(
