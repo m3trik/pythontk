@@ -201,10 +201,10 @@ class SpotPlacement(_SpotPlacementInternal):
     NEAR = 0.02
     #: A camera's room in free space, as a radius in metres.
     FREE = 0.05
-    #: Metres between an arrow's tip and its part.
+    #: Metres between a pointer's tip and its part.
     GAP = 0.04
-    #: An arrow's length, tip to tail, in metres.
-    ARROW = 0.13
+    #: A pointer's length, tip to tail, in metres.
+    POINTER = 0.13
     #: A picture's vertical field of view, in degrees.
     VIEW_ANGLE = 30.0
     #: The room around a picture's part (1: it just fits).
@@ -438,7 +438,7 @@ class SpotPlacement(_SpotPlacementInternal):
 
         Parameters:
             eyes: Where the person's eyes are. ``None``: those of :meth:`stand`'s spot.
-            gap, length: Metres between the tip and the part, and tip to tail (defaults :attr:`GAP`, :attr:`ARROW`).
+            gap, length: Metres between the tip and the part, and tip to tail (defaults :attr:`GAP`, :attr:`POINTER`).
             travel: How far it bobs away from the part along its axis, in metres: the room it needs is its sweep.
         """
         tip, aim, _found = self._point(
@@ -677,7 +677,7 @@ class SpotPlacement(_SpotPlacementInternal):
         u, ui = self.unit, self.up
         up, _, h2 = self._frame()
         gap = (self.GAP if gap is None else gap) * u
-        length = (self.ARROW if length is None else length) * u
+        length = (self.POINTER if length is None else length) * u
         centre, extents = self._centre(target), self._extents(target)
         if eyes is None:
             eyes = self._eyes(target, delivery, owners)

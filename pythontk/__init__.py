@@ -928,6 +928,7 @@ MOVED_NAMES = {
     # The build sheet's words named for their family at its most general: a
     # placing row's pointer is a pointer, whatever is drawn at it.
     "ManifestPlacement.ARROW": ("pythontk.ManifestPlacement.POINTER", "0.27.0"),
+    "SpotPlacement.ARROW": ("pythontk.SpotPlacement.POINTER", "0.27.0"),
 }
 
 bootstrap_package(globals(), include=DEFAULT_INCLUDE, moved=MOVED_NAMES)

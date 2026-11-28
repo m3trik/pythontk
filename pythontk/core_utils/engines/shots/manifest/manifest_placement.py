@@ -140,7 +140,7 @@ class ManifestPlacement:
     #: The placement's own measures (``ptk.SpotPlacement``), named here for what a helper is made with.
     STAND_OFF = SpotPlacement.STAND_OFF
     GAP = SpotPlacement.GAP
-    POINTER = SpotPlacement.ARROW
+    POINTER = SpotPlacement.POINTER
     VIEW_ANGLE = SpotPlacement.VIEW_ANGLE
     MARGIN = SpotPlacement.MARGIN
     LEAST_FRAMED = SpotPlacement.LEAST_FRAMED
